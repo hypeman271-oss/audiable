@@ -19,6 +19,8 @@ const libraryCard = $("library-card");
 const libraryList = $("library-list");
 const libraryClearBtn = $("library-clear");
 const playModeBtn = $("play-mode-btn");
+const libraryLabel = $("library-label");
+const librarySearch = $("library-search");
 const browseVoicesBtn = $("browse-voices-btn");
 const voiceBrowser = $("voice-browser");
 const voiceBrowserClose = $("voice-browser-close");
@@ -647,15 +649,19 @@ function formatClipMeta(clip) {
   return parts.join(" · ");
 }
 
-// ---- Playlist / auto-advance --------------------------------------------
-// The library doubles as a playlist. When the current clip ends we look up
-// the next one according to _playMode and auto-load it. listClips() returns
-// newest-first (sorted by id descending), so "newest" is the natural order
-// and "oldest" reverses it.
-const PLAY_MODES = ["newest", "oldest", "shuffle"];
+// ---- Library order, search, auto-advance --------------------------------
+// _playMode controls BOTH the on-screen sort and the auto-advance order so
+// "what plays next" matches "what you see next" — except for shuffle, which
+// keeps the newest-first display but randomizes auto-advance.
+//
+// listClips() returns newest-first (id descending), so "newest" needs no
+// extra work; sortClips() handles the others.
+const PLAY_MODES = ["newest", "oldest", "longest", "shortest", "shuffle"];
 const PLAY_MODE_LABELS = {
   newest: "Newest first",
   oldest: "Oldest first",
+  longest: "Longest first",
+  shortest: "Shortest first",
   shuffle: "Shuffle",
 };
 const PLAY_MODE_KEY = "narrative.playMode";
@@ -663,6 +669,26 @@ const PLAY_MODE_KEY = "narrative.playMode";
 let _playMode = PLAY_MODES.includes(localStorage.getItem(PLAY_MODE_KEY))
   ? localStorage.getItem(PLAY_MODE_KEY)
   : "newest";
+
+// Search query is session-scoped (re-typing on reload is fine; remembering
+// a stale filter past a refresh is annoying).
+let _librarySearch = "";
+
+function sortClips(clips, mode) {
+  if (mode === "oldest") return [...clips].reverse();
+  if (mode === "longest") {
+    return [...clips].sort(
+      (a, b) => (b.durationSec || 0) - (a.durationSec || 0)
+    );
+  }
+  if (mode === "shortest") {
+    return [...clips].sort(
+      (a, b) => (a.durationSec || 0) - (b.durationSec || 0)
+    );
+  }
+  // newest, shuffle → leave at listClips() default (newest-first)
+  return clips;
+}
 
 function updatePlayModeBtn() {
   playModeBtn.textContent = PLAY_MODE_LABELS[_playMode];
@@ -673,12 +699,29 @@ playModeBtn.addEventListener("click", () => {
   _playMode = PLAY_MODES[(i + 1) % PLAY_MODES.length];
   try { localStorage.setItem(PLAY_MODE_KEY, _playMode); } catch {}
   updatePlayModeBtn();
+  // Re-render the library so the new sort applies immediately.
+  renderLibrary();
 });
 
 updatePlayModeBtn();
 
+librarySearch.addEventListener("input", () => {
+  _librarySearch = librarySearch.value;
+  renderLibrary();
+});
+
+librarySearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    librarySearch.value = "";
+    _librarySearch = "";
+    renderLibrary();
+    librarySearch.blur();
+  }
+});
+
 // Returns the id of the clip that should play after `fromId` ends, or null
-// if we're at the end of the queue (or shuffle has no other clips).
+// if we're at the end of the queue (or shuffle has no other clips). Walks
+// the same sort order the user sees in the library.
 async function nextClipId(fromId) {
   let clips;
   try {
@@ -694,7 +737,7 @@ async function nextClipId(fromId) {
     return others[Math.floor(Math.random() * others.length)].id;
   }
 
-  const ordered = _playMode === "oldest" ? [...clips].reverse() : clips;
+  const ordered = sortClips(clips, _playMode);
   const idx = ordered.findIndex((c) => c.id === fromId);
   if (idx < 0 || idx + 1 >= ordered.length) return null;
   return ordered[idx + 1].id;
@@ -707,12 +750,42 @@ async function renderLibrary() {
   } catch (e) {
     console.warn("library read failed:", e);
   }
+  const totalCount = clips.length;
   libraryList.innerHTML = "";
-  if (clips.length === 0) {
+  if (totalCount === 0) {
     libraryCard.hidden = true;
     return;
   }
   libraryCard.hidden = false;
+
+  // Sort first, then filter — that way the visible order matches what
+  // auto-advance will play next.
+  clips = sortClips(clips, _playMode);
+
+  const query = _librarySearch.trim().toLowerCase();
+  if (query) {
+    clips = clips.filter((c) => {
+      return (
+        (c.title || "").toLowerCase().includes(query) ||
+        (c.text || "").toLowerCase().includes(query) ||
+        (c.voiceName || "").toLowerCase().includes(query)
+      );
+    });
+  }
+
+  // Header label reflects whether the filter is hiding anything.
+  libraryLabel.textContent =
+    query && clips.length !== totalCount
+      ? `Library · ${clips.length} of ${totalCount}`
+      : "Library";
+
+  if (clips.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "library-empty";
+    empty.textContent = `No clips match "${query}"`;
+    libraryList.appendChild(empty);
+    return;
+  }
 
   for (const clip of clips) {
     const item = document.createElement("div");

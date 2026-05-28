@@ -132,18 +132,24 @@
 
       <section class="card library" id="library-card" hidden>
         <div class="label-row">
-          <span class="label">Library</span>
+          <span class="label" id="library-label">Library</span>
           <div class="label-row-actions">
             <button
               id="play-mode-btn"
               type="button"
               class="link-btn"
-              aria-label="Cycle playlist order"
-              title="Tap to change playlist order"
+              aria-label="Cycle library sort + playlist order"
+              title="Tap to change sort + playlist order"
             >Newest first</button>
             <button id="library-clear" type="button" class="link-btn">Clear all</button>
           </div>
         </div>
+        <input
+          id="library-search"
+          type="search"
+          placeholder="Search by title, text, or voice…"
+          autocomplete="off"
+        />
         <div id="library-list" class="library-list"></div>
       </section>
     </main>

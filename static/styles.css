@@ -370,6 +370,21 @@ button:disabled {
   color: var(--danger);
 }
 
+#library-search {
+  /* Reuses the standard input styling but slimmer so it sits between the
+     header and the clip list without dominating the card. */
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.library-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
 .library-list {
   display: flex;
   flex-direction: column;

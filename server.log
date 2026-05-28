@@ -37,3 +37,10 @@ INFO:     192.168.1.64:46254 - "GET / HTTP/1.1" 304 Not Modified
 INFO:     192.168.1.64:46254 - "GET /styles.css HTTP/1.1" 304 Not Modified
 INFO:     192.168.1.64:46260 - "GET /app.js HTTP/1.1" 304 Not Modified
 INFO:     192.168.1.64:46260 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60864 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     192.168.1.64:55086 - "GET / HTTP/1.1" 200 OK
+INFO:     192.168.1.64:55086 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     192.168.1.64:55088 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     192.168.1.64:55088 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     192.168.1.64:55088 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:55088 - "GET /api/voices HTTP/1.1" 200 OK
