@@ -123,6 +123,8 @@ const urlInput = $("url-input");
 const urlFetchBtn = $("url-fetch-btn");
 const speedBtn = $("speed-btn");
 const sleepBtn = $("sleep-btn");
+const bookmarkAddBtn = $("bookmark-add-btn");
+const bookmarksList = $("bookmarks-list");
 const genLabel = generateBtn.querySelector(".label-text");
 const genSpinner = generateBtn.querySelector(".spinner");
 
@@ -360,6 +362,171 @@ playerEl.addEventListener("timeupdate", () => {
 });
 
 _updateSleepBtn();
+
+// ---- Bookmarks ----------------------------------------------------------
+// Drop a timestamp on the currently-loaded clip while you're listening.
+// Each bookmark gets an optional note (typed inline, no modal — the
+// "Add a note…" placeholder reads as a hint without forcing a dialog).
+// Bookmarks live as clip.bookmarks[] in IndexedDB and survive export/import.
+
+async function addBookmarkAtCurrentTime() {
+  if (!_currentClipId) {
+    setStatus("Load a clip first — nothing to bookmark.", true);
+    return;
+  }
+  try {
+    const clip = await getClip(_currentClipId);
+    if (!clip) return;
+    const t = virtualTime();
+    if (!Array.isArray(clip.bookmarks)) clip.bookmarks = [];
+    clip.bookmarks.push({
+      id: Date.now(),
+      timeSec: t,
+      note: "",
+      createdAt: new Date().toISOString(),
+    });
+    // Keep the list sorted by timestamp so display order matches audio order.
+    clip.bookmarks.sort((a, b) => a.timeSec - b.timeSec);
+    await saveClip(clip);
+    await renderBookmarks();
+    setStatus(`Bookmark added at ${formatTime(t)}.`);
+  } catch (e) {
+    console.warn("bookmark add failed:", e);
+    setStatus(`Bookmark failed: ${e.message}`, true);
+  }
+}
+
+async function updateBookmarkNote(bookmarkId, newNote) {
+  if (!_currentClipId) return;
+  try {
+    const clip = await getClip(_currentClipId);
+    if (!clip || !Array.isArray(clip.bookmarks)) return;
+    const bm = clip.bookmarks.find((b) => b.id === bookmarkId);
+    if (!bm) return;
+    bm.note = newNote;
+    await saveClip(clip);
+    // No re-render needed; the user already sees their typed note.
+  } catch (e) {
+    console.warn("bookmark note save failed:", e);
+  }
+}
+
+async function deleteBookmark(bookmarkId) {
+  if (!_currentClipId) return;
+  try {
+    const clip = await getClip(_currentClipId);
+    if (!clip || !Array.isArray(clip.bookmarks)) return;
+    clip.bookmarks = clip.bookmarks.filter((b) => b.id !== bookmarkId);
+    await saveClip(clip);
+    await renderBookmarks();
+  } catch (e) {
+    console.warn("bookmark delete failed:", e);
+  }
+}
+
+// Move the playhead to time `t` (in seconds within the clip's full timeline).
+// Handles both streaming mode (jump to the per-sentence WAV that covers t,
+// then nudge currentTime to the intra-sentence offset) and post-swap mode
+// (direct currentTime). Used by bookmark jump.
+function seekToTime(t) {
+  t = Math.max(0, Number(t) || 0);
+  if (_streamPlayhead >= 0 && sentenceOffsetsSec.length) {
+    const idx = currentSentenceIndex(t);
+    if (idx >= 0 && idx < _streamQueue.length) {
+      const sentenceStart = sentenceOffsetsSec[idx] || 0;
+      const intra = Math.max(0, t - sentenceStart);
+      // Use the existing sentence-seek path to load the right per-sentence
+      // WAV, then advance inside it once its metadata is ready.
+      seekToSentence(idx);
+      const onLoad = () => {
+        playerEl.removeEventListener("loadedmetadata", onLoad);
+        try {
+          const cap = isFinite(playerEl.duration) ? playerEl.duration : intra;
+          playerEl.currentTime = Math.min(cap, intra);
+        } catch {}
+      };
+      playerEl.addEventListener("loadedmetadata", onLoad);
+    }
+    return;
+  }
+  // Post-swap / combined-WAV: direct currentTime move.
+  try {
+    const cap = isFinite(playerEl.duration) ? playerEl.duration : t;
+    playerEl.currentTime = Math.min(cap, t);
+  } catch {}
+}
+
+async function renderBookmarks() {
+  bookmarksList.innerHTML = "";
+  let bookmarks = [];
+  if (_currentClipId) {
+    try {
+      const clip = await getClip(_currentClipId);
+      if (clip && Array.isArray(clip.bookmarks)) bookmarks = clip.bookmarks;
+    } catch {}
+  }
+
+  // Update the chip label so the bookmark count is visible even when the
+  // list is scrolled out of view.
+  bookmarkAddBtn.textContent =
+    bookmarks.length > 0 ? `🔖 Bookmark · ${bookmarks.length}` : "🔖 Bookmark";
+
+  if (bookmarks.length === 0) {
+    bookmarksList.hidden = true;
+    return;
+  }
+  bookmarksList.hidden = false;
+
+  for (const bm of bookmarks) {
+    const row = document.createElement("div");
+    row.className = "bookmark-row";
+
+    const timeBtn = document.createElement("button");
+    timeBtn.type = "button";
+    timeBtn.className = "bookmark-time";
+    timeBtn.textContent = formatTime(bm.timeSec);
+    timeBtn.title = `Jump to ${formatTime(bm.timeSec)}`;
+    timeBtn.addEventListener("click", () => {
+      seekToTime(bm.timeSec);
+      playerEl.play().catch(() => {});
+    });
+
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.className = "bookmark-note";
+    noteInput.value = bm.note || "";
+    noteInput.maxLength = 200;
+    noteInput.placeholder = "Add a note…";
+    noteInput.addEventListener("change", () => {
+      updateBookmarkNote(bm.id, noteInput.value.trim());
+    });
+    noteInput.addEventListener("keydown", (e) => {
+      // Enter saves + blurs (which triggers the change handler above).
+      // Escape reverts to the saved value and blurs.
+      if (e.key === "Enter") {
+        e.preventDefault();
+        noteInput.blur();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        noteInput.value = bm.note || "";
+        noteInput.blur();
+      }
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "bookmark-delete";
+    delBtn.textContent = "×";
+    delBtn.title = "Delete bookmark";
+    delBtn.setAttribute("aria-label", `Delete bookmark at ${formatTime(bm.timeSec)}`);
+    delBtn.addEventListener("click", () => deleteBookmark(bm.id));
+
+    row.append(timeBtn, noteInput, delBtn);
+    bookmarksList.appendChild(row);
+  }
+}
+
+bookmarkAddBtn.addEventListener("click", addBookmarkAtCurrentTime);
 
 // ---- Resume position ---------------------------------------------------
 // Per-clip "remember where I left off." Saved into the existing IndexedDB
@@ -792,6 +959,10 @@ async function generate() {
           title: existing.title,
           note: existing.note || "",
           createdAt: existing.createdAt,
+          // Carry bookmarks through a regen — the audio length may have
+          // shifted slightly, but the user's notes are too valuable to
+          // wipe automatically. They can prune misaligned ones manually.
+          bookmarks: Array.isArray(existing.bookmarks) ? existing.bookmarks : [],
         };
       }
     } catch {}
@@ -941,11 +1112,19 @@ async function generate() {
               blob: combined,
               durationSec: isFinite(playerEl.duration) ? playerEl.duration : 0,
               progressSec: 0,
+              // Empty for fresh clips, preserved across regen.
+              bookmarks: regenExistingMeta ? regenExistingMeta.bookmarks : [],
               createdAt: regenExistingMeta
                 ? regenExistingMeta.createdAt
                 : new Date().toISOString(),
             })
-              .then(renderLibrary)
+              .then(() => {
+                renderLibrary();
+                // For a regen this picks up the existing bookmarks (which
+                // we want to preserve across re-synthesis); for a fresh
+                // clip this just renders the empty list (hidden).
+                renderBookmarks();
+              })
               .catch((e) => console.warn("library save failed:", e));
           };
           playerEl.addEventListener("loadedmetadata", onLoaded, { once: true });
@@ -1171,6 +1350,10 @@ function clearForNewClip() {
 
   textLabel.textContent = "Your text";
   textEl.focus();
+  // Clear out the previously-loaded clip's bookmarks display too — they
+  // belong to the clip we just decoupled from, not whatever the user
+  // generates next.
+  renderBookmarks();
   setStatus("Cleared. Ready for new text.");
 }
 
@@ -1986,6 +2169,7 @@ async function exportLibrary() {
         createdAt: clip.createdAt || new Date(clip.id).toISOString(),
         audioFile,
         audioType: clip.blob.type,
+        bookmarks: Array.isArray(clip.bookmarks) ? clip.bookmarks : [],
       });
     }
 
@@ -2085,6 +2269,9 @@ async function importLibraryFromFile(file) {
         sentenceOffsetsSec: mc.sentenceOffsetsSec || [],
         durationSec: Number(mc.durationSec) || 0,
         progressSec: Number(mc.progressSec) || 0,
+        // Bookmarks: array of {id, timeSec, note, createdAt}. Older
+        // manifests don't have the field — default to empty.
+        bookmarks: Array.isArray(mc.bookmarks) ? mc.bookmarks : [],
         createdAt: mc.createdAt || new Date(mc.id).toISOString(),
         blob,
       });
@@ -2220,8 +2407,10 @@ async function loadClip(id) {
       : `Loaded · ${clip.title}`
   );
   playerEl.play().catch(() => {});
-  // Re-render so the ▶ indicator moves to this clip.
+  // Re-render so the ▶ indicator moves to this clip + the new clip's
+  // bookmarks list appears under the player.
   renderLibrary();
+  renderBookmarks();
 }
 
 libraryClearBtn.addEventListener("click", async () => {

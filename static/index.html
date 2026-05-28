@@ -156,6 +156,13 @@
         <audio id="player" controls preload="auto"></audio>
         <div class="player-actions">
           <button
+            id="bookmark-add-btn"
+            type="button"
+            class="bookmark-add-btn"
+            aria-label="Drop a bookmark at the current position"
+            title="Drop a bookmark at the current position"
+          >🔖 Bookmark</button>
+          <button
             id="sleep-btn"
             type="button"
             class="sleep-btn"
@@ -170,6 +177,7 @@
             title="Tap to cycle playback speed"
           >1×</button>
         </div>
+        <div id="bookmarks-list" class="bookmarks-list" hidden></div>
       </section>
 
       <p class="status" id="status" aria-live="polite"></p>

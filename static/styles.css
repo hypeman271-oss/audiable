@@ -543,6 +543,108 @@ button:disabled {
   border-color: var(--accent);
 }
 
+/* Bookmark chip mirrors the sleep / speed pill shape. Auto-grows a bit to
+   fit the "🔖 Bookmark · 3" count suffix without clipping. */
+.bookmark-add-btn {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.bookmark-add-btn:hover {
+  background: rgba(124, 156, 255, 0.18);
+  border-color: var(--accent);
+}
+
+.bookmark-add-btn:active {
+  transform: scale(0.97);
+}
+
+/* Bookmark list — sits below the player controls, one row per bookmark. */
+.bookmarks-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bookmark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card-2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 4px 4px 4px 0;
+}
+
+.bookmark-time {
+  flex: 0 0 auto;
+  min-width: 64px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 13px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: center;
+  border-radius: 6px;
+}
+
+.bookmark-time:hover {
+  background: rgba(124, 156, 255, 0.12);
+}
+
+.bookmark-note {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 4px;
+  outline: none;
+  /* Soft hint that this is editable without a heavy bordered look */
+  border-radius: 4px;
+}
+
+.bookmark-note:focus {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.bookmark-note::placeholder {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
+.bookmark-delete {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 17px;
+  line-height: 1;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.bookmark-delete:hover {
+  color: var(--danger);
+  background: rgba(255, 124, 124, 0.08);
+}
+
 .status {
   min-height: 1.2em;
   color: var(--fg-dim);
