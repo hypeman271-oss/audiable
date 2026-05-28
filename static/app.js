@@ -1,5 +1,81 @@
 const $ = (id) => document.getElementById(id);
 
+// ---- API key (X-Narrative-Key) -----------------------------------------
+// When the server is started with NARRATIVE_KEY set (typical for the public
+// tunnel), every /api/* request needs an X-Narrative-Key header that matches.
+// We wrap window.fetch once so the rest of the app doesn't have to think
+// about it: stored key gets attached automatically, and a 401 triggers a
+// single prompt + retry.
+const API_KEY_STORAGE = "narrative.apiKey";
+
+function getApiKey() {
+  try { return localStorage.getItem(API_KEY_STORAGE) || ""; } catch { return ""; }
+}
+function setApiKey(key) {
+  try {
+    if (key) localStorage.setItem(API_KEY_STORAGE, key);
+    else localStorage.removeItem(API_KEY_STORAGE);
+  } catch {}
+}
+
+let _keyPromptInFlight = false;
+function _promptForApiKey() {
+  // Re-entrant guard so concurrent 401s don't stack up half a dozen
+  // prompts on top of each other while the user types.
+  if (_keyPromptInFlight) return null;
+  _keyPromptInFlight = true;
+  try {
+    const k = window.prompt(
+      "This Narrative server requires an API key.\n\n" +
+      "Paste your X-Narrative-Key value (set by the server admin):",
+      getApiKey()
+    );
+    if (k && k.trim()) {
+      setApiKey(k.trim());
+      return k.trim();
+    }
+    return null;
+  } finally {
+    _keyPromptInFlight = false;
+  }
+}
+
+(() => {
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async (input, options) => {
+    options = options ? { ...options } : {};
+    const url =
+      typeof input === "string"
+        ? input
+        : input && typeof input.url === "string"
+        ? input.url
+        : "";
+    const isApi = url.startsWith("/api/");
+
+    if (isApi) {
+      const key = getApiKey();
+      if (key) {
+        const h = new Headers(options.headers || {});
+        h.set("X-Narrative-Key", key);
+        options.headers = h;
+      }
+    }
+
+    let res = await origFetch(input, options);
+
+    if (isApi && res.status === 401) {
+      const newKey = _promptForApiKey();
+      if (newKey) {
+        const h = new Headers(options.headers || {});
+        h.set("X-Narrative-Key", newKey);
+        options.headers = h;
+        res = await origFetch(input, options);
+      }
+    }
+    return res;
+  };
+})();
+
 const textEl = $("text");
 const charCountEl = $("char-count");
 const voiceEl = $("voice");
@@ -32,6 +108,10 @@ const voiceBrowserList = $("voice-browser-list");
 const voiceInstalledToggle = $("voice-installed-toggle");
 const uploadBtn = $("upload-btn");
 const uploadInput = $("upload-input");
+const pasteUrlBtn = $("paste-url-btn");
+const urlRow = $("url-row");
+const urlInput = $("url-input");
+const urlFetchBtn = $("url-fetch-btn");
 const speedBtn = $("speed-btn");
 const genLabel = generateBtn.querySelector(".label-text");
 const genSpinner = generateBtn.querySelector(".spinner");
@@ -1039,6 +1119,91 @@ libraryClearBtn.addEventListener("click", async () => {
 // textarea. Server handles dispatch by extension (txt/md/pdf/epub/docx).
 
 uploadBtn.addEventListener("click", () => uploadInput.click());
+
+// ---- Paste URL ----------------------------------------------------------
+// Toggle an inline input above the textarea; submit fetches the article
+// server-side (trafilatura strips nav/ads/footers) and drops clean text
+// into the textarea, ready for Generate.
+
+function showUrlRow() {
+  urlRow.hidden = false;
+  urlInput.disabled = false;
+  urlFetchBtn.disabled = false;
+  urlInput.focus();
+  urlInput.select();
+}
+
+function hideUrlRow() {
+  urlRow.hidden = true;
+  urlInput.value = "";
+}
+
+pasteUrlBtn.addEventListener("click", () => {
+  if (urlRow.hidden) showUrlRow();
+  else hideUrlRow();
+});
+
+urlInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    fetchFromUrl();
+  } else if (e.key === "Escape") {
+    hideUrlRow();
+  }
+});
+
+urlFetchBtn.addEventListener("click", fetchFromUrl);
+
+async function fetchFromUrl() {
+  const url = (urlInput.value || "").trim();
+  if (!url) return;
+  pasteUrlBtn.disabled = true;
+  urlInput.disabled = true;
+  urlFetchBtn.disabled = true;
+  urlFetchBtn.textContent = "Fetching…";
+  // Show the bare hostname while we wait so the user knows we're hitting
+  // the right place (and not eg. truncating their URL).
+  let host = url;
+  try {
+    host = new URL(url).hostname || url;
+  } catch {}
+  setStatus(`Fetching ${host}…`);
+
+  try {
+    const res = await fetch("/api/extract/url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const j = await res.json();
+        if (j.detail) detail = j.detail;
+      } catch {}
+      throw new Error(detail);
+    }
+    const data = await res.json();
+
+    // Same shape as the file-upload path — keep behavior aligned.
+    exitReadingView();
+    textEl.value = data.text || "";
+    updateCounts();
+
+    hideUrlRow();
+    const chars = (data.chars || 0).toLocaleString();
+    setStatus(`Loaded ${data.filename} · ${chars} chars · ready to Generate`);
+    textEl.focus();
+  } catch (err) {
+    setStatus(`Fetch failed: ${err.message}`, true);
+  } finally {
+    pasteUrlBtn.disabled = false;
+    urlInput.disabled = false;
+    urlFetchBtn.disabled = false;
+    urlFetchBtn.textContent = "Fetch";
+  }
+}
+
 
 uploadInput.addEventListener("change", async (e) => {
   const file = e.target.files?.[0];

@@ -8,12 +8,14 @@ Run:
 
 from __future__ import annotations
 
+import hmac
 import mimetypes
+import os
 import socket
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,6 +30,48 @@ STATIC_DIR = Path(__file__).parent / "static"
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 app = FastAPI(title="Narrative", version="0.1.0")
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Optional shared-secret auth on /api/* — gated by env var NARRATIVE_KEY.
+
+    Designed for the Cloudflare-tunnel use case: when the app is exposed to
+    the public internet via the tunnel, set NARRATIVE_KEY so random visitors
+    who stumble onto the URL can't run synthesis on your CPU / install
+    voices on your disk / proxy URL fetches through your server.
+
+    When NARRATIVE_KEY is unset (default for purely-local use), this is a
+    no-op and every request passes through. When set, /api/* requires the
+    matching X-Narrative-Key header.
+
+    Two carve-outs:
+      - Static files (anything not under /api/) are always allowed so the
+        frontend can boot and prompt for the key in the first place.
+      - /api/voices/sample/* is unauthenticated so <audio src="..."> sample
+        previews keep working without each one having to be loaded via
+        Fetch + Blob URL. The samples are already public on HuggingFace,
+        so there's no real privacy lost.
+    """
+    required_key = os.environ.get("NARRATIVE_KEY", "").strip()
+    if not required_key:
+        return await call_next(request)
+
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    if path.startswith("/api/voices/sample/"):
+        return await call_next(request)
+
+    provided = request.headers.get("X-Narrative-Key", "")
+    if not provided or not hmac.compare_digest(
+        provided.encode("utf-8"), required_key.encode("utf-8")
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "missing or invalid X-Narrative-Key"},
+        )
+    return await call_next(request)
 
 
 class SynthesizeRequest(BaseModel):
@@ -312,6 +356,27 @@ async def synthesize_stream(req: SynthesizeRequest):
     )
 
 
+class ExtractUrlRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2048)
+
+
+@app.post("/api/extract/url")
+async def extract_url_endpoint(req: ExtractUrlRequest):
+    """Fetch a URL server-side and extract the article text."""
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, extract.fetch_and_extract_url, req.url
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
+
+
 @app.post("/api/extract")
 async def extract_endpoint(file: UploadFile = File(...)):
     """Pull the text out of an uploaded document so the user can pipe it into TTS."""
@@ -377,6 +442,23 @@ def _print_banner(port: int) -> None:
         "  (one-time: winget install --id Cloudflare.cloudflared)",
         bar,
     ]
+
+    if not os.environ.get("NARRATIVE_KEY", "").strip():
+        import secrets as _secrets
+
+        lines += [
+            "  Exposing this to the internet (e.g. via the tunnel)?",
+            "  Set NARRATIVE_KEY so random visitors can't use your TTS:",
+            f"    $env:NARRATIVE_KEY = '{_secrets.token_urlsafe(24)}'",
+            "  Then paste the same string into the prompt the first time",
+            "  you open the URL on your phone.",
+            bar,
+        ]
+    else:
+        lines += [
+            "  NARRATIVE_KEY is set — /api/* requests require X-Narrative-Key.",
+            bar,
+        ]
     print("\n".join(lines), flush=True)
 
 

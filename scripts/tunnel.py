@@ -1,10 +1,26 @@
-"""Spin up an HTTPS tunnel for Narrative via Cloudflare quick tunnel.
+"""Spin up an HTTPS tunnel for Narrative via Cloudflare.
 
-Once `python server.py` is running, run this in a second terminal and you
-get a public `https://<random>.trycloudflare.com` URL — open it on your
-phone (cellular OK). The PWA install prompt fires properly, the service
-worker actually registers (so the app shell works offline), and you can
-listen to clips you generated at home while you're somewhere else.
+Two modes:
+
+  Quick tunnel (default)
+    Random `https://<random>.trycloudflare.com` URL, no account needed.
+    URL changes on every restart, so the phone PWA's saved URL gets
+    stale every time. Great for one-off listening sessions.
+
+  Named tunnel (--name)
+    Persistent URL on a domain you own (free Cloudflare account).
+    Your phone PWA stays installed at the same URL forever.
+    Requires one-time setup:
+        cloudflared tunnel login          # opens browser, picks your domain
+        cloudflared tunnel create narrative
+        cloudflared tunnel route dns narrative narrative.yourdomain.com
+    Then run:
+        python scripts/tunnel.py --name narrative
+
+Auth (recommended for either mode):
+    The server gates /api/* behind X-Narrative-Key when env var
+    NARRATIVE_KEY is set. See the server's startup banner for a
+    suggested key + setup line.
 
 Requirements
 ------------
@@ -15,15 +31,9 @@ The `cloudflared` binary needs to be on PATH:
 
 Usage
 -----
-    python scripts/tunnel.py              # tunnels :8000
+    python scripts/tunnel.py                       # quick tunnel on :8000
     python scripts/tunnel.py --port 8000
-
-Security note
--------------
-While the tunnel is up, anyone with the URL can hit your TTS endpoints
-(synthesize, voice browser/install, file upload — bounded by the 25 MB
-upload cap). The URL is unguessable, but treat it as semi-public — close
-the terminal when you're done listening.
+    python scripts/tunnel.py --name narrative      # named tunnel (persistent)
 """
 
 from __future__ import annotations
@@ -110,13 +120,40 @@ def _print_banner(public_url: str, port: int) -> None:
     print("\n".join(lines), flush=True)
 
 
+def _print_named_banner(tunnel_name: str, port: int) -> None:
+    bar = "=" * 60
+    lines = [
+        "",
+        bar,
+        f"  Named tunnel '{tunnel_name}' starting",
+        bar,
+        f"  Local:   http://localhost:{port}",
+        f"  Public:  whatever you configured via `cloudflared tunnel route dns`",
+        bar,
+        "  Open that URL on your phone — it stays the same across restarts,",
+        "  so a previously-installed PWA keeps working.",
+        bar,
+        "",
+    ]
+    print("\n".join(lines), flush=True)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Cloudflare quick tunnel for Narrative.")
+    parser = argparse.ArgumentParser(description="Cloudflare tunnel for Narrative.")
     parser.add_argument(
         "--port",
         type=int,
         default=8000,
         help="Local port the Narrative server is listening on (default: 8000).",
+    )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "Run a pre-created named tunnel (persistent URL on a domain "
+            "you own). See script docstring for one-time setup steps. "
+            "Omit to use a random-URL quick tunnel instead."
+        ),
     )
     args = parser.parse_args()
 
@@ -133,17 +170,31 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    cmd = [
-        bin_path,
-        "tunnel",
-        "--url",
-        f"http://localhost:{args.port}",
-        "--no-autoupdate",
-    ]
+    if args.name:
+        # Named tunnel: cloudflared knows the public URL via the user's
+        # `tunnel route dns` config. It doesn't print a public URL of its
+        # own, so we just print the banner up front.
+        cmd = [
+            bin_path,
+            "tunnel",
+            "run",
+            "--url",
+            f"http://localhost:{args.port}",
+            args.name,
+        ]
+        _print_named_banner(args.name, args.port)
+    else:
+        cmd = [
+            bin_path,
+            "tunnel",
+            "--url",
+            f"http://localhost:{args.port}",
+            "--no-autoupdate",
+        ]
     print(f"[tunnel] launching: {' '.join(cmd)}\n", flush=True)
 
     # Merge cloudflared's stderr into stdout so we get a single stream to
-    # scan for the trycloudflare URL.
+    # scan for the trycloudflare URL (quick tunnel only).
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -154,12 +205,12 @@ def main() -> int:
 
     public_url: str | None = None
     try:
-        # Stream cloudflared's output verbatim AND pick out the public URL the
-        # first time we see it so we can print our own banner.
         for line in proc.stdout:  # type: ignore[union-attr]
             sys.stdout.write(line)
             sys.stdout.flush()
-            if public_url is None:
+            # Quick-tunnel only: pick the trycloudflare URL out of the log
+            # the first time we see it and print our own banner.
+            if not args.name and public_url is None:
                 match = _TRYCLOUDFLARE_RE.search(line)
                 if match:
                     public_url = match.group(0)

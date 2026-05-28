@@ -100,6 +100,57 @@ select:focus {
   margin-top: 6px;
 }
 
+/* Paste-URL inline row — shown above the textarea when the user clicks
+   "Paste URL." Input + Fetch button on one line; collapses on submit/Esc. */
+.url-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+#url-input {
+  flex: 1;
+  /* Inherits .url-row's existing input styling via the global input rules
+     above (textarea / select / input[type="range"] cover most fields). */
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+
+#url-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.18);
+}
+
+.url-fetch-btn {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #0b1020;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  min-width: 72px;
+}
+
+.url-fetch-btn:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.url-fetch-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .label-row {
   display: flex;
   align-items: baseline;

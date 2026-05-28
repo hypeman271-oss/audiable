@@ -14,22 +14,10 @@
     python scripts/tunnel.py
   (one-time: winget install --id Cloudflare.cloudflared)
 ========================================================
-INFO:     127.0.0.1:63411 - "GET /api/voices HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63412 - "POST /api/voices/install/stream HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63418 - "GET /api/voices HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63419 - "DELETE /api/voices/ca_ES-upc_ona-x_low HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63420 - "GET /api/voices HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63421 - "DELETE /api/voices/ca_ES-upc_ona-x_low HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:63422 - "DELETE /api/voices/some-bad..voice HTTP/1.1" 400 Bad Request
-INFO:     192.168.1.64:51232 - "GET / HTTP/1.1" 304 Not Modified
-INFO:     192.168.1.64:51234 - "GET /app.js HTTP/1.1" 200 OK
-INFO:     192.168.1.64:51232 - "GET /styles.css HTTP/1.1" 200 OK
-INFO:     192.168.1.64:51234 - "GET /api/voices HTTP/1.1" 200 OK
-INFO:     192.168.1.64:49628 - "GET /api/voices/catalog HTTP/1.1" 200 OK
-INFO:     192.168.1.64:48102 - "GET / HTTP/1.1" 200 OK
-INFO:     192.168.1.64:48102 - "GET /styles.css HTTP/1.1" 200 OK
-INFO:     192.168.1.64:48106 - "GET /app.js HTTP/1.1" 200 OK
-INFO:     192.168.1.64:48106 - "GET /api/voices HTTP/1.1" 200 OK
-INFO:     192.168.1.64:48106 - "GET /api/voices/catalog HTTP/1.1" 200 OK
-INFO:     192.168.1.64:48118 - "DELETE /api/voices/eu_ES-antton-medium HTTP/1.1" 200 OK
-INFO:     192.168.1.64:48118 - "GET /api/voices HTTP/1.1" 200 OK
+  Exposing this to the internet (e.g. via the tunnel)?
+  Set NARRATIVE_KEY so random visitors can't use your TTS:
+    $env:NARRATIVE_KEY = 'kFlXNZkXHvG5cmcUDT0xXhs-LJ2t5dm5'
+  Then paste the same string into the prompt the first time
+  you open the URL on your phone.
+========================================================
+INFO:     127.0.0.1:60344 - "GET /api/voices HTTP/1.1" 200 OK

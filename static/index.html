@@ -29,6 +29,12 @@
           <label for="text" class="label" id="text-label">Your text</label>
           <div class="label-row-actions">
             <button
+              id="paste-url-btn"
+              type="button"
+              class="link-btn"
+              aria-label="Fetch text from a URL"
+            >Paste URL</button>
+            <button
               id="upload-btn"
               type="button"
               class="link-btn"
@@ -49,6 +55,16 @@
           hidden
           accept=".txt,.md,.markdown,.pdf,.epub,.docx,text/plain,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         />
+        <div id="url-row" class="url-row" hidden>
+          <input
+            id="url-input"
+            type="url"
+            placeholder="https://… (article URL)"
+            autocomplete="off"
+            inputmode="url"
+          />
+          <button id="url-fetch-btn" type="button" class="url-fetch-btn">Fetch</button>
+        </div>
         <textarea
           id="text"
           placeholder="Paste an article, a chapter, or just a sentence — or upload a file above."
