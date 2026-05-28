@@ -1,0 +1,11 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pyttsx3==2.98
+pydantic==2.10.3
+piper-tts==1.4.2
+python-multipart==0.0.29
+pymupdf==1.27.2.3
+ebooklib==0.20
+beautifulsoup4==4.14.3
+python-docx==1.2.0
+lameenc==1.8.2

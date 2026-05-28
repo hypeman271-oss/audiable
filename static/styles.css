@@ -1,0 +1,637 @@
+:root {
+  --bg: #0b1020;
+  --bg-card: #141a30;
+  --bg-card-2: #1b2240;
+  --fg: #e7ecff;
+  --fg-dim: #97a0c9;
+  --accent: #7c9cff;
+  --accent-strong: #5b7dff;
+  --danger: #ff7c7c;
+  --radius: 14px;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(1200px 800px at 80% -10%, #1c2550 0%, var(--bg) 60%) fixed;
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 18px 64px;
+  padding-bottom: calc(64px + env(safe-area-inset-bottom));
+}
+
+.hero {
+  padding: 8px 4px 18px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 32px;
+  letter-spacing: -0.02em;
+  background: linear-gradient(120deg, #fff, var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tagline {
+  margin: 4px 0 0;
+  color: var(--fg-dim);
+  font-size: 14px;
+}
+
+.card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+
+.label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin-bottom: 8px;
+}
+
+textarea,
+select,
+input[type="range"] {
+  width: 100%;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 16px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.18);
+}
+
+.meta {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 6px;
+}
+
+.label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.label-row-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.label-row .label {
+  margin-bottom: 0;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.link-btn:hover {
+  color: var(--fg);
+}
+
+.reading-view {
+  width: 100%;
+  background: var(--bg-card-2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 16px;
+  line-height: 1.55;
+  min-height: 180px;
+  max-height: 360px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
+.reading-view .sentence {
+  color: var(--fg-dim);
+  transition: color 0.15s ease, background-color 0.15s ease;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+
+.reading-view .sentence + .sentence {
+  margin-left: 4px;
+}
+
+.reading-view .sentence.active {
+  color: var(--fg);
+  background-color: rgba(124, 156, 255, 0.18);
+}
+
+.reading-view .sentence.played {
+  color: #b9c3eb;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+@media (max-width: 480px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.slider label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--fg-dim);
+  margin-bottom: 6px;
+}
+
+input[type="range"] {
+  padding: 0;
+  height: 32px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--bg-card-2);
+  border-radius: 3px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-top: -8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  background: var(--bg-card-2);
+  border-radius: 3px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+button {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: transform 0.06s ease, background 0.18s ease, opacity 0.18s ease;
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+button.primary {
+  background: var(--accent);
+  color: #0b1020;
+}
+
+button.primary:hover {
+  background: var(--accent-strong);
+}
+
+button.secondary {
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(11, 16, 32, 0.3);
+  border-top-color: #0b1020;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Synthesis progress bar — shown between the action buttons and the status line */
+#synth-progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 3px;
+  overflow: hidden;
+  /* Remove browser default appearance */
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-card-2);
+}
+
+#synth-progress::-webkit-progress-bar {
+  background: var(--bg-card-2);
+  border-radius: 3px;
+}
+
+#synth-progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
+
+#synth-progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+.player {
+  padding: 14px;
+}
+
+.player audio {
+  width: 100%;
+  display: block;
+}
+
+.player-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Compact speed cycle button — chip-style so it sits comfortably next to the
+   native audio control bar without competing with it visually. */
+.speed-btn {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 56px;
+}
+
+.speed-btn:hover {
+  background: rgba(124, 156, 255, 0.18);
+  border-color: var(--accent);
+}
+
+.status {
+  min-height: 1.2em;
+  color: var(--fg-dim);
+  font-size: 13px;
+  margin: 10px 4px 0;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clip {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  background: var(--bg-card-2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* Currently-playing clip: subtle accent ring so the user can spot it
+   at a glance, even when the library is long. */
+.clip.current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 156, 255, 0.18);
+}
+
+.clip.current .clip-title::before {
+  content: "▶ ";
+  color: var(--accent);
+}
+
+.clip-play {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 12px 14px;
+  text-align: left;
+  color: var(--fg);
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.clip-play:hover {
+  background: rgba(124, 156, 255, 0.08);
+}
+
+.clip-title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clip-meta {
+  font-size: 12px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clip-delete {
+  background: none;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--fg-dim);
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 20px;
+  font-family: inherit;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.clip-delete:hover {
+  color: var(--danger);
+  background: rgba(255, 124, 124, 0.08);
+}
+
+/* ---------- Voice browser dialog ---------- */
+/* Native <dialog> with .showModal() so we get the focus trap + ESC handling
+   for free. Sized for one-handed phone use; desktop gets a centered card. */
+.voice-browser {
+  width: min(560px, calc(100vw - 24px));
+  max-height: 85vh;
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.voice-browser::backdrop {
+  background: rgba(11, 16, 32, 0.7);
+}
+
+.voice-browser-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.voice-browser-head h2 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+#voice-browser-search {
+  width: calc(100% - 32px);
+  margin: 14px 16px 0;
+  display: block;
+}
+
+.voice-browser-list {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  /* Cap so the list scrolls within the dialog instead of pushing the
+     header off-screen on tiny viewports. */
+  max-height: calc(85vh - 130px);
+}
+
+.voice-browser-loading {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 14px;
+}
+
+.catalog-group {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin: 14px 4px 6px;
+}
+
+.catalog-group:first-child {
+  margin-top: 0;
+}
+
+.catalog-voice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card-2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+
+.catalog-voice-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.catalog-voice-name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.catalog-voice-meta {
+  font-size: 12px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.catalog-voice-preview {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--accent);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Pad-right tweak so the play glyph looks centered */
+  padding: 0 0 0 2px;
+}
+
+.catalog-voice-preview:hover:not(:disabled) {
+  background: rgba(124, 156, 255, 0.18);
+}
+
+.catalog-voice-preview.playing {
+  background: var(--accent);
+  color: #0b1020;
+  border-color: var(--accent);
+  padding: 0;
+}
+
+.catalog-voice-preview.loading {
+  cursor: wait;
+}
+
+.catalog-voice-preview:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.catalog-voice-action {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #0b1020;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  min-width: 84px;
+  text-align: center;
+}
+
+.catalog-voice-action:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.catalog-voice-action.installed {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--fg-dim);
+  cursor: default;
+}
+
+.catalog-voice-action[disabled] {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.catalog-voice-action.failed {
+  background: var(--danger);
+  color: #0b1020;
+}
+
+@media (max-width: 480px) {
+  .voice-browser {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+  }
+  .voice-browser-list {
+    max-height: calc(100vh - 130px);
+  }
+}

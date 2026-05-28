@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b1020" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Narrative" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Narrative</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <h1>Narrative</h1>
+        <p class="tagline">Type. Listen. Download.</p>
+      </header>
+
+      <section class="card">
+        <div class="label-row">
+          <label for="text" class="label" id="text-label">Your text</label>
+          <div class="label-row-actions">
+            <button
+              id="upload-btn"
+              type="button"
+              class="link-btn"
+              aria-label="Upload a text, PDF, EPUB or Word file"
+            >Upload file</button>
+            <button
+              id="edit-text"
+              type="button"
+              class="link-btn"
+              hidden
+              aria-label="Edit the text"
+            >Edit text</button>
+          </div>
+        </div>
+        <input
+          id="upload-input"
+          type="file"
+          hidden
+          accept=".txt,.md,.markdown,.pdf,.epub,.docx,text/plain,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        />
+        <textarea
+          id="text"
+          placeholder="Paste an article, a chapter, or just a sentence — or upload a file above."
+          rows="8"
+          maxlength="500000"
+        ></textarea>
+        <div id="reading-view" class="reading-view" hidden></div>
+        <div class="meta">
+          <span id="char-count">0 / 50000</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="label-row">
+          <label for="voice" class="label">Voice</label>
+          <button
+            id="browse-voices-btn"
+            type="button"
+            class="link-btn"
+            aria-label="Browse and install more voices"
+          >Browse voices</button>
+        </div>
+        <select id="voice"></select>
+
+        <div class="row">
+          <div class="slider">
+            <label for="rate">Speed <span id="rate-value">180</span></label>
+            <input id="rate" type="range" min="80" max="300" step="5" value="180" />
+          </div>
+          <div class="slider">
+            <label for="volume">Volume <span id="volume-value">100%</span></label>
+            <input id="volume" type="range" min="0" max="100" step="1" value="100" />
+          </div>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="generate" class="primary">
+          <span class="label-text">Generate</span>
+          <span class="spinner" hidden></span>
+        </button>
+        <button id="download" class="secondary" disabled>Download</button>
+      </div>
+      <progress id="synth-progress" value="0" max="1" hidden></progress>
+
+      <section class="player card" id="player-card" hidden>
+        <audio id="player" controls preload="auto"></audio>
+        <div class="player-actions">
+          <button
+            id="speed-btn"
+            type="button"
+            class="speed-btn"
+            aria-label="Playback speed"
+            title="Tap to cycle playback speed"
+          >1×</button>
+        </div>
+      </section>
+
+      <p class="status" id="status" aria-live="polite"></p>
+
+      <dialog id="voice-browser" class="voice-browser">
+        <div class="voice-browser-head">
+          <h2>Browse voices</h2>
+          <button
+            id="voice-browser-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close voice browser"
+          >Close</button>
+        </div>
+        <input
+          id="voice-browser-search"
+          type="search"
+          placeholder="Filter by language, country, or name…"
+          autocomplete="off"
+        />
+        <div id="voice-browser-list" class="voice-browser-list">
+          <div class="voice-browser-loading">Loading catalog…</div>
+        </div>
+      </dialog>
+
+      <section class="card library" id="library-card" hidden>
+        <div class="label-row">
+          <span class="label">Library</span>
+          <div class="label-row-actions">
+            <button
+              id="play-mode-btn"
+              type="button"
+              class="link-btn"
+              aria-label="Cycle playlist order"
+              title="Tap to change playlist order"
+            >Newest first</button>
+            <button id="library-clear" type="button" class="link-btn">Clear all</button>
+          </div>
+        </div>
+        <div id="library-list" class="library-list"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

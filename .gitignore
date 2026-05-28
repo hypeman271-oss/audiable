@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.DS_Store
+*.wav
+
+# Piper voice models (large binaries, downloaded via scripts/get_voice.py)
+voices/*.onnx
+voices/*.onnx.json
