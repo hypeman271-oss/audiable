@@ -116,6 +116,7 @@ const voiceBrowserList = $("voice-browser-list");
 const voiceInstalledToggle = $("voice-installed-toggle");
 const uploadBtn = $("upload-btn");
 const uploadInput = $("upload-input");
+const clearBtn = $("clear-btn");
 const pasteUrlBtn = $("paste-url-btn");
 const urlRow = $("url-row");
 const urlInput = $("url-input");
@@ -763,6 +764,11 @@ function base64ToBytes(b64) {
   return out;
 }
 
+// When set, the next generate() will overwrite this clip id instead of
+// creating a fresh one. Used by saveCurrentClipText() to re-synthesize
+// when sentence count changes so karaoke alignment stays in sync.
+let _regenTargetClipId = null;
+
 async function generate() {
   const text = textEl.value.trim();
   if (!text) {
@@ -771,11 +777,31 @@ async function generate() {
     return;
   }
 
+  // Consume the regen target up front so a second concurrent generate()
+  // call doesn't double-claim it. If set, fetch the existing clip's
+  // identity (title / note / createdAt) so the regen preserves them
+  // instead of falling back to auto-suggested defaults.
+  const regenTargetId = _regenTargetClipId;
+  _regenTargetClipId = null;
+  let regenExistingMeta = null;
+  if (regenTargetId) {
+    try {
+      const existing = await getClip(regenTargetId);
+      if (existing) {
+        regenExistingMeta = {
+          title: existing.title,
+          note: existing.note || "",
+          createdAt: existing.createdAt,
+        };
+      }
+    } catch {}
+  }
+
   _synthController = new AbortController();
   resetStream();
   sentenceOffsetsSec = [];
   enterBusyState();
-  setStatus("Starting synthesis…");
+  setStatus(regenTargetId ? "Re-synthesizing…" : "Starting synthesis…");
 
   try {
     const res = await fetch("/api/synthesize/stream", {
@@ -881,7 +907,9 @@ async function generate() {
           }
 
           const voiceName = voiceEl.selectedOptions[0]?.textContent || voiceEl.value || "";
-          const newClipId = Date.now();
+          // If we're regenerating, reuse the existing clip id so the row
+          // updates in place. Otherwise mint a fresh id from the wall clock.
+          const newClipId = regenTargetId || Date.now();
           const onLoaded = () => {
             if (isFinite(playerEl.duration)) {
               playerEl.currentTime = Math.min(targetTime, playerEl.duration);
@@ -895,7 +923,14 @@ async function generate() {
             _lastProgressSaveAt = Date.now(); // suppress an immediate redundant save
             saveClip({
               id: newClipId,
-              title: makeTitle(text),
+              // For regen, preserve whatever title/note/createdAt the user
+              // had on the original clip so re-narration doesn't blow away
+              // a custom title or note. For new clips, fall back to the
+              // auto-suggested title.
+              title: regenExistingMeta
+                ? regenExistingMeta.title
+                : makeTitle(text),
+              note: regenExistingMeta ? regenExistingMeta.note : "",
               text,
               voiceId: voiceEl.value || null,
               voiceName,
@@ -906,7 +941,9 @@ async function generate() {
               blob: combined,
               durationSec: isFinite(playerEl.duration) ? playerEl.duration : 0,
               progressSec: 0,
-              createdAt: new Date().toISOString(),
+              createdAt: regenExistingMeta
+                ? regenExistingMeta.createdAt
+                : new Date().toISOString(),
             })
               .then(renderLibrary)
               .catch((e) => console.warn("library save failed:", e));
@@ -1020,6 +1057,7 @@ function enterReadingView(text) {
   textEl.hidden = true;
   readingView.hidden = false;
   editTextBtn.hidden = false;
+  saveTextBtn.hidden = true;
   textLabel.textContent = "Now reading";
 }
 
@@ -1027,10 +1065,116 @@ function exitReadingView() {
   textEl.hidden = false;
   readingView.hidden = true;
   editTextBtn.hidden = true;
+  // Save text only makes sense when there's a loaded clip to save into —
+  // freshly-typed text with no clip yet still needs Generate first.
+  saveTextBtn.hidden = !_currentClipId;
   textLabel.textContent = "Your text";
   sentenceSpans.forEach((s) => s.classList.remove("active", "played"));
   activeSentenceIdx = -1;
 }
+
+async function saveCurrentClipText() {
+  if (!_currentClipId) {
+    setStatus("Load a clip first — there's nothing to save into.", true);
+    return;
+  }
+  saveTextBtn.disabled = true;
+  const oldLabel = saveTextBtn.textContent;
+  saveTextBtn.textContent = "Saving…";
+  try {
+    const clip = await getClip(_currentClipId);
+    if (!clip) {
+      setStatus("Clip not found — it may have been deleted in another tab.", true);
+      return;
+    }
+    const oldText = clip.text || "";
+    const newText = textEl.value;
+
+    // Compare sentence counts to decide whether to trigger an auto-regen.
+    // The karaoke highlight + sentence-skip lock-screen buttons map audio
+    // time → sentence index, so as long as the number of sentences stays
+    // the same the existing audio + offsets keep aligning. Add or remove
+    // a sentence and every sentence past that point gets highlighted in
+    // the wrong place — only a fresh synthesis can fix that.
+    const oldSentenceCount = splitSentencesClient(oldText).length;
+    const newSentenceCount = splitSentencesClient(newText).length;
+    const needsRegen = oldSentenceCount !== newSentenceCount;
+
+    clip.text = newText;
+    if (needsRegen) {
+      // Old resume position likely doesn't map cleanly to the new audio,
+      // so reset it before we save and kick off the regen.
+      clip.progressSec = 0;
+    }
+    await saveClip(clip);
+
+    if (!needsRegen) {
+      // Typo / capitalization / whitespace fix — same sentence boundaries,
+      // audio still aligns. Just refresh the reading-view spans.
+      setStatus(`Saved text changes to "${clip.title || "(untitled)"}."`);
+      enterReadingView(newText);
+      renderLibrary();
+      return;
+    }
+
+    // Sentence count changed — tell generate() to overwrite this clip's
+    // audio in place. The text was already saved above; if the regen
+    // is cancelled or fails, the old audio is still on disk and the
+    // new text is preserved.
+    setStatus(
+      `Sentence count changed (${oldSentenceCount} → ${newSentenceCount}) — regenerating audio…`
+    );
+    _regenTargetClipId = _currentClipId;
+    // Re-enter the reading view so the user can watch the new sentences
+    // light up as the per-sentence streaming arrives.
+    enterReadingView(newText);
+    // Fire and forget — generate() drives its own status / progress UI.
+    generate();
+  } catch (e) {
+    console.warn("save text failed:", e);
+    setStatus(`Save failed: ${e.message}`, true);
+  } finally {
+    saveTextBtn.disabled = false;
+    saveTextBtn.textContent = oldLabel;
+  }
+}
+
+saveTextBtn.addEventListener("click", saveCurrentClipText);
+
+// ---- Clear (start a new clip) -------------------------------------------
+// Empty the textarea + drop the "currently-loaded clip" binding so the next
+// Generate creates a fresh row instead of overwriting / saving-into the
+// previous one. Deliberately *doesn't* touch the player, the library, or
+// the voice/preset settings — so you can keep listening to clip A while
+// typing the text for clip B, and the voice you just dialed in carries
+// forward to the next generation.
+function clearForNewClip() {
+  // If we were in the reading view, drop back to the textarea so the user
+  // can actually type into the (about to be empty) editor.
+  if (!readingView.hidden) exitReadingView();
+
+  textEl.value = "";
+  updateCounts();
+
+  // Decouple from the previously-loaded clip: Save text + the regen path
+  // both look at _currentClipId, so leaving it pointed at the old clip
+  // would mean "Save text" silently saves into the wrong row.
+  _currentClipId = null;
+  _lastProgressSaveAt = 0;
+  saveTextBtn.hidden = true;
+
+  // Wipe the sentence state so any leftover highlight from the previous
+  // clip doesn't bleed into the next reading view.
+  sentenceOffsetsSec = [];
+  sentenceSpans = [];
+  activeSentenceIdx = -1;
+
+  textLabel.textContent = "Your text";
+  textEl.focus();
+  setStatus("Cleared. Ready for new text.");
+}
+
+clearBtn.addEventListener("click", clearForNewClip);
 
 function highlightCurrentSentence() {
   if (!sentenceSpans.length) return;
@@ -1046,8 +1190,18 @@ function highlightCurrentSentence() {
   });
   const activeSpan = sentenceSpans[idx];
   if (activeSpan) {
-    // Keep the active sentence visible inside the scrollable reading view.
-    activeSpan.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    // Scroll only the reading-view's own scrollbar, never the document.
+    // scrollIntoView({block:"nearest"}) walks ALL scroll ancestors, so
+    // when the user has scrolled the page down to reorder library cards,
+    // it yanks the document back up to show the active sentence. Doing
+    // the math manually with scrollBy keeps the action contained.
+    const cRect = readingView.getBoundingClientRect();
+    const sRect = activeSpan.getBoundingClientRect();
+    if (sRect.top < cRect.top) {
+      readingView.scrollBy({ top: sRect.top - cRect.top, behavior: "smooth" });
+    } else if (sRect.bottom > cRect.bottom) {
+      readingView.scrollBy({ top: sRect.bottom - cRect.bottom, behavior: "smooth" });
+    }
   }
 }
 
@@ -1154,15 +1308,34 @@ function formatClipMeta(clip) {
 //
 // listClips() returns newest-first (id descending), so "newest" needs no
 // extra work; sortClips() handles the others.
-const PLAY_MODES = ["newest", "oldest", "longest", "shortest", "shuffle"];
+const PLAY_MODES = ["newest", "oldest", "longest", "shortest", "custom", "shuffle"];
 const PLAY_MODE_LABELS = {
   newest: "Newest first",
   oldest: "Oldest first",
   longest: "Longest first",
   shortest: "Shortest first",
+  custom: "Custom order",
   shuffle: "Shuffle",
 };
 const PLAY_MODE_KEY = "narrative.playMode";
+const LIBRARY_ORDER_KEY = "narrative.libraryOrder";
+
+function _loadLibraryOrder() {
+  try {
+    const raw = localStorage.getItem(LIBRARY_ORDER_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(Number).filter(Number.isFinite) : [];
+  } catch {
+    return [];
+  }
+}
+
+function _saveLibraryOrder(ids) {
+  try {
+    localStorage.setItem(LIBRARY_ORDER_KEY, JSON.stringify(ids));
+  } catch {}
+}
 
 let _playMode = PLAY_MODES.includes(localStorage.getItem(PLAY_MODE_KEY))
   ? localStorage.getItem(PLAY_MODE_KEY)
@@ -1183,6 +1356,20 @@ function sortClips(clips, mode) {
     return [...clips].sort(
       (a, b) => (a.durationSec || 0) - (b.durationSec || 0)
     );
+  }
+  if (mode === "custom") {
+    // Honor the user-drag-defined order from localStorage. Clips not in
+    // the order list (e.g. freshly generated after the last reorder) fall
+    // through to newest-first behind whatever's been explicitly placed.
+    const order = _loadLibraryOrder();
+    const orderIdx = new Map(order.map((id, i) => [id, i]));
+    return [...clips].sort((a, b) => {
+      const ai = orderIdx.has(a.id) ? orderIdx.get(a.id) : Infinity;
+      const bi = orderIdx.has(b.id) ? orderIdx.get(b.id) : Infinity;
+      if (ai !== bi) return ai - bi;
+      // Tie-breaker for unsorted clips: newest first.
+      return b.id - a.id;
+    });
   }
   // newest, shuffle → leave at listClips() default (newest-first)
   return clips;
@@ -1253,6 +1440,18 @@ function isClipInProgress(clip) {
 function makeClipCard(clip) {
   const item = document.createElement("div");
   item.className = "clip" + (clip.id === _currentClipId ? " current" : "");
+  // Stamp the clip id onto the DOM node so the drag-commit pass can read
+  // the visual order without looking anything up.
+  item.dataset.clipId = String(clip.id);
+
+  const dragHandle = document.createElement("div");
+  dragHandle.className = "clip-drag";
+  dragHandle.setAttribute("aria-label", "Drag to reorder");
+  dragHandle.title = "Drag to reorder";
+  // Two stacked vertical ellipses render reliably as a "grip" affordance
+  // across iOS / Android / Windows fonts.
+  dragHandle.textContent = "⋮⋮";
+  _attachDragHandle(dragHandle, item);
 
   const playBtn = document.createElement("button");
   playBtn.className = "clip-play";
@@ -1278,6 +1477,26 @@ function makeClipCard(clip) {
   }
   playBtn.addEventListener("click", () => loadClip(clip.id));
 
+  // Reset-to-start ↺ — shown only for clips that actually have a resume
+  // position to wipe. Reading my book chapters back as I revise: I want
+  // to restart from the top after editing the manuscript, not pick up
+  // mid-paragraph from the version I heard last.
+  const showReset = isClipInProgress(clip);
+  let resetBtn = null;
+  if (showReset) {
+    resetBtn = document.createElement("button");
+    resetBtn.className = "clip-reset";
+    resetBtn.type = "button";
+    resetBtn.setAttribute("aria-label", `Reset ${clip.title} to start`);
+    resetBtn.title = "Reset to start";
+    // Anticlockwise open circle arrow — the universal "reset" glyph.
+    resetBtn.textContent = "↺";
+    resetBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await resetClipProgress(clip.id);
+    });
+  }
+
   const editBtn = document.createElement("button");
   editBtn.className = "clip-edit";
   editBtn.type = "button";
@@ -1301,8 +1520,139 @@ function makeClipCard(clip) {
     renderLibrary();
   });
 
-  item.append(playBtn, editBtn, delBtn);
+  // Reset button slots between play and edit when present so the
+  // delete × always lives on the far right (consistent destructive zone).
+  if (resetBtn) {
+    item.append(dragHandle, playBtn, resetBtn, editBtn, delBtn);
+  } else {
+    item.append(dragHandle, playBtn, editBtn, delBtn);
+  }
   return item;
+}
+
+async function resetClipProgress(id) {
+  try {
+    const clip = await getClip(id);
+    if (!clip) return;
+    clip.progressSec = 0;
+    await saveClip(clip);
+    // If the user is hitting reset on the clip they're currently listening
+    // to, rewind the player itself too — otherwise the IndexedDB row says
+    // 0 but the audio keeps playing from where it was.
+    if (_currentClipId === id) {
+      try { playerEl.currentTime = 0; } catch {}
+    }
+    renderLibrary();
+    setStatus(`Reset "${clip.title || "clip"}" to start.`);
+  } catch (e) {
+    console.warn("reset progress failed:", e);
+    setStatus(`Reset failed: ${e.message}`, true);
+  }
+}
+
+// ---- Drag-to-reorder (Pointer Events) -----------------------------------
+// Works for both mouse and touch via the unified Pointer Events API. The
+// pointerdown handler captures the pointer so move/up events keep firing
+// even if the user drags outside the original handle. On drop, we figure
+// out where the card landed by walking its sibling clip cards top-to-
+// bottom and looking for the first one whose vertical midpoint is BELOW
+// the dragged card's midpoint.
+
+let _dragSession = null; // {cardEl, pointerId, startY}
+
+function _attachDragHandle(handle, cardEl) {
+  handle.addEventListener("pointerdown", (e) => {
+    // Ignore non-primary buttons (right-click etc).
+    if (e.button !== 0 && e.button !== undefined && e.pointerType === "mouse") {
+      return;
+    }
+    e.preventDefault();
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+
+    _dragSession = {
+      cardEl,
+      pointerId: e.pointerId,
+      startY: e.clientY,
+    };
+    cardEl.classList.add("dragging");
+
+    handle.addEventListener("pointermove", _onDragMove);
+    handle.addEventListener("pointerup", _onDragEnd);
+    handle.addEventListener("pointercancel", _onDragEnd);
+  });
+}
+
+function _onDragMove(e) {
+  if (!_dragSession || e.pointerId !== _dragSession.pointerId) return;
+  e.preventDefault();
+  const dy = e.clientY - _dragSession.startY;
+  _dragSession.cardEl.style.transform = `translateY(${dy}px)`;
+}
+
+async function _onDragEnd(e) {
+  if (!_dragSession || e.pointerId !== _dragSession.pointerId) return;
+  const { cardEl } = _dragSession;
+  const handle = e.currentTarget;
+  try { handle.releasePointerCapture(e.pointerId); } catch {}
+  handle.removeEventListener("pointermove", _onDragMove);
+  handle.removeEventListener("pointerup", _onDragEnd);
+  handle.removeEventListener("pointercancel", _onDragEnd);
+
+  // Where did the card visually land? Snapshot rect BEFORE we reset the
+  // transform so it reflects the dragged position.
+  const draggedRect = cardEl.getBoundingClientRect();
+  const draggedMid = draggedRect.top + draggedRect.height / 2;
+
+  cardEl.style.transform = "";
+  cardEl.classList.remove("dragging");
+  _dragSession = null;
+
+  // Find first sibling whose midpoint is below ours — that's the insertion
+  // point. Only consider cards in the SAME parent (so the drag is bounded
+  // by the section the card started in).
+  const parent = cardEl.parentNode;
+  const siblings = Array.from(parent.children).filter(
+    (c) => c !== cardEl && c.classList.contains("clip")
+  );
+  let insertBefore = null;
+  for (const sib of siblings) {
+    const r = sib.getBoundingClientRect();
+    const mid = r.top + r.height / 2;
+    if (draggedMid < mid) {
+      insertBefore = sib;
+      break;
+    }
+  }
+
+  if (insertBefore) {
+    parent.insertBefore(cardEl, insertBefore);
+  } else {
+    parent.appendChild(cardEl);
+  }
+
+  await _commitDragOrder();
+}
+
+async function _commitDragOrder() {
+  // Walk the WHOLE library list (across both sections), record the visual
+  // order of clip ids, persist to localStorage. We then re-render to make
+  // sure the sectioned view is in the right shape — if a clip was dragged
+  // across the Continue Listening / Other Clips boundary, the section
+  // partition needs to re-run.
+  const clipEls = Array.from(libraryList.querySelectorAll(".clip[data-clip-id]"));
+  const order = clipEls.map((el) => Number(el.dataset.clipId)).filter(Number.isFinite);
+  _saveLibraryOrder(order);
+
+  // Switching to "custom" mode is the cleanest way to signal to the user
+  // that their drag took effect — and it makes the sort consistent with
+  // what they just dropped into place.
+  if (_playMode !== "custom") {
+    _playMode = "custom";
+    try { localStorage.setItem(PLAY_MODE_KEY, _playMode); } catch {}
+    updatePlayModeBtn();
+  }
+
+  renderLibrary();
 }
 
 function _appendSectionHeader(label) {
@@ -1363,10 +1713,12 @@ async function renderLibrary() {
   // recently created in-progress clip first (clip.id is a millis timestamp,
   // so newest-first is just descending id) — that's almost always the one
   // they want next.
-  const inProgress = clips
-    .filter(isClipInProgress)
-    .slice() // sortClips returns a fresh array but be defensive
-    .sort((a, b) => b.id - a.id);
+  // `clips` is already sorted by the user's chosen mode (Custom / Newest /
+  // Oldest / etc.). Continue Listening used to override that with a hard
+  // id-desc sort, which silently ate any drag-to-reorder inside this
+  // section — pick up the user's order here too so a Custom-order drag
+  // sticks regardless of which section the card lives in.
+  const inProgress = clips.filter(isClipInProgress);
   const inProgressIds = new Set(inProgress.map((c) => c.id));
   const others = clips.filter((c) => !inProgressIds.has(c.id));
 
@@ -1643,6 +1995,10 @@ async function exportLibrary() {
       exportedAt: new Date().toISOString(),
       clips: manifestClips,
       presets,
+      // Carry the user-defined library order along so a restore lands
+      // with chapters / clips in the right sequence on a fresh device.
+      libraryOrder: _loadLibraryOrder(),
+      playMode: _playMode,
     };
 
     const manifestBytes = new TextEncoder().encode(
@@ -1748,6 +2104,30 @@ async function importLibraryFromFile(file) {
       }
       _savePresets(existing);
       renderPresets();
+    }
+
+    // Restore manual library order — append any ids that weren't already
+    // present so existing local clips stay where they are.
+    if (Array.isArray(manifest.libraryOrder) && manifest.libraryOrder.length > 0) {
+      const existingOrder = _loadLibraryOrder();
+      const seen = new Set(existingOrder);
+      const merged = existingOrder.slice();
+      for (const id of manifest.libraryOrder) {
+        const n = Number(id);
+        if (Number.isFinite(n) && !seen.has(n)) {
+          merged.push(n);
+          seen.add(n);
+        }
+      }
+      _saveLibraryOrder(merged);
+    }
+
+    // Restore the play / sort mode if it was custom — otherwise leave the
+    // local choice alone (the user's current sort preference wins).
+    if (manifest.playMode === "custom" && _playMode !== "custom") {
+      _playMode = "custom";
+      try { localStorage.setItem(PLAY_MODE_KEY, _playMode); } catch {}
+      updatePlayModeBtn();
     }
 
     renderLibrary();
