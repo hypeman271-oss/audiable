@@ -57,6 +57,13 @@ def list_voices():
         lang_code = lang_info.get("code") or ""
         lang_native = lang_info.get("name_native") or lang_info.get("name_english") or ""
         languages = [x for x in (lang_code, lang_native) if x]
+        # num_speakers lives at the top of the config for newer voices and
+        # nested under audio/inference for older ones — try both, fall back to 1.
+        num_speakers = (
+            meta.get("num_speakers")
+            or (meta.get("inference") or {}).get("num_speakers")
+            or 1
+        )
         try:
             locale, name, quality = suffix.split("-")
             pretty = f"{name.title()} ({locale}, {quality})"
@@ -69,6 +76,7 @@ def list_voices():
                 languages=languages,
                 gender=None,
                 engine="piper",
+                num_speakers=int(num_speakers),
             )
         )
     return out
@@ -105,6 +113,7 @@ def synthesize_iter(
     voice_id: str,
     rate: int | None = None,
     volume: float | None = None,
+    speaker_id: int | None = None,
 ):
     """Generator: yields one sentence event per finished sentence, then a result event.
 
@@ -136,6 +145,7 @@ def synthesize_iter(
         length_scale=length_scale,
         volume=volume if volume is not None else 1.0,
         normalize_audio=True,
+        speaker_id=speaker_id,
     )
 
     total = len(sentences)
@@ -175,11 +185,14 @@ def synthesize(
     voice_id: str,
     rate: int | None = None,
     volume: float | None = None,
+    speaker_id: int | None = None,
 ):
     import base64
     from . import SynthesisResult
 
-    for event in synthesize_iter(text, voice_id, rate=rate, volume=volume):
+    for event in synthesize_iter(
+        text, voice_id, rate=rate, volume=volume, speaker_id=speaker_id
+    ):
         if event["type"] == "result":
             return SynthesisResult(
                 wav=base64.b64decode(event["wav_b64"]),

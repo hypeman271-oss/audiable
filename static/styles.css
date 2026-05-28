@@ -168,6 +168,48 @@ select:focus {
   color: #b9c3eb;
 }
 
+/* Speaker picker — only rendered for voices with num_speakers > 1.
+   Sits below the main voice select inside the same card. */
+.speaker-row {
+  margin-top: 12px;
+}
+
+.speaker-preview-btn {
+  background: var(--bg-card-2);
+  color: var(--accent);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0 0 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.speaker-preview-btn:hover:not(:disabled) {
+  background: rgba(124, 156, 255, 0.18);
+}
+
+.speaker-preview-btn.playing {
+  background: var(--accent);
+  color: #0b1020;
+  border-color: var(--accent);
+  padding: 0;
+}
+
+.speaker-preview-btn.loading {
+  cursor: wait;
+}
+
+.speaker-preview-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -505,12 +547,42 @@ button:disabled {
   display: block;
 }
 
+.voice-browser-filters {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 16px 0;
+}
+
+.voice-filter-chip {
+  background: var(--bg-card-2);
+  color: var(--fg-dim);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.voice-filter-chip:hover {
+  background: rgba(124, 156, 255, 0.10);
+}
+
+.voice-filter-chip.active {
+  background: var(--accent);
+  color: #0b1020;
+  border-color: var(--accent);
+}
+
 .voice-browser-list {
   padding: 12px 16px 16px;
   overflow-y: auto;
   /* Cap so the list scrolls within the dialog instead of pushing the
      header off-screen on tiny viewports. */
-  max-height: calc(85vh - 130px);
+  max-height: calc(85vh - 170px);
 }
 
 .voice-browser-loading {
@@ -636,6 +708,37 @@ button:disabled {
 .catalog-voice-action.failed {
   background: var(--danger);
   color: #0b1020;
+}
+
+/* Remove (×) button — only rendered for installed voices, sits to the right
+   of the "Installed" pill. Tuned to read as destructive on hover without
+   shouting at idle. */
+.catalog-voice-remove {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 16px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.catalog-voice-remove:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgba(255, 124, 124, 0.10);
+  border-color: rgba(255, 124, 124, 0.35);
+}
+
+.catalog-voice-remove:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 @media (max-width: 480px) {

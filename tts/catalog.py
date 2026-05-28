@@ -97,37 +97,45 @@ _SAMPLE_CACHE: dict[str, bytes] = {}
 _SAMPLE_CACHE_MAX = 100
 
 
-def _sample_url(voice_id: str) -> str:
+def _sample_url(voice_id: str, speaker_id: int = 0) -> str:
     parts = voice_id.split("-")
     if len(parts) != 3:
         raise ValueError(f"invalid voice id format: {voice_id!r}")
     locale, name, quality = parts
     lang = locale.split("_")[0]
-    return f"{DOWNLOAD_BASE}/{lang}/{locale}/{name}/{quality}/samples/speaker_0.mp3"
+    return (
+        f"{DOWNLOAD_BASE}/{lang}/{locale}/{name}/{quality}"
+        f"/samples/speaker_{speaker_id}.mp3"
+    )
 
 
-def fetch_sample(voice_id: str) -> bytes:
-    """Return the official Piper preview MP3 for a voice (~50-100KB).
+def fetch_sample(voice_id: str, speaker_id: int = 0) -> bytes:
+    """Return the official Piper preview MP3 for a (voice, speaker) pair.
 
-    Raises FileNotFoundError if the voice has no published sample (some
-    voices don't ship one — most do). Cached in-process.
+    Multi-speaker voices like LibriTTS publish one sample per speaker
+    (speaker_0.mp3 through speaker_N-1.mp3). Single-speaker voices only
+    have speaker_0.mp3. Raises FileNotFoundError if the requested combo
+    has no published sample. Cached in-process per (voice, speaker).
     """
-    if voice_id in _SAMPLE_CACHE:
-        return _SAMPLE_CACHE[voice_id]
-    url = _sample_url(voice_id)
+    cache_key = f"{voice_id}#{speaker_id}"
+    if cache_key in _SAMPLE_CACHE:
+        return _SAMPLE_CACHE[cache_key]
+    url = _sample_url(voice_id, speaker_id)
     req = urllib.request.Request(url, headers={"User-Agent": "narrative/0.1 (+local)"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             data = resp.read()
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            raise FileNotFoundError(f"no sample for {voice_id}") from e
+            raise FileNotFoundError(
+                f"no sample for {voice_id} speaker {speaker_id}"
+            ) from e
         raise
     # Crude eviction — drop the whole cache if it's full. Lookups are
-    # bursty (one click of "preview" per voice) so an LRU would be overkill.
+    # bursty (one click of "preview" per voice/speaker) so an LRU would be overkill.
     if len(_SAMPLE_CACHE) >= _SAMPLE_CACHE_MAX:
         _SAMPLE_CACHE.clear()
-    _SAMPLE_CACHE[voice_id] = data
+    _SAMPLE_CACHE[cache_key] = data
     return data
 
 
@@ -220,3 +228,47 @@ def download_voice(voice_id: str) -> dict:
     for _ in download_voice_iter(voice_id):
         pass
     return fetch_catalog()[voice_id]
+
+
+def remove_voice(voice_id: str) -> None:
+    """Delete a voice's .onnx + .onnx.json from VOICES_DIR.
+
+    Validates the voice ID format before touching anything so a malformed
+    request can't be used to point at arbitrary paths. Evicts the in-memory
+    PiperVoice cache too, so the next call to list/use this voice sees the
+    files genuinely gone.
+
+    Raises:
+        ValueError if the voice ID isn't <locale>-<name>-<quality>.
+        FileNotFoundError if neither file existed (idempotent for partials).
+    """
+    parts = voice_id.split("-")
+    if len(parts) != 3:
+        raise ValueError(f"invalid voice id format: {voice_id!r}")
+
+    # Reject any voice ID component that's not safe for a filename — extra
+    # belt over the catalog's split.
+    for piece in parts:
+        if not piece or "/" in piece or "\\" in piece or piece in (".", ".."):
+            raise ValueError(f"invalid voice id segment: {piece!r}")
+
+    removed = False
+    for ext in ("onnx", "onnx.json"):
+        out = VOICES_DIR / f"{voice_id}.{ext}"
+        if out.exists():
+            out.unlink()
+            removed = True
+    if not removed:
+        raise FileNotFoundError(f"voice not installed: {voice_id}")
+
+    # Drop the cached PiperVoice (if any) so a fresh re-install actually
+    # reloads from disk instead of replaying the old onnxruntime session.
+    from . import piper_engine  # avoid import cycle at module load
+    piper_engine._cache.pop(voice_id, None)
+
+    # The sample cache is keyed by (voice_id, speaker_id). It doesn't point
+    # at any local file, just held bytes — fine to leave or drop. Drop it
+    # so a future preview re-hits HF and stays consistent with "I just
+    # removed this voice."
+    for key in [k for k in _SAMPLE_CACHE if k.startswith(f"{voice_id}#")]:
+        _SAMPLE_CACHE.pop(key, None)

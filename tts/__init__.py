@@ -32,6 +32,10 @@ class Voice:
     languages: list[str]
     gender: str | None
     engine: str  # "piper" or "sapi"
+    # Number of distinct speakers baked into the model. 1 for SAPI voices
+    # and most Piper voices; LibriTTS/high is 904. The frontend shows a
+    # speaker picker only when this is > 1.
+    num_speakers: int = 1
 
 
 @dataclass
@@ -66,14 +70,18 @@ def synthesize_iter(
     voice_id: str | None = None,
     rate: int | None = None,
     volume: float | None = None,
+    speaker_id: int | None = None,
 ):
     """Generator dispatching to the right engine.
 
-    Yields {"type":"progress","done":N,"total":M} for each sentence,
-    then {"type":"result","wav_b64":str,"sentence_offsets_ms":list[int]}.
+    Yields per-sentence and final result events. `speaker_id` is honored
+    by Piper voices with num_speakers > 1 and silently ignored by SAPI
+    (which is single-voice per id).
     """
     if voice_id and voice_id.startswith("piper:"):
-        yield from piper_engine.synthesize_iter(text, voice_id, rate=rate, volume=volume)
+        yield from piper_engine.synthesize_iter(
+            text, voice_id, rate=rate, volume=volume, speaker_id=speaker_id
+        )
     else:
         yield from sapi.synthesize_iter(text, voice_id, rate=rate, volume=volume)
 
@@ -83,10 +91,13 @@ def synthesize(
     voice_id: str | None = None,
     rate: int | None = None,
     volume: float | None = None,
+    speaker_id: int | None = None,
 ) -> SynthesisResult:
     import base64
 
-    for event in synthesize_iter(text, voice_id=voice_id, rate=rate, volume=volume):
+    for event in synthesize_iter(
+        text, voice_id=voice_id, rate=rate, volume=volume, speaker_id=speaker_id
+    ):
         if event["type"] == "result":
             return SynthesisResult(
                 wav=base64.b64decode(event["wav_b64"]),

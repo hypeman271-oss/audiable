@@ -3,6 +3,9 @@ const $ = (id) => document.getElementById(id);
 const textEl = $("text");
 const charCountEl = $("char-count");
 const voiceEl = $("voice");
+const speakerRow = $("speaker-row");
+const speakerEl = $("speaker");
+const speakerPreviewBtn = $("speaker-preview-btn");
 const rateEl = $("rate");
 const rateValueEl = $("rate-value");
 const volumeEl = $("volume");
@@ -26,6 +29,7 @@ const voiceBrowser = $("voice-browser");
 const voiceBrowserClose = $("voice-browser-close");
 const voiceBrowserSearch = $("voice-browser-search");
 const voiceBrowserList = $("voice-browser-list");
+const voiceInstalledToggle = $("voice-installed-toggle");
 const uploadBtn = $("upload-btn");
 const uploadInput = $("upload-input");
 const speedBtn = $("speed-btn");
@@ -222,17 +226,24 @@ volumeEl.addEventListener("input", () => {
 textEl.addEventListener("input", updateCounts);
 updateCounts();
 
+// voice_id → num_speakers, populated from /api/voices. Used by onVoiceChange
+// to decide whether to surface the speaker picker. SAPI voices and most
+// Piper voices have num_speakers=1; LibriTTS is the headline 904-speaker model.
+const _voiceSpeakerCounts = new Map();
+
 async function loadVoices() {
   try {
     const res = await fetch("/api/voices");
     if (!res.ok) throw new Error(`voices request failed: ${res.status}`);
     const data = await res.json();
     voiceEl.innerHTML = "";
+    _voiceSpeakerCounts.clear();
     if (!data.voices || data.voices.length === 0) {
       const opt = document.createElement("option");
       opt.textContent = "No voices found on this system";
       opt.disabled = true;
       voiceEl.appendChild(opt);
+      onVoiceChange();
       return;
     }
 
@@ -252,15 +263,137 @@ async function loadVoices() {
         // Piper names already include locale, so don't repeat it.
         const suffix =
           v.engine === "piper" || !v.languages?.[0] ? "" : ` · ${v.languages[0]}`;
-        opt.textContent = `${v.name}${suffix}`;
+        const multi = v.num_speakers > 1 ? ` · ${v.num_speakers} voices` : "";
+        opt.textContent = `${v.name}${suffix}${multi}`;
         og.appendChild(opt);
+        _voiceSpeakerCounts.set(v.id, Number(v.num_speakers) || 1);
       }
       voiceEl.appendChild(og);
     }
+    // Sync the speaker row to whichever voice ended up selected.
+    onVoiceChange();
   } catch (err) {
     setStatus(`Could not load voices: ${err.message}`, true);
   }
 }
+
+// ---- Speaker picker -----------------------------------------------------
+// Shown only when the selected voice has num_speakers > 1. Selection is
+// persisted per voice in localStorage so switching away and back doesn't
+// reset you to speaker 0.
+const SPEAKER_STORAGE_KEY = "narrative.speakerByVoice";
+
+function _loadSpeakerMap() {
+  try {
+    return JSON.parse(localStorage.getItem(SPEAKER_STORAGE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function _saveSpeakerMap(map) {
+  try {
+    localStorage.setItem(SPEAKER_STORAGE_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+function rememberedSpeaker(voiceId) {
+  const map = _loadSpeakerMap();
+  const v = Number(map[voiceId]);
+  return Number.isFinite(v) && v >= 0 ? v : 0;
+}
+
+function rememberSpeaker(voiceId, speakerId) {
+  const map = _loadSpeakerMap();
+  map[voiceId] = Number(speakerId) || 0;
+  _saveSpeakerMap(map);
+}
+
+function onVoiceChange() {
+  stopSpeakerPreview();
+  const voiceId = voiceEl.value;
+  const n = _voiceSpeakerCounts.get(voiceId) || 1;
+  if (n <= 1) {
+    speakerRow.hidden = true;
+    speakerEl.innerHTML = "";
+    return;
+  }
+  // Build the dropdown: "Speaker 0" through "Speaker N-1".
+  speakerEl.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `Speaker ${i}`;
+    speakerEl.appendChild(opt);
+  }
+  speakerEl.value = String(Math.min(rememberedSpeaker(voiceId), n - 1));
+  speakerRow.hidden = false;
+}
+
+voiceEl.addEventListener("change", onVoiceChange);
+speakerEl.addEventListener("change", () => {
+  stopSpeakerPreview();
+  rememberSpeaker(voiceEl.value, Number(speakerEl.value));
+});
+
+// Reuse the voice-browser preview's shared Audio element for the inline
+// speaker preview. State machine mirrors togglePreview() in the catalog.
+let _speakerPreviewActive = false;
+
+function stopSpeakerPreview() {
+  if (!_speakerPreviewActive) return;
+  if (_previewAudio) {
+    _previewAudio.pause();
+    _previewAudio.removeAttribute("src");
+    _previewAudio.load();
+  }
+  speakerPreviewBtn.classList.remove("playing", "loading");
+  speakerPreviewBtn.textContent = "▶";
+  speakerPreviewBtn.disabled = false;
+  speakerPreviewBtn.title = "Preview this speaker";
+  _speakerPreviewActive = false;
+}
+
+speakerPreviewBtn.addEventListener("click", async () => {
+  if (_speakerPreviewActive) {
+    stopSpeakerPreview();
+    return;
+  }
+  // Also stop any catalog-row preview that might be playing.
+  if (typeof stopPreview === "function") stopPreview();
+
+  const voiceId = (voiceEl.value || "").replace(/^piper:/, "");
+  const speakerId = Number(speakerEl.value || 0);
+  if (!voiceId) return;
+
+  const audio = _ensurePreviewAudio();
+  // When the shared Audio's ended event fires we won't know who owns it;
+  // attach a one-shot reset so the button flips back correctly.
+  const onEnded = () => {
+    audio.removeEventListener("ended", onEnded);
+    stopSpeakerPreview();
+  };
+  audio.addEventListener("ended", onEnded);
+
+  speakerPreviewBtn.classList.add("loading");
+  speakerPreviewBtn.textContent = "…";
+  _speakerPreviewActive = true;
+  audio.src = `/api/voices/sample/${encodeURIComponent(voiceId)}?speaker=${speakerId}`;
+  try {
+    await audio.play();
+    speakerPreviewBtn.classList.remove("loading");
+    speakerPreviewBtn.classList.add("playing");
+    speakerPreviewBtn.textContent = "■";
+  } catch (err) {
+    audio.removeEventListener("ended", onEnded);
+    speakerPreviewBtn.classList.remove("playing", "loading");
+    speakerPreviewBtn.textContent = "—";
+    speakerPreviewBtn.title = "No preview available for this speaker";
+    speakerPreviewBtn.disabled = true;
+    _speakerPreviewActive = false;
+    console.info("speaker preview unavailable:", voiceId, speakerId, err.message || err);
+  }
+});
 
 // Decode a base64 string to a Uint8Array for Blob construction.
 function base64ToBytes(b64) {
@@ -293,6 +426,10 @@ async function generate() {
         voice_id: voiceEl.value || null,
         rate: Number(rateEl.value),
         volume: Number(volumeEl.value) / 100,
+        // Only send speaker_id when the speaker row is actually visible —
+        // single-speaker voices reject the field harmlessly, but skipping
+        // it keeps the wire payload clean.
+        speaker_id: speakerRow.hidden ? null : Number(speakerEl.value || 0),
       }),
       signal: _synthController.signal,
     });
@@ -404,6 +541,7 @@ async function generate() {
               voiceName,
               rate: Number(rateEl.value),
               volume: Number(volumeEl.value) / 100,
+              speakerId: speakerRow.hidden ? null : Number(speakerEl.value || 0),
               sentenceOffsetsSec: sentenceOffsetsSec.slice(),
               blob: combined,
               durationSec: isFinite(playerEl.duration) ? playerEl.duration : 0,
@@ -835,7 +973,17 @@ async function loadClip(id) {
 
   textEl.value = clip.text || "";
   updateCounts();
-  if (clip.voiceId) voiceEl.value = clip.voiceId;
+  if (clip.voiceId) {
+    voiceEl.value = clip.voiceId;
+    onVoiceChange(); // re-render the speaker row for the new voice
+    if (
+      typeof clip.speakerId === "number" &&
+      !speakerRow.hidden &&
+      speakerEl.options.length > clip.speakerId
+    ) {
+      speakerEl.value = String(clip.speakerId);
+    }
+  }
   if (clip.rate) {
     rateEl.value = String(clip.rate);
     rateValueEl.textContent = String(clip.rate);
@@ -1143,6 +1291,22 @@ function setupMediaSession() {
 // voice shows up in the main dropdown immediately.
 
 let _voiceCatalog = null; // cached per page load
+// "Show installed only" chip state. Reset each time the dialog opens so
+// the default browsing experience always shows the full catalog.
+let _installedOnly = false;
+
+function updateInstalledToggle() {
+  // Show the installed count when the filter is off (helpful at a glance);
+  // flip to "All voices" when it's on so the toggle action is obvious.
+  const installedCount = _voiceCatalog
+    ? _voiceCatalog.filter((v) => v.installed).length
+    : 0;
+  voiceInstalledToggle.classList.toggle("active", _installedOnly);
+  voiceInstalledToggle.setAttribute("aria-pressed", String(_installedOnly));
+  voiceInstalledToggle.textContent = _installedOnly
+    ? "All voices"
+    : `Installed only (${installedCount})`;
+}
 
 async function loadVoiceCatalog(force = false) {
   if (_voiceCatalog && !force) return _voiceCatalog;
@@ -1163,8 +1327,10 @@ async function loadVoiceCatalog(force = false) {
 
 function renderVoiceCatalog() {
   if (!_voiceCatalog) return;
+  updateInstalledToggle();
   const q = voiceBrowserSearch.value.trim().toLowerCase();
   const matches = _voiceCatalog.filter((v) => {
+    if (_installedOnly && !v.installed) return false;
     if (!q) return true;
     return (
       v.name.toLowerCase().includes(q) ||
@@ -1197,8 +1363,17 @@ function renderVoiceCatalog() {
 
   voiceBrowserList.innerHTML = "";
   if (byGroup.size === 0) {
-    voiceBrowserList.innerHTML =
-      '<div class="voice-browser-loading">No voices match.</div>';
+    // Give context-aware empty copy so the user understands WHY the list
+    // is empty — "no installed voices yet" vs. "your filter excluded all."
+    const empty = document.createElement("div");
+    empty.className = "voice-browser-loading";
+    if (_installedOnly && !_voiceCatalog.some((v) => v.installed)) {
+      empty.textContent =
+        "No voices installed yet. Turn off the filter to browse the catalog.";
+    } else {
+      empty.textContent = "No voices match.";
+    }
+    voiceBrowserList.appendChild(empty);
     return;
   }
 
@@ -1262,7 +1437,61 @@ function makeCatalogRow(v) {
   }
 
   row.append(info, preview, action);
+
+  // Installed voices get a small × button for uninstall. We keep the
+  // "Installed" pill so the row's state still reads at a glance.
+  if (v.installed) {
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "catalog-voice-remove";
+    removeBtn.textContent = "×";
+    removeBtn.title = "Remove this voice from disk";
+    removeBtn.setAttribute("aria-label", `Remove ${v.name}`);
+    removeBtn.addEventListener("click", () => removeCatalogVoice(v, removeBtn));
+    row.appendChild(removeBtn);
+  }
+
   return row;
+}
+
+async function removeCatalogVoice(voice, btn) {
+  // Soft confirm — a 130 MB LibriTTS install isn't fun to redo by accident,
+  // but it's also one click away if they change their mind.
+  const ok = confirm(
+    `Remove "${cap(voice.name)} (${voice.quality})"? ` +
+    `(${voice.size_mb} MB will be freed; you can re-install anytime.)`
+  );
+  if (!ok) return;
+
+  btn.disabled = true;
+  // Stop any preview that's playing the file we're about to delete.
+  stopPreview();
+  try {
+    const res = await fetch(`/api/voices/${encodeURIComponent(voice.id)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const j = await res.json();
+        if (j.detail) detail = j.detail;
+      } catch {}
+      throw new Error(detail);
+    }
+    // Update local catalog state and re-render so the row flips back
+    // from "Installed (×)" to "Install".
+    voice.installed = false;
+    renderVoiceCatalog();
+    // Refresh the main voice dropdown so the removed voice disappears
+    // from there too. If it was the current selection, the dropdown
+    // will fall back to its first option (and the speaker row will
+    // hide via onVoiceChange).
+    await loadVoices();
+  } catch (e) {
+    console.warn("voice remove failed:", e);
+    btn.disabled = false;
+    setStatus(`Remove failed: ${e.message}`, true);
+  }
 }
 
 // ---- Voice preview ------------------------------------------------------
@@ -1407,9 +1636,15 @@ async function installCatalogVoice(voice, btn) {
 browseVoicesBtn.addEventListener("click", async () => {
   voiceBrowser.showModal();
   voiceBrowserSearch.value = "";
+  _installedOnly = false;
   await loadVoiceCatalog();
   renderVoiceCatalog();
   voiceBrowserSearch.focus();
+});
+
+voiceInstalledToggle.addEventListener("click", () => {
+  _installedOnly = !_installedOnly;
+  renderVoiceCatalog();
 });
 
 voiceBrowserClose.addEventListener("click", () => voiceBrowser.close());

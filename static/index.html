@@ -73,6 +73,22 @@
         </div>
         <select id="voice"></select>
 
+        <!-- Speaker picker — hidden unless the selected voice has multiple
+             speakers (e.g. LibriTTS = 904). Shown via JS in onVoiceChange. -->
+        <div id="speaker-row" class="speaker-row" hidden>
+          <div class="label-row">
+            <label for="speaker" class="label">Speaker</label>
+            <button
+              id="speaker-preview-btn"
+              type="button"
+              class="speaker-preview-btn"
+              aria-label="Preview speaker"
+              title="Preview this speaker"
+            >▶</button>
+          </div>
+          <select id="speaker"></select>
+        </div>
+
         <div class="row">
           <div class="slider">
             <label for="rate">Speed <span id="rate-value">180</span></label>
@@ -125,6 +141,14 @@
           placeholder="Filter by language, country, or name…"
           autocomplete="off"
         />
+        <div class="voice-browser-filters">
+          <button
+            id="voice-installed-toggle"
+            type="button"
+            class="voice-filter-chip"
+            aria-pressed="false"
+          >Installed only</button>
+        </div>
         <div id="voice-browser-list" class="voice-browser-list">
           <div class="voice-browser-loading">Loading catalog…</div>
         </div>

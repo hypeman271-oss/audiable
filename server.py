@@ -35,6 +35,10 @@ class SynthesizeRequest(BaseModel):
     voice_id: str | None = None
     rate: int | None = Field(default=None, ge=50, le=400)
     volume: float | None = Field(default=None, ge=0.0, le=1.0)
+    # 0..num_speakers-1. Ignored for single-speaker voices and for SAPI.
+    # Upper bound is enforced by Piper's model at synth time, not here, since
+    # the request can target any voice and we don't want to special-case.
+    speaker_id: int | None = Field(default=None, ge=0, le=10000)
 
 
 @app.get("/api/voices")
@@ -47,6 +51,7 @@ def voices():
                 "languages": v.languages,
                 "gender": v.gender,
                 "engine": v.engine,
+                "num_speakers": v.num_speakers,
             }
             for v in tts.list_voices()
         ]
@@ -85,6 +90,22 @@ async def voices_install(req: InstallVoiceRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "voice_id": req.voice_id}
+
+
+@app.delete("/api/voices/{voice_id}")
+def voices_remove(voice_id: str):
+    """Uninstall a Piper voice — deletes its .onnx + .onnx.json from voices/."""
+    from tts import catalog
+
+    try:
+        catalog.remove_voice(voice_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"voice not installed: {voice_id}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"could not remove voice: {e}")
+    return {"ok": True, "voice_id": voice_id}
 
 
 @app.post("/api/voices/install/stream")
@@ -144,20 +165,26 @@ async def voices_install_stream(req: InstallVoiceRequest):
 
 
 @app.get("/api/voices/sample/{voice_id}")
-async def voice_sample(voice_id: str):
-    """Proxy the official Piper preview MP3 for a voice from HuggingFace.
+async def voice_sample(voice_id: str, speaker: int = 0):
+    """Proxy the official Piper preview MP3 for a (voice, speaker) pair.
 
-    Cached in-process for the session, and we ask the browser to cache for
-    a day so flipping back and forth in the voice browser doesn't re-hit
-    the network. 404s cleanly when a voice has no published sample.
+    `?speaker=N` picks a specific speaker for multi-speaker models like
+    LibriTTS. Defaults to 0 — works for every voice. Cached in-process
+    per (voice, speaker), and we ask the browser to cache for a day so
+    flipping back and forth doesn't re-hit the network.
     """
     import asyncio
 
     from tts import catalog
 
+    if speaker < 0 or speaker > 10000:
+        raise HTTPException(status_code=400, detail="speaker out of range")
+
     loop = asyncio.get_running_loop()
     try:
-        data = await loop.run_in_executor(None, catalog.fetch_sample, voice_id)
+        data = await loop.run_in_executor(
+            None, catalog.fetch_sample, voice_id, speaker
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="no preview available")
     except ValueError as e:
@@ -179,6 +206,7 @@ def synthesize(req: SynthesizeRequest):
             voice_id=req.voice_id,
             rate=req.rate,
             volume=req.volume,
+            speaker_id=req.speaker_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -232,6 +260,7 @@ async def synthesize_stream(req: SynthesizeRequest):
                 voice_id=req.voice_id,
                 rate=req.rate,
                 volume=req.volume,
+                speaker_id=req.speaker_id,
             )
         except ValueError as exc:
             yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
