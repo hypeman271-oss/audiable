@@ -1260,9 +1260,9 @@ function cap(s) {
 async function installCatalogVoice(voice, btn) {
   btn.disabled = true;
   btn.classList.remove("failed");
-  btn.textContent = "Installing…";
+  btn.textContent = "Starting…";
   try {
-    const res = await fetch("/api/voices/install", {
+    const res = await fetch("/api/voices/install/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ voice_id: voice.id }),
@@ -1275,11 +1275,49 @@ async function installCatalogVoice(voice, btn) {
       } catch {}
       throw new Error(detail);
     }
-    // Mark installed in the local catalog so a re-render preserves the state.
+
+    // Parse the SSE stream the same way generate() does.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let total = 0;
+    let finished = false;
+    let errorMsg = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const blocks = buf.split("\n\n");
+      buf = blocks.pop();
+      for (const block of blocks) {
+        const line = block.trim();
+        if (!line.startsWith("data:")) continue;
+        let event;
+        try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+        if (event.type === "start") {
+          total = event.total_bytes || 0;
+          btn.textContent = "0%";
+        } else if (event.type === "progress") {
+          const pct = total > 0
+            ? Math.min(100, Math.round((event.downloaded / total) * 100))
+            : 0;
+          btn.textContent = `${pct}%`;
+        } else if (event.type === "done") {
+          finished = true;
+        } else if (event.type === "error") {
+          errorMsg = event.message || "install error";
+        }
+      }
+    }
+
+    if (errorMsg) throw new Error(errorMsg);
+    if (!finished) throw new Error("install stream ended early");
+
     voice.installed = true;
     btn.classList.add("installed");
     btn.textContent = "Installed";
-    // Refresh the main voice dropdown so the new voice is selectable now.
     await loadVoices();
   } catch (e) {
     console.warn("voice install failed:", e);

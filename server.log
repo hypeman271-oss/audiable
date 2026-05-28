@@ -10,25 +10,30 @@
   Android: Chrome -> menu -> Install App / Add to Home screen
   (PWA install on Android requires HTTPS or localhost.)
 ========================================================
-INFO:     127.0.0.1:63760 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63764 - "GET /api/voices/sample/ja_JP-takumi-medium HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:62049 - "GET /api/voices/sample/bogus-xx-medium HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:62052 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62054 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64799 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64801 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64803 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53163 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64585 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64586 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64587 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46528 - "GET / HTTP/1.1" 304 Not Modified
-INFO:     192.168.1.64:46528 - "GET /styles.css HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46536 - "GET /app.js HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46536 - "GET /api/voices HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46536 - "GET /api/voices/catalog HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46536 - "GET /api/voices/sample/ar_JO-kareem-low HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46536 - "GET /api/voices/sample/ar_JO-kareem-medium HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46536 - "GET /api/voices/sample/sq_AL-edon-medium HTTP/1.1" 200 OK
-INFO:     192.168.1.64:46536 - "GET /api/voices/sample/eu_ES-antton-medium HTTP/1.1" 200 OK
-INFO:     192.168.1.64:37820 - "GET /api/voices/sample/eu_ES-maider-medium HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53061 - "POST /api/voices/install/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53163 - "POST /api/voices/install/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52555 - "POST /api/voices/install/stream HTTP/1.1" 200 OK
+INFO:     192.168.1.64:50004 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:50004 - "GET /styles.css HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:50010 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     192.168.1.64:50004 - "GET /icons/favicon.png HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:50022 - "GET /icons/icon-180.png HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:50010 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     192.168.1.64:50028 - "GET /api/voices/catalog HTTP/1.1" 200 OK
+INFO:     192.168.1.64:50028 - "POST /api/voices/install/stream HTTP/1.1" 200 OK
+INFO:     192.168.1.64:50028 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     192.168.1.64:52378 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:52378 - "GET /app.js HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:52378 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     192.168.1.64:52382 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     192.168.1.64:48540 - "GET /icons/icon-512.png HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:58232 - "GET /app.js HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:58232 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     2800:e6:4010:44e1:e462:7e9e:d7d5:7fd:0 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62814 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     2800:e6:4010:44e1:e462:7e9e:d7d5:7fd:0 - "GET / HTTP/1.1" 200 OK
+INFO:     2800:e6:4010:44e1:e462:7e9e:d7d5:7fd:0 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     192.168.1.64:46254 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:46254 - "GET /styles.css HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:46260 - "GET /app.js HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:46260 - "GET /api/voices HTTP/1.1" 200 OK

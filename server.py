@@ -87,6 +87,62 @@ async def voices_install(req: InstallVoiceRequest):
     return {"ok": True, "voice_id": req.voice_id}
 
 
+@app.post("/api/voices/install/stream")
+async def voices_install_stream(req: InstallVoiceRequest):
+    """SSE endpoint: streams byte-level download progress while installing.
+
+    Events:
+      {"type":"start","voice_id":"...","total_bytes":N}
+      {"type":"progress","downloaded":N,"total":M}
+      {"type":"done","voice_id":"..."}
+      {"type":"error","message":"..."}
+    """
+    import asyncio
+    import json as _json
+
+    from tts import catalog
+
+    _DONE = object()
+
+    async def _agen():
+        loop = asyncio.get_running_loop()
+        try:
+            it = catalog.download_voice_iter(req.voice_id)
+        except ValueError as exc:
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
+
+        def _next_event():
+            try:
+                return next(it)
+            except StopIteration:
+                return _DONE
+
+        while True:
+            try:
+                event = await loop.run_in_executor(None, _next_event)
+            except RuntimeError as exc:
+                # Network failure mid-download — surface as an error event so
+                # the frontend can flip the button to "Failed" cleanly.
+                yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+                break
+            except Exception as exc:
+                yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+                break
+            if event is _DONE:
+                break
+            yield f"data: {_json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        _agen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/voices/sample/{voice_id}")
 async def voice_sample(voice_id: str):
     """Proxy the official Piper preview MP3 for a voice from HuggingFace.
@@ -286,6 +342,10 @@ def _print_banner(port: int) -> None:
         "  iPhone:  Safari -> Share -> Add to Home Screen",
         "  Android: Chrome -> menu -> Install App / Add to Home screen",
         "  (PWA install on Android requires HTTPS or localhost.)",
+        bar,
+        "  Want HTTPS so the phone PWA installs + works over cellular?",
+        "    python scripts/tunnel.py",
+        "  (one-time: winget install --id Cloudflare.cloudflared)",
         bar,
     ]
     print("\n".join(lines), flush=True)

@@ -131,14 +131,18 @@ def fetch_sample(voice_id: str) -> bytes:
     return data
 
 
-def download_voice(voice_id: str) -> dict:
-    """Download a voice's .onnx + .onnx.json pair into VOICES_DIR.
+def download_voice_iter(voice_id: str):
+    """Generator: yields download progress dicts then a final done dict.
 
-    Idempotent — already-present files are left alone. Partial downloads
-    are cleaned up on failure so a retry doesn't see a zero-byte stub
-    and skip the redownload.
+    Events:
+      {"type": "start",    "voice_id": str, "total_bytes": int}
+      {"type": "progress", "downloaded": int, "total": int}
+      {"type": "done",     "voice_id": str}
 
-    Returns the catalog entry for callers that want to surface metadata.
+    Idempotent. Already-present files are reported instantly at 100%
+    of their expected byte count so the UI snaps to "Installed" without
+    re-downloading. Partial files on failure are cleaned up so a retry
+    re-fetches instead of seeing a zero-byte stub and skipping.
     """
     catalog = fetch_catalog()
     if voice_id not in catalog:
@@ -152,21 +156,67 @@ def download_voice(voice_id: str) -> dict:
 
     VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
+    voice = catalog[voice_id]
+    files_in_catalog = voice.get("files") or {}
+
+    # Build the per-file plan with expected sizes from the catalog so we know
+    # the total up-front (no extra HEAD request per file).
+    file_specs: list[tuple[str, Path, int]] = []
     for ext in ("onnx", "onnx.json"):
         fname = f"{voice_id}.{ext}"
+        rel_path = f"{lang}/{locale}/{name}/{quality}/{fname}"
+        info = files_in_catalog.get(rel_path) or {}
+        size_bytes = int(info.get("size_bytes") or 0)
         out = VOICES_DIR / fname
+        url = f"{DOWNLOAD_BASE}/{rel_path}"
+        file_specs.append((url, out, size_bytes))
+
+    total_bytes = sum(s for _, _, s in file_specs)
+    yield {"type": "start", "voice_id": voice_id, "total_bytes": total_bytes}
+
+    downloaded = 0
+    CHUNK = 64 * 1024  # ~5-30 progress events per file at typical Piper sizes
+
+    for url, out, expected_size in file_specs:
         if out.exists() and out.stat().st_size > 0:
+            downloaded += expected_size or out.stat().st_size
+            yield {
+                "type": "progress",
+                "downloaded": downloaded,
+                "total": total_bytes,
+            }
             continue
-        url = f"{DOWNLOAD_BASE}/{lang}/{locale}/{name}/{quality}/{fname}"
+
         try:
-            urllib.request.urlretrieve(url, out)
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "narrative/0.1 (+local)"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp, open(out, "wb") as f:
+                while True:
+                    chunk = resp.read(CHUNK)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    yield {
+                        "type": "progress",
+                        "downloaded": downloaded,
+                        "total": total_bytes,
+                    }
         except urllib.error.HTTPError as e:
             if out.exists():
                 out.unlink()
-            raise RuntimeError(f"failed to fetch {fname}: HTTP {e.code}") from e
+            raise RuntimeError(f"failed to fetch {out.name}: HTTP {e.code}") from e
         except Exception as e:
             if out.exists():
                 out.unlink()
-            raise RuntimeError(f"failed to fetch {fname}: {e}") from e
+            raise RuntimeError(f"failed to fetch {out.name}: {e}") from e
 
-    return catalog[voice_id]
+    yield {"type": "done", "voice_id": voice_id}
+
+
+def download_voice(voice_id: str) -> dict:
+    """Backward-compatible wrapper that drains download_voice_iter."""
+    for _ in download_voice_iter(voice_id):
+        pass
+    return fetch_catalog()[voice_id]
