@@ -510,6 +510,35 @@ button:disabled {
   border-color: var(--accent);
 }
 
+/* Sleep timer chip — same shape as the speed button, slightly wider to
+   fit the "💤 14:59" countdown without clipping. Goes "active" (accent
+   background) while the timer is running. */
+.sleep-btn {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 78px;
+  /* Tabular nums so the countdown doesn't jitter as digits change width. */
+  font-variant-numeric: tabular-nums;
+}
+
+.sleep-btn:hover {
+  background: rgba(124, 156, 255, 0.18);
+  border-color: var(--accent);
+}
+
+.sleep-btn.active {
+  background: var(--accent);
+  color: #0b1020;
+  border-color: var(--accent);
+}
+
 .status {
   min-height: 1.2em;
   color: var(--fg-dim);

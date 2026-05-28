@@ -93,6 +93,7 @@ const playerEl = $("player");
 const statusEl = $("status");
 const readingView = $("reading-view");
 const editTextBtn = $("edit-text");
+const saveTextBtn = $("save-text-btn");
 const textLabel = $("text-label");
 const libraryCard = $("library-card");
 const libraryList = $("library-list");
@@ -120,6 +121,7 @@ const urlRow = $("url-row");
 const urlInput = $("url-input");
 const urlFetchBtn = $("url-fetch-btn");
 const speedBtn = $("speed-btn");
+const sleepBtn = $("sleep-btn");
 const genLabel = generateBtn.querySelector(".label-text");
 const genSpinner = generateBtn.querySelector(".spinner");
 
@@ -235,6 +237,128 @@ applyPlaybackRate();
 // Re-apply on every src change — browsers sometimes reset playbackRate to 1
 // when the audio source changes, which would break per-sentence streaming.
 playerEl.addEventListener("loadedmetadata", applyPlaybackRate);
+
+// ---- Sleep timer --------------------------------------------------------
+// Cycles through Off / 15 / 30 / 45 / 60 min. On expiry, fades the player
+// volume to zero over 5 seconds and pauses. Volume is restored after the
+// fade so the next manual play isn't silent. Wall-clock based, so audio
+// keeps playing through phone PWA backgrounding even when setInterval
+// gets throttled — `timeupdate` (which fires while audio plays) also
+// checks the expiry, catching it within a few hundred ms in any case.
+const SLEEP_DURATIONS_MIN = [0, 15, 30, 45, 60];
+const SLEEP_FADE_MS = 5000;
+
+let _sleepIdx = 0;          // index into SLEEP_DURATIONS_MIN
+let _sleepExpiryMs = 0;     // 0 when idle; Date.now() target otherwise
+let _sleepTickHandle = null;
+let _sleepFadeHandle = null;
+let _sleepFadeStartVol = null;  // saved so cancel/reset can restore
+
+function _formatCountdown(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function _updateSleepBtn() {
+  if (_sleepExpiryMs <= 0) {
+    sleepBtn.textContent = "Sleep";
+    sleepBtn.classList.remove("active");
+    return;
+  }
+  const remaining = _sleepExpiryMs - Date.now();
+  sleepBtn.textContent = `💤 ${_formatCountdown(remaining)}`;
+  sleepBtn.classList.add("active");
+}
+
+function _cancelSleepFade() {
+  if (_sleepFadeHandle) clearInterval(_sleepFadeHandle);
+  _sleepFadeHandle = null;
+  if (_sleepFadeStartVol !== null) {
+    playerEl.volume = _sleepFadeStartVol;
+    _sleepFadeStartVol = null;
+  }
+}
+
+function cancelSleepTimer() {
+  if (_sleepTickHandle) clearInterval(_sleepTickHandle);
+  _sleepTickHandle = null;
+  _sleepExpiryMs = 0;
+  _cancelSleepFade();
+  _updateSleepBtn();
+}
+
+function startSleepTimer(minutes) {
+  cancelSleepTimer();
+  _sleepExpiryMs = Date.now() + minutes * 60 * 1000;
+  // Tick once per second for the countdown label; timeupdate will catch
+  // expiry faster when audio is actively playing.
+  _sleepTickHandle = setInterval(() => {
+    if (Date.now() >= _sleepExpiryMs) {
+      _onSleepExpired();
+    } else {
+      _updateSleepBtn();
+    }
+  }, 1000);
+  _updateSleepBtn();
+}
+
+function _onSleepExpired() {
+  if (_sleepTickHandle) clearInterval(_sleepTickHandle);
+  _sleepTickHandle = null;
+  _sleepExpiryMs = 0;
+
+  // If we're already paused, nothing to fade — just reset UI.
+  if (playerEl.paused) {
+    _updateSleepBtn();
+    setStatus("Sleep timer reached.");
+    return;
+  }
+
+  // Linear fade from current volume to 0 over SLEEP_FADE_MS.
+  _sleepFadeStartVol = playerEl.volume;
+  const fadeStartAt = Date.now();
+  _sleepFadeHandle = setInterval(() => {
+    const elapsed = Date.now() - fadeStartAt;
+    const ratio = Math.max(0, 1 - elapsed / SLEEP_FADE_MS);
+    playerEl.volume = _sleepFadeStartVol * ratio;
+    if (elapsed >= SLEEP_FADE_MS) {
+      clearInterval(_sleepFadeHandle);
+      _sleepFadeHandle = null;
+      playerEl.pause();
+      // Restore volume so next manual play isn't silent.
+      playerEl.volume = _sleepFadeStartVol;
+      _sleepFadeStartVol = null;
+      _updateSleepBtn();
+      setStatus("Sleep timer reached — paused.");
+    }
+  }, 100);
+  _updateSleepBtn();
+}
+
+sleepBtn.addEventListener("click", () => {
+  _sleepIdx = (_sleepIdx + 1) % SLEEP_DURATIONS_MIN.length;
+  const minutes = SLEEP_DURATIONS_MIN[_sleepIdx];
+  if (minutes === 0) {
+    cancelSleepTimer();
+    setStatus("Sleep timer off.");
+  } else {
+    startSleepTimer(minutes);
+    setStatus(`Sleep timer set for ${minutes} min.`);
+  }
+});
+
+// Belt-and-suspenders: `timeupdate` keeps firing during playback (including
+// from the PWA's lock-screen MediaSession control flow), so we'll catch the
+// expiry promptly even if setInterval is throttled in the background.
+playerEl.addEventListener("timeupdate", () => {
+  if (_sleepExpiryMs > 0 && Date.now() >= _sleepExpiryMs) {
+    _onSleepExpired();
+  }
+});
+
+_updateSleepBtn();
 
 // ---- Resume position ---------------------------------------------------
 // Per-clip "remember where I left off." Saved into the existing IndexedDB
@@ -1308,6 +1432,346 @@ clipEditTitle.addEventListener("keydown", (e) => {
     e.preventDefault();
     saveClipEdit();
   }
+});
+
+// ---- Library export / import (zip backup) -------------------------------
+// Self-contained STORED-mode zip implementation. We skip JSZip (~100 KB)
+// because:
+//   1. MP3 is already compressed — DEFLATE on it would buy a couple percent.
+//   2. The manifest is tiny.
+//   3. Keeping the app dependency-free is worth a few hundred lines of code.
+//
+// Format reference: https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
+const _ZIP_LFH_SIG = 0x04034b50;
+const _ZIP_CD_SIG = 0x02014b50;
+const _ZIP_EOCD_SIG = 0x06054b50;
+
+const _CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c >>> 1) ^ ((c & 1) ? 0xedb88320 : 0);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function _crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (crc >>> 8) ^ _CRC32_TABLE[(crc ^ bytes[i]) & 0xff];
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Builds a zip from [{name, data: Uint8Array}, ...] and returns a Uint8Array.
+// STORED only (compression method 0). UTF-8 filenames via the language-encoding
+// flag (bit 11 in the GP bit flag field).
+function makeZip(entries) {
+  const encoder = new TextEncoder();
+
+  // Pass 1: pre-compute name bytes, CRC, sizes, local-header offsets.
+  const records = entries.map((e) => ({
+    nameBytes: encoder.encode(e.name),
+    data: e.data,
+    crc: _crc32(e.data),
+    size: e.data.length,
+    localOffset: 0,
+  }));
+
+  let pos = 0;
+  for (const r of records) {
+    r.localOffset = pos;
+    pos += 30 + r.nameBytes.length + r.size;
+  }
+  const cdStart = pos;
+  for (const r of records) {
+    pos += 46 + r.nameBytes.length;
+  }
+  const cdEnd = pos;
+  const totalSize = cdEnd + 22;
+
+  const out = new Uint8Array(totalSize);
+  const view = new DataView(out.buffer);
+  let p = 0;
+
+  // Local file headers + raw data
+  for (const r of records) {
+    view.setUint32(p, _ZIP_LFH_SIG, true); p += 4;
+    view.setUint16(p, 20, true); p += 2;          // version needed
+    view.setUint16(p, 0x0800, true); p += 2;      // GP bit flag — UTF-8 names
+    view.setUint16(p, 0, true); p += 2;           // method (STORED)
+    view.setUint16(p, 0, true); p += 2;           // mod time
+    view.setUint16(p, 0, true); p += 2;           // mod date
+    view.setUint32(p, r.crc, true); p += 4;
+    view.setUint32(p, r.size, true); p += 4;
+    view.setUint32(p, r.size, true); p += 4;
+    view.setUint16(p, r.nameBytes.length, true); p += 2;
+    view.setUint16(p, 0, true); p += 2;
+    out.set(r.nameBytes, p); p += r.nameBytes.length;
+    out.set(r.data, p); p += r.size;
+  }
+
+  // Central directory
+  for (const r of records) {
+    view.setUint32(p, _ZIP_CD_SIG, true); p += 4;
+    view.setUint16(p, 20, true); p += 2;          // version made by
+    view.setUint16(p, 20, true); p += 2;          // version needed
+    view.setUint16(p, 0x0800, true); p += 2;      // GP flag — UTF-8 names
+    view.setUint16(p, 0, true); p += 2;           // method
+    view.setUint16(p, 0, true); p += 2;
+    view.setUint16(p, 0, true); p += 2;
+    view.setUint32(p, r.crc, true); p += 4;
+    view.setUint32(p, r.size, true); p += 4;
+    view.setUint32(p, r.size, true); p += 4;
+    view.setUint16(p, r.nameBytes.length, true); p += 2;
+    view.setUint16(p, 0, true); p += 2;
+    view.setUint16(p, 0, true); p += 2;
+    view.setUint16(p, 0, true); p += 2;           // disk number
+    view.setUint16(p, 0, true); p += 2;           // internal attrs
+    view.setUint32(p, 0, true); p += 4;           // external attrs
+    view.setUint32(p, r.localOffset, true); p += 4;
+    out.set(r.nameBytes, p); p += r.nameBytes.length;
+  }
+
+  // End of central directory
+  view.setUint32(p, _ZIP_EOCD_SIG, true); p += 4;
+  view.setUint16(p, 0, true); p += 2;
+  view.setUint16(p, 0, true); p += 2;
+  view.setUint16(p, records.length, true); p += 2;
+  view.setUint16(p, records.length, true); p += 2;
+  view.setUint32(p, cdEnd - cdStart, true); p += 4;
+  view.setUint32(p, cdStart, true); p += 4;
+  view.setUint16(p, 0, true); p += 2;            // comment length
+
+  return out;
+}
+
+// Parse a zip blob back into [{name, data}, ...]. Throws on malformed
+// input or any non-STORED entry (we'd never produce DEFLATE'd output).
+function readZip(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // Scan backwards for EOCD signature — comment can be up to 64KB.
+  let eocd = -1;
+  const minStart = Math.max(0, bytes.length - 65557);
+  for (let i = bytes.length - 22; i >= minStart; i--) {
+    if (view.getUint32(i, true) === _ZIP_EOCD_SIG) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("not a zip file (EOCD record missing)");
+
+  const numEntries = view.getUint16(eocd + 10, true);
+  const cdOffset = view.getUint32(eocd + 16, true);
+
+  const decoder = new TextDecoder();
+  const out = [];
+  let p = cdOffset;
+  for (let i = 0; i < numEntries; i++) {
+    if (view.getUint32(p, true) !== _ZIP_CD_SIG) {
+      throw new Error("malformed central directory entry");
+    }
+    const method = view.getUint16(p + 10, true);
+    const compSize = view.getUint32(p + 20, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const localOffset = view.getUint32(p + 42, true);
+    const name = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+
+    if (method !== 0) {
+      throw new Error(`zip uses unsupported compression (method ${method}) for ${name}`);
+    }
+    if (view.getUint32(localOffset, true) !== _ZIP_LFH_SIG) {
+      throw new Error(`bad local header for ${name}`);
+    }
+    const lhNameLen = view.getUint16(localOffset + 26, true);
+    const lhExtraLen = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + lhNameLen + lhExtraLen;
+    const data = bytes.slice(dataStart, dataStart + compSize);
+    out.push({ name, data });
+  }
+  return out;
+}
+
+async function exportLibrary() {
+  const exportBtn = $("library-export");
+  exportBtn.disabled = true;
+  exportBtn.textContent = "Building…";
+  try {
+    const clips = await listClips();
+    if (clips.length === 0) {
+      setStatus("Library is empty — nothing to export.", true);
+      return;
+    }
+    const presets = _loadPresets();
+
+    const manifestClips = [];
+    const entries = [];
+
+    for (const clip of clips) {
+      if (!clip.blob) continue;
+      const bytes = new Uint8Array(await clip.blob.arrayBuffer());
+      const ext = clip.blob.type === "audio/mpeg" ? "mp3" : "wav";
+      const audioFile = `audio/${clip.id}.${ext}`;
+      entries.push({ name: audioFile, data: bytes });
+
+      manifestClips.push({
+        id: clip.id,
+        title: clip.title || "",
+        note: clip.note || "",
+        text: clip.text || "",
+        voiceId: clip.voiceId || null,
+        voiceName: clip.voiceName || "",
+        speakerId: typeof clip.speakerId === "number" ? clip.speakerId : null,
+        rate: Number(clip.rate) || 180,
+        volume: typeof clip.volume === "number" ? clip.volume : 1.0,
+        sentenceOffsetsSec: clip.sentenceOffsetsSec || [],
+        durationSec: Number(clip.durationSec) || 0,
+        progressSec: Number(clip.progressSec) || 0,
+        createdAt: clip.createdAt || new Date(clip.id).toISOString(),
+        audioFile,
+        audioType: clip.blob.type,
+      });
+    }
+
+    const manifest = {
+      schema: 1,
+      app: "Narrative",
+      exportedAt: new Date().toISOString(),
+      clips: manifestClips,
+      presets,
+    };
+
+    const manifestBytes = new TextEncoder().encode(
+      JSON.stringify(manifest, null, 2)
+    );
+    // Put the manifest first so a partial download still finds it.
+    entries.unshift({ name: "manifest.json", data: manifestBytes });
+
+    const zip = makeZip(entries);
+    const blob = new Blob([zip], { type: "application/zip" });
+    const url = URL.createObjectURL(blob);
+    const today = new Date().toISOString().slice(0, 10);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `narrative-library-${today}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    const mb = (zip.length / (1024 * 1024)).toFixed(1);
+    setStatus(`Exported ${manifestClips.length} clip(s) (${mb} MB).`);
+  } catch (e) {
+    console.warn("export failed:", e);
+    setStatus(`Export failed: ${e.message}`, true);
+  } finally {
+    exportBtn.disabled = false;
+    exportBtn.textContent = "Export";
+  }
+}
+
+async function importLibraryFromFile(file) {
+  const importBtn = $("library-import");
+  importBtn.disabled = true;
+  importBtn.textContent = "Reading…";
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const entries = readZip(bytes);
+
+    const manifestEntry = entries.find((e) => e.name === "manifest.json");
+    if (!manifestEntry) {
+      throw new Error("no manifest.json — is this a Narrative export?");
+    }
+    const manifest = JSON.parse(new TextDecoder().decode(manifestEntry.data));
+    if (!manifest.clips || !Array.isArray(manifest.clips)) {
+      throw new Error("manifest.json has no clips array");
+    }
+
+    // Audio lookup: filename → bytes.
+    const audioByName = new Map();
+    for (const e of entries) {
+      if (e.name.startsWith("audio/")) audioByName.set(e.name, e.data);
+    }
+
+    const existingIds = new Set((await listClips()).map((c) => c.id));
+    let imported = 0;
+    let skippedDup = 0;
+    let skippedMissing = 0;
+
+    for (const mc of manifest.clips) {
+      if (existingIds.has(mc.id)) {
+        skippedDup++;
+        continue;
+      }
+      const audioBytes = audioByName.get(mc.audioFile);
+      if (!audioBytes) {
+        console.warn(`audio missing for clip ${mc.id} (${mc.audioFile})`);
+        skippedMissing++;
+        continue;
+      }
+      const blob = new Blob([audioBytes], {
+        type: mc.audioType || "audio/mpeg",
+      });
+      await saveClip({
+        id: mc.id,
+        title: mc.title || "(untitled)",
+        note: mc.note || "",
+        text: mc.text || "",
+        voiceId: mc.voiceId || null,
+        voiceName: mc.voiceName || "",
+        speakerId: typeof mc.speakerId === "number" ? mc.speakerId : null,
+        rate: Number(mc.rate) || 180,
+        volume: typeof mc.volume === "number" ? mc.volume : 1.0,
+        sentenceOffsetsSec: mc.sentenceOffsetsSec || [],
+        durationSec: Number(mc.durationSec) || 0,
+        progressSec: Number(mc.progressSec) || 0,
+        createdAt: mc.createdAt || new Date(mc.id).toISOString(),
+        blob,
+      });
+      imported++;
+    }
+
+    // Merge presets in by id; existing ones win.
+    let presetsAdded = 0;
+    if (Array.isArray(manifest.presets) && manifest.presets.length > 0) {
+      const existing = _loadPresets();
+      const existingPresetIds = new Set(existing.map((p) => p.id));
+      for (const p of manifest.presets) {
+        if (!existingPresetIds.has(p.id)) {
+          existing.unshift(p);
+          presetsAdded++;
+        }
+      }
+      _savePresets(existing);
+      renderPresets();
+    }
+
+    renderLibrary();
+    const parts = [`imported ${imported} clip(s)`];
+    if (skippedDup) parts.push(`${skippedDup} duplicate(s) skipped`);
+    if (skippedMissing) parts.push(`${skippedMissing} missing audio skipped`);
+    if (presetsAdded) parts.push(`${presetsAdded} preset(s) added`);
+    setStatus(parts.join(", ") + ".");
+  } catch (e) {
+    console.warn("import failed:", e);
+    setStatus(`Import failed: ${e.message}`, true);
+  } finally {
+    importBtn.disabled = false;
+    importBtn.textContent = "Import";
+  }
+}
+
+$("library-export").addEventListener("click", exportLibrary);
+$("library-import").addEventListener("click", () => $("library-import-file").click());
+$("library-import-file").addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (file) importLibraryFromFile(file);
+  // Reset so selecting the same file twice still fires "change".
+  e.target.value = "";
 });
 
 async function loadClip(id) {

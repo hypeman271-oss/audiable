@@ -41,6 +41,13 @@
               aria-label="Upload a text, PDF, EPUB or Word file"
             >Upload file</button>
             <button
+              id="save-text-btn"
+              type="button"
+              class="link-btn"
+              hidden
+              aria-label="Save text changes to the loaded clip"
+            >Save text</button>
+            <button
               id="edit-text"
               type="button"
               class="link-btn"
@@ -141,6 +148,13 @@
       <section class="player card" id="player-card" hidden>
         <audio id="player" controls preload="auto"></audio>
         <div class="player-actions">
+          <button
+            id="sleep-btn"
+            type="button"
+            class="sleep-btn"
+            aria-label="Sleep timer"
+            title="Tap to cycle sleep timer (Off / 15 / 30 / 45 / 60 min)"
+          >Sleep</button>
           <button
             id="speed-btn"
             type="button"
