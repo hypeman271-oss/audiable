@@ -219,6 +219,64 @@ select:focus {
   color: #b9c3eb;
 }
 
+/* Saved synthesis presets — horizontal chip scroller. Hidden when empty
+   so an unused row doesn't waste vertical space. */
+.presets-list {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  /* Pad-right so the last chip doesn't kiss the card edge while scrolling. */
+  padding-bottom: 2px;
+}
+
+.preset-chip {
+  flex: 0 0 auto;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 5px 4px 5px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.preset-chip:hover {
+  background: rgba(124, 156, 255, 0.15);
+  border-color: var(--accent);
+}
+
+.preset-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset-chip-x {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 15px;
+  font-family: inherit;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.preset-chip-x:hover {
+  color: var(--danger);
+  background: rgba(255, 124, 124, 0.10);
+}
+
 /* Speaker picker — only rendered for voices with num_speakers > 1.
    Sits below the main voice select inside the same card. */
 .speaker-row {
@@ -471,11 +529,41 @@ button:disabled {
   font-size: 14px;
 }
 
+/* Compact Export / Import strip — sits between the search box and the
+   first clip card. Keeps the library card header from getting crowded
+   with every quality-of-life action. */
+.library-tools {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 10px;
+  padding-left: 2px;
+}
+
+.library-tools .link-btn {
+  font-size: 12px;
+}
+
 .library-empty {
   padding: 18px 12px;
   text-align: center;
   color: var(--fg-dim);
   font-size: 13px;
+}
+
+/* Section labels inside the library list. Mirrors .label styling so the
+   "Continue listening" + "Other clips" headers feel like first-class
+   sub-titles rather than ad-hoc text. */
+.library-section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  font-weight: 600;
+  margin: 14px 4px 4px;
+}
+
+.library-section:first-child {
+  margin-top: 0;
 }
 
 .library-list {
@@ -529,12 +617,27 @@ button:disabled {
 .clip-title {
   font-size: 14px;
   font-weight: 600;
-  white-space: nowrap;
+  line-height: 1.35;
+  /* Two-line clamp with ellipsis on the second line. -webkit-box is the
+     widely-supported way to do this; the bare `display: block` from the
+     parent flex column isn't enough to make a span actually clip on its
+     own. Without this, overflow:hidden + text-overflow:ellipsis quietly
+     no-op on the inline span and long structured titles run past both
+     card edges. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  /* Long unbroken tokens like "word_count_target" are one word to CSS;
+     allow breaks anywhere inside them so they wrap instead of overflowing. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .clip-meta {
+  /* Promote to block so overflow + ellipsis actually apply to the span. */
+  display: block;
   font-size: 12px;
   color: var(--fg-dim);
   white-space: nowrap;
@@ -557,6 +660,112 @@ button:disabled {
 .clip-delete:hover {
   color: var(--danger);
   background: rgba(255, 124, 124, 0.08);
+}
+
+/* Edit pencil — sits between clip body and the × delete on each card. */
+.clip-edit {
+  background: none;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--fg-dim);
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 15px;
+  font-family: inherit;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.clip-edit:hover {
+  color: var(--accent);
+  background: rgba(124, 156, 255, 0.08);
+}
+
+/* Optional one-line note shown when clip.note is non-empty. Sits below
+   the existing meta row inside the play button so the whole card stays
+   one tap-target. */
+.clip-note {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+  display: block;
+}
+
+/* ---------- Clip-edit dialog ---------- */
+.clip-edit-dialog {
+  width: min(480px, calc(100vw - 24px));
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.clip-edit-dialog::backdrop {
+  background: rgba(11, 16, 32, 0.7);
+}
+
+.clip-edit-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+}
+
+.clip-edit-body .label {
+  margin-bottom: 0;
+  margin-top: 6px;
+}
+
+.clip-edit-body .label:first-child {
+  margin-top: 0;
+}
+
+#clip-edit-title,
+#clip-edit-note {
+  /* The global input/textarea rules at the top of the file already cover
+     dark-theme styling. Just override min-height for the inputs. */
+  width: 100%;
+}
+
+#clip-edit-title {
+  padding: 10px 12px;
+  font-size: 15px;
+}
+
+.clip-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.clip-edit-actions .primary {
+  background: var(--accent);
+  color: #0b1020;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.clip-edit-actions .primary:hover {
+  background: var(--accent-strong);
+}
+
+@media (max-width: 480px) {
+  .clip-edit-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    border-radius: 0;
+  }
 }
 
 /* ---------- Voice browser dialog ---------- */

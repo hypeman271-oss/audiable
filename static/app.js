@@ -100,7 +100,14 @@ const libraryClearBtn = $("library-clear");
 const playModeBtn = $("play-mode-btn");
 const libraryLabel = $("library-label");
 const librarySearch = $("library-search");
+const clipEditDialog = $("clip-edit");
+const clipEditClose = $("clip-edit-close");
+const clipEditTitle = $("clip-edit-title");
+const clipEditNote = $("clip-edit-note");
+const clipEditSave = $("clip-edit-save");
 const browseVoicesBtn = $("browse-voices-btn");
+const presetSaveBtn = $("preset-save-btn");
+const presetsList = $("presets-list");
 const voiceBrowser = $("voice-browser");
 const voiceBrowserClose = $("voice-browser-close");
 const voiceBrowserSearch = $("voice-browser-search");
@@ -474,6 +481,155 @@ speakerPreviewBtn.addEventListener("click", async () => {
     console.info("speaker preview unavailable:", voiceId, speakerId, err.message || err);
   }
 });
+
+// ---- Synthesis presets ---------------------------------------------------
+// Save named voice + speaker + rate + volume combos as chips you can tap to
+// re-apply. Useful when you've found a LibriTTS speaker + speed you like
+// and want to come back to it without rebuilding the config by hand.
+const PRESETS_STORAGE_KEY = "narrative.presets";
+
+function _loadPresets() {
+  try {
+    const raw = localStorage.getItem(PRESETS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function _savePresets(list) {
+  try {
+    localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.warn("preset save failed:", e);
+  }
+}
+
+function _currentPresetSnapshot() {
+  return {
+    voiceId: voiceEl.value || null,
+    speakerId: speakerRow.hidden ? null : Number(speakerEl.value || 0),
+    rate: Number(rateEl.value),
+    volume: Number(volumeEl.value) / 100,
+  };
+}
+
+function _suggestPresetName() {
+  const voiceLabel =
+    (voiceEl.selectedOptions[0]?.textContent || "Voice").split(" · ")[0];
+  const parts = [voiceLabel];
+  if (!speakerRow.hidden) parts.push(`spk ${speakerEl.value}`);
+  parts.push(`${rateEl.value} wpm`);
+  return parts.join(" · ");
+}
+
+function applyPreset(preset) {
+  // Voice: check it's still in the dropdown (the user might have removed
+  // it via the voice browser since the preset was saved).
+  if (preset.voiceId) {
+    let optionExists = false;
+    for (const opt of voiceEl.options) {
+      if (opt.value === preset.voiceId) { optionExists = true; break; }
+    }
+    if (!optionExists) {
+      setStatus(
+        `Preset "${preset.name}" uses a voice that isn't installed.`,
+        true
+      );
+      return;
+    }
+    voiceEl.value = preset.voiceId;
+    onVoiceChange(); // populates speaker dropdown for the new voice
+  }
+
+  // Speaker: only meaningful if the new voice exposes one and the saved
+  // index is in range for that voice.
+  if (
+    typeof preset.speakerId === "number" &&
+    !speakerRow.hidden &&
+    speakerEl.options.length > preset.speakerId
+  ) {
+    speakerEl.value = String(preset.speakerId);
+  }
+
+  if (typeof preset.rate === "number") {
+    const r = Math.min(300, Math.max(80, Math.round(preset.rate)));
+    rateEl.value = String(r);
+    rateValueEl.textContent = String(r);
+  }
+  if (typeof preset.volume === "number") {
+    const v = Math.min(100, Math.max(0, Math.round(preset.volume * 100)));
+    volumeEl.value = String(v);
+    volumeValueEl.textContent = `${v}%`;
+  }
+
+  setStatus(`Applied preset: ${preset.name}`);
+}
+
+function deletePreset(id) {
+  const list = _loadPresets().filter((p) => p.id !== id);
+  _savePresets(list);
+  renderPresets();
+}
+
+function renderPresets() {
+  const list = _loadPresets();
+  presetsList.innerHTML = "";
+  if (list.length === 0) {
+    presetsList.hidden = true;
+    return;
+  }
+  presetsList.hidden = false;
+  for (const preset of list) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "preset-chip";
+    chip.title = (
+      `${preset.voiceId || "default voice"}` +
+      (preset.speakerId != null ? ` · spk ${preset.speakerId}` : "") +
+      ` · ${preset.rate} wpm · ${Math.round(preset.volume * 100)}%`
+    );
+
+    const name = document.createElement("span");
+    name.className = "preset-chip-name";
+    name.textContent = preset.name;
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "preset-chip-x";
+    del.textContent = "×";
+    del.title = "Delete preset";
+    del.setAttribute("aria-label", `Delete preset ${preset.name}`);
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deletePreset(preset.id);
+    });
+
+    chip.append(name, del);
+    chip.addEventListener("click", () => applyPreset(preset));
+    presetsList.appendChild(chip);
+  }
+}
+
+presetSaveBtn.addEventListener("click", () => {
+  const suggested = _suggestPresetName();
+  const name = window.prompt("Name this preset:", suggested);
+  if (!name || !name.trim()) return;
+  const list = _loadPresets();
+  list.unshift({
+    id: Date.now(),
+    name: name.trim(),
+    ..._currentPresetSnapshot(),
+    createdAt: new Date().toISOString(),
+  });
+  _savePresets(list);
+  renderPresets();
+  setStatus(`Saved preset: ${name.trim()}`);
+});
+
+renderPresets();
 
 // Decode a base64 string to a Uint8Array for Blob construction.
 function base64ToBytes(b64) {
@@ -961,6 +1117,77 @@ async function nextClipId(fromId) {
   return ordered[idx + 1].id;
 }
 
+// A clip is "in progress" when its saved resume position is past the very
+// first second AND not basically at the end. Matches the same threshold
+// formatClipMeta uses to decide whether to render the "1:23 / 5:00" string.
+function isClipInProgress(clip) {
+  const p = Number(clip.progressSec) || 0;
+  const d = Number(clip.durationSec) || 0;
+  return p > 1 && p < d - 1;
+}
+
+function makeClipCard(clip) {
+  const item = document.createElement("div");
+  item.className = "clip" + (clip.id === _currentClipId ? " current" : "");
+
+  const playBtn = document.createElement("button");
+  playBtn.className = "clip-play";
+  playBtn.type = "button";
+  playBtn.setAttribute("aria-label", `Play ${clip.title}`);
+  // Show the full title on hover (desktop) / long-press (mobile) for
+  // when the clamped 2-line title doesn't show the whole thing.
+  if (clip.title) playBtn.title = clip.title;
+  const titleEl = document.createElement("span");
+  titleEl.className = "clip-title";
+  titleEl.textContent = clip.title || "(untitled)";
+  const metaEl = document.createElement("span");
+  metaEl.className = "clip-meta";
+  metaEl.textContent = formatClipMeta(clip);
+  playBtn.append(titleEl, metaEl);
+  // If the user added a note, render it as a small italic line below
+  // the standard meta. Keeps the card a single tap-target.
+  if (clip.note && clip.note.trim()) {
+    const noteEl = document.createElement("span");
+    noteEl.className = "clip-note";
+    noteEl.textContent = clip.note.trim();
+    playBtn.appendChild(noteEl);
+  }
+  playBtn.addEventListener("click", () => loadClip(clip.id));
+
+  const editBtn = document.createElement("button");
+  editBtn.className = "clip-edit";
+  editBtn.type = "button";
+  editBtn.setAttribute("aria-label", `Edit ${clip.title}`);
+  editBtn.title = "Edit title + note";
+  // Pencil glyph (U+270E) — renders consistently on Windows, macOS, iOS, Android.
+  editBtn.textContent = "✎";
+  editBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openClipEdit(clip.id);
+  });
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "clip-delete";
+  delBtn.type = "button";
+  delBtn.setAttribute("aria-label", `Delete ${clip.title}`);
+  delBtn.textContent = "×";
+  delBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await deleteClipById(clip.id);
+    renderLibrary();
+  });
+
+  item.append(playBtn, editBtn, delBtn);
+  return item;
+}
+
+function _appendSectionHeader(label) {
+  const h = document.createElement("div");
+  h.className = "library-section";
+  h.textContent = label;
+  libraryList.appendChild(h);
+}
+
 async function renderLibrary() {
   let clips = [];
   try {
@@ -986,7 +1213,8 @@ async function renderLibrary() {
       return (
         (c.title || "").toLowerCase().includes(query) ||
         (c.text || "").toLowerCase().includes(query) ||
-        (c.voiceName || "").toLowerCase().includes(query)
+        (c.voiceName || "").toLowerCase().includes(query) ||
+        (c.note || "").toLowerCase().includes(query)
       );
     });
   }
@@ -1005,38 +1233,82 @@ async function renderLibrary() {
     return;
   }
 
-  for (const clip of clips) {
-    const item = document.createElement("div");
-    item.className = "clip" + (clip.id === _currentClipId ? " current" : "");
+  // Split into "in progress" and "other" so resume-where-you-left-off
+  // becomes a one-tap action at the top of the library. The in-progress
+  // section ignores the user's sort mode and instead shows the most
+  // recently created in-progress clip first (clip.id is a millis timestamp,
+  // so newest-first is just descending id) — that's almost always the one
+  // they want next.
+  const inProgress = clips
+    .filter(isClipInProgress)
+    .slice() // sortClips returns a fresh array but be defensive
+    .sort((a, b) => b.id - a.id);
+  const inProgressIds = new Set(inProgress.map((c) => c.id));
+  const others = clips.filter((c) => !inProgressIds.has(c.id));
 
-    const playBtn = document.createElement("button");
-    playBtn.className = "clip-play";
-    playBtn.type = "button";
-    playBtn.setAttribute("aria-label", `Play ${clip.title}`);
-    const titleEl = document.createElement("span");
-    titleEl.className = "clip-title";
-    titleEl.textContent = clip.title || "(untitled)";
-    const metaEl = document.createElement("span");
-    metaEl.className = "clip-meta";
-    metaEl.textContent = formatClipMeta(clip);
-    playBtn.append(titleEl, metaEl);
-    playBtn.addEventListener("click", () => loadClip(clip.id));
+  if (inProgress.length > 0) {
+    _appendSectionHeader(`Continue listening · ${inProgress.length}`);
+    for (const clip of inProgress) libraryList.appendChild(makeClipCard(clip));
+    if (others.length > 0) {
+      _appendSectionHeader(`Other clips · ${others.length}`);
+    }
+  }
 
-    const delBtn = document.createElement("button");
-    delBtn.className = "clip-delete";
-    delBtn.type = "button";
-    delBtn.setAttribute("aria-label", `Delete ${clip.title}`);
-    delBtn.textContent = "×";
-    delBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await deleteClipById(clip.id);
-      renderLibrary();
-    });
+  for (const clip of others) libraryList.appendChild(makeClipCard(clip));
+}
 
-    item.append(playBtn, delBtn);
-    libraryList.appendChild(item);
+// ---- Edit clip (title + note) ------------------------------------------
+// Opens the <dialog> with the current values, saves the new ones back into
+// the same IndexedDB row. Audio blob and all the synthesis-side fields
+// (voice, speaker, offsets, duration) are left untouched.
+let _editingClipId = null;
+
+async function openClipEdit(clipId) {
+  const clip = await getClip(clipId);
+  if (!clip) return;
+  _editingClipId = clipId;
+  clipEditTitle.value = clip.title || "";
+  clipEditNote.value = clip.note || "";
+  clipEditDialog.showModal();
+  clipEditTitle.focus();
+  clipEditTitle.select();
+}
+
+function closeClipEdit() {
+  _editingClipId = null;
+  clipEditDialog.close();
+}
+
+async function saveClipEdit() {
+  if (!_editingClipId) return closeClipEdit();
+  const id = _editingClipId;
+  try {
+    const clip = await getClip(id);
+    if (!clip) return closeClipEdit();
+    const newTitle = (clipEditTitle.value || "").trim() || "(untitled)";
+    const newNote = (clipEditNote.value || "").trim();
+    clip.title = newTitle;
+    clip.note = newNote;
+    await saveClip(clip);
+    closeClipEdit();
+    renderLibrary();
+    setStatus(`Updated "${newTitle}"`);
+  } catch (e) {
+    console.warn("clip edit save failed:", e);
+    setStatus(`Save failed: ${e.message}`, true);
   }
 }
+
+clipEditClose.addEventListener("click", closeClipEdit);
+clipEditSave.addEventListener("click", saveClipEdit);
+clipEditDialog.addEventListener("close", () => { _editingClipId = null; });
+clipEditTitle.addEventListener("keydown", (e) => {
+  // Enter on the title field saves; multi-line note handles Enter natively.
+  if (e.key === "Enter") {
+    e.preventDefault();
+    saveClipEdit();
+  }
+});
 
 async function loadClip(id) {
   const clip = await getClip(id);
