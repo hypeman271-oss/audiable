@@ -549,6 +549,10 @@ def _print_banner(port: int) -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    PORT = 8000
+    # PORT defaults to 8000 (the documented dev port) but can be
+    # overridden via env so the Playwright suite can launch on a
+    # separate port (8001) without clashing with a dev server already
+    # running on 8000.
+    PORT = int(os.environ.get("PORT", "8000"))
     _print_banner(PORT)
     uvicorn.run("server:app", host="0.0.0.0", port=PORT, reload=False)

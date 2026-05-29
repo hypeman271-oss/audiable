@@ -58,7 +58,7 @@ less for first-person / close-third prose dominated by pronouns.
 
 ### The improvement gradient
 
-#### Tier 1 — Last-named-speaker + paragraph-aware
+#### Tier 1 — Last-named-speaker + paragraph-aware ~~(deferred)~~ shipped in v62
 
 Single-evening addition. Heuristic:
 
@@ -75,7 +75,16 @@ Expected accuracy: **~75–80%** on standard fiction.
 Code: ~60 lines on top of the existing function. Pure JS, no backend
 changes. Could ship in a single iteration.
 
-#### Tier 2 — Gender-aware pronouns
+**Shipped in v62.** Paragraphs split on `\n\s*\n+`; cursor lives in the
+inner-paragraph scope so it resets at every break. Cursor updates on
+any sentence that names a character (narration counts — establishing
+"John walked in" lets the next "He said hello" inherit). Quoted
+sentences without an explicit name inherit the cursor whether
+attribution is pronoun-based or a continuation quote — no separate
+gate. Fallback to narrator when the cursor is null. Roster order
+breaks ties when two names appear in one sentence.
+
+#### Tier 2 — Gender-aware pronouns ~~(deferred)~~ shipped in v65
 
 Small addition on top of Tier 1. Add an optional `gender` field
 (`"male" | "female" | "they"`) to each character row in the Characters
@@ -90,6 +99,17 @@ Expected accuracy combined with Tier 1: **~85%**.
 
 UI cost: one extra column in the Characters dialog. Maybe one evening on
 top of Tier 1, so two evenings total.
+
+**Shipped in v65.** Schema gains `character.gender` ("" / "male" /
+"female" / "they"). Characters dialog gets a compact `<select>` between
+name and voice (— / He / She / They); mobile layout drops the field
+onto its own row. The segmenter maintains `lastByGender = {male,
+female, they}` alongside the Tier 1 `lastNamedChar`; both reset at
+paragraph boundaries. Quoted sentences without explicit names call
+`_detectAttributionGender()` — which strips `"..." / '...' / "..." /
+'...'` quoted spans BEFORE scanning so pronouns inside the dialogue
+content don't pollute attribution. Pronoun resolution tries the
+gender map first, then falls back to Tier 1, then narrator.
 
 #### Tier 3 — Real coreference resolution (spaCy / neuralcoref)
 
@@ -156,15 +176,44 @@ configuration (provider, model, API key). Characters dialog gets a
 Shorter notes on features that have surfaced in conversation but
 weren't built. Roughly grouped.
 
+### Considered and intentionally deferred
+
+- **Preview translation across voice languages.** Question: "Can we
+  translate the preview text into each voice's language so a German
+  voice speaks the German translation of my English text?" Three viable
+  paths surfaced:
+  - LibreTranslate public API — 2 hrs to ship, free, rate-limited,
+    manuscript leaves the server.
+  - DeepL API — 2 hrs, best quality, 500K char/mo free tier, secret
+    needed, manuscript leaves the server.
+  - Self-hosted LibreTranslate — 4 hrs + Fly volume upgrade (3 GB image
+    won't fit free tier), in-house only.
+
+  Decision (v61 era): **skip it.** The Language filter shipped in v58
+  already lets a single-language author narrow the catalog to their
+  language and ignore the rest. Translation only earns its complexity
+  for multilingual authors or for non-English users auditioning English
+  voices — neither is in the current alpha audience. Revisit if a
+  tester actually asks for it.
+
 ### Author mode features
 
-- **Filler-word callout.** Inline panel below the textarea (Author mode
-  only) showing counts of common crutch words: "just 12, very 8, really
-  5, that 23." Updates live as you type. Pitched and gated behind
-  Author mode but never shipped.
-- **Long-sentence highlighter.** In the reading view, sentences over ~35
-  words get a warm-tinted background. Composes with the karaoke
-  highlight. Pitched but never shipped.
+- ~~**Filler-word callout.**~~ Shipped in v52. Chip strip below the
+  textarea meta line; one pill per crutch word with `word N` (count
+  bolded), top-8 by frequency, sorted desc then alphabetical for
+  stability. Counter uses one pre-built regex with `\b…\b` word
+  boundaries; multi-word entries ("kind of", "sort of") tolerate any
+  internal whitespace. Re-counts inside `updateCounts()` so it updates
+  live with typing. CSS gated by `.author-only` so readers never see it;
+  hidden during reading view and restored on `exitReadingView`.
+- ~~**Long-sentence highlighter.**~~ Shipped in v51. Sentences with
+  word count ≥ 35 (computed at enterReadingView time using the same
+  splitter as the textarea meta) get `data-long-sentence="true"` and a
+  `title` showing the exact count. CSS gated by
+  `body[data-author-mode]` so readers never see it. The `--long-sentence-tint`
+  token differs per theme (soft amber on dark, more saturated orange on
+  light). Rule precedence puts the `.active` karaoke highlight after
+  long-sentence so the accent wins during read-along.
 - ~~**Chapter auto-split on paste.**~~ Shipped in v47. Paste / URL fetch /
   file upload all run `_detectChapters(text)`; two pattern families
   (markdown ATX headings and `Chapter|Part|Book|Section N` line starts
@@ -177,19 +226,37 @@ weren't built. Roughly grouped.
 
 ### Voice browser polish
 
-- **LibriTTS speaker audition wizard.** Auditing 904 anonymous numeric
-  speaker IDs is unrealistic with the current preview button. A guided
-  flow that plays 20-second samples in batches, lets you star ones
-  you like, and ranks speakers by listen-count would be genuinely
-  useful. Could include a curated "starting points" list of widely-
-  liked speaker IDs from the Piper community.
-- **Voice favorites.** Star voices in the catalog and main dropdown.
-  Starred voices float to the top of the picker. A "Favorites" filter
-  chip in the voice browser. Especially helpful once you have LibriTTS
-  installed and want fast access to your 2–3 go-to speakers.
-- **Custom preview text.** Type your own sentence (or paste a paragraph
-  from your manuscript), preview it across multiple voices to compare.
-  Currently the preview button only plays the canned sample sentence.
+- ~~**LibriTTS speaker audition wizard.**~~ Shipped in v70. New
+  "Audition" link-btn in the speaker row opens a paged dialog (6
+  speakers per page). Each row: Speaker N · ▶ play · ★ star · Use.
+  ▶ plays the existing `/api/voices/sample/{id}?speaker=N` proxy
+  sample. ★ persists in `narrative.speakerFavorites = {voiceId: [ids]}`
+  per-voice so multiple multi-speaker voices keep separate shortlists.
+  "Use" sets `speakerEl.value` + dispatches change so the main app
+  picks up the choice. "★ Starred only" filter chip flips between
+  the full 904-range and the starred subset (with empty-state copy
+  when no stars yet). Prev / Next page disabled at the edges. The
+  ranked-by-listen-count and curated "community favorites" ideas
+  are NOT shipped — useful future additions but require data the
+  Piper community would need to surface.
+- ~~**Voice favorites.**~~ Shipped in v50. ★/☆ button on every catalog
+  row toggles; favorites persisted as an ordered array in
+  `narrative.voiceFavorites` (most-recently starred at top). Browser
+  gets a "★ Favorites only" filter chip with live count and empty-state
+  copy. Main voice `<select>` now opens with a "★ Favorites" optgroup
+  at the top when any are starred. Star toggle re-fetches voices and
+  preserves the current selection so a click doesn't yank the user
+  off the voice they're on.
+- ~~**Custom preview text.**~~ Shipped in v56. Slim pill input above
+  the catalog ("Optional: paste your own text to preview…", 300 char
+  cap, Clear button when populated). When non-empty, every ▶ in the
+  catalog routes through `/api/synthesize` instead of the static
+  `/api/voices/sample/{id}` proxy — auditions YOUR text in each voice.
+  Empty input keeps the original canned-sample fast path. Object URLs
+  revoked on stop so blobs don't leak. Multi-speaker voices preview
+  with speaker 0 (per-voice browsing is about the voice family, not the
+  speaker — that picker lives elsewhere). Custom text is preserved
+  across browser opens so you don't retype your manuscript snippet.
 
 ### Library / playback
 
@@ -230,15 +297,22 @@ weren't built. Roughly grouped.
 
 ### Manual / docs
 
-- **Real screenshots.** The current manual uses inline SVG illustrations
-  of UI elements. Replacing them with actual PNG screenshots would
-  feel more polished once the UI is stable. The `<figure>` wrappers
-  in `static/manual.html` are set up so dropping in `<img>` tags is a
-  one-line edit per illustration.
-- **"What's new" log.** A short changelog page summarizing each
-  noteworthy addition by date. Useful if the app is ever shared with
-  others; lets returning users see what's changed without re-reading
-  the whole manual.
+- ~~**Real screenshots.**~~ Solved differently in v53: instead of swapping
+  hand-drawn SVGs for PNGs, we swapped them for *real component markup*
+  using the actual app's CSS classes (`.catalog-voice`, `.player-actions`,
+  `.bookmark-row`, `.clip.current`, `.character-row`). Wrapped in
+  `.manual-demo` (pointer-events:none, framed). Net effect: the manual's
+  illustrations now look pixel-identical to the live app, follow the
+  Light theme automatically, and pick up new chips (skip-forward, ★)
+  whenever the app evolves — no PNG regeneration ever.
+- ~~**"What's new" log.**~~ Shipped in v66. Standalone `whats-new.html`
+  styled with the manual's CSS; entries grouped by version range
+  (newest gets accent-tinted highlight). Settings dialog gains a
+  "What's new →" link with a "NEW" pill that hangs off it until the
+  user opens the changelog. Acknowledgement tracked in
+  `narrative.lastSeenWhatsNew` (integer = cache version); bumping
+  `WHATS_NEW_LATEST` in app.js automatically lights up the badge on
+  next Settings open for every existing tester.
 
 ### Quality-of-life
 
@@ -250,9 +324,19 @@ weren't built. Roughly grouped.
 - **Auto-pause on phone call / notification.** Standard MediaSession
   handles some of this; explicit handling of `interruptionend` could
   make resume cleaner.
-- **Bulk library operations.** Multi-select clips for delete or
-  export. Currently each clip is one × at a time. Useful past ~30
-  clips.
+- ~~**Bulk library operations.**~~ Shipped in v67. "Select" link in
+  the library-tools row flips renderLibrary into multi-select mode:
+  drag-handle slot becomes a `☐ / ☑` checkbox, tapping the card
+  toggles the selection (instead of loading the clip), per-clip
+  reset/edit/delete buttons hide. Tools row swaps to
+  `Cancel · Select all · Export N · Delete N` with live counts.
+  "Select all" picks every clip currently rendered (respects the
+  active search / hide-played filter, since it reads the DOM). Bulk
+  delete uses tap-twice-to-confirm (3 sec armed window, same pattern
+  as Reset stats) so a single misclick can't wipe a chapter run.
+  Bulk export reuses the existing exportLibrary with a new optional
+  `idsFilter` Set — manifest + zip only contain selected clips,
+  presets + libraryOrder still travel along for portability.
 
 ### Tools that aren't features but would help maintenance
 

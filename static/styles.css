@@ -46,6 +46,10 @@
   --danger-border: rgba(255, 124, 124, 0.35);
   /* Dashed border on "Add character" empty CTA. */
   --accent-border-dashed: rgba(124, 156, 255, 0.4);
+  /* Warm amber wash for Author-mode long-sentence highlighting in the
+     reading view. Tuned to read as "warning" without competing with the
+     accent karaoke highlight. */
+  --long-sentence-tint: rgba(255, 200, 60, 0.12);
 }
 
 /* Light theme — cream / warm-white surfaces with deep navy text. Tuned
@@ -84,6 +88,7 @@
   --spinner-ring: rgba(255, 255, 255, 0.4);
   --danger-border: rgba(195, 58, 46, 0.35);
   --accent-border-dashed: rgba(72, 88, 217, 0.4);
+  --long-sentence-tint: rgba(220, 130, 20, 0.16);
 }
 
 * {
@@ -535,6 +540,24 @@ body:not([data-author-mode]) .author-only {
   text-align: center;
 }
 
+/* "NEW" pill that hangs off the "What's new →" link until the user
+   opens the changelog. Inline with the link text so it doesn't take a
+   separate line; flips to display:none when the badge is hidden. */
+.whats-new-badge {
+  display: inline-block;
+  margin: 0 6px 0 4px;
+  padding: 1px 7px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+}
+
+.whats-new-badge[hidden] { display: none; }
+
 .settings-help-link:hover {
   background: var(--accent-tint-2);
 }
@@ -586,13 +609,19 @@ body:not([data-author-mode]) .author-only {
 
 .character-row {
   display: grid;
-  /* name | voice | speaker | × */
-  grid-template-columns: 1fr 1.4fr auto auto;
+  /* name | gender | voice | speaker | × */
+  grid-template-columns: 1fr auto 1.4fr auto auto;
   gap: 6px;
   background: var(--bg-card-2);
   padding: 8px;
   border-radius: 10px;
   align-items: center;
+}
+
+/* Gender select — narrow, just enough for "She" / "They". The compact
+   labels keep the desktop row from getting cramped. */
+.character-row select.character-gender {
+  min-width: 64px;
 }
 
 .character-row input.character-name {
@@ -677,23 +706,39 @@ body:not([data-author-mode]) .author-only {
     border-radius: 0;
   }
   .character-row {
+    /* Mobile: each control on its own line for breathing room.
+       Layout:
+         Row 1: name (full) | × delete (right)
+         Row 2: gender (full)
+         Row 3: voice (full)
+         Row 4: speaker (full) — hidden when num_speakers <= 1 */
     grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
+    grid-template-rows: auto auto auto auto;
     gap: 6px;
   }
   .character-row input.character-name {
     grid-column: 1 / 3;
   }
+  .character-row select.character-gender {
+    grid-column: 1 / 3;
+    grid-row: 2;
+  }
   .character-row select.character-voice {
-    grid-column: 1;
+    grid-column: 1 / 3;
+    grid-row: 3;
   }
   .character-row select.character-speaker {
     grid-column: 1 / 3;
+    grid-row: 4;
   }
   .character-delete {
+    /* Top-right corner of the row — name and delete share row 1; the
+       wider name input occupies most of it via grid-column: 1 / 3 +
+       align-self lets delete float to the right edge. */
     grid-column: 2;
-    grid-row: 2;
+    grid-row: 1;
     justify-self: end;
+    align-self: center;
   }
 }
 
@@ -732,7 +777,14 @@ body:not([data-author-mode]) .author-only {
 
 textarea,
 select,
+input[type="text"],
+input[type="search"],
 input[type="range"] {
+  /* Single global look for the common form controls so a search input
+     never falls back to its default 200-px sizing (the bug that
+     stranded the library search). Individual inputs with explicit
+     overrides (#url-input, #voice-preview-text, .bookmark-note, etc.)
+     win on specificity. */
   width: 100%;
   background: var(--bg-card-2);
   color: var(--fg);
@@ -746,7 +798,9 @@ input[type="range"] {
 }
 
 textarea:focus,
-select:focus {
+select:focus,
+input[type="text"]:focus,
+input[type="search"]:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-tint-3);
 }
@@ -873,6 +927,19 @@ select:focus {
   margin-left: 4px;
 }
 
+/* Long-sentence highlight — Author-mode only. Sentences over the word
+   threshold get a warm amber wash so an author can spot run-on candidates
+   at a glance while listening. Gated by body[data-author-mode] so readers
+   never see it; the data-long-sentence attribute is harmlessly inert when
+   the gate is off. The .active karaoke highlight is defined AFTER this
+   rule so it overrides the amber while a long sentence is being read,
+   keeping the karaoke read clear. */
+body[data-author-mode]
+  .reading-view
+  .sentence[data-long-sentence="true"] {
+  background-color: var(--long-sentence-tint);
+}
+
 .reading-view .sentence.active {
   color: var(--fg);
   background-color: var(--accent-tint-3);
@@ -993,6 +1060,40 @@ select:focus {
   background: var(--danger-tint-soft);
 }
 
+/* ---- Filler-word callout (Author mode only) -------------------------
+   Inline strip of chip-shaped counters below the .meta line: each chip
+   is "word N" with N bolded. Scrolls horizontally on narrow phones so
+   eight tightly-packed chips don't break the layout. */
+.filler-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.filler-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.filler-chip .filler-word {
+  font-weight: 500;
+}
+
+.filler-chip strong {
+  font-weight: 700;
+  color: var(--fg);
+}
+
 /* Saved synthesis presets — horizontal chip scroller. Hidden when empty
    so an unused row doesn't waste vertical space. */
 .presets-list {
@@ -1055,6 +1156,47 @@ select:focus {
    Sits below the main voice select inside the same card. */
 .speaker-row {
   margin-top: 12px;
+}
+
+/* Speaker "chip" — replacement for the native dropdown when the voice
+   has too many speakers to scroll through usefully (e.g. LibriTTS at
+   904). Shows the current speaker + a "change…" affordance; clicking
+   opens the audition wizard. Sized like the dropdown so the row layout
+   doesn't jump when JS swaps between them. */
+.speaker-chip {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 16px;
+  font-family: inherit;
+  cursor: pointer;
+  /* Subtle chevron-style arrow on the right via background-image — same
+     trick the language filter uses to mark a dropdown without the
+     native <select> arrow. */
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--fg-dim) 50%),
+    linear-gradient(135deg, var(--fg-dim) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 14px) 50%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  padding-right: 36px;
+}
+
+.speaker-chip:hover {
+  border-color: var(--accent);
+}
+
+.speaker-chip:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint-3);
 }
 
 .speaker-preview-btn {
@@ -1521,9 +1663,51 @@ button:disabled {
    with every quality-of-life action. */
 .library-tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
+  row-gap: 6px;
   margin-bottom: 10px;
   padding-left: 2px;
+}
+
+/* Select-mode tools row. Bulk Delete reads as destructive (danger color)
+   so the action is obvious — bulk delete is irreversible. */
+.library-tools-select .library-select-delete {
+  color: var(--danger);
+}
+.library-tools-select .library-select-delete:hover:not(:disabled) {
+  color: var(--danger);
+  text-decoration: underline;
+}
+.library-tools-select .link-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---- Multi-select clip styling --------------------------------------
+   In select mode, the drag handle slot is repurposed for a checkbox.
+   Selected clips get an accent ring + tinted bg so it reads at a glance
+   how many you've picked. Tap targets cover the whole row. */
+.clip-select-checkbox {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  font-size: 16px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  border-right: 1px solid var(--border-soft);
+}
+
+.clip.selected {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.clip.selected .clip-select-checkbox {
+  color: var(--accent);
 }
 
 .library-tools .link-btn {
@@ -1862,10 +2046,100 @@ button:disabled {
   display: block;
 }
 
+/* Custom preview text row. Slim input that lives between the filter
+   chips and the catalog list — paste a sentence here and every ▶
+   below auditions THAT text in the voice's voice. */
+.voice-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 0;
+}
+
+#voice-preview-text {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+#voice-preview-text:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint-3);
+}
+
+#voice-preview-text::placeholder {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
+#voice-preview-clear {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+/* Hint that explains the installed-vs-uninstalled behavior of the custom
+   preview path. Only shown when the input has text — otherwise it's
+   noise. Subdued styling so it reads as guidance, not warning. */
+.voice-preview-hint {
+  margin: 6px 16px 0;
+  padding: 8px 12px;
+  background: var(--accent-tint);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+}
+
 .voice-browser-filters {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 6px;
   padding: 8px 16px 0;
+}
+
+/* Language picker — chip-shaped <select> so it sits comfortably next to
+   the Favorites / Installed filter chips. Native dropdown affordance is
+   kept (browser-default arrow) since 30+ languages don't fit a chip row. */
+.voice-language-select {
+  margin-right: auto;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 28px 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  /* Custom caret since appearance: none strips the native one. */
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  outline: none;
+  max-width: 220px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.voice-language-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint-3);
 }
 
 .voice-filter-chip {
@@ -1917,6 +2191,100 @@ button:disabled {
 
 .catalog-group:first-child {
   margin-top: 0;
+}
+
+/* ---- Speaker audition wizard --------------------------------------
+   Same dialog shell as the voice browser; row-level styling is its
+   own thing because the data is just "Speaker N" + 4 controls.
+   Page navigation lives in a bottom strip. */
+.speaker-wizard-subtitle {
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 2px;
+}
+
+.speaker-wizard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+
+.speaker-wizard-num {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  min-width: 0;
+}
+
+.speaker-wizard-play,
+.speaker-wizard-star {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.speaker-wizard-play.playing {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+.speaker-wizard-star {
+  color: var(--fg-dim);
+  border: none;
+  background: transparent;
+  font-size: 18px;
+}
+
+.speaker-wizard-star.starred {
+  color: #ffc83d;
+}
+
+.speaker-wizard-use {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+
+.speaker-wizard-use:hover {
+  background: var(--accent-strong);
+}
+
+.speaker-wizard-nav {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.speaker-wizard-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 13px;
 }
 
 .catalog-voice {
@@ -1974,6 +2342,13 @@ button:disabled {
   background: var(--accent-tint-3);
 }
 
+/* Queued state — set by _installThenPreview while the row's voice is
+   being installed before its preview can play. Looks like .loading but
+   without the cursor-wait (the install button shows the % progress). */
+.catalog-voice-preview.queued {
+  color: var(--fg-dim);
+}
+
 .catalog-voice-preview.playing {
   background: var(--accent);
   color: var(--on-accent);
@@ -2015,6 +2390,21 @@ button:disabled {
   cursor: default;
 }
 
+/* "Keep" pill — shown after an audition install. Reads as actionable
+   (filled accent like the regular "Install" pill) so the user notices
+   they need to commit before closing or the voice will be removed. */
+.catalog-voice-action.keep {
+  background: var(--accent-tint-3);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  cursor: pointer;
+}
+
+.catalog-voice-action.keep:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
 .catalog-voice-action[disabled] {
   opacity: 0.65;
   cursor: wait;
@@ -2054,6 +2444,45 @@ button:disabled {
 .catalog-voice-remove:disabled {
   opacity: 0.5;
   cursor: wait;
+}
+
+/* ★ Favorite button — sits at the left edge of the catalog row. Hollow
+   star (☆) when idle, filled gold star (★) + amber tint when starred.
+   No border at idle so it reads as a tap target, not chrome. */
+.catalog-voice-fav {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  border: none;
+  font-size: 18px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.catalog-voice-fav:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.catalog-voice-fav.starred {
+  /* Gold star reads as "favorited" in both themes — accent doesn't quite
+     convey the "starred" semantics, and a fixed amber is a tiny
+     theme-bleed we're choosing on purpose for clarity. */
+  color: #ffc83d;
+}
+
+.catalog-voice-fav.starred:hover {
+  background: rgba(255, 200, 60, 0.14);
+  color: #f5b800;
 }
 
 @media (max-width: 480px) {

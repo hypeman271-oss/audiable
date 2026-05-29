@@ -186,6 +186,13 @@
           </div>
 
           <a
+            id="settings-whats-new-link"
+            href="/whats-new.html"
+            target="_blank"
+            rel="noopener"
+            class="settings-help-link"
+          >What's new <span class="whats-new-badge" hidden>NEW</span> →</a>
+          <a
             href="/manual.html"
             target="_blank"
             rel="noopener"
@@ -195,8 +202,16 @@
             id="settings-feedback-link"
             href="#"
             class="settings-help-link"
-            aria-label="Send feedback by email"
-          >Send feedback →</a>
+            aria-label="Send feedback via your default mail app"
+          >Send feedback (mail app) →</a>
+          <a
+            id="settings-feedback-gmail-link"
+            href="#"
+            target="_blank"
+            rel="noopener"
+            class="settings-help-link"
+            aria-label="Send feedback via Gmail"
+          >Send feedback (Gmail) →</a>
         </div>
       </dialog>
 
@@ -305,6 +320,17 @@
         <div class="meta">
           <span id="char-count">0 / 50000</span>
         </div>
+
+        <!-- Filler-word callout — Author mode only. Counts common crutch
+             words in the textarea and shows them as a small chip strip.
+             Empty when there's nothing to flag, so a clean draft doesn't
+             waste vertical space. -->
+        <div
+          id="filler-counts"
+          class="filler-counts author-only"
+          hidden
+          aria-label="Common crutch word counts"
+        ></div>
       </section>
 
       <section class="card">
@@ -338,15 +364,36 @@
         <div id="speaker-row" class="speaker-row" hidden>
           <div class="label-row">
             <label for="speaker" class="label">Speaker</label>
-            <button
-              id="speaker-preview-btn"
-              type="button"
-              class="speaker-preview-btn"
-              aria-label="Preview speaker"
-              title="Preview this speaker"
-            >▶</button>
+            <div class="label-row-actions">
+              <button
+                id="speaker-audition-btn"
+                type="button"
+                class="link-btn"
+                aria-label="Open speaker audition wizard"
+              >Audition</button>
+              <button
+                id="speaker-preview-btn"
+                type="button"
+                class="speaker-preview-btn"
+                aria-label="Preview speaker"
+                title="Preview this speaker"
+              >▶</button>
+            </div>
           </div>
+          <!-- Native dropdown for voices with a manageable speaker count
+               (≤20). LibriTTS at 904 hides this in favor of the chip
+               below — chosen by JS in onVoiceChange. -->
           <select id="speaker"></select>
+          <!-- Chip alternative for high-count voices. Displays the
+               current speaker number and opens the audition wizard on
+               click. The native <select> is hidden in that mode. -->
+          <button
+            id="speaker-chip"
+            type="button"
+            class="speaker-chip"
+            hidden
+            aria-label="Open speaker audition wizard"
+          >Speaker 0 — change…</button>
         </div>
 
         <!-- Saved voice + speed + volume combos. Hidden when empty; the
@@ -469,6 +516,19 @@
           autocomplete="off"
         />
         <div class="voice-browser-filters">
+          <select
+            id="voice-language-filter"
+            class="voice-language-select"
+            aria-label="Filter by language"
+          >
+            <option value="">All languages</option>
+          </select>
+          <button
+            id="voice-favorites-toggle"
+            type="button"
+            class="voice-filter-chip"
+            aria-pressed="false"
+          >★ Favorites only</button>
           <button
             id="voice-installed-toggle"
             type="button"
@@ -476,8 +536,87 @@
             aria-pressed="false"
           >Installed only</button>
         </div>
+        <!-- Custom preview text. When empty, ▶ on a row plays the canned
+             HuggingFace sample. When filled, ▶ instead synthesizes this
+             text with the row's voice — paste a sentence from your
+             manuscript, audition voices on YOUR text. -->
+        <div class="voice-preview-row">
+          <input
+            id="voice-preview-text"
+            type="text"
+            maxlength="300"
+            autocomplete="off"
+            placeholder="Optional: paste your own text to preview…"
+          />
+          <button
+            id="voice-preview-clear"
+            type="button"
+            class="link-btn"
+            aria-label="Clear preview text"
+            hidden
+          >Clear</button>
+        </div>
+        <!-- Behavior hint shown only when the preview text is non-empty.
+             ▶ on installed voices synthesizes your text directly. ▶ on
+             uninstalled voices runs the standard install flow first
+             (live percentage in the Install pill), auto-plays your
+             text, then the pill turns into "Keep" — the install
+             auto-reverts when you close the dialog unless you commit. -->
+        <div id="voice-preview-hint" class="voice-preview-hint" hidden>
+          Tap ▶ on any voice to hear your text. Uninstalled voices
+          install temporarily (~30–130 MB), play, then auto-remove on
+          close — tap <strong>Keep</strong> to commit one you like.
+        </div>
         <div id="voice-browser-list" class="voice-browser-list">
           <div class="voice-browser-loading">Loading catalog…</div>
+        </div>
+      </dialog>
+
+      <!-- Speaker audition wizard. Surfaces 6 speakers per page for the
+           current multi-speaker voice (LibriTTS = 904), with star
+           persistence and a "Use" action that drops a chosen speaker
+           straight into the speaker picker. Standalone dialog so it can
+           overlay either the main app or the voice browser. -->
+      <dialog id="speaker-wizard" class="voice-browser speaker-wizard">
+        <div class="voice-browser-head">
+          <div>
+            <h2>Audition speakers</h2>
+            <div class="speaker-wizard-subtitle" id="speaker-wizard-subtitle">
+              Speakers 1–6 of 0
+            </div>
+          </div>
+          <button
+            id="speaker-wizard-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close speaker wizard"
+          >Close</button>
+        </div>
+        <div class="voice-browser-filters">
+          <button
+            id="speaker-wizard-starred"
+            type="button"
+            class="voice-filter-chip"
+            aria-pressed="false"
+          >★ Starred only (0)</button>
+        </div>
+        <div
+          id="speaker-wizard-list"
+          class="voice-browser-list speaker-wizard-list"
+        ></div>
+        <div class="speaker-wizard-nav">
+          <button
+            id="speaker-wizard-prev"
+            type="button"
+            class="link-btn"
+            aria-label="Previous page"
+          >← Prev</button>
+          <button
+            id="speaker-wizard-next"
+            type="button"
+            class="link-btn"
+            aria-label="Next page"
+          >Next →</button>
         </div>
       </dialog>
 
@@ -532,7 +671,8 @@
           placeholder="Search by title, text, or voice…"
           autocomplete="off"
         />
-        <div class="library-tools">
+        <!-- Idle tools (visible outside select mode) -->
+        <div class="library-tools" id="library-tools-idle">
           <button
             id="library-export"
             type="button"
@@ -552,12 +692,43 @@
             aria-pressed="false"
             aria-label="Hide clips you've finished"
           >Hide played</button>
+          <button
+            id="library-select"
+            type="button"
+            class="link-btn"
+            aria-label="Enter multi-select mode for bulk delete or export"
+          >Select</button>
           <input
             id="library-import-file"
             type="file"
             accept=".zip,application/zip,application/x-zip-compressed"
             hidden
           />
+        </div>
+        <!-- Select-mode tools (visible only while choosing clips) -->
+        <div class="library-tools library-tools-select" id="library-tools-select" hidden>
+          <button
+            id="library-select-cancel"
+            type="button"
+            class="link-btn"
+          >Cancel</button>
+          <button
+            id="library-select-all"
+            type="button"
+            class="link-btn"
+          >Select all</button>
+          <button
+            id="library-select-export"
+            type="button"
+            class="link-btn"
+            disabled
+          >Export 0</button>
+          <button
+            id="library-select-delete"
+            type="button"
+            class="link-btn library-select-delete"
+            disabled
+          >Delete 0</button>
         </div>
         <div id="library-list" class="library-list"></div>
       </section>

@@ -1,0 +1,14 @@
+{
+  "name": "narrative-tests",
+  "private": true,
+  "description": "End-to-end Playwright smoke + regression tests for Narrative. The app itself is Python — this exists only so npx + Playwright have a place to live.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

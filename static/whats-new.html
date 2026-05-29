@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1020" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf4e3" />
+    <title>Narrative — What's new</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script>
+      // Same theme-boot block as the app + manual. Prevents a dark-flash
+      // for light-mode users who land here from the in-app link.
+      (function () {
+        try {
+          var pref = localStorage.getItem("narrative.theme") || "auto";
+          if (!["auto", "dark", "light"].includes(pref)) pref = "auto";
+          var resolved =
+            pref === "auto"
+              ? (matchMedia("(prefers-color-scheme: light)").matches
+                  ? "light"
+                  : "dark")
+              : pref;
+          if (resolved === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        } catch (_) {}
+      })();
+    </script>
+    <style>
+      /* Reuse the manual's typography. The few page-specific tweaks live
+         here so manual.html stays focused on documentation. */
+      body { padding-bottom: 80px; }
+      .manual {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px 18px 80px;
+        padding-bottom: calc(80px + env(safe-area-inset-bottom));
+      }
+      .manual h1 {
+        font-size: 28px;
+        margin: 0;
+        background: linear-gradient(120deg, var(--hero-grad-start), var(--accent));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .manual .lede {
+        color: var(--fg-dim);
+        font-size: 14px;
+        margin: 4px 0 28px;
+      }
+      .back-link {
+        display: inline-block;
+        margin-bottom: 14px;
+        color: var(--accent);
+        font-size: 13px;
+        text-decoration: none;
+      }
+      .back-link:hover { text-decoration: underline; }
+
+      /* Each release block. The version stamp + theme group are visually
+         tied; the body bullets describe what the user sees. */
+      .release {
+        margin: 28px 0;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .release:last-child {
+        border-bottom: none;
+      }
+      .release-head {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+      }
+      .release-version {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      .release-tagline {
+        font-size: 14px;
+        color: var(--fg-dim);
+        font-style: italic;
+      }
+      .release ul {
+        padding-left: 22px;
+        margin: 8px 0 0;
+      }
+      .release li {
+        margin-bottom: 6px;
+        line-height: 1.55;
+        font-size: 14px;
+      }
+      .release li strong { color: var(--fg); }
+
+      .release-newest {
+        background: var(--accent-tint);
+        border-left: 3px solid var(--accent);
+        padding: 14px 18px 18px;
+        border-radius: 0 10px 10px 0;
+      }
+
+      .footer-cta {
+        margin-top: 40px;
+        padding: 16px 18px;
+        background: var(--bg-card);
+        border-radius: 10px;
+        font-size: 13.5px;
+        color: var(--fg-dim);
+        line-height: 1.6;
+      }
+      .footer-cta a {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .footer-cta a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <main class="manual">
+      <a href="/" class="back-link">← Back to Narrative</a>
+
+      <h1>What's new</h1>
+      <p class="lede">
+        Notable changes shipped since the start of the alpha. Newest at
+        the top. Build versions track the service-worker cache so you
+        can tell what you're running by checking
+        <strong>Settings → Send feedback</strong> (the build line in
+        the auto-context).
+      </p>
+
+      <!-- ============================================================= -->
+      <article class="release release-newest">
+        <div class="release-head">
+          <span class="release-version">v65</span>
+          <span class="release-tagline">Author — smarter dialogue routing</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Gender-aware character detection.</strong> The
+            Characters dialog now has a He / She / They column. When
+            you've set it, lines with pronoun-only attribution
+            (<em>"How are you?" she asked.</em>) route to the right
+            character even when the named speaker is several sentences
+            back. ~85% accuracy on mixed-gender scenes, up from ~75%.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v62 – v64</span>
+          <span class="release-tagline">Bug fixes + dialogue v1</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Send feedback works again.</strong> The button was
+            silently broken by a URI encoding bug — every alpha tester
+            who tried it just saw nothing happen. Now it opens your
+            default mail app, copies the address to your clipboard as
+            a fallback, and shows a confirmation in the status line.
+          </li>
+          <li>
+            <strong>Send feedback (Gmail) →</strong> separate link for
+            when your OS default mail app is something you don't
+            actually check.
+          </li>
+          <li>
+            <strong>Tier 1 character detection.</strong> Paragraph-aware
+            speaker cursor. <em>"He said hello"</em> now correctly
+            attributes when the named speaker (<em>"John walked in."</em>)
+            was in the previous sentence — and the cursor resets at every
+            paragraph break so a new speaker doesn't inherit the old one.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v56 – v61</span>
+          <span class="release-tagline">Voice browser — audition voices on your own text</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Custom preview text.</strong> Paste a sentence from
+            your manuscript above the catalog. Tap ▶ on any voice to
+            hear <em>that</em> sentence in <em>that</em> voice —
+            installed or not.
+          </li>
+          <li>
+            <strong>Auditions are temporary.</strong> Tapping ▶ on an
+            uninstalled voice installs it just long enough to preview
+            your text. The Install pill turns into a "Keep" button —
+            tap it to commit, or close the dialog and the install
+            auto-reverts. Try voices freely without filling up disk.
+          </li>
+          <li>
+            <strong>Language filter.</strong> Drop-down above the
+            catalog narrows ~160 voices to just the ones in your
+            language. Each Piper voice only speaks the language it was
+            trained on; this hides the rest.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v53 – v55</span>
+          <span class="release-tagline">Manual rewrite</span>
+        </div>
+        <ul>
+          <li>
+            The illustrations in the manual are now <strong>real app
+            components</strong>, not hand-drawn approximations. They
+            inherit the live theme, update automatically when the app
+            evolves, and won't drift out of date.
+          </li>
+          <li>
+            The page-layout diagram at the top is now a live mini-app
+            with side-callouts explaining what each card is for.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v50 – v52</span>
+          <span class="release-tagline">Author — writing-health signals</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Filler-word callout</strong> — live chip strip below
+            the textarea shows counts of <em>just / very / really / that /
+            kind of</em> etc. Top 8 by frequency. Author mode only.
+          </li>
+          <li>
+            <strong>Long-sentence highlighter</strong> — sentences over
+            35 words get a warm amber wash in the reading view, so you
+            can see run-on candidates while you listen back. Author
+            mode only.
+          </li>
+          <li>
+            <strong>Voice favorites (★).</strong> Star voices you like;
+            they float to the top of the main picker in a "★ Favorites"
+            group, and a "★ Favorites only" filter chip narrows the
+            catalog.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v46 – v49</span>
+          <span class="release-tagline">Reader polish</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Light theme.</strong> Settings → Theme: Auto / Dark
+            / Light. Auto follows your system. Light uses a warm cream
+            palette tuned for daytime / outdoor reading.
+          </li>
+          <li>
+            <strong>Chapter auto-split on paste.</strong> Paste a book
+            with <em>Chapter N</em> headings (or markdown <code># Chapter</code>
+            headings) and a banner offers to split it into separate
+            clips. Tap Split, click Generate once, the rest auto-continue
+            in sequence — each chapter saved with its heading as the
+            title.
+          </li>
+          <li>
+            <strong>5-second skip-forward chip</strong> — the matching
+            half of the existing ↶5s back. The full pair: ↶5s · 5s↷.
+          </li>
+          <li>
+            <strong>Listen stats in Settings.</strong> Today / this week
+            / all-time playback time, top voice, most-listened clip.
+            Reset on demand.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v45</span>
+          <span class="release-tagline">Mobile parity</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Long-press tooltips.</strong> Every button with a
+            <code>title</code> attribute (which on desktop appears as
+            a hover hint) now surfaces the same hint on a ~500 ms hold
+            on touch devices. Mobile users finally get the same
+            affordance as desktop.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <div class="footer-cta">
+        Found a bug or want to suggest a feature? Use
+        <strong>Settings → Send feedback</strong> in the app —
+        the auto-context (build version, current clip, user agent)
+        helps triage way faster than a free-form report.
+      </div>
+    </main>
+  </body>
+</html>
