@@ -126,6 +126,12 @@ const settingsBtn = $("settings-btn");
 const settingsDialog = $("settings-dialog");
 const settingsClose = $("settings-close");
 const authorModeToggle = $("author-mode-toggle");
+const settingsFeedbackLink = $("settings-feedback-link");
+
+// Alpha feedback inbox — mailto links pre-fill subject + auto-context +
+// the user's report and target this address. Update before any deploy
+// that changes ownership.
+const FEEDBACK_EMAIL = "bachatadonis@gmail.com";
 const clearBtn = $("clear-btn");
 const pasteUrlBtn = $("paste-url-btn");
 const urlRow = $("url-row");
@@ -170,6 +176,10 @@ const synthProgress = $("synth-progress");
 // Set by generate() and loadClip(); used by the progress-save throttle to
 // know which library row to update with currentTime.
 let _currentClipId = null;
+// Voice that the currently-loaded clip was synthesized with. Used by the
+// listen-stats accumulator so the "top voice" tally reflects what the
+// user actually heard, not whatever the voice picker happens to show.
+let _currentPlayingVoiceId = null;
 // Wall-clock timestamp of the last progress save; throttles timeupdate-driven
 // IndexedDB writes to roughly once per PROGRESS_SAVE_INTERVAL_MS.
 let _lastProgressSaveAt = 0;
@@ -199,8 +209,98 @@ function setAuthorMode(on) {
 // Apply current setting at boot — survives reloads and PWA reinstalls.
 setAuthorMode(isAuthorMode());
 
+// ---- Theme (auto / dark / light) ---------------------------------------
+// The data-theme attribute on <html> drives a separate token block in
+// styles.css that re-colors the whole UI. "auto" follows prefers-color-
+// scheme; an inline boot script in index.html applies the saved choice
+// before paint so testers don't see a dark→light flash on light mode.
+const THEME_KEY = "narrative.theme";
+const VALID_THEMES = ["auto", "dark", "light"];
+
+function getThemePref() {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return VALID_THEMES.includes(v) ? v : "auto";
+  } catch { return "auto"; }
+}
+
+function resolveTheme(pref) {
+  if (pref === "auto") {
+    return matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
+  }
+  return pref;
+}
+
+function applyTheme(pref) {
+  const resolved = resolveTheme(pref);
+  if (resolved === "light") {
+    document.documentElement.setAttribute("data-theme", "light");
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
+  // Keep iOS / Android browser chrome in sync. index.html ships two
+  // media-keyed theme-color tags that handle the Auto case for free.
+  // For explicit Dark/Light, prepend an unmediated override so it wins
+  // (browsers use the first applicable theme-color in document order).
+  const head = document.head;
+  let override = head.querySelector('meta[name="theme-color"][data-narrative]');
+  if (pref === "auto") {
+    if (override) override.remove();
+  } else {
+    if (!override) {
+      override = document.createElement("meta");
+      override.setAttribute("name", "theme-color");
+      override.setAttribute("data-narrative", "");
+      head.insertBefore(override, head.firstChild);
+    }
+    override.setAttribute(
+      "content",
+      resolved === "light" ? "#faf4e3" : "#0b1020"
+    );
+  }
+}
+
+function setTheme(pref) {
+  if (!VALID_THEMES.includes(pref)) pref = "auto";
+  try { localStorage.setItem(THEME_KEY, pref); } catch {}
+  applyTheme(pref);
+}
+
+// Re-apply on system theme change ONLY when the user has chosen auto;
+// otherwise their explicit pick wins.
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  if (getThemePref() === "auto") applyTheme("auto");
+});
+
+// Wire the three radios. Reflecting current pref happens when the dialog
+// opens (below) so the checked state always matches what's saved.
+document
+  .querySelectorAll('.theme-picker input[name="theme"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.checked) setTheme(radio.value);
+    });
+  });
+
+// Boot-time apply. The inline <head> script handles the pre-paint case;
+// this is a belt-and-suspenders for browsers that ran past the inline
+// script with a stale value (rare).
+applyTheme(getThemePref());
+
 settingsBtn.addEventListener("click", () => {
   authorModeToggle.checked = isAuthorMode();
+  // Reflect current theme pref into the radios so the open dialog always
+  // shows the right selection even if the user switched in another tab.
+  const pref = getThemePref();
+  document
+    .querySelectorAll('.theme-picker input[name="theme"]')
+    .forEach((r) => { r.checked = r.value === pref; });
+  // Refresh stats so they reflect listening that happened since the
+  // dialog was last opened. _renderStatsPanel resolves a few lookups
+  // (voice display name, clip title) so it's async.
+  _renderStatsPanel();
   settingsDialog.showModal();
 });
 
@@ -211,6 +311,41 @@ authorModeToggle.addEventListener("change", () => {
   // Recompute the textarea meta line so word count + time estimate
   // appear / disappear immediately when the toggle flips.
   updateCounts();
+});
+
+// Alpha feedback: open the user's mail client with subject + body pre-filled,
+// including auto-context that's annoying for them to type but useful for
+// triage. Falls back gracefully if no mail client is configured (the link
+// just does nothing, and they can copy-paste the address from the dialog).
+settingsFeedbackLink.addEventListener("click", async (e) => {
+  e.preventDefault();
+  const ctx = [
+    `URL:       ${location.href}`,
+    `Build:     ${(await caches.keys()).find((k) => k.startsWith("narrative-shell")) || "(no SW cache)"}`,
+    `UA:        ${navigator.userAgent}`,
+    `Window:    ${window.innerWidth}×${window.innerHeight}`,
+    `Screen:    ${screen.width}×${screen.height}`,
+    `Author:    ${isAuthorMode() ? "on" : "off"}`,
+    `Playing:   ${_currentClipId ? `clip ${_currentClipId}` : "(no clip loaded)"}`,
+    `When:      ${new Date().toISOString()}`,
+  ].join("\n");
+  const subject = "Narrative alpha feedback";
+  const body =
+    "What were you doing?\n" +
+    "\n\n" +
+    "What did you expect to happen?\n" +
+    "\n\n" +
+    "What actually happened?\n" +
+    "\n\n" +
+    "(Screenshot welcome — attach to this email)\n" +
+    "\n" +
+    "---\n" +
+    "Auto-context (don't edit — helps me debug):\n" +
+    ctx;
+  window.location.href =
+    `mailto:${encodeURIComponent(FEEDBACK_EMAIL)}` +
+    `?subject=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(body)}`;
 });
 
 // ---- Streaming playback state -------------------------------------------
@@ -493,6 +628,259 @@ playerEl.addEventListener("timeupdate", () => {
 
 _updateAbBtn();
 
+// ---- Listen statistics --------------------------------------------------
+// Buckets listen seconds by day, voice, and clip. Drives the Settings
+// stats panel ("Today / This week / All-time / Top voice / Most listened").
+// All wall-clock at 1× speed equivalent: we add playerEl.currentTime
+// deltas while playing, so a 23-minute audiobook listened at 1.5× counts
+// as ~15 minutes — the "how much content you got through" view, not the
+// "how long you were doing it" view. The former is what users care about.
+const STATS_KEY = "narrative.stats";
+const STATS_SCHEMA = 1;
+
+function _emptyStats() {
+  return { schema: STATS_SCHEMA, daily: {}, voices: {}, clips: {}, total: 0 };
+}
+
+function _loadStats() {
+  try {
+    const raw = localStorage.getItem(STATS_KEY);
+    if (!raw) return _emptyStats();
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.schema !== STATS_SCHEMA) return _emptyStats();
+    return {
+      schema: STATS_SCHEMA,
+      daily: parsed.daily || {},
+      voices: parsed.voices || {},
+      clips: parsed.clips || {},
+      total: Number(parsed.total) || 0,
+    };
+  } catch {
+    return _emptyStats();
+  }
+}
+
+let _stats = _loadStats();
+let _statsDirty = false;
+let _lastListenTime = -1; // playerEl.currentTime at last accumulator tick
+
+function _flushStats() {
+  if (!_statsDirty) return;
+  try { localStorage.setItem(STATS_KEY, JSON.stringify(_stats)); } catch {}
+  _statsDirty = false;
+}
+
+function _todayKey() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Prune day buckets older than 60 days so the JSON blob can't grow without
+// bound. All-time total + voices + clips are not pruned (those are
+// cumulative). Returns the pruned stats.
+function _pruneOldDays(stats) {
+  const cutoff = Date.now() - 60 * 24 * 60 * 60 * 1000;
+  for (const key of Object.keys(stats.daily)) {
+    const parsed = Date.parse(key + "T00:00:00");
+    if (isFinite(parsed) && parsed < cutoff) delete stats.daily[key];
+  }
+  return stats;
+}
+
+function _recordListenDelta(deltaSec, clipId, voiceId) {
+  // Sanity gate: clip negative deltas (seek backwards), oversized deltas
+  // (resume after pause, tab backgrounded), and tiny noise. Tab throttling
+  // can fire timeupdate after a long pause — the resume looks like a
+  // huge jump; we don't want to credit the user for the time they were
+  // away.
+  if (!isFinite(deltaSec) || deltaSec <= 0 || deltaSec > 2) return;
+  const today = _todayKey();
+  _stats.daily[today] = (_stats.daily[today] || 0) + deltaSec;
+  _stats.total += deltaSec;
+  if (voiceId) {
+    _stats.voices[voiceId] = (_stats.voices[voiceId] || 0) + deltaSec;
+  }
+  if (clipId != null) {
+    const k = String(clipId);
+    _stats.clips[k] = (_stats.clips[k] || 0) + deltaSec;
+  }
+  _statsDirty = true;
+}
+
+playerEl.addEventListener("play", () => {
+  // Reset the delta tracker so the first post-play tick doesn't credit
+  // a giant jump from wherever the head was last.
+  _lastListenTime = playerEl.currentTime || 0;
+});
+
+playerEl.addEventListener("pause", () => {
+  _lastListenTime = -1;
+  _flushStats();
+});
+
+playerEl.addEventListener("seeking", () => {
+  // Discard the in-progress delta — the next post-seek timeupdate will
+  // re-anchor _lastListenTime to the new position.
+  _lastListenTime = -1;
+});
+
+playerEl.addEventListener("timeupdate", () => {
+  if (playerEl.paused) return;
+  const now = playerEl.currentTime || 0;
+  if (_lastListenTime < 0) {
+    _lastListenTime = now;
+    return;
+  }
+  const delta = now - _lastListenTime;
+  _lastListenTime = now;
+  // Attribute to the voice the loaded clip was synthesized with; the
+  // picker can drift mid-playback if the user starts tweaking for the
+  // next clip while the current one plays.
+  _recordListenDelta(delta, _currentClipId, _currentPlayingVoiceId);
+});
+
+// Periodic flush so the user can close the tab and not lose listen time.
+setInterval(_flushStats, 10_000);
+window.addEventListener("beforeunload", _flushStats);
+window.addEventListener("pagehide", _flushStats);
+
+function _statsTodaySec() {
+  return _stats.daily[_todayKey()] || 0;
+}
+
+function _statsWeekSec() {
+  let total = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    total += _stats.daily[k] || 0;
+  }
+  return total;
+}
+
+function _statsTopVoiceId() {
+  let best = null;
+  let bestSec = 0;
+  for (const [k, v] of Object.entries(_stats.voices)) {
+    if (v > bestSec) { bestSec = v; best = k; }
+  }
+  return best;
+}
+
+function _statsTopClipId() {
+  let best = null;
+  let bestSec = 0;
+  for (const [k, v] of Object.entries(_stats.clips)) {
+    if (v > bestSec) { bestSec = v; best = k; }
+  }
+  return best;
+}
+
+// Format seconds as "12 min" / "3h 20m" / "1d 4h" — punchier than
+// formatTime's M:SS for stats that span hours / days.
+function _formatStatsDuration(sec) {
+  sec = Math.round(sec || 0);
+  if (sec < 60) return `${sec} sec`;
+  if (sec < 3600) return `${Math.round(sec / 60)} min`;
+  if (sec < 24 * 3600) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.round((sec % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  const d = Math.floor(sec / (24 * 3600));
+  const h = Math.round((sec % (24 * 3600)) / 3600);
+  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+}
+
+function _resetStats() {
+  _stats = _emptyStats();
+  _statsDirty = true;
+  _flushStats();
+  _lastListenTime = -1;
+}
+
+// Stats panel inside the Settings dialog. Pulls the latest numbers,
+// resolves voice display name + top clip title, and hides the bottom
+// extras + Reset button until there's actually been some listening.
+async function _renderStatsPanel() {
+  const todayEl = $("stats-today");
+  const weekEl = $("stats-week");
+  const totalEl = $("stats-total");
+  const topVoiceEl = $("stats-top-voice");
+  const topClipEl = $("stats-top-clip");
+  const extrasEl = $("stats-extras");
+  const emptyEl = $("stats-empty");
+  const resetBtn = $("stats-reset");
+
+  todayEl.textContent = _formatStatsDuration(_statsTodaySec());
+  weekEl.textContent = _formatStatsDuration(_statsWeekSec());
+  totalEl.textContent = _formatStatsDuration(_stats.total);
+
+  const hasAny = _stats.total > 0;
+  emptyEl.hidden = hasAny;
+  extrasEl.hidden = !hasAny;
+  resetBtn.hidden = !hasAny;
+  if (!hasAny) return;
+
+  // Top voice — display name preferred over the raw voice_id slug. The
+  // <select> options carry friendly labels; fall back to the id if it's
+  // not in the picker (e.g. an installed voice that was removed).
+  const topVoiceId = _statsTopVoiceId();
+  if (topVoiceId) {
+    let label = topVoiceId;
+    const opt = voiceEl.querySelector(`option[value="${CSS.escape(topVoiceId)}"]`);
+    if (opt && opt.textContent) label = opt.textContent;
+    topVoiceEl.textContent = label;
+  } else {
+    topVoiceEl.textContent = "—";
+  }
+
+  // Top clip — resolve via IndexedDB. If it was deleted, fall through.
+  const topClipId = _statsTopClipId();
+  if (topClipId) {
+    try {
+      const clip = await getClip(Number(topClipId));
+      topClipEl.textContent = clip?.title || `Clip ${topClipId}`;
+    } catch {
+      topClipEl.textContent = `Clip ${topClipId}`;
+    }
+  } else {
+    topClipEl.textContent = "—";
+  }
+}
+
+// Reset stats. No native confirm() — keeps the dialog focused. Click the
+// button once to arm ("Tap again to confirm"), again within 4 sec to wipe.
+(() => {
+  const resetBtn = $("stats-reset");
+  let armed = false;
+  let armTimer = null;
+  const original = "Reset stats";
+  resetBtn.addEventListener("click", () => {
+    if (!armed) {
+      armed = true;
+      resetBtn.textContent = "Tap again to confirm";
+      resetBtn.style.color = "var(--danger)";
+      armTimer = setTimeout(() => {
+        armed = false;
+        resetBtn.textContent = original;
+        resetBtn.style.color = "";
+      }, 4000);
+      return;
+    }
+    clearTimeout(armTimer);
+    armed = false;
+    resetBtn.textContent = original;
+    resetBtn.style.color = "";
+    _resetStats();
+    _renderStatsPanel();
+  });
+})();
+
 // ---- Bookmarks ----------------------------------------------------------
 // Drop a timestamp on the currently-loaded clip while you're listening.
 // Each bookmark gets an optional note (typed inline, no modal — the
@@ -658,10 +1046,11 @@ async function renderBookmarks() {
 
 bookmarkAddBtn.addEventListener("click", addBookmarkAtCurrentTime);
 
-// ---- 5-second skip-back -------------------------------------------------
-// Quick recovery for "I zoned out for a moment." Separate from the
-// MediaSession sentence-skip on the lock screen (that one re-plays the
-// whole sentence, which is overkill when you just missed a word).
+// ---- 5-second skip-back / skip-forward ----------------------------------
+// Quick recovery for "I zoned out for a moment" + its mirror for "okay
+// I got that, move me along." Separate from the MediaSession sentence
+// skip on the lock screen (that one jumps a whole sentence, which is
+// overkill when you just missed a word).
 skipBackBtn.addEventListener("click", () => {
   // Use seekToTime so streaming mode + combined-WAV mode are both handled,
   // and the math is in terms of the virtual timeline (not whatever
@@ -669,6 +1058,116 @@ skipBackBtn.addEventListener("click", () => {
   const here = virtualTime();
   seekToTime(Math.max(0, here - 5));
 });
+
+const skipForwardBtn = $("skip-forward-btn");
+skipForwardBtn.addEventListener("click", () => {
+  // seekToTime already clamps to playerEl.duration on the way out, so
+  // overshooting the end is a no-op rather than an error.
+  const here = virtualTime();
+  seekToTime(here + 5);
+});
+
+// ---- Sticky mini player -------------------------------------------------
+// Shows a slim "now playing" bar at the top of the viewport once the main
+// player card has scrolled off-screen, so play / pause / seek-back-to-
+// player stay one tap away while you're scrolling through the library.
+//
+// Visibility is driven by an IntersectionObserver watching the main player
+// card. The mini player mirrors playerEl state — it doesn't have its own
+// audio. State sync flows: playerEl events → _updateMini*().
+const miniPlayer = $("mini-player");
+const miniPlayPause = $("mini-play-pause");
+const miniInfo = $("mini-info");
+const miniTitleEl = $("mini-title");
+const miniTimeEl = $("mini-time");
+const miniScrollUpBtn = $("mini-scroll-up");
+const miniProgressFill = $("mini-progress-fill");
+
+function _updateMiniPlayerState() {
+  miniPlayPause.textContent = playerEl.paused ? "▶" : "⏸";
+  const cur = virtualTime();
+  // Prefer the cached duration from sentence offsets (works in streaming
+  // mode too), otherwise fall back to playerEl.duration.
+  const dur = isFinite(playerEl.duration) && playerEl.duration > 0
+    ? playerEl.duration
+    : 0;
+  miniTimeEl.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+  if (dur > 0) {
+    const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
+    miniProgressFill.style.width = `${pct}%`;
+  } else {
+    miniProgressFill.style.width = "0%";
+  }
+}
+
+async function _updateMiniPlayerTitle() {
+  if (!_currentClipId) {
+    miniTitleEl.textContent = "Generating…";
+    return;
+  }
+  try {
+    const clip = await getClip(_currentClipId);
+    if (clip) {
+      miniTitleEl.textContent = clip.title || "(untitled)";
+      miniTitleEl.title = clip.title || "";
+    }
+  } catch {}
+}
+
+// IntersectionObserver: slide the mini player in when the main player card
+// has scrolled OFF THE TOP of the viewport — meaning the user has scrolled
+// *past* it. Don't show it when the player is below the viewport (page
+// just loaded and the user hasn't reached the player yet) — otherwise the
+// mini bar covers the Narrative hero + ⚙ Settings button.
+//
+// boundingClientRect.bottom < 0 means the player is entirely above the
+// viewport (scrolled past). bottom > 0 with !isIntersecting means it's
+// below the viewport (not yet reached).
+const _miniObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      const scrolledPast = entry.boundingClientRect.bottom < 0;
+      const shouldShow = !entry.isIntersecting && scrolledPast && !playerCard.hidden;
+      if (shouldShow) {
+        miniPlayer.hidden = false;
+        // Force a layout pass so the browser registers the starting
+        // transform before we toggle data-visible — without this, the
+        // first show-on-page-load skips the slide-in animation.
+        void miniPlayer.offsetHeight;
+        miniPlayer.dataset.visible = "true";
+        _updateMiniPlayerState();
+        _updateMiniPlayerTitle();
+      } else {
+        miniPlayer.dataset.visible = "false";
+        // Wait for the slide-out transition (matches the CSS duration)
+        // before hiding so the bar doesn't pop out abruptly.
+        setTimeout(() => {
+          if (miniPlayer.dataset.visible !== "true") miniPlayer.hidden = true;
+        }, 280);
+      }
+    }
+  },
+  { threshold: 0 }
+);
+_miniObserver.observe(playerCard);
+
+miniPlayPause.addEventListener("click", () => {
+  if (playerEl.paused) playerEl.play().catch(() => {});
+  else playerEl.pause();
+});
+
+// Tap the title block OR the explicit ↑ button to jump back to the full
+// player card. The title block is the bigger hit-target on phone.
+function _scrollToPlayer() {
+  playerCard.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+miniScrollUpBtn.addEventListener("click", _scrollToPlayer);
+miniInfo.addEventListener("click", _scrollToPlayer);
+
+playerEl.addEventListener("timeupdate", _updateMiniPlayerState);
+playerEl.addEventListener("play", _updateMiniPlayerState);
+playerEl.addEventListener("pause", _updateMiniPlayerState);
+playerEl.addEventListener("loadedmetadata", _updateMiniPlayerState);
 
 // ---- Resume position ---------------------------------------------------
 // Per-clip "remember where I left off." Saved into the existing IndexedDB
@@ -1536,6 +2035,7 @@ async function generate() {
             // Track which library row this player is bound to so the
             // progress-save throttle can update the right one.
             _currentClipId = newClipId;
+            _currentPlayingVoiceId = voiceEl.value || null;
             _lastProgressSaveAt = Date.now(); // suppress an immediate redundant save
             saveClip({
               id: newClipId,
@@ -1543,9 +2043,12 @@ async function generate() {
               // had on the original clip so re-narration doesn't blow away
               // a custom title or note. For new clips, fall back to the
               // auto-suggested title.
+              // Chapter queue (if active) supplies the title for new clips
+              // — that's how "Chapter 3: The Crossing" lands in the library
+              // instead of the auto-suggested first-line title.
               title: regenExistingMeta
                 ? regenExistingMeta.title
-                : makeTitle(text),
+                : (_pendingChapterTitle || makeTitle(text)),
               note: regenExistingMeta ? regenExistingMeta.note : "",
               text,
               voiceId: voiceEl.value || null,
@@ -1569,6 +2072,14 @@ async function generate() {
                 // we want to preserve across re-synthesis); for a fresh
                 // clip this just renders the empty list (hidden).
                 renderBookmarks();
+                _updateMiniPlayerTitle();
+                // Consume the pending chapter title now that the save has
+                // landed; the next chapter (if queued) will set its own.
+                _pendingChapterTitle = null;
+                // If we're inside an auto-continuing chapter sequence,
+                // advance to the next one — this loads its text and kicks
+                // off generate() on a short timer. No-op when no queue.
+                _advanceChapterQueue();
               })
               .catch((e) => console.warn("library save failed:", e));
           };
@@ -1641,6 +2152,210 @@ function makeTitle(text) {
   if (!trimmed) return "Narrative";
   return firstLine.length > 60 ? `${trimmed}…` : trimmed;
 }
+
+// ---- Chapter auto-split --------------------------------------------------
+// When a paste / file-load / URL-fetch lands in the textarea, scan for
+// chapter markers. If 2+ are found, surface a banner offering to split
+// the text into separate clips. On Split: chapter 1 goes into the
+// textarea, the rest queue up, generate() picks them off one by one and
+// auto-continues until the queue drains. Single button push, walk away,
+// come back to a fully-narrated book.
+
+const chapterBanner = $("chapter-banner");
+const chapterBannerCount = $("chapter-banner-count");
+const chapterBannerSplit = $("chapter-banner-split");
+const chapterBannerDismiss = $("chapter-banner-dismiss");
+const chapterQueueEl = $("chapter-queue");
+const chapterQueueText = $("chapter-queue-text");
+const chapterQueueCancel = $("chapter-queue-cancel");
+
+let _chapterQueue = [];          // [{title, text}] still to synthesize
+let _chapterTotalCount = 0;      // fixed for the life of the queue
+let _chapterCurrentIndex = 0;    // 1-based; what's loaded in the textarea right now
+let _pendingChapterTitle = null; // consumed by generate() in place of makeTitle
+let _detectedChapters = null;    // hangs around between banner show and Split click
+
+// Try each chapter-marker family in priority order. First family with
+// 2+ matches wins; later families are ignored to avoid double-splitting.
+// Returns null when nothing structured was found.
+function _detectChapters(text) {
+  if (!text || text.length < 400) return null;
+  const lines = text.split(/\r?\n/);
+
+  // Pattern families. Each function maps a line to either null (no
+  // match) or a title string.
+  const families = [
+    // Markdown ATX headings (# / ## / ###).
+    (line) => {
+      const m = line.match(/^(#{1,3})\s+(.+?)\s*#*\s*$/);
+      return m ? m[2].trim() : null;
+    },
+    // "Chapter N" / "CHAPTER 12" / "Chapter One" / "Part 3" — optional
+    // subtitle after a colon, em-dash, period, or just a space.
+    (line) => {
+      const m = line
+        .trim()
+        .match(
+          /^(chapter|part|book|section)\s+([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty)\b[\s.:—–-]*(.*)$/i
+        );
+      if (!m) return null;
+      const word = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      const num = m[2].trim();
+      const subtitle = (m[3] || "").trim();
+      const head = `${word} ${num}`;
+      return subtitle ? `${head}: ${subtitle}` : head;
+    },
+  ];
+
+  for (const match of families) {
+    const hits = [];
+    for (let i = 0; i < lines.length; i++) {
+      const t = match(lines[i]);
+      if (t) hits.push({ lineIdx: i, title: t });
+    }
+    if (hits.length < 2) continue;
+
+    // Build chapters: body of chapter i is lines (hits[i]+1 .. hits[i+1]-1).
+    const chapters = [];
+    for (let h = 0; h < hits.length; h++) {
+      const startLine = hits[h].lineIdx + 1;
+      const endLine = h + 1 < hits.length ? hits[h + 1].lineIdx : lines.length;
+      const body = lines.slice(startLine, endLine).join("\n").trim();
+      // Skip chapters with nothing in them (a stray "Chapter 1" with no
+      // following prose isn't worth a clip — saves the user from a junk
+      // entry in their library).
+      if (body) chapters.push({ title: hits[h].title, text: body });
+    }
+    if (chapters.length < 2) continue;
+
+    // Preamble before chapter 1: if it's shortish, fold into chapter 1.
+    // If it's substantial (likely real prose like a foreword), promote
+    // it to its own segment with an auto-suggested title.
+    const preamble = lines.slice(0, hits[0].lineIdx).join("\n").trim();
+    if (preamble) {
+      if (preamble.length < 800) {
+        chapters[0].text = preamble + "\n\n" + chapters[0].text;
+      } else {
+        chapters.unshift({ title: makeTitle(preamble), text: preamble });
+      }
+    }
+    return chapters;
+  }
+  return null;
+}
+
+function _showChapterBanner(chapters) {
+  _detectedChapters = chapters;
+  chapterBannerCount.textContent =
+    chapters.length === 1 ? "1 chapter" : `${chapters.length} chapters`;
+  chapterBanner.hidden = false;
+}
+
+function _hideChapterBanner() {
+  _detectedChapters = null;
+  chapterBanner.hidden = true;
+}
+
+function _updateChapterQueueUI() {
+  if (_chapterTotalCount <= 0) {
+    chapterQueueEl.hidden = true;
+    return;
+  }
+  chapterQueueEl.hidden = false;
+  const idx = _chapterCurrentIndex;
+  const total = _chapterTotalCount;
+  const nextTitle = _chapterQueue.length > 0 ? _chapterQueue[0].title : null;
+  const head = `Chapter ${idx} of ${total}`;
+  chapterQueueText.textContent = nextTitle
+    ? `${head} · Next: ${nextTitle}`
+    : `${head} · last one`;
+}
+
+function _startChapterQueue(chapters) {
+  if (!chapters || chapters.length < 2) return;
+  _chapterTotalCount = chapters.length;
+  _chapterCurrentIndex = 1;
+  const first = chapters[0];
+  _chapterQueue = chapters.slice(1);
+  _pendingChapterTitle = first.title;
+  textEl.value = first.text;
+  updateCounts();
+  _hideChapterBanner();
+  _updateChapterQueueUI();
+  setStatus(
+    `Chapter 1 of ${_chapterTotalCount} loaded. Click Generate — the rest will auto-continue.`
+  );
+}
+
+// Called from generate()'s save path. If there are more chapters waiting,
+// load the next, set its pending title, and re-fire generate(). Returns
+// true when it advanced (caller can suppress "ready to Play" UI), false
+// when the queue is drained / not active.
+function _advanceChapterQueue() {
+  if (_chapterTotalCount <= 0) return false;
+  if (_chapterQueue.length === 0) {
+    // Last chapter just finished. Wipe state.
+    const done = _chapterTotalCount;
+    _chapterTotalCount = 0;
+    _chapterCurrentIndex = 0;
+    _pendingChapterTitle = null;
+    _updateChapterQueueUI();
+    setStatus(`All ${done} chapters synthesized.`);
+    return false;
+  }
+  const next = _chapterQueue.shift();
+  _chapterCurrentIndex += 1;
+  _pendingChapterTitle = next.title;
+  textEl.value = next.text;
+  updateCounts();
+  _updateChapterQueueUI();
+  // Defer so library re-render / save side effects from the previous
+  // chapter complete before the next synthesis starts.
+  setTimeout(() => generate(), 150);
+  return true;
+}
+
+function _cancelChapterQueue() {
+  if (_chapterTotalCount <= 0) return;
+  _chapterQueue = [];
+  _updateChapterQueueUI();
+  setStatus("Chapter queue cancelled — current chapter will still save.");
+}
+
+// Single entry point for "text just arrived from outside; check it." All
+// three import paths (paste / file upload / URL fetch) call this.
+// Anything past this is likely a markdown doc with subheadings, not a
+// real chapter list — don't pre-suggest cutting it into ~40 clips.
+const MAX_AUTO_DETECT = 30;
+
+function _checkForChapters() {
+  // Don't re-banner if a queue is already running — the user has already
+  // decided to split a chunk and we shouldn't second-guess them.
+  if (_chapterTotalCount > 0) return;
+  const chapters = _detectChapters(textEl.value);
+  if (
+    chapters &&
+    chapters.length >= 2 &&
+    chapters.length <= MAX_AUTO_DETECT
+  ) {
+    _showChapterBanner(chapters);
+  } else {
+    _hideChapterBanner();
+  }
+}
+
+// Paste fires BEFORE the textarea value updates, so defer to a tick.
+textEl.addEventListener("paste", () => {
+  setTimeout(_checkForChapters, 0);
+});
+
+chapterBannerSplit.addEventListener("click", () => {
+  if (_detectedChapters) _startChapterQueue(_detectedChapters);
+});
+
+chapterBannerDismiss.addEventListener("click", _hideChapterBanner);
+
+chapterQueueCancel.addEventListener("click", _cancelChapterQueue);
 
 // ---- Reading view --------------------------------------------------------
 // After Generate, the editable textarea is hidden and the input text is
@@ -1776,6 +2491,18 @@ function clearForNewClip() {
   // Cancel any pending auto-advance — the user is clearly starting fresh.
   _cancelAutoAdvance();
 
+  // Clear text mid-queue also cancels the queue. Otherwise the next
+  // chapter would auto-load into the just-cleared textarea and surprise
+  // the user. Hide the banner too in case a detection was lingering.
+  if (_chapterTotalCount > 0) {
+    _chapterQueue = [];
+    _chapterTotalCount = 0;
+    _chapterCurrentIndex = 0;
+    _pendingChapterTitle = null;
+    _updateChapterQueueUI();
+  }
+  _hideChapterBanner();
+
   // If we were in the reading view, drop back to the textarea so the user
   // can actually type into the (about to be empty) editor.
   if (!readingView.hidden) exitReadingView();
@@ -1787,6 +2514,7 @@ function clearForNewClip() {
   // both look at _currentClipId, so leaving it pointed at the old clip
   // would mean "Save text" silently saves into the wrong row.
   _currentClipId = null;
+  _currentPlayingVoiceId = null;
   _lastProgressSaveAt = 0;
   saveTextBtn.hidden = true;
 
@@ -2877,6 +3605,10 @@ async function loadClip(id) {
   // Bind the player to this clip so the throttled progress-saver knows which
   // library row to update as playback advances.
   _currentClipId = id;
+  // Listen-stats attributes by the clip's stored voice (not the picker,
+  // which can drift while playback continues). Cached here so the
+  // timeupdate accumulator doesn't have to round-trip IDB on every tick.
+  _currentPlayingVoiceId = clip.voiceId || null;
   _lastProgressSaveAt = Date.now();
 
   enterReadingView(clip.text || "");
@@ -2909,6 +3641,9 @@ async function loadClip(id) {
   // bookmarks list appears under the player.
   renderLibrary();
   renderBookmarks();
+  // Keep the mini player's title fresh even when it's currently visible
+  // (e.g. auto-advance fires while the user is scrolled down).
+  _updateMiniPlayerTitle();
 }
 
 libraryClearBtn.addEventListener("click", async () => {
@@ -2992,6 +3727,7 @@ async function fetchFromUrl() {
     exitReadingView();
     textEl.value = data.text || "";
     updateCounts();
+    _checkForChapters();
 
     hideUrlRow();
     const chars = (data.chars || 0).toLocaleString();
@@ -3033,6 +3769,7 @@ uploadInput.addEventListener("change", async (e) => {
     exitReadingView();
     textEl.value = data.text || "";
     updateCounts();
+    _checkForChapters();
 
     const chars = (data.chars || 0).toLocaleString();
     setStatus(`Loaded ${data.filename} · ${chars} chars · ready to Generate`);
@@ -3631,6 +4368,144 @@ voiceBrowserSearch.addEventListener("input", renderVoiceCatalog);
 // Native <dialog> fires "close" both for ESC and for explicit .close() calls.
 // Cleanest place to stop any in-flight preview.
 voiceBrowser.addEventListener("close", stopPreview);
+
+// ---- Long-press tooltips on touch devices ------------------------------
+// Mobile browsers ignore `title` attributes on buttons (no hover state), so
+// every hint we've sprinkled across the UI is desktop-only. This gives touch
+// users the same affordance: hold for ~500ms on any element with a `title`,
+// a tooltip toast appears, and the synthetic click that follows is
+// suppressed so the long-press doesn't also trigger the button.
+(() => {
+  let _tipTimer = null;
+  let _tipStartX = 0;
+  let _tipStartY = 0;
+  let _tipShown = false;
+  let _tipTarget = null;
+  let _tipNode = null;
+  let _tipDismissTimer = null;
+
+  // Pointer is over a coarse input (finger / stylus). Don't bother on a
+  // mouse — browsers already do `title` hover tooltips there.
+  function _isTouch() {
+    return matchMedia("(hover: none), (pointer: coarse)").matches;
+  }
+
+  function _hideTooltip() {
+    if (_tipNode) {
+      _tipNode.remove();
+      _tipNode = null;
+    }
+    if (_tipDismissTimer) {
+      clearTimeout(_tipDismissTimer);
+      _tipDismissTimer = null;
+    }
+  }
+
+  function _showTooltip(target, text) {
+    _hideTooltip();
+    const node = document.createElement("div");
+    node.className = "tooltip-toast";
+    node.textContent = text;
+    document.body.appendChild(node);
+
+    // Position above the target if there's room, else below.
+    const rect = target.getBoundingClientRect();
+    const tipRect = node.getBoundingClientRect();
+    const margin = 8;
+    let top = rect.top - tipRect.height - margin;
+    if (top < 8) top = rect.bottom + margin;
+    let left = rect.left + rect.width / 2 - tipRect.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+    node.style.top = `${Math.round(top)}px`;
+    node.style.left = `${Math.round(left)}px`;
+
+    _tipNode = node;
+    _tipDismissTimer = setTimeout(_hideTooltip, 2500);
+  }
+
+  function _cancelPending() {
+    if (_tipTimer) {
+      clearTimeout(_tipTimer);
+      _tipTimer = null;
+    }
+    _tipTarget = null;
+  }
+
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      if (!_isTouch()) return;
+      if (e.touches.length !== 1) return;
+      const target = e.target.closest("[title]");
+      if (!target) return;
+      // Drag handle owns its own pointer events; don't fight it.
+      if (target.classList.contains("clip-drag")) return;
+      const text = target.getAttribute("title");
+      if (!text) return;
+
+      _cancelPending();
+      _tipShown = false;
+      _tipTarget = target;
+      _tipStartX = e.touches[0].clientX;
+      _tipStartY = e.touches[0].clientY;
+
+      _tipTimer = setTimeout(() => {
+        _tipTimer = null;
+        if (!_tipTarget) return;
+        _showTooltip(_tipTarget, text);
+        _tipShown = true;
+      }, 500);
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!_tipTimer && !_tipShown) return;
+      if (e.touches.length !== 1) {
+        _cancelPending();
+        _hideTooltip();
+        return;
+      }
+      const dx = e.touches[0].clientX - _tipStartX;
+      const dy = e.touches[0].clientY - _tipStartY;
+      // ~10px dead zone; beyond that the user is scrolling or swiping.
+      if (dx * dx + dy * dy > 100) {
+        _cancelPending();
+        if (_tipShown) _hideTooltip();
+        _tipShown = false;
+      }
+    },
+    { passive: true }
+  );
+
+  document.addEventListener("touchend", () => {
+    _cancelPending();
+    // Leave the tooltip visible for its auto-dismiss window so the user can
+    // actually read what they held to see.
+  });
+
+  document.addEventListener("touchcancel", () => {
+    _cancelPending();
+    _hideTooltip();
+    _tipShown = false;
+  });
+
+  // Suppress the synthetic click that follows a successful long-press, so
+  // holding to read the tooltip doesn't also fire the button's action.
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (_tipShown) {
+        e.preventDefault();
+        e.stopPropagation();
+        _tipShown = false;
+      }
+    },
+    true
+  );
+})();
 
 // Register the service worker so the app shell loads offline and the page
 // is installable on the home screen. Service workers only register over

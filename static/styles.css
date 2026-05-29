@@ -1,4 +1,7 @@
 :root {
+  /* Core surface + brand tokens. The light theme block below overrides
+     these — every other color in the file should resolve through here so
+     a single data-theme="light" flip recolors the whole app. */
   --bg: #0b1020;
   --bg-card: #141a30;
   --bg-card-2: #1b2240;
@@ -9,6 +12,78 @@
   --danger: #ff7c7c;
   --radius: 14px;
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+
+  /* Semantic tokens. Tuned per-theme so the dark UI's white-alpha borders
+     become black-alpha in light mode (otherwise everything looks washed
+     out and the cards lose their edges). */
+  --border-soft: var(--border-soft);
+  --border: var(--border);
+  --border-strong: var(--border-strong);
+  --border-emph: var(--border-emph);
+  --scrim: var(--scrim);
+  --glass: var(--glass);
+  --hover-soft: var(--hover-soft);
+  /* Text color for buttons painted with var(--accent) as their fill. In
+     dark mode the accent is light blue, so dark text reads best; in light
+     mode the accent flips to a deeper blue and we want white text on it. */
+  --on-accent: #0b1020;
+  --accent-tint: var(--accent-tint);
+  --accent-tint-2: var(--accent-tint-2);
+  --accent-tint-3: var(--accent-tint-3);
+  --danger-tint: var(--danger-tint);
+  --danger-tint-soft: var(--danger-tint-soft);
+  --bg-gradient-edge: #1c2550;
+  --played-fg: #b9c3eb;
+  --shadow-mini: 0 6px 22px rgba(0, 0, 0, 0.4);
+  --shadow-drag: 0 14px 38px rgba(0, 0, 0, 0.45);
+  --shadow-tooltip: 0 6px 18px rgba(0, 0, 0, 0.45);
+  /* Bright endpoint of the hero H1 text gradient. Pure white reads on
+     the dark bg; light mode needs the accent-strong here instead. */
+  --hero-grad-start: #fff;
+  /* Ring of the spinner inside accent-painted buttons. */
+  --spinner-ring: rgba(11, 16, 32, 0.3);
+  /* Danger border on hover (catalog remove × etc.). */
+  --danger-border: rgba(255, 124, 124, 0.35);
+  /* Dashed border on "Add character" empty CTA. */
+  --accent-border-dashed: rgba(124, 156, 255, 0.4);
+}
+
+/* Light theme — cream / warm-white surfaces with deep navy text. Tuned
+   for daytime / outdoor reading where pure white feels harsh and the
+   dark UI bleaches out under direct sun. */
+:root[data-theme="light"] {
+  --bg: #faf4e3;
+  --bg-card: #ffffff;
+  --bg-card-2: #f1ebd6;
+  --fg: #1a1f33;
+  --fg-dim: #5f667b;
+  --accent: #4858d9;
+  --accent-strong: #2f3eb8;
+  --danger: #c33a2e;
+  --shadow: 0 4px 18px rgba(40, 30, 0, 0.10);
+
+  --border-soft: rgba(20, 25, 50, 0.07);
+  --border: rgba(20, 25, 50, 0.10);
+  --border-strong: rgba(20, 25, 50, 0.14);
+  --border-emph: rgba(20, 25, 50, 0.18);
+  --scrim: rgba(40, 30, 10, 0.35);
+  --glass: rgba(255, 252, 244, 0.92);
+  --hover-soft: rgba(20, 25, 50, 0.05);
+  --on-accent: #ffffff;
+  --accent-tint: rgba(72, 88, 217, 0.08);
+  --accent-tint-2: rgba(72, 88, 217, 0.12);
+  --accent-tint-3: rgba(72, 88, 217, 0.16);
+  --danger-tint: rgba(195, 58, 46, 0.10);
+  --danger-tint-soft: rgba(195, 58, 46, 0.08);
+  --bg-gradient-edge: #f7e6b3;
+  --played-fg: #7d8497;
+  --shadow-mini: 0 4px 14px rgba(40, 30, 0, 0.12);
+  --shadow-drag: 0 10px 26px rgba(40, 30, 0, 0.18);
+  --shadow-tooltip: 0 6px 18px rgba(40, 30, 0, 0.18);
+  --hero-grad-start: #2f3eb8;
+  --spinner-ring: rgba(255, 255, 255, 0.4);
+  --danger-border: rgba(195, 58, 46, 0.35);
+  --accent-border-dashed: rgba(72, 88, 217, 0.4);
 }
 
 * {
@@ -19,7 +94,7 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: radial-gradient(1200px 800px at 80% -10%, #1c2550 0%, var(--bg) 60%) fixed;
+  background: radial-gradient(1200px 800px at 80% -10%, var(--bg-gradient-edge) 0%, var(--bg) 60%) fixed;
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
@@ -32,6 +107,114 @@ body {
   margin: 0 auto;
   padding: 24px 18px 64px;
   padding-bottom: calc(64px + env(safe-area-inset-bottom));
+}
+
+/* ---------- Sticky mini player ---------- */
+/* Slides in from the top when the main player card scrolls off-screen.
+   Hidden by default; an IntersectionObserver flips the data-visible
+   attribute (which then drives the transform). The hidden attribute is
+   also toggled so the bar isn't taking up tab-stops when invisible. */
+.mini-player {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 14px 12px;
+  /* Account for iOS notch / dynamic island. */
+  padding-top: calc(10px + env(safe-area-inset-top));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: var(--shadow-mini);
+  transform: translateY(-100%);
+  transition: transform 0.25s ease;
+}
+
+.mini-player[data-visible="true"] {
+  transform: translateY(0);
+}
+
+.mini-play-pause {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.mini-play-pause:hover {
+  background: var(--accent-strong);
+}
+
+.mini-info {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.mini-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.mini-time {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  margin-top: 1px;
+}
+
+.mini-scroll-up {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--fg-dim);
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0;
+  line-height: 1;
+}
+
+.mini-scroll-up:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mini-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--border-soft);
+}
+
+.mini-progress > div {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  transition: width 0.18s linear;
 }
 
 .hero {
@@ -48,7 +231,7 @@ body {
 .settings-btn {
   flex: 0 0 auto;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--fg-dim);
   font-size: 18px;
@@ -65,7 +248,7 @@ body {
 
 .settings-btn:hover {
   color: var(--accent);
-  background: rgba(124, 156, 255, 0.10);
+  background: var(--accent-tint);
   border-color: var(--accent);
 }
 
@@ -82,7 +265,7 @@ body {
 }
 
 .settings-dialog::backdrop {
-  background: rgba(11, 16, 32, 0.7);
+  background: var(--scrim);
 }
 
 /* Author-mode-only UI is hidden by default; revealed when the body has
@@ -90,6 +273,33 @@ body {
    author-only chrome anywhere in the app with a single class. */
 body:not([data-author-mode]) .author-only {
   display: none !important;
+}
+
+/* Long-press tooltip on touch devices — reads the existing title="..."
+   attribute and surfaces it as a styled toast. Desktop users keep the
+   native hover tooltip; mobile users get this on ~500 ms hold. */
+.tooltip-toast {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-card);
+  color: var(--fg);
+  padding: 9px 13px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-tooltip);
+  pointer-events: none;
+  max-width: 280px;
+  /* So a long label doesn't clip awkwardly. */
+  word-wrap: break-word;
+  animation: tooltipFadeIn 0.18s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .settings-body {
@@ -118,6 +328,152 @@ body:not([data-author-mode]) .author-only {
   min-width: 0;
 }
 
+/* Stacked variant of .settings-toggle for controls that don't fit a single
+   "label + on/off" row — e.g. the three-way theme picker, which needs the
+   description above and the segmented control below. */
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-card-2);
+  border-radius: 10px;
+}
+
+/* Segmented control — three pill-shaped radios in a track. The visually
+   hidden inputs keep keyboard / a11y semantics; the visible <span> is
+   what users actually see and click. */
+.theme-picker {
+  display: flex;
+  background: var(--bg-card);
+  border-radius: 9px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.theme-picker > label {
+  flex: 1;
+  position: relative;
+  cursor: pointer;
+}
+
+.theme-picker > label input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+
+.theme-picker > label span {
+  display: block;
+  text-align: center;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.theme-picker > label input:checked + span {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.theme-picker > label:hover input:not(:checked) + span {
+  color: var(--fg);
+}
+
+.theme-picker > label input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Listen statistics panel ------------------------------------------
+   Read-only card inside Settings. Top row is three big-number cells
+   (Today / Week / All-time); extras live in a stacked label/value list
+   below; Reset stats hangs at the bottom as a quiet link button. */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.stats-cell {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px 8px;
+  text-align: center;
+  min-width: 0;
+}
+
+.stats-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+
+.stats-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--fg);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  /* Keep "12h 34m" on one line on narrow phones. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stats-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.stats-extra-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.stats-extra-label {
+  color: var(--fg-dim);
+  flex: 0 0 auto;
+}
+
+.stats-extra-value {
+  color: var(--fg);
+  font-weight: 600;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.stats-reset-btn {
+  align-self: flex-end;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.stats-reset-btn:hover {
+  color: var(--danger);
+}
+
 .settings-toggle-label strong {
   font-size: 14px;
 }
@@ -136,7 +492,7 @@ body:not([data-author-mode]) .author-only {
   width: 44px;
   height: 26px;
   background: var(--bg-card);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border-emph);
   border-radius: 999px;
   position: relative;
   cursor: pointer;
@@ -163,7 +519,7 @@ body:not([data-author-mode]) .author-only {
 
 .settings-switch:checked::after {
   left: 22px;
-  background: #0b1020;
+  background: var(--on-accent);
 }
 
 .settings-help-link {
@@ -180,7 +536,7 @@ body:not([data-author-mode]) .author-only {
 }
 
 .settings-help-link:hover {
-  background: rgba(124, 156, 255, 0.15);
+  background: var(--accent-tint-2);
 }
 
 @media (max-width: 480px) {
@@ -205,7 +561,7 @@ body:not([data-author-mode]) .author-only {
 }
 
 .characters-dialog::backdrop {
-  background: rgba(11, 16, 32, 0.7);
+  background: var(--scrim);
 }
 
 .characters-body {
@@ -241,7 +597,7 @@ body:not([data-author-mode]) .author-only {
 
 .character-row input.character-name {
   background: var(--bg-card);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
   color: var(--fg);
@@ -258,7 +614,7 @@ body:not([data-author-mode]) .author-only {
 .character-row select {
   background: var(--bg-card);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
   font-family: inherit;
@@ -282,7 +638,7 @@ body:not([data-author-mode]) .author-only {
 
 .character-delete:hover {
   color: var(--danger);
-  background: rgba(255, 124, 124, 0.10);
+  background: var(--danger-tint);
 }
 
 .characters-empty {
@@ -298,7 +654,7 @@ body:not([data-author-mode]) .author-only {
   width: 100%;
   background: transparent;
   color: var(--accent);
-  border: 1px dashed rgba(124, 156, 255, 0.4);
+  border: 1px dashed var(--accent-border-dashed);
   border-radius: 10px;
   padding: 10px;
   font-family: inherit;
@@ -308,7 +664,7 @@ body:not([data-author-mode]) .author-only {
 }
 
 .characters-add-btn:hover {
-  background: rgba(124, 156, 255, 0.08);
+  background: var(--accent-tint);
   border-style: solid;
 }
 
@@ -345,7 +701,7 @@ body:not([data-author-mode]) .author-only {
   margin: 0;
   font-size: 32px;
   letter-spacing: -0.02em;
-  background: linear-gradient(120deg, #fff, var(--accent));
+  background: linear-gradient(120deg, var(--hero-grad-start), var(--accent));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -380,7 +736,7 @@ input[type="range"] {
   width: 100%;
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
   padding: 12px;
   font-size: 16px;
@@ -392,7 +748,7 @@ input[type="range"] {
 textarea:focus,
 select:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.18);
+  box-shadow: 0 0 0 3px var(--accent-tint-3);
 }
 
 .meta {
@@ -417,7 +773,7 @@ select:focus {
      above (textarea / select / input[type="range"] cover most fields). */
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 14px;
@@ -428,7 +784,7 @@ select:focus {
 
 #url-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.18);
+  box-shadow: 0 0 0 3px var(--accent-tint-3);
 }
 
 .url-fetch-btn {
@@ -436,7 +792,7 @@ select:focus {
   padding: 8px 16px;
   border-radius: 10px;
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   font-size: 14px;
   font-weight: 600;
   border: none;
@@ -495,7 +851,7 @@ select:focus {
 .reading-view {
   width: 100%;
   background: var(--bg-card-2);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
   padding: 12px;
   font-size: 16px;
@@ -519,11 +875,122 @@ select:focus {
 
 .reading-view .sentence.active {
   color: var(--fg);
-  background-color: rgba(124, 156, 255, 0.18);
+  background-color: var(--accent-tint-3);
 }
 
 .reading-view .sentence.played {
-  color: #b9c3eb;
+  color: var(--played-fg);
+}
+
+/* ---- Chapter auto-split banner ----------------------------------------
+   Shown after a paste detects 2+ chapter markers. Sits between the
+   textarea and the char-count meta, tinted with the accent color so it
+   reads as an actionable suggestion rather than a status line. */
+.chapter-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-tint-3);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.chapter-banner-msg {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.chapter-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.chapter-banner-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chapter-banner-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chapter-banner-btn.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+.chapter-banner-btn.primary:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+/* ---- Chapter queue pill -----------------------------------------------
+   Visible while a multi-chapter sequence is mid-flight. Shows current /
+   total progress and a × that stops the auto-continue after the current
+   chapter completes. */
+.chapter-queue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 6px 8px 12px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.chapter-queue-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chapter-queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.chapter-queue-cancel {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 999px;
+  font-family: inherit;
+}
+
+.chapter-queue-cancel:hover {
+  color: var(--danger);
+  background: var(--danger-tint-soft);
 }
 
 /* Saved synthesis presets — horizontal chip scroller. Hidden when empty
@@ -543,7 +1010,7 @@ select:focus {
   flex: 0 0 auto;
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 5px 4px 5px 12px;
   font-size: 13px;
@@ -558,7 +1025,7 @@ select:focus {
 }
 
 .preset-chip:hover {
-  background: rgba(124, 156, 255, 0.15);
+  background: var(--accent-tint-2);
   border-color: var(--accent);
 }
 
@@ -581,7 +1048,7 @@ select:focus {
 
 .preset-chip-x:hover {
   color: var(--danger);
-  background: rgba(255, 124, 124, 0.10);
+  background: var(--danger-tint);
 }
 
 /* Speaker picker — only rendered for voices with num_speakers > 1.
@@ -593,7 +1060,7 @@ select:focus {
 .speaker-preview-btn {
   background: var(--bg-card-2);
   color: var(--accent);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   width: 32px;
   height: 32px;
@@ -607,12 +1074,12 @@ select:focus {
 }
 
 .speaker-preview-btn:hover:not(:disabled) {
-  background: rgba(124, 156, 255, 0.18);
+  background: var(--accent-tint-3);
 }
 
 .speaker-preview-btn.playing {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border-color: var(--accent);
   padding: 0;
 }
@@ -717,7 +1184,7 @@ button:active {
 
 button.primary {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
 }
 
 button.primary:hover {
@@ -727,7 +1194,7 @@ button.primary:hover {
 button.secondary {
   background: var(--bg-card);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
 }
 
 button:disabled {
@@ -738,8 +1205,8 @@ button:disabled {
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(11, 16, 32, 0.3);
-  border-top-color: #0b1020;
+  border: 2px solid var(--spinner-ring);
+  border-top-color: var(--on-accent);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -792,9 +1259,37 @@ button:disabled {
 
 .player-actions {
   display: flex;
-  justify-content: flex-end;
   gap: 10px;
   margin-top: 10px;
+  /* Five chips (↶ 5s, 🔖 Bookmark, Sleep, A↔B, 1×) don't fit on a
+     portrait phone screen. Horizontal scroll keeps them all reachable;
+     left-alignment puts the most-used ones (skip-back, bookmark)
+     in view first. */
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  padding-bottom: 4px;
+}
+
+.player-actions > * {
+  /* Don't let chips compress to fit — they each have fixed sizes
+     and the row scrolls instead. */
+  flex-shrink: 0;
+}
+
+/* Slim, themed scrollbar so it doesn't clash with the dark UI. */
+.player-actions::-webkit-scrollbar {
+  height: 4px;
+}
+
+.player-actions::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
+.player-actions::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Compact speed cycle button — chip-style so it sits comfortably next to the
@@ -802,7 +1297,7 @@ button:disabled {
 .speed-btn {
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 13px;
@@ -813,7 +1308,7 @@ button:disabled {
 }
 
 .speed-btn:hover {
-  background: rgba(124, 156, 255, 0.18);
+  background: var(--accent-tint-3);
   border-color: var(--accent);
 }
 
@@ -822,7 +1317,7 @@ button:disabled {
 .ab-loop-btn {
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 13px;
@@ -834,13 +1329,13 @@ button:disabled {
 }
 
 .ab-loop-btn:hover {
-  background: rgba(124, 156, 255, 0.18);
+  background: var(--accent-tint-3);
   border-color: var(--accent);
 }
 
 .ab-loop-btn.active {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -850,7 +1345,7 @@ button:disabled {
 .sleep-btn {
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 13px;
@@ -863,22 +1358,23 @@ button:disabled {
 }
 
 .sleep-btn:hover {
-  background: rgba(124, 156, 255, 0.18);
+  background: var(--accent-tint-3);
   border-color: var(--accent);
 }
 
 .sleep-btn.active {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
 /* Skip-back chip — "I zoned out for a moment" rewind. Same pill shape
    as the other player-action chips. */
-.skip-back-btn {
+.skip-back-btn,
+.skip-forward-btn {
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 13px;
@@ -888,12 +1384,14 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-.skip-back-btn:hover {
-  background: rgba(124, 156, 255, 0.18);
+.skip-back-btn:hover,
+.skip-forward-btn:hover {
+  background: var(--accent-tint-3);
   border-color: var(--accent);
 }
 
-.skip-back-btn:active {
+.skip-back-btn:active,
+.skip-forward-btn:active {
   transform: scale(0.97);
 }
 
@@ -902,7 +1400,7 @@ button:disabled {
 .bookmark-add-btn {
   background: var(--bg-card-2);
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 13px;
@@ -913,7 +1411,7 @@ button:disabled {
 }
 
 .bookmark-add-btn:hover {
-  background: rgba(124, 156, 255, 0.18);
+  background: var(--accent-tint-3);
   border-color: var(--accent);
 }
 
@@ -934,7 +1432,7 @@ button:disabled {
   align-items: center;
   gap: 8px;
   background: var(--bg-card-2);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 4px 4px 4px 0;
 }
@@ -956,7 +1454,7 @@ button:disabled {
 }
 
 .bookmark-time:hover {
-  background: rgba(124, 156, 255, 0.12);
+  background: var(--accent-tint-2);
 }
 
 .bookmark-note {
@@ -974,7 +1472,7 @@ button:disabled {
 }
 
 .bookmark-note:focus {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hover-soft);
 }
 
 .bookmark-note::placeholder {
@@ -996,7 +1494,7 @@ button:disabled {
 
 .bookmark-delete:hover {
   color: var(--danger);
-  background: rgba(255, 124, 124, 0.08);
+  background: var(--danger-tint-soft);
 }
 
 .status {
@@ -1066,7 +1564,7 @@ button:disabled {
   align-items: stretch;
   gap: 8px;
   background: var(--bg-card-2);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
   overflow: hidden;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
@@ -1090,7 +1588,7 @@ button:disabled {
   touch-action: none;
   font-size: 14px;
   line-height: 1;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid var(--border-soft);
   font-family: inherit;
   /* Use a pre-built character pair for the grip — fall back to "::" if not. */
   letter-spacing: -1px;
@@ -1098,7 +1596,7 @@ button:disabled {
 
 .clip-drag:hover {
   color: var(--accent);
-  background: rgba(124, 156, 255, 0.06);
+  background: var(--accent-tint);
 }
 
 .clip-drag:active,
@@ -1111,7 +1609,7 @@ button:disabled {
 .clip.dragging {
   z-index: 10;
   opacity: 0.92;
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-drag);
   border-color: var(--accent);
   transition: none;
 }
@@ -1124,7 +1622,7 @@ button:disabled {
    at a glance, even when the library is long. */
 .clip.current {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(124, 156, 255, 0.18);
+  box-shadow: 0 0 0 2px var(--accent-tint-3);
 }
 
 .clip.current .clip-title::before {
@@ -1148,7 +1646,7 @@ button:disabled {
 }
 
 .clip-play:hover {
-  background: rgba(124, 156, 255, 0.08);
+  background: var(--accent-tint);
 }
 
 .clip-title {
@@ -1185,7 +1683,7 @@ button:disabled {
 .clip-delete {
   background: none;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 1px solid var(--border-soft);
   color: var(--fg-dim);
   padding: 0 14px;
   cursor: pointer;
@@ -1196,7 +1694,7 @@ button:disabled {
 
 .clip-delete:hover {
   color: var(--danger);
-  background: rgba(255, 124, 124, 0.08);
+  background: var(--danger-tint-soft);
 }
 
 /* Reset-to-start — sits between play and edit, only rendered for clips
@@ -1204,7 +1702,7 @@ button:disabled {
 .clip-reset {
   background: none;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 1px solid var(--border-soft);
   color: var(--fg-dim);
   padding: 0 14px;
   cursor: pointer;
@@ -1216,14 +1714,14 @@ button:disabled {
 
 .clip-reset:hover {
   color: var(--accent);
-  background: rgba(124, 156, 255, 0.08);
+  background: var(--accent-tint);
 }
 
 /* Edit pencil — sits between clip body and the × delete on each card. */
 .clip-edit {
   background: none;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 1px solid var(--border-soft);
   color: var(--fg-dim);
   padding: 0 14px;
   cursor: pointer;
@@ -1234,7 +1732,7 @@ button:disabled {
 
 .clip-edit:hover {
   color: var(--accent);
-  background: rgba(124, 156, 255, 0.08);
+  background: var(--accent-tint);
 }
 
 /* Optional one-line note shown when clip.note is non-empty. Sits below
@@ -1264,7 +1762,7 @@ button:disabled {
 }
 
 .clip-edit-dialog::backdrop {
-  background: rgba(11, 16, 32, 0.7);
+  background: var(--scrim);
 }
 
 .clip-edit-body {
@@ -1303,7 +1801,7 @@ button:disabled {
 
 .clip-edit-actions .primary {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border: none;
   padding: 10px 24px;
   border-radius: 10px;
@@ -1341,7 +1839,7 @@ button:disabled {
 }
 
 .voice-browser::backdrop {
-  background: rgba(11, 16, 32, 0.7);
+  background: var(--scrim);
 }
 
 .voice-browser-head {
@@ -1349,7 +1847,7 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .voice-browser-head h2 {
@@ -1373,7 +1871,7 @@ button:disabled {
 .voice-filter-chip {
   background: var(--bg-card-2);
   color: var(--fg-dim);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 5px 12px;
   font-size: 12px;
@@ -1385,12 +1883,12 @@ button:disabled {
 }
 
 .voice-filter-chip:hover {
-  background: rgba(124, 156, 255, 0.10);
+  background: var(--accent-tint);
 }
 
 .voice-filter-chip.active {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -1428,7 +1926,7 @@ button:disabled {
   gap: 10px;
   padding: 10px 12px;
   background: var(--bg-card-2);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
   margin-bottom: 6px;
 }
@@ -1461,7 +1959,7 @@ button:disabled {
   border-radius: 999px;
   background: var(--bg-card);
   color: var(--accent);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -1473,12 +1971,12 @@ button:disabled {
 }
 
 .catalog-voice-preview:hover:not(:disabled) {
-  background: rgba(124, 156, 255, 0.18);
+  background: var(--accent-tint-3);
 }
 
 .catalog-voice-preview.playing {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border-color: var(--accent);
   padding: 0;
 }
@@ -1497,7 +1995,7 @@ button:disabled {
   padding: 6px 14px;
   border-radius: 999px;
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   font-size: 13px;
   font-weight: 600;
   border: none;
@@ -1512,7 +2010,7 @@ button:disabled {
 
 .catalog-voice-action.installed {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border-emph);
   color: var(--fg-dim);
   cursor: default;
 }
@@ -1524,7 +2022,7 @@ button:disabled {
 
 .catalog-voice-action.failed {
   background: var(--danger);
-  color: #0b1020;
+  color: var(--on-accent);
 }
 
 /* Remove (×) button — only rendered for installed voices, sits to the right
@@ -1537,7 +2035,7 @@ button:disabled {
   border-radius: 999px;
   background: transparent;
   color: var(--fg-dim);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   font-size: 16px;
   font-family: inherit;
   line-height: 1;
@@ -1549,8 +2047,8 @@ button:disabled {
 
 .catalog-voice-remove:hover:not(:disabled) {
   color: var(--danger);
-  background: rgba(255, 124, 124, 0.10);
-  border-color: rgba(255, 124, 124, 0.35);
+  background: var(--danger-tint);
+  border-color: var(--danger-border);
 }
 
 .catalog-voice-remove:disabled {

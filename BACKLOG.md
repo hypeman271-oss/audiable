@@ -5,6 +5,11 @@ built. When an idea surfaces that's worth keeping but isn't worth doing right
 now, capture it here so the reasoning isn't lost and the next iteration has
 context to start from.
 
+**See also: [`STRATEGY.md`](./STRATEGY.md)** — once a feature here becomes a
+V1 launch differentiator (LLM dialogue detection, chapter auto-split,
+filler-word callouts, long-sentence highlighter, voice favorites, listen
+statistics, etc.), it's worth re-checking against the launch checklist there.
+
 Entries are roughly ordered by likely value, not chronologically. Each one
 should be self-contained enough that picking it up months later doesn't
 require re-deriving the analysis.
@@ -160,10 +165,15 @@ weren't built. Roughly grouped.
 - **Long-sentence highlighter.** In the reading view, sentences over ~35
   words get a warm-tinted background. Composes with the karaoke
   highlight. Pitched but never shipped.
-- **Chapter auto-split on paste.** Detect `Chapter N` / `## Chapter` /
-  scene-break markers in pasted text, offer to split into separate
-  pre-titled clips. Pairs with drag-to-reorder. Pitched but never
-  shipped.
+- ~~**Chapter auto-split on paste.**~~ Shipped in v47. Paste / URL fetch /
+  file upload all run `_detectChapters(text)`; two pattern families
+  (markdown ATX headings and `Chapter|Part|Book|Section N` line starts
+  with optional subtitle). A 2+ hit count surfaces a banner under the
+  textarea — Split loads chapter 1 + queues the rest. `generate()`
+  reads `_pendingChapterTitle`; on save, `_advanceChapterQueue()` loads
+  the next chapter and auto-fires generate(). Pill near the textarea
+  shows "Chapter 3 of 5 · Next: '…'" with × to cancel after the current
+  chapter. Clear button also cancels the queue.
 
 ### Voice browser polish
 
@@ -183,13 +193,22 @@ weren't built. Roughly grouped.
 
 ### Library / playback
 
-- **Listen statistics.** Small "Stats" card showing total listening time
-  today / this week / all-time, words listened, favorite voice (most
-  used), most-listened clip. Could be motivating; lightweight
-  implementation (a listenedSec counter per session + a Stats dialog).
-- **Theme toggle (light mode).** Settings switch that cycles
-  auto / dark / light. High-contrast cream-on-near-white palette for
-  daytime / outdoor use. Persist in localStorage.
+- ~~**Listen statistics.**~~ Shipped in v49. Stats panel inside Settings:
+  Today / This week / All-time + top voice + most-listened clip + Reset
+  button (tap-twice-to-confirm, no native dialog). Accumulator hooks
+  player play/pause/seeking/timeupdate; sane-delta gate (0 < dt < 2 sec)
+  so seeks and tab-throttling don't bloat counters. localStorage flushed
+  every 10 s + on pause + on beforeunload/pagehide. Daily buckets pruned
+  past 60 days; voices/clips/total are cumulative. Words listened
+  intentionally skipped — adds little signal over time, and the implicit
+  "content time" semantics (1.5× plays count as content seconds, not
+  wall-clock) is more meaningful anyway.
+- ~~**Theme toggle (light mode).**~~ Shipped in v46 (Settings → Theme:
+  Auto / Dark / Light). Semantic CSS tokens swap on
+  `:root[data-theme="light"]`; inline boot script in index.html applies
+  the saved choice before paint to prevent dark-flash on light testers;
+  applyTheme also patches the OS theme-color meta so the status bar
+  matches.
 - **Per-clip notes that sync with audio time.** Already have bookmarks,
   but a flat "notes" panel per clip (longer than a one-line bookmark
   note, separate from the title's overall note field) could be useful
@@ -223,8 +242,11 @@ weren't built. Roughly grouped.
 
 ### Quality-of-life
 
-- **5-second skip-forward** (counterpart to the existing ↶ 5s back).
-  Small addition; pairs naturally with the existing chip.
+- ~~**5-second skip-forward**~~ Shipped in v48. Mirrors the existing
+  ↶5s back chip; shares CSS via grouped selectors. Handler uses the
+  same virtualTime + seekToTime path so it works in both streaming and
+  combined-WAV modes; seekToTime's existing duration clamp handles
+  overshoot at the end of a clip.
 - **Auto-pause on phone call / notification.** Standard MediaSession
   handles some of this; explicit handling of `interruptionend` could
   make resume cleaner.

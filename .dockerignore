@@ -1,0 +1,50 @@
+# Files / paths that shouldn't end up in the Docker image. Keeps the
+# image small and avoids leaking local dev artifacts.
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Server runtime logs from local dev (do NOT ship these)
+server.log
+server_err.log
+tunnel.log
+tunnel_err.log
+*.log
+
+# IDE / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local-only docs (developer notes, not user-facing)
+BACKLOG.md
+STRATEGY.md
+DEPLOY.md
+
+# The voice-fetcher script — we ship voices pre-baked in the image.
+# The catalog/install endpoint still works at runtime for installing
+# additional voices, but those won't survive a redeploy (the image's
+# voices/ dir is recreated on every build).
+scripts/get_voice.py
+scripts/make_icons.py
+scripts/tunnel.py
+
+# Test files & samples
+test_samples/
+tests/
+
+# Anything else local-machine-only
+*.swp
+*.bak
+*.tmp

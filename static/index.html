@@ -6,7 +6,11 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#0b1020" />
+    <!-- Status-bar / browser-chrome tint. Two media-keyed variants so the
+         OS-level color follows light/dark without JS. (Explicit Theme
+         override in Settings is handled by app.js mutating these tags.) -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1020" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf4e3" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Narrative" />
@@ -16,8 +20,60 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png" />
     <link rel="stylesheet" href="/styles.css" />
+    <!-- Apply the saved theme BEFORE the stylesheet evaluates, so a user
+         who chose Light doesn't see a dark-themed flash on every reload.
+         Mirrors the logic in app.js (setTheme/applyTheme) so the two
+         agree at first paint. -->
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem("narrative.theme") || "auto";
+          if (!["auto", "dark", "light"].includes(pref)) pref = "auto";
+          var resolved =
+            pref === "auto"
+              ? (matchMedia("(prefers-color-scheme: light)").matches
+                  ? "light"
+                  : "dark")
+              : pref;
+          if (resolved === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+          // Pre-paint status-bar override for explicit Dark/Light picks.
+          // (Auto rides on the two media-keyed theme-color tags above.)
+          if (pref !== "auto") {
+            var m = document.createElement("meta");
+            m.setAttribute("name", "theme-color");
+            m.setAttribute("data-narrative", "");
+            m.setAttribute("content", resolved === "light" ? "#faf4e3" : "#0b1020");
+            document.head.insertBefore(m, document.head.firstChild);
+          }
+        } catch (_) {}
+      })();
+    </script>
   </head>
   <body>
+    <!-- Sticky mini player: only visible when the main player card has
+         scrolled offscreen, driven by an IntersectionObserver in app.js. -->
+    <div id="mini-player" class="mini-player" hidden>
+      <button
+        id="mini-play-pause"
+        type="button"
+        class="mini-play-pause"
+        aria-label="Play / pause"
+      >▶</button>
+      <div class="mini-info" id="mini-info">
+        <div id="mini-title" class="mini-title">Loading…</div>
+        <div id="mini-time" class="mini-time">0:00 / 0:00</div>
+      </div>
+      <button
+        id="mini-scroll-up"
+        type="button"
+        class="mini-scroll-up"
+        aria-label="Show full player"
+      >↑</button>
+      <div class="mini-progress"><div id="mini-progress-fill"></div></div>
+    </div>
+
     <main class="app">
       <header class="hero">
         <div class="hero-row">
@@ -64,12 +120,83 @@
             />
           </label>
 
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Theme</strong>
+              <span class="settings-toggle-desc">
+                Auto follows your device setting. Light mode uses a warm
+                cream palette tuned for outdoor or daytime reading.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Theme">
+              <label>
+                <input type="radio" name="theme" value="auto" />
+                <span>Auto</span>
+              </label>
+              <label>
+                <input type="radio" name="theme" value="dark" />
+                <span>Dark</span>
+              </label>
+              <label>
+                <input type="radio" name="theme" value="light" />
+                <span>Light</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Listen statistics. Read-only summary populated by app.js
+               every time the Settings dialog opens. -->
+          <div class="settings-row" id="stats-row">
+            <div class="settings-toggle-label">
+              <strong>Listen stats</strong>
+              <span class="settings-toggle-desc" id="stats-empty" hidden>
+                No listening yet. Play a clip and come back.
+              </span>
+            </div>
+            <div class="stats-grid" id="stats-grid">
+              <div class="stats-cell">
+                <div class="stats-label">Today</div>
+                <div class="stats-value" id="stats-today">0 min</div>
+              </div>
+              <div class="stats-cell">
+                <div class="stats-label">This week</div>
+                <div class="stats-value" id="stats-week">0 min</div>
+              </div>
+              <div class="stats-cell">
+                <div class="stats-label">All-time</div>
+                <div class="stats-value" id="stats-total">0 min</div>
+              </div>
+            </div>
+            <div class="stats-extras" id="stats-extras">
+              <div class="stats-extra-row">
+                <span class="stats-extra-label">Top voice</span>
+                <span class="stats-extra-value" id="stats-top-voice">—</span>
+              </div>
+              <div class="stats-extra-row">
+                <span class="stats-extra-label">Most listened</span>
+                <span class="stats-extra-value" id="stats-top-clip">—</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="stats-reset"
+              class="link-btn stats-reset-btn"
+              aria-label="Reset listen statistics"
+            >Reset stats</button>
+          </div>
+
           <a
             href="/manual.html"
             target="_blank"
             rel="noopener"
             class="settings-help-link"
           >Help &amp; manual →</a>
+          <a
+            id="settings-feedback-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="Send feedback by email"
+          >Send feedback →</a>
         </div>
       </dialog>
 
@@ -135,6 +262,46 @@
           maxlength="500000"
         ></textarea>
         <div id="reading-view" class="reading-view" hidden></div>
+
+        <!-- Chapter auto-split banner. Shown after a paste detects 2+
+             "Chapter N" / markdown-heading markers in the text. Split
+             pulls chapter 1 into the textarea and queues the rest for
+             sequential synthesis. -->
+        <div id="chapter-banner" class="chapter-banner" hidden>
+          <span class="chapter-banner-msg">
+            <strong id="chapter-banner-count">0 chapters</strong> detected.
+            Split into separate clips?
+          </span>
+          <span class="chapter-banner-actions">
+            <button
+              id="chapter-banner-split"
+              type="button"
+              class="chapter-banner-btn primary"
+            >Split</button>
+            <button
+              id="chapter-banner-dismiss"
+              type="button"
+              class="chapter-banner-btn"
+              aria-label="Dismiss chapter detection"
+            >Keep as one</button>
+          </span>
+        </div>
+
+        <!-- Chapter queue pill. Visible while a chapter sequence is in
+             flight: shows progress and lets the user cancel the auto-
+             continue (current chapter still finishes). -->
+        <div id="chapter-queue" class="chapter-queue" hidden>
+          <span class="chapter-queue-icon" aria-hidden="true">📚</span>
+          <span class="chapter-queue-text" id="chapter-queue-text">Chapter 1 of 1</span>
+          <button
+            id="chapter-queue-cancel"
+            type="button"
+            class="chapter-queue-cancel"
+            aria-label="Cancel chapter queue"
+            title="Stop after the current chapter"
+          >×</button>
+        </div>
+
         <div class="meta">
           <span id="char-count">0 / 50000</span>
         </div>
@@ -217,6 +384,13 @@
             aria-label="Skip back 5 seconds"
             title="Skip back 5 seconds"
           >↶ 5s</button>
+          <button
+            id="skip-forward-btn"
+            type="button"
+            class="skip-forward-btn"
+            aria-label="Skip forward 5 seconds"
+            title="Skip forward 5 seconds"
+          >5s ↷</button>
           <button
             id="bookmark-add-btn"
             type="button"

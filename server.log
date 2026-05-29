@@ -61,3 +61,119 @@ INFO:     127.0.0.1:64333 - "GET /manual.html HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64333 - "GET /styles.css HTTP/1.1" 304 Not Modified
 INFO:     127.0.0.1:64333 - "GET /sw.js HTTP/1.1" 304 Not Modified
 INFO:     127.0.0.1:65059 - "GET /api/voices/catalog HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64648 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64648 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64648 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55364 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55364 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58163 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55364 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55364 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55364 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:60334 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60334 - "GET /sw.js HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:59152 - "GET / HTTP/1.1" 200 OK
+INFO:     192.168.1.64:59152 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     192.168.1.64:59164 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     192.168.1.64:59164 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53746 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63855 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53746 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53746 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53746 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63855 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58397 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63855 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63855 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53746 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53746 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63855 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55896 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55896 - "GET /app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63810 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63810 - "GET /sw.js HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:47006 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:47006 - "GET /styles.css HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:47000 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     192.168.1.64:47000 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51024 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54729 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     192.168.1.64:57394 - "GET /icons/icon-512.png HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:53165 - "GET /icons/favicon.png HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57178 - "GET /icons/icon-512.png HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:56621 - "GET /icons/icon-192.png HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:56700 - "GET / HTTP/1.1" 200 OK
+INFO:     192.168.1.64:56700 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     192.168.1.64:56706 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     192.168.1.64:56700 - "GET /icons/icon-180.png HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:56716 - "GET /icons/favicon.png HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:56706 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     192.168.1.64:43048 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     192.168.1.64:43048 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     192.168.1.64:43058 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     192.168.1.64:43058 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65188 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51753 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65188 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65188 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64994 - "GET /manifest.webmanifest HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65188 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65188 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51753 - "GET /manual.html HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51753 - "GET /icons/icon-180.png HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65509 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65509 - "GET /sw.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:54406 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51025 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54406 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54406 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54406 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51025 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56158 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51025 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51025 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54406 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57030 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51025 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54406 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65165 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65165 - "GET /styles.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:54314 - "GET /app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:54314 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54314 - "GET /sw.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:53163 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52833 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52833 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53163 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53163 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58327 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58060 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58327 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58327 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58327 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58327 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58327 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53163 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58327 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51026 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57757 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51026 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51026 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51026 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57757 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63975 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57757 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57757 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51026 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51026 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57757 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52931 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52931 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52931 - "GET /sw.js HTTP/1.1" 304 Not Modified
