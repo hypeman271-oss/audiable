@@ -127,24 +127,47 @@ def fetch_and_extract_url(url: str, github_token: str | None = None) -> dict:
                 f"refusing to fetch non-public address: {ip_str}"
             )
 
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (compatible; Narrative/0.1; +local TTS reader)"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-    )
+    # Detect known-file URLs (raw markdown, plain text, docx, pdf, epub
+    # served directly). These skip trafilatura and go through the same
+    # extract_text dispatcher that the file-upload path uses.
+    file_ext = PurePath(parsed.path).suffix.lower().lstrip(".")
+    is_file_url = file_ext in _HANDLERS
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; Narrative/0.1; +local TTS reader)"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    # Broaden Accept for raw-file URLs so servers that content-negotiate
+    # (GitHub raw, S3 with content-type sniffing) don't refuse to return
+    # the bytes we want.
+    if is_file_url:
+        headers["Accept"] = "*/*"
+    else:
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    # GitHub PAT auth — ONLY attached when both:
+    #   a) the caller supplied a token, AND
+    #   b) the target host is GitHub (post-rewrite).
+    # The host check matters: never leak the token to a third-party
+    # site, including a redirect target. urllib's default redirect
+    # handler does carry headers through, so the explicit host check
+    # here is the only line of defense.
+    if github_token and parsed.hostname in _GITHUB_HOSTS:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    req = urllib.request.Request(url, headers=headers)
 
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             content_type = (resp.headers.get("Content-Type") or "").lower()
-            if "html" not in content_type and "xml" not in content_type and "text" not in content_type:
-                raise ExtractionError(
-                    f"unsupported content type for URL: {content_type or '(none)'}"
-                )
+            # Loosened MIME check for file URLs (raw markdown is text/plain;
+            # docx is application/vnd.openxmlformats...; pdf is application/pdf).
+            if not is_file_url:
+                if "html" not in content_type and "xml" not in content_type and "text" not in content_type:
+                    raise ExtractionError(
+                        f"unsupported content type for URL: {content_type or '(none)'}"
+                    )
             # Cap on response size so a 1 GB page doesn't OOM us.
             raw = resp.read(MAX_URL_FETCH_BYTES + 1)
             if len(raw) > MAX_URL_FETCH_BYTES:
@@ -152,9 +175,33 @@ def fetch_and_extract_url(url: str, github_token: str | None = None) -> dict:
                     f"page too large (> {MAX_URL_FETCH_BYTES // (1024 * 1024)} MB)"
                 )
     except urllib.error.HTTPError as e:
-        raise ExtractionError(f"HTTP {e.code} fetching URL") from e
+        # Friendly hint for the common case: 404 on a github.com URL
+        # often means the token is missing or doesn't have repo scope.
+        hint = ""
+        if parsed.hostname in _GITHUB_HOSTS and e.code in (401, 403, 404):
+            hint = (
+                " — if this is a private repo, paste a Personal Access "
+                "Token in Settings &rarr; GitHub"
+            )
+        raise ExtractionError(f"HTTP {e.code} fetching URL{hint}") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise ExtractionError(f"could not fetch URL: {e}") from e
+
+    # File-URL branch: skip trafilatura, route through the shared
+    # extract_text dispatcher (same code the upload path uses). Returns
+    # plain text and no images — the chapter detector in the frontend
+    # handles markdown headings on its own.
+    if is_file_url:
+        filename = PurePath(parsed.path).name or parsed.hostname or "url"
+        text = extract_text(filename, raw)
+        if not text.strip():
+            raise ExtractionError("file is empty or unreadable")
+        return {
+            "filename": filename,
+            "chars": len(text),
+            "text": text,
+            "images": [],
+        }
 
     # Decode using the response charset (Content-Type) when present;
     # fall back to UTF-8, then latin-1, so a stray encoding doesn't crash us.

@@ -471,17 +471,29 @@ async def synthesize_stream(req: SynthesizeRequest):
 
 class ExtractUrlRequest(BaseModel):
     url: str = Field(..., min_length=8, max_length=2048)
+    # Optional GitHub Personal Access Token for private-repo URLs.
+    # Sent in the body rather than a header so the X-Narrative-Key
+    # middleware doesn't have to special-case it. The fetcher only
+    # forwards it to github.com / raw.githubusercontent.com (verified
+    # post-rewrite), so a token for repo X never leaks to host Y.
+    github_token: str | None = Field(default=None, max_length=200)
 
 
 @app.post("/api/extract/url")
 async def extract_url_endpoint(req: ExtractUrlRequest):
     """Fetch a URL server-side and extract the article text."""
     import asyncio
+    import functools
 
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
-            None, extract.fetch_and_extract_url, req.url
+            None,
+            functools.partial(
+                extract.fetch_and_extract_url,
+                req.url,
+                github_token=req.github_token,
+            ),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

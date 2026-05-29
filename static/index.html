@@ -220,6 +220,41 @@
             class="settings-help-link"
             aria-label="Send feedback via Gmail"
           >Send feedback (Gmail) →</a>
+
+          <!-- GitHub section: paste a Personal Access Token so URL
+               fetch can pull from private repos. Token is stored only
+               in localStorage on this device. The /api/extract/url
+               endpoint forwards it to GitHub hosts only. -->
+          <div class="settings-section">
+            <label for="settings-github-token" class="settings-section-label">
+              GitHub
+            </label>
+            <p class="settings-section-hint">
+              Paste a Personal Access Token to fetch from private
+              repos. Token stays on this device.
+              <a
+                href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Narrative"
+                target="_blank"
+                rel="noopener"
+              >Create one →</a>
+            </p>
+            <div class="settings-token-row">
+              <input
+                id="settings-github-token"
+                type="password"
+                placeholder="ghp_… or github_pat_…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button
+                id="settings-github-token-clear"
+                type="button"
+                class="settings-token-clear"
+                aria-label="Clear stored token"
+              >Clear</button>
+            </div>
+            <p id="settings-github-status" class="settings-section-hint" aria-live="polite"></p>
+          </div>
         </div>
       </dialog>
 

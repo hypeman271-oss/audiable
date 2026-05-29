@@ -664,6 +664,64 @@ body[data-ui-mode="simple"] .advanced-only {
   text-align: center;
 }
 
+/* Settings section — visual grouping for things like the GitHub PAT
+   input. A thin top border separates it from the feedback links
+   above. */
+.settings-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-section-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+.settings-section-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+.settings-section-hint a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.settings-section-hint a:hover {
+  text-decoration: underline;
+}
+.settings-token-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.settings-token-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* The global textarea rule covers most form sizing; this just keeps
+     the row aligned to its Clear button. */
+}
+.settings-token-clear {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  background: var(--bg-card-2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.settings-token-clear:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
+}
+
 /* "NEW" pill that hangs off the "What's new →" link until the user
    opens the changelog. Inline with the link text so it doesn't take a
    separate line; flips to display:none when the badge is hidden. */

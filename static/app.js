@@ -499,10 +499,52 @@ settingsBtn.addEventListener("click", () => {
   // Show the "NEW" badge on the What's new link if the user hasn't seen
   // the current changelog version yet.
   whatsNewBadge.hidden = !_isWhatsNewUnread();
+  // Sync the GitHub PAT field. We DON'T show the stored token in clear
+  // text — that would leak it into the visible DOM and into form-fill
+  // history. Instead we just show a "Token saved (last 4: ABCD)"
+  // confirmation, with the input empty so any typed value is treated
+  // as a fresh paste.
+  const _gh = $("settings-github-token");
+  const _ghStatus = $("settings-github-status");
+  if (_gh && _ghStatus) {
+    _gh.value = "";
+    const saved = getGithubToken();
+    if (saved) {
+      const tail = saved.slice(-4);
+      _ghStatus.textContent = `Token saved (…${tail}). Paste a new value to replace it.`;
+    } else {
+      _ghStatus.textContent = "No token saved. Public URLs work without one.";
+    }
+  }
   settingsDialog.showModal();
 });
 
 settingsClose.addEventListener("click", () => settingsDialog.close());
+
+// GitHub PAT input — save on change, with a confirmation hint shown
+// underneath. Token-shape sanity check is loose: GitHub PATs start with
+// `ghp_` (classic) or `github_pat_` (fine-grained), but we don't fail
+// on unknown formats since GitHub Enterprise and future formats may
+// differ.
+(() => {
+  const input = $("settings-github-token");
+  const clearBtn = $("settings-github-token-clear");
+  const status = $("settings-github-status");
+  if (!input || !clearBtn || !status) return;
+  input.addEventListener("change", () => {
+    const v = input.value.trim();
+    if (!v) return; // empty value on change just means user re-opened the dialog
+    setGithubToken(v);
+    const tail = v.slice(-4);
+    status.textContent = `Token saved (…${tail}). Cleared from this field.`;
+    input.value = ""; // don't keep it visible in the DOM
+  });
+  clearBtn.addEventListener("click", () => {
+    setGithubToken("");
+    input.value = "";
+    status.textContent = "Token cleared.";
+  });
+})();
 
 // Mode picker change handler. Apply the new mode, then refresh the
 // textarea meta so the word-count / read-time line appears or
@@ -1853,6 +1895,44 @@ function rememberSpeaker(voiceId, speakerId) {
 // the main picker AND a filter chip in the voice browser. Stored as an
 // array so the user's star order is stable (most-recently-starred floats
 // to the top within the favorites list).
+// GitHub Personal Access Token (PAT) for fetching from private repos.
+// Stored in localStorage so it persists across sessions on this device
+// only. The token is sent to /api/extract/url in the request body when
+// the URL is a GitHub URL; the backend forwards it as a Bearer token
+// to github.com / raw.githubusercontent.com only.
+const GITHUB_TOKEN_KEY = "narrative.githubToken";
+
+function getGithubToken() {
+  try {
+    return (localStorage.getItem(GITHUB_TOKEN_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function setGithubToken(token) {
+  try {
+    if (token && token.trim()) {
+      localStorage.setItem(GITHUB_TOKEN_KEY, token.trim());
+    } else {
+      localStorage.removeItem(GITHUB_TOKEN_KEY);
+    }
+  } catch {}
+}
+
+function _isGithubUrl(url) {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname === "github.com" ||
+      u.hostname === "www.github.com" ||
+      u.hostname === "raw.githubusercontent.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
 const VOICE_FAVORITES_KEY = "narrative.voiceFavorites";
 
 function getFavoriteVoices() {
@@ -5495,10 +5575,19 @@ async function fetchFromUrl() {
   setStatus(`Fetching ${host}…`);
 
   try {
+    // Attach a GitHub PAT only when the URL is a GitHub URL. The token
+    // lives in localStorage; the backend further restricts forwarding
+    // to github.com / raw.githubusercontent.com so a stale token can't
+    // leak to other hosts via a redirect.
+    const body = { url };
+    if (_isGithubUrl(url)) {
+      const token = getGithubToken();
+      if (token) body.github_token = token;
+    }
     const res = await fetch("/api/extract/url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
