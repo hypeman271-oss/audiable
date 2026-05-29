@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1020" />
+    <title>Narrative — Manual</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      /* Manual-specific styling on top of the app's existing palette so
+         the manual reads like part of the app, not a bolted-on doc. */
+      body { padding-bottom: 80px; }
+      .manual {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px 18px 80px;
+        padding-bottom: calc(80px + env(safe-area-inset-bottom));
+      }
+      .manual h1 {
+        font-size: 28px;
+        margin: 0;
+        background: linear-gradient(120deg, #fff, var(--accent));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .manual .lede {
+        color: var(--fg-dim);
+        font-size: 14px;
+        margin: 4px 0 24px;
+      }
+      .manual h2 {
+        font-size: 19px;
+        margin: 40px 0 10px;
+        padding: 6px 0 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .manual h3 {
+        font-size: 15px;
+        margin: 22px 0 8px;
+        color: var(--accent);
+      }
+      .manual p, .manual li { line-height: 1.6; font-size: 14px; }
+      .manual ul, .manual ol { padding-left: 22px; }
+      .manual li { margin-bottom: 4px; }
+      .manual code, .manual .kbd {
+        background: var(--bg-card-2);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12.5px;
+      }
+      .manual pre {
+        background: var(--bg-card);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 10px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--fg-dim);
+        margin: 12px 0;
+      }
+      .manual pre.diagram {
+        color: var(--fg);
+        font-size: 11.5px;
+      }
+      .manual figure {
+        margin: 14px 0;
+        padding: 0;
+      }
+      .manual figcaption {
+        font-size: 12px;
+        color: var(--fg-dim);
+        text-align: center;
+        margin-top: 6px;
+      }
+      .manual svg.illus {
+        display: block;
+        max-width: 100%;
+        margin: 8px auto;
+        background: var(--bg-card);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .manual .note,
+      .manual .tip,
+      .manual .warn {
+        padding: 10px 14px;
+        border-radius: 8px;
+        margin: 14px 0;
+        font-size: 13.5px;
+        line-height: 1.5;
+      }
+      .manual .note {
+        background: rgba(124, 156, 255, 0.08);
+        border-left: 3px solid var(--accent);
+      }
+      .manual .tip {
+        background: rgba(124, 156, 255, 0.04);
+        border-left: 3px solid var(--fg-dim);
+      }
+      .manual .warn {
+        background: rgba(255, 124, 124, 0.07);
+        border-left: 3px solid var(--danger);
+      }
+      .manual .toc {
+        background: var(--bg-card);
+        padding: 14px 18px;
+        border-radius: var(--radius);
+        margin-bottom: 28px;
+        box-shadow: var(--shadow);
+      }
+      .manual .toc h2 {
+        margin: 0 0 8px;
+        padding: 0;
+        border: none;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--fg-dim);
+      }
+      .manual .toc ol {
+        margin: 0;
+        padding-left: 22px;
+      }
+      .manual .toc li { margin: 3px 0; }
+      .manual .toc a {
+        color: var(--fg);
+        text-decoration: none;
+      }
+      .manual .toc a:hover { color: var(--accent); }
+      .manual a { color: var(--accent); text-decoration: none; }
+      .manual a:hover { text-decoration: underline; }
+      .manual table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        margin: 12px 0;
+      }
+      .manual th, .manual td {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .manual th {
+        color: var(--fg-dim);
+        font-weight: 600;
+      }
+      .back-link {
+        display: inline-block;
+        margin-bottom: 14px;
+        color: var(--accent);
+        font-size: 13px;
+        text-decoration: none;
+      }
+      .back-link:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <main class="manual">
+      <a href="/" class="back-link">← Back to Narrative</a>
+
+      <h1>Narrative Manual</h1>
+      <p class="lede">
+        Local text-to-speech for readers and writers. Type, paste a URL,
+        upload a chapter — listen anywhere. Everything below is in the
+        app already; this manual just labels the controls.
+      </p>
+
+      <nav class="toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#layout">How the page is laid out</a></li>
+          <li><a href="#text">Getting text in</a></li>
+          <li><a href="#voice">Choosing a voice</a></li>
+          <li><a href="#player">The player</a></li>
+          <li><a href="#reading">Reading view</a></li>
+          <li><a href="#library">The library</a></li>
+          <li><a href="#settings">Settings &amp; Author mode</a></li>
+          <li><a href="#phone">Listening on your phone</a></li>
+          <li><a href="#shortcuts">Shortcuts &amp; tips</a></li>
+        </ol>
+      </nav>
+
+      <!-- ============================================================= -->
+      <h2 id="layout">1. How the page is laid out</h2>
+      <p>
+        Narrative is one scrolling page divided into stacked cards. Top to
+        bottom:
+      </p>
+      <pre class="diagram">
+┌──────────────────────────────────────────────────────────────┐
+│  Narrative                                              ⚙   │  ← Settings
+│  Type. Listen. Download.                                     │
+├──────────────────────────────────────────────────────────────┤
+│  Your text       [Clear] [Paste URL] [Upload file]           │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │ Paste an article, chapter, or sentence here…           │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                  0 / 500,000 │
+├──────────────────────────────────────────────────────────────┤
+│  Voice                          [Save preset] [Browse voices]│
+│  [Amy (en_US, medium)                                      ▼]│
+│  Speed  180          Volume  100%                            │
+│  [────●──────────]   [──────────────●─]                      │
+├──────────────────────────────────────────────────────────────┤
+│  [           Generate            ]   [  Download  ]          │
+├──────────────────────────────────────────────────────────────┤
+│  ▶ Audio player                          ↶ 5s · 🔖 · A↔B · 1×│
+│  • bookmark · 1:23 — clunky phrase            ×              │
+├──────────────────────────────────────────────────────────────┤
+│  Ready · 1.4 MB                                              │
+├──────────────────────────────────────────────────────────────┤
+│  LIBRARY · 6                          [Custom order] [Clear] │
+│  [search by title, text, or voice…                         ] │
+│  [Export] [Import] [Hide played]                             │
+│                                                              │
+│  CONTINUE LISTENING · 2                                      │
+│   ⋮⋮  ▶ Chapter 3                       2:14/11:22  ↺ ✎ ×    │
+│   ⋮⋮    Chapter 2                       4:17/16:02  ↺ ✎ ×    │
+│                                                              │
+│  OTHER CLIPS · 4                                             │
+│   ⋮⋮    Chapter 4                       12:01       ✎ ×      │
+│   ⋮⋮    Chapter 1                       12:03       ✎ ×      │
+└──────────────────────────────────────────────────────────────┘
+      </pre>
+      <p>
+        Each card is independent — you can keep listening to one clip
+        while you paste, generate, or rearrange another. The
+        <strong>⚙ Settings</strong> button up top is the only piece of
+        chrome outside the cards.
+      </p>
+
+      <!-- ============================================================= -->
+      <h2 id="text">2. Getting text in</h2>
+      <p>The text card has five link-style actions in its header:</p>
+      <table>
+        <tr>
+          <th>Action</th>
+          <th>What it does</th>
+        </tr>
+        <tr>
+          <td><strong>Clear</strong></td>
+          <td>Empties the textarea + decouples from any loaded clip. Use
+            it when you're done with one piece and want to start a new
+            one without refreshing.</td>
+        </tr>
+        <tr>
+          <td><strong>Paste URL</strong></td>
+          <td>Opens an inline URL input. Paste any article URL
+            (blog post, Wikipedia, news), hit <span class="kbd">Enter</span>,
+            and the server fetches it, extracts the main article via
+            <code>trafilatura</code> (drops nav, ads, comments), and
+            drops the clean text in the textarea. SSRF-guarded: only
+            public HTTP(S) URLs allowed.</td>
+        </tr>
+        <tr>
+          <td><strong>Upload file</strong></td>
+          <td><code>.txt · .md · .pdf · .epub · .docx</code>. PDFs go
+            through a cleanup pipeline: page numbers stripped, repeated
+            headers/footers detected and removed across pages, mid-
+            sentence page breaks bridged so the splitter doesn't cut
+            "the cat sat on the | mat" into two sentences. 25 MB cap.</td>
+        </tr>
+        <tr>
+          <td><strong>Save text</strong></td>
+          <td>(Only visible when a clip is loaded.) Writes any edits in
+            the textarea back into the currently-loaded clip in the
+            library. If the number of sentences changed, an
+            <strong>auto-regen</strong> kicks off so the audio matches
+            the new text. Typo fixes that don't change sentence count
+            save instantly with no resynthesis.</td>
+        </tr>
+        <tr>
+          <td><strong>Edit text</strong></td>
+          <td>(Only visible while you're in the reading view.) Hides
+            the reading view, shows the textarea with the clip's full
+            text ready to edit. Save text writes it back; Generate
+            creates a new clip instead.</td>
+        </tr>
+      </table>
+
+      <!-- ============================================================= -->
+      <h2 id="voice">3. Choosing a voice</h2>
+
+      <h3>Voice picker</h3>
+      <p>
+        The dropdown lists every installed voice, grouped by engine:
+      </p>
+      <ul>
+        <li>
+          <strong>Neural (high quality)</strong> — Piper voices, ~30–130
+          MB each. Sound natural.
+        </li>
+        <li>
+          <strong>System voices</strong> — your OS's built-in TTS (SAPI
+          on Windows). Always available, lower quality.
+        </li>
+      </ul>
+      <p>
+        Multi-speaker voices like <strong>LibriTTS</strong> ship 904
+        distinct speakers in one model — when one of those is selected,
+        a <strong>Speaker</strong> picker appears below with options
+        <code>Speaker 0</code> through <code>Speaker N-1</code>. A small
+        ▶ button next to the speaker dropdown plays a preview of
+        the selected speaker.
+      </p>
+
+      <h3>Browse voices</h3>
+      <p>
+        Tap <strong>Browse voices</strong> to open the catalog: ~160
+        voices across ~30 languages. Each row has:
+      </p>
+      <figure>
+        <svg class="illus" viewBox="0 0 560 80" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Catalog row layout">
+          <rect x="2" y="2" width="556" height="76" rx="10" fill="#1b2240" stroke="rgba(255,255,255,0.08)" />
+          <text x="20" y="32" fill="#e7ecff" font-family="Inter, sans-serif" font-size="14" font-weight="600">Amy · medium</text>
+          <text x="20" y="54" fill="#97a0c9" font-family="Inter, sans-serif" font-size="12">60.3 MB · en_US-amy-medium</text>
+          <!-- preview button -->
+          <circle cx="400" cy="40" r="17" fill="#141a30" stroke="rgba(255,255,255,0.08)" />
+          <text x="400" y="46" fill="#7c9cff" font-family="Inter, sans-serif" font-size="13" text-anchor="middle">▶</text>
+          <!-- install pill -->
+          <rect x="430" y="22" width="84" height="36" rx="999" fill="#7c9cff" />
+          <text x="472" y="46" fill="#0b1020" font-family="Inter, sans-serif" font-size="13" font-weight="700" text-anchor="middle">Install</text>
+          <!-- remove × -->
+          <circle cx="535" cy="40" r="16" fill="transparent" stroke="rgba(255,255,255,0.08)" />
+          <text x="535" y="46" fill="#97a0c9" font-family="Inter, sans-serif" font-size="16" text-anchor="middle">×</text>
+        </svg>
+        <figcaption>Catalog row — preview, install / "Installed" pill, remove ×</figcaption>
+      </figure>
+      <ul>
+        <li><strong>▶ Preview</strong> — proxies the official sample MP3 from HuggingFace, plays inline.</li>
+        <li><strong>Install</strong> — streams the .onnx + .onnx.json over SSE with a live percentage in the button label (<code>0% → 100% → Installed</code>). Lands directly in your <code>voices/</code> folder.</li>
+        <li><strong>× Remove</strong> — appears for installed voices only; deletes both files and frees disk.</li>
+      </ul>
+      <p>
+        Above the catalog, an <strong>Installed only (N)</strong> chip
+        filters to only the voices you have. The search input filters
+        by language, country, or name.
+      </p>
+
+      <h3>Speed &amp; volume</h3>
+      <p>
+        Two sliders affect synthesis only — they get baked into the
+        generated audio. For changing playback speed on an existing
+        clip, use the <strong>1×</strong> chip on the player instead
+        (see Section 4).
+      </p>
+
+      <h3>Saved presets</h3>
+      <p>
+        Found a voice + speed + volume combo you like? Hit
+        <strong>Save preset</strong>, name it (e.g. "Audiobook
+        narrator"), and a chip appears under the voice picker. Tap
+        the chip to re-apply all four settings. Long-press / × deletes.
+      </p>
+
+      <h3>Characters <span style="color: var(--fg-dim); font-weight: 400;">(Author mode)</span></h3>
+      <p>
+        Assign different voices to different characters in your draft.
+        See <a href="#author-mode">Author mode</a> below.
+      </p>
+
+      <!-- ============================================================= -->
+      <h2 id="player">4. The player</h2>
+      <p>
+        Above the native browser audio control, there's a row of
+        action chips. Left to right:
+      </p>
+      <figure>
+        <svg class="illus" viewBox="0 0 560 60" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Player action chips">
+          <!-- skip back -->
+          <rect x="10" y="14" width="64" height="32" rx="999" fill="#1b2240" stroke="rgba(255,255,255,0.08)" />
+          <text x="42" y="35" fill="#e7ecff" font-family="Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">↶ 5s</text>
+          <!-- bookmark -->
+          <rect x="84" y="14" width="120" height="32" rx="999" fill="#1b2240" stroke="rgba(255,255,255,0.08)" />
+          <text x="144" y="35" fill="#e7ecff" font-family="Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">🔖 Bookmark</text>
+          <!-- A-B loop -->
+          <rect x="214" y="14" width="78" height="32" rx="999" fill="#7c9cff" />
+          <text x="253" y="35" fill="#0b1020" font-family="Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">↻ 1:23–2:45</text>
+          <!-- sleep -->
+          <rect x="302" y="14" width="92" height="32" rx="999" fill="#7c9cff" />
+          <text x="348" y="35" fill="#0b1020" font-family="Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">💤 14:32</text>
+          <!-- speed -->
+          <rect x="404" y="14" width="58" height="32" rx="999" fill="#1b2240" stroke="rgba(255,255,255,0.08)" />
+          <text x="433" y="35" fill="#e7ecff" font-family="Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">1.5×</text>
+        </svg>
+        <figcaption>Player chips. Sleep + A-B shown active.</figcaption>
+      </figure>
+
+      <h3>↶ 5s — Skip-back</h3>
+      <p>
+        Tap to rewind 5 seconds. "I zoned out for a moment" recovery.
+        Different from the lock-screen prev/next which jump a whole
+        sentence.
+      </p>
+
+      <h3>🔖 Bookmark</h3>
+      <p>
+        Drops a bookmark at the current audio position. The chip's
+        label updates to show the count
+        (<code>🔖 Bookmark · 3</code>), and a list appears under the
+        player:
+      </p>
+      <figure>
+        <svg class="illus" viewBox="0 0 560 56" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bookmark row">
+          <rect x="2" y="2" width="556" height="52" rx="8" fill="#1b2240" stroke="rgba(255,255,255,0.06)" />
+          <text x="44" y="34" fill="#7c9cff" font-family="Inter, sans-serif" font-size="13" font-weight="700" text-anchor="middle">3:42</text>
+          <text x="100" y="34" fill="#e7ecff" font-family="Inter, sans-serif" font-size="13" font-style="italic">clunky phrase</text>
+          <text x="530" y="35" fill="#97a0c9" font-family="Inter, sans-serif" font-size="17" text-anchor="middle">×</text>
+        </svg>
+        <figcaption>Bookmark row: time (tap to jump), note (tap to edit), × to delete</figcaption>
+      </figure>
+      <ul>
+        <li>Tap the <strong>time</strong> on the left to jump there and play.</li>
+        <li>Tap the <strong>note</strong> field, type a reminder, press <span class="kbd">Enter</span> or click away to save.</li>
+        <li>Bookmarks live with the clip in the library (export/import too).</li>
+        <li>Auto-regen on save-text preserves bookmarks even if the audio is rebuilt.</li>
+      </ul>
+
+      <h3>A↔B loop</h3>
+      <p>
+        Re-listen to a tricky passage. Cycles through four states on tap:
+      </p>
+      <ol>
+        <li><strong>A↔B</strong> — idle.</li>
+        <li><strong>A 1:23</strong> — A captured at current time, waiting for B.</li>
+        <li><strong>↻ 1:23–2:45</strong> (accent background) — both set, looping. Playback resets to A whenever it crosses B.</li>
+        <li>Tap once more to clear.</li>
+      </ol>
+      <div class="tip">
+        Loading a different clip clears the loop bounds (they
+        belonged to a different audio track).
+      </div>
+
+      <h3>💤 Sleep timer</h3>
+      <p>
+        Cycles <code>Off → 15 → 30 → 45 → 60 min</code>. When the
+        timer expires, audio <strong>fades over 5 seconds</strong>
+        and pauses gracefully — your saved resume position lands at
+        the exact moment of fade-out, so the next morning the clip
+        starts where you fell asleep.
+      </p>
+
+      <h3>Playback speed (1×)</h3>
+      <p>
+        Cycles <code>1× → 1.25× → 1.5× → 1.75× → 2× → 0.75× → 1×</code>.
+        Affects playback only, not stored audio. Choice is persisted
+        per browser. Reapplied automatically when the audio source
+        changes (per-sentence streaming, clip switch).
+      </p>
+
+      <!-- ============================================================= -->
+      <h2 id="reading">5. Reading view</h2>
+      <p>
+        Once a clip is playing, the textarea swaps for the
+        <strong>reading view</strong>: the source text rendered as
+        clickable sentence spans. The active sentence is highlighted;
+        played sentences fade slightly so you can see your progress.
+      </p>
+      <ul>
+        <li><strong>Tap a sentence</strong> to seek there and keep playing.</li>
+        <li>The active sentence stays in view inside the reading-view box (the box has its own internal scroll, so it never yanks the rest of the page around).</li>
+        <li>Tap <strong>Edit text</strong> in the text-card header to go back to the textarea for edits.</li>
+      </ul>
+      <div class="tip">
+        On phone, the lock-screen prev/next buttons jump by whole
+        sentences — useful when you missed context, not just a word.
+        The on-screen <strong>↶ 5s</strong> is for the
+        missed-a-word case.
+      </div>
+
+      <!-- ============================================================= -->
+      <h2 id="library">6. The library</h2>
+      <p>
+        Every clip you generate is auto-saved into a per-browser
+        library (IndexedDB). Newest clips appear at the top by
+        default.
+      </p>
+
+      <h3>Card anatomy</h3>
+      <figure>
+        <svg class="illus" viewBox="0 0 560 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Library card layout">
+          <rect x="2" y="2" width="556" height="60" rx="10" fill="#1b2240" stroke="#7c9cff" />
+          <!-- drag handle -->
+          <text x="24" y="38" fill="#97a0c9" font-family="Inter, sans-serif" font-size="14" text-anchor="middle">⋮⋮</text>
+          <!-- title/meta -->
+          <text x="60" y="26" fill="#e7ecff" font-family="Inter, sans-serif" font-size="14" font-weight="700">▶ Chapter 3</text>
+          <text x="60" y="46" fill="#97a0c9" font-family="Inter, sans-serif" font-size="12">Amy · 247w · 4:08 / 11:22 · 7:15 PM</text>
+          <!-- reset -->
+          <text x="425" y="38" fill="#97a0c9" font-family="Inter, sans-serif" font-size="16" text-anchor="middle">↺</text>
+          <!-- edit -->
+          <text x="475" y="38" fill="#97a0c9" font-family="Inter, sans-serif" font-size="15" text-anchor="middle">✎</text>
+          <!-- delete -->
+          <text x="525" y="38" fill="#97a0c9" font-family="Inter, sans-serif" font-size="17" text-anchor="middle">×</text>
+        </svg>
+        <figcaption>Currently-playing in-progress clip — accent border, ▶ glyph, full meta line</figcaption>
+      </figure>
+      <table>
+        <tr><th>Element</th><th>What it does</th></tr>
+        <tr><td><strong>⋮⋮</strong></td><td>Drag handle. Press, drag up or down, release to reorder. Works for mouse and touch.</td></tr>
+        <tr><td><strong>Card body</strong></td><td>Tap anywhere on the title/meta area to load and play this clip.</td></tr>
+        <tr><td><strong>↺ Reset</strong></td><td>Only shown for in-progress clips. Wipes the saved resume position so next play starts from the top. If you reset the clip you're currently listening to, the player rewinds too.</td></tr>
+        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename and add a note (e.g. <em>"Chapter 3 — needs work on the kitchen scene"</em>).</td></tr>
+        <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
+      </table>
+
+      <h3>Sections</h3>
+      <p>
+        The list splits into two sections automatically:
+      </p>
+      <ul>
+        <li><strong>CONTINUE LISTENING</strong> — clips with a saved resume position (you started but didn't finish). Always at the top so "where was I" is one tap.</li>
+        <li><strong>OTHER CLIPS</strong> — everything else. Same sort + filter as the top section.</li>
+      </ul>
+      <p>
+        Both sections respect the active sort mode. If a clip plays
+        to the end, it auto-moves down to Other Clips on next
+        render.
+      </p>
+
+      <h3>Search + sort + filter</h3>
+      <ul>
+        <li><strong>Search box</strong> matches title, source text, voice name, OR note text. Press <span class="kbd">Esc</span> to clear.</li>
+        <li><strong>Sort chip</strong> cycles
+          <code>Newest → Oldest → Longest → Shortest → Custom → Shuffle</code>.
+          <em>Custom</em> uses your drag-defined order; auto-switches
+          on the first drag.
+        </li>
+        <li><strong>Hide played</strong> (in the library tools row) hides clips you've finished and reset. Becomes <em>"Show all"</em> when active. State persisted.</li>
+      </ul>
+
+      <h3>Drag to reorder</h3>
+      <p>
+        Tap and drag the <strong>⋮⋮</strong> handle on any card.
+        Releasing flips the sort mode to <strong>Custom order</strong>
+        and persists. Auto-advance plays through clips in the order
+        you see them — so dragging chapters into reading order means
+        the audiobook just works.
+      </p>
+      <div class="tip">
+        Reordering inside Continue Listening reorders within that
+        section. When a clip's resume position is cleared (manual ↺
+        reset or auto-advance to next), it drops down into Other
+        Clips at the position you put it.
+      </div>
+
+      <h3>Auto-advance</h3>
+      <p>
+        When a clip ends, the next one in your chosen sort order
+        starts automatically — with a <strong>3-second breath</strong>
+        between them. Status shows <em>"Up next in 3s…"</em>.
+      </p>
+      <p>
+        If you tap a different clip or hit Clear during the gap, the
+        queued load is cancelled.
+      </p>
+
+      <h3>Export / Import</h3>
+      <p>
+        Below the search:
+      </p>
+      <ul>
+        <li><strong>Export</strong> — builds a zip containing every clip as MP3 plus a JSON <code>manifest.json</code> with all metadata (titles, notes, voices, speakers, sentence offsets, resume positions, bookmarks, presets, library order, play mode). Downloads as <code>narrative-library-YYYY-MM-DD.zip</code>.</li>
+        <li><strong>Import</strong> — pick a previously-exported zip. Clips with IDs that already exist are skipped (so re-imports are safe). Restores presets and custom order too.</li>
+      </ul>
+      <div class="note">
+        The zip is a real PKZIP file — your phone's Files app can
+        open it, you can extract individual MP3s with any zip tool,
+        the manifest is human-readable JSON.
+      </div>
+
+      <!-- ============================================================= -->
+      <h2 id="settings">7. Settings &amp; Author mode</h2>
+      <p>
+        The <strong>⚙</strong> at the top right opens Settings. One
+        toggle for now: <strong>Author mode</strong>. Off by default.
+      </p>
+      <p>Flipping it on reveals:</p>
+      <ul>
+        <li>
+          <strong>Word count + read-aloud time</strong> in the
+          textarea meta line:
+          <code>1,247 / 500,000 · 247 words · ~1:22 at 180 wpm</code>.
+          Updates live as you type or move the speed slider.
+        </li>
+        <li>
+          <strong>Characters link</strong> in the voice card label-row
+          — opens the character roster dialog.
+        </li>
+        <li>
+          More writing-craft features will slot in here (long-
+          sentence highlighter, filler-word callouts, chapter auto-
+          split, etc).
+        </li>
+      </ul>
+
+      <h3 id="author-mode">Character voices</h3>
+      <p>
+        Open <strong>Characters</strong> and add one row per character.
+        For each: name, voice, and (if the chosen voice is multi-
+        speaker like LibriTTS) a speaker ID.
+      </p>
+      <figure>
+        <svg class="illus" viewBox="0 0 540 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Characters dialog row">
+          <rect x="2" y="2" width="536" height="60" rx="10" fill="#1b2240" />
+          <rect x="14" y="14" width="120" height="36" rx="8" fill="#141a30" stroke="rgba(255,255,255,0.08)" />
+          <text x="74" y="37" fill="#e7ecff" font-family="Inter, sans-serif" font-size="12" text-anchor="middle">Sarah</text>
+          <rect x="144" y="14" width="200" height="36" rx="8" fill="#141a30" stroke="rgba(255,255,255,0.08)" />
+          <text x="244" y="37" fill="#e7ecff" font-family="Inter, sans-serif" font-size="12" text-anchor="middle">Libritts (en_US, high) ▾</text>
+          <rect x="354" y="14" width="110" height="36" rx="8" fill="#141a30" stroke="rgba(255,255,255,0.08)" />
+          <text x="409" y="37" fill="#e7ecff" font-family="Inter, sans-serif" font-size="12" text-anchor="middle">Speaker 314 ▾</text>
+          <text x="498" y="37" fill="#97a0c9" font-family="Inter, sans-serif" font-size="17" text-anchor="middle">×</text>
+        </svg>
+        <figcaption>A character row: name · voice · speaker · delete</figcaption>
+      </figure>
+      <p>
+        When you hit Generate, Narrative scans your text sentence by
+        sentence. A sentence containing a quote
+        (<code>"…"</code>, <code>"…"</code>, etc.) AND a character's name as a
+        whole word is routed through that character's voice. Other
+        sentences use the main voice picker (your narrator).
+      </p>
+      <p>Detected patterns:</p>
+      <ul>
+        <li><em>"Welcome," said Sarah.</em> → Sarah's voice</li>
+        <li><em>Sarah said, "I'll be quick."</em> → Sarah's voice</li>
+        <li><em>"Hello." Sarah walked into the room.</em> → Sarah (name appears with quote)</li>
+        <li>Pronoun-only attribution (<em>"How are you?" she asked.</em>) doesn't resolve — falls through to the narrator.</li>
+      </ul>
+      <div class="warn">
+        If you assign two characters voices from different Piper
+        models with different sample rates (e.g. one
+        <code>_low</code> 16 kHz and one <code>_high</code> 22 kHz),
+        the multi-voice synthesis will fail with a clear error in
+        the status line. Pick voices from the same quality tier
+        (all <code>medium</code> or all <code>high</code>) to mix
+        cleanly.
+      </div>
+
+      <!-- ============================================================= -->
+      <h2 id="phone">8. Listening on your phone</h2>
+
+      <h3>Quick tunnel (no setup)</h3>
+      <p>
+        In a terminal on the machine running Narrative:
+      </p>
+      <pre>python scripts/tunnel.py</pre>
+      <p>
+        After a few seconds you get a public
+        <code>https://&lt;random&gt;.trycloudflare.com</code> URL. Open it on
+        your phone — works over cellular, not just home Wi-Fi. The
+        service worker registers properly, the PWA install prompt
+        fires on Android, and on iOS it's Safari → Share → Add to
+        Home Screen.
+      </p>
+      <p>
+        First time you'll need <code>cloudflared</code> installed:
+      </p>
+      <pre>winget install --id Cloudflare.cloudflared    <em># Windows</em>
+brew install cloudflared                       <em># macOS</em></pre>
+      <p>
+        Each restart of <code>tunnel.py</code> gives a new random
+        URL. To get a stable URL, see <strong>Named tunnel</strong>
+        below.
+      </p>
+
+      <h3>Named tunnel (persistent URL)</h3>
+      <p>
+        One-time setup if you own a domain on Cloudflare:
+      </p>
+      <pre>cloudflared tunnel login
+cloudflared tunnel create narrative
+cloudflared tunnel route dns narrative narrative.yourdomain.com</pre>
+      <p>Then run:</p>
+      <pre>python scripts/tunnel.py --name narrative</pre>
+      <p>
+        The URL <code>https://narrative.yourdomain.com</code> stays
+        the same across restarts, so the PWA on your phone stays
+        installed at one address forever.
+      </p>
+
+      <h3>Lock down with X-Narrative-Key</h3>
+      <p>
+        When the tunnel is up your TTS endpoint is reachable from
+        anywhere. Stop random visitors from using your CPU:
+      </p>
+      <pre>$env:NARRATIVE_KEY = 'paste-the-suggested-key-from-server-banner'
+python server.py</pre>
+      <p>
+        With <code>NARRATIVE_KEY</code> set, all <code>/api/*</code>
+        requests require <code>X-Narrative-Key</code> as a header.
+        The first time you open the URL on your phone, the app
+        prompts you for the key. It's saved in your phone's
+        localStorage and sent automatically forever.
+      </p>
+
+      <!-- ============================================================= -->
+      <h2 id="shortcuts">9. Shortcuts &amp; tips</h2>
+
+      <h3>Keyboard</h3>
+      <table>
+        <tr><th>Where</th><th>Key</th><th>Does</th></tr>
+        <tr><td>Textarea</td><td><span class="kbd">Ctrl</span> / <span class="kbd">⌘</span> + <span class="kbd">Enter</span></td><td>Generate</td></tr>
+        <tr><td>Search box</td><td><span class="kbd">Esc</span></td><td>Clear search</td></tr>
+        <tr><td>URL input</td><td><span class="kbd">Enter</span> / <span class="kbd">Esc</span></td><td>Fetch / Cancel</td></tr>
+        <tr><td>Bookmark note</td><td><span class="kbd">Enter</span> / <span class="kbd">Esc</span></td><td>Save / Revert</td></tr>
+        <tr><td>Edit-clip title</td><td><span class="kbd">Enter</span></td><td>Save</td></tr>
+      </table>
+
+      <h3>Workflow ideas</h3>
+      <ul>
+        <li>
+          <strong>Audiobook a book chapter-by-chapter.</strong> Paste
+          chapter 1 → Generate → save. Repeat for each chapter.
+          Drag-reorder by chapter number. Hit play on chapter 1 —
+          auto-advance plays the whole book in order with 3-second
+          breaths between chapters.
+        </li>
+        <li>
+          <strong>Read articles you'll never read.</strong> Phone
+          PWA + tunnel + Paste URL. The Continue Listening shelf
+          handles "I started this on my commute, finish on the
+          train home."
+        </li>
+        <li>
+          <strong>Revise your own writing.</strong> Author mode on.
+          Generate. Walk around. Tap 🔖 every time you hear something
+          to fix; type quick notes when you stop. Back at your desk,
+          tap each bookmark's time to re-hear it, fix the manuscript,
+          Save text — auto-regen if sentence count changed — listen
+          again. Repeat.
+        </li>
+        <li>
+          <strong>Stress-test dialogue.</strong> Author mode → add
+          your characters with distinct LibriTTS speakers → Generate
+          a chapter. If two characters' dialogue sounds the same in
+          your own ears, your prose may be confusing them on the
+          page too.
+        </li>
+      </ul>
+
+      <h3>Where your data lives</h3>
+      <ul>
+        <li><strong>Library (clips + bookmarks + notes)</strong> — IndexedDB <code>audiable</code> database in your browser. Per-browser-profile, per-origin.</li>
+        <li><strong>Voice models</strong> — <code>voices/*.onnx</code> on the server machine.</li>
+        <li><strong>Synthesis presets + library order + custom config</strong> — <code>localStorage</code> keys under <code>narrative.*</code>.</li>
+        <li><strong>Uploaded files (PDFs, etc.)</strong> — extracted in memory on the server, never saved to disk.</li>
+      </ul>
+      <div class="tip">
+        Use <strong>Export</strong> regularly to back up everything
+        as a single zip. The whole library state restores cleanly
+        on any device.
+      </div>
+
+      <p style="margin-top: 48px;">
+        <a href="/" class="back-link">← Back to Narrative</a>
+      </p>
+    </main>
+  </body>
+</html>

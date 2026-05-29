@@ -85,6 +85,18 @@ class SynthesizeRequest(BaseModel):
     speaker_id: int | None = Field(default=None, ge=0, le=10000)
 
 
+class SynthesisSegment(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500_000)
+    voice_id: str | None = None
+    speaker_id: int | None = Field(default=None, ge=0, le=10000)
+
+
+class SynthesizeSegmentsRequest(BaseModel):
+    segments: list[SynthesisSegment] = Field(..., min_length=1, max_length=2000)
+    rate: int | None = Field(default=None, ge=50, le=400)
+    volume: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 @app.get("/api/voices")
 def voices():
     return {
@@ -134,6 +146,78 @@ async def voices_install(req: InstallVoiceRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "voice_id": req.voice_id}
+
+
+@app.post("/api/synthesize/segments/stream")
+async def synthesize_segments_stream(req: SynthesizeSegmentsRequest):
+    """SSE endpoint: multi-segment synthesis with per-segment voice/speaker.
+
+    Used by character-voice mode. The frontend splits the manuscript into
+    segments (attributed dialogue + narration), each with its own voice,
+    and posts them here. We synthesize each segment in turn, threading
+    through the existing per-sentence streaming flow so the UI still gets
+    granular progress and per-sentence playback. Final result is the
+    concatenated audio, MP3-encoded like /api/synthesize/stream does.
+    """
+    import asyncio
+    import base64
+    import json as _json
+
+    from tts.encode import wav_to_mp3
+
+    _DONE = object()
+
+    async def _agen():
+        loop = asyncio.get_running_loop()
+        try:
+            it = tts.synthesize_segments_iter(
+                segments=[s.model_dump() for s in req.segments],
+                rate=req.rate,
+                volume=req.volume,
+            )
+        except ValueError as exc:
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
+
+        def _next_event():
+            try:
+                return next(it)
+            except StopIteration:
+                return _DONE
+
+        def _encode_result(ev: dict) -> dict:
+            wav_bytes = base64.b64decode(ev["wav_b64"])
+            mp3_bytes = wav_to_mp3(wav_bytes, bitrate_kbps=64)
+            return {
+                "type": "result",
+                "mp3_b64": base64.b64encode(mp3_bytes).decode(),
+                "sentence_offsets_ms": ev["sentence_offsets_ms"],
+            }
+
+        while True:
+            try:
+                event = await loop.run_in_executor(None, _next_event)
+            except Exception as exc:
+                yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+                break
+            if event is _DONE:
+                break
+            if event.get("type") == "result":
+                try:
+                    event = await loop.run_in_executor(None, _encode_result, event)
+                except Exception as exc:
+                    yield f"data: {_json.dumps({'type': 'error', 'message': f'mp3 encode failed: {exc}'})}\n\n"
+                    break
+            yield f"data: {_json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        _agen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.delete("/api/voices/{voice_id}")

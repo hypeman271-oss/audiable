@@ -98,6 +98,7 @@ const textLabel = $("text-label");
 const libraryCard = $("library-card");
 const libraryList = $("library-list");
 const libraryClearBtn = $("library-clear");
+const libraryHidePlayedBtn = $("library-hide-played");
 const playModeBtn = $("play-mode-btn");
 const libraryLabel = $("library-label");
 const librarySearch = $("library-search");
@@ -109,6 +110,11 @@ const clipEditSave = $("clip-edit-save");
 const browseVoicesBtn = $("browse-voices-btn");
 const presetSaveBtn = $("preset-save-btn");
 const presetsList = $("presets-list");
+const charactersBtn = $("characters-btn");
+const charactersDialog = $("characters-dialog");
+const charactersClose = $("characters-close");
+const charactersList = $("characters-list");
+const charactersAddBtn = $("characters-add");
 const voiceBrowser = $("voice-browser");
 const voiceBrowserClose = $("voice-browser-close");
 const voiceBrowserSearch = $("voice-browser-search");
@@ -116,6 +122,10 @@ const voiceBrowserList = $("voice-browser-list");
 const voiceInstalledToggle = $("voice-installed-toggle");
 const uploadBtn = $("upload-btn");
 const uploadInput = $("upload-input");
+const settingsBtn = $("settings-btn");
+const settingsDialog = $("settings-dialog");
+const settingsClose = $("settings-close");
+const authorModeToggle = $("author-mode-toggle");
 const clearBtn = $("clear-btn");
 const pasteUrlBtn = $("paste-url-btn");
 const urlRow = $("url-row");
@@ -123,6 +133,8 @@ const urlInput = $("url-input");
 const urlFetchBtn = $("url-fetch-btn");
 const speedBtn = $("speed-btn");
 const sleepBtn = $("sleep-btn");
+const abLoopBtn = $("ab-loop-btn");
+const skipBackBtn = $("skip-back-btn");
 const bookmarkAddBtn = $("bookmark-add-btn");
 const bookmarksList = $("bookmarks-list");
 const genLabel = generateBtn.querySelector(".label-text");
@@ -140,6 +152,18 @@ let activeSentenceIdx = -1;
 // AbortController for the in-flight synthesis request (null when idle).
 let _synthController = null;
 
+// setTimeout handle for the 3-second pause between auto-advanced chapters.
+// Cleared by _cancelAutoAdvance() whenever the user takes any action that
+// would invalidate the queued next-clip load (manual play of another clip,
+// Clear button, etc).
+let _autoAdvanceTimer = null;
+function _cancelAutoAdvance() {
+  if (_autoAdvanceTimer) {
+    clearTimeout(_autoAdvanceTimer);
+    _autoAdvanceTimer = null;
+  }
+}
+
 const synthProgress = $("synth-progress");
 
 // ID of the clip currently loaded in the player (matches a row in IndexedDB).
@@ -150,6 +174,44 @@ let _currentClipId = null;
 // IndexedDB writes to roughly once per PROGRESS_SAVE_INTERVAL_MS.
 let _lastProgressSaveAt = 0;
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
+
+// ---- Author mode --------------------------------------------------------
+// A persisted toggle that gates "writing-craft" features (word count + read
+// time, long-sentence highlighting, filler-word callouts, character voice
+// assignment, etc.) behind a user opt-in. Everyone else gets a clean
+// reader-focused UI by default.
+//
+// CSS uses `body[data-author-mode]` selectors, JS uses isAuthorMode().
+const AUTHOR_MODE_KEY = "narrative.authorMode";
+
+function isAuthorMode() {
+  try { return localStorage.getItem(AUTHOR_MODE_KEY) === "true"; }
+  catch { return false; }
+}
+
+function setAuthorMode(on) {
+  try { localStorage.setItem(AUTHOR_MODE_KEY, on ? "true" : "false"); }
+  catch {}
+  if (on) document.body.dataset.authorMode = "true";
+  else delete document.body.dataset.authorMode;
+}
+
+// Apply current setting at boot — survives reloads and PWA reinstalls.
+setAuthorMode(isAuthorMode());
+
+settingsBtn.addEventListener("click", () => {
+  authorModeToggle.checked = isAuthorMode();
+  settingsDialog.showModal();
+});
+
+settingsClose.addEventListener("click", () => settingsDialog.close());
+
+authorModeToggle.addEventListener("change", () => {
+  setAuthorMode(authorModeToggle.checked);
+  // Recompute the textarea meta line so word count + time estimate
+  // appear / disappear immediately when the toggle flips.
+  updateCounts();
+});
 
 // ---- Streaming playback state -------------------------------------------
 // While synthesis runs, each sentence's WAV arrives over SSE and we play
@@ -363,6 +425,74 @@ playerEl.addEventListener("timeupdate", () => {
 
 _updateSleepBtn();
 
+// ---- A-B loop -----------------------------------------------------------
+// Tap the chip to mark A (current time), tap again to mark B and start
+// looping between them, tap a third time to clear. Useful for re-listening
+// to a tricky passage (language practice, study, writers checking rhythm,
+// listeners re-hearing a complex paragraph).
+//
+// State machine:
+//   _loopA = null, _loopB = null     → idle, label "A↔B"
+//   _loopA set,    _loopB = null     → "A 1:23", waiting for B
+//   _loopA set,    _loopB set        → looping, label "↻ 1:23–2:45", accent bg
+//
+// While looping is active, a timeupdate guard seeks back to A whenever
+// currentTime crosses B. Switching clips clears the loop (the bounds
+// belonged to a different audio track).
+let _loopA = null;
+let _loopB = null;
+
+function _updateAbBtn() {
+  if (_loopA == null) {
+    abLoopBtn.textContent = "A↔B";
+    abLoopBtn.classList.remove("active");
+  } else if (_loopB == null) {
+    abLoopBtn.textContent = `A ${formatTime(_loopA)}`;
+    abLoopBtn.classList.remove("active");
+  } else {
+    abLoopBtn.textContent = `↻ ${formatTime(_loopA)}–${formatTime(_loopB)}`;
+    abLoopBtn.classList.add("active");
+  }
+}
+
+function clearAbLoop() {
+  _loopA = null;
+  _loopB = null;
+  _updateAbBtn();
+}
+
+abLoopBtn.addEventListener("click", () => {
+  const here = virtualTime();
+  if (_loopA == null) {
+    _loopA = here;
+  } else if (_loopB == null) {
+    // B must be after A — if the user marked B before A, swap them.
+    if (here <= _loopA + 0.1) {
+      // Too close / before A — treat as resetting A here.
+      _loopA = here;
+    } else {
+      _loopB = here;
+    }
+  } else {
+    // Third tap clears.
+    _loopA = null;
+    _loopB = null;
+  }
+  _updateAbBtn();
+});
+
+// Loop enforcement: when both bounds are set, seek back to A whenever the
+// playhead crosses B. timeupdate fires ~4 times/sec during playback, which
+// is enough granularity that the user won't hear past B.
+playerEl.addEventListener("timeupdate", () => {
+  if (_loopA == null || _loopB == null) return;
+  if (virtualTime() >= _loopB) {
+    seekToTime(_loopA);
+  }
+});
+
+_updateAbBtn();
+
 // ---- Bookmarks ----------------------------------------------------------
 // Drop a timestamp on the currently-loaded clip while you're listening.
 // Each bookmark gets an optional note (typed inline, no modal — the
@@ -528,6 +658,18 @@ async function renderBookmarks() {
 
 bookmarkAddBtn.addEventListener("click", addBookmarkAtCurrentTime);
 
+// ---- 5-second skip-back -------------------------------------------------
+// Quick recovery for "I zoned out for a moment." Separate from the
+// MediaSession sentence-skip on the lock screen (that one re-plays the
+// whole sentence, which is overkill when you just missed a word).
+skipBackBtn.addEventListener("click", () => {
+  // Use seekToTime so streaming mode + combined-WAV mode are both handled,
+  // and the math is in terms of the virtual timeline (not whatever
+  // per-sentence WAV happens to be loaded right now).
+  const here = virtualTime();
+  seekToTime(Math.max(0, here - 5));
+});
+
 // ---- Resume position ---------------------------------------------------
 // Per-clip "remember where I left off." Saved into the existing IndexedDB
 // row by mutating clip.progressSec; throttled so we're not hitting the DB
@@ -559,6 +701,10 @@ async function markCurrentClipPlayed() {
     const clip = await getClip(_currentClipId);
     if (!clip) return;
     clip.progressSec = 0;
+    // Stamp the completion time so the "Hide played" library filter has
+    // something to key off. We can't distinguish "never played" from
+    // "played and reset" via progressSec alone (both are 0).
+    clip.playedAt = new Date().toISOString();
     await saveClip(clip);
     renderLibrary();
   } catch (e) {
@@ -589,13 +735,46 @@ function exitBusyState() {
   if (lastBlob) downloadBtn.disabled = false;
 }
 
+function _countWords(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return 0;
+  // Split on any whitespace; the regex handles tabs / newlines / multiple
+  // spaces in one shot. Matches what most writing apps report.
+  return trimmed.split(/\s+/).length;
+}
+
+function _estimateReadSeconds(words, wpm) {
+  if (!words || !wpm) return 0;
+  return (words / wpm) * 60;
+}
+
 function updateCounts() {
-  const len = textEl.value.length;
-  charCountEl.textContent = `${len.toLocaleString()} / 500,000`;
+  const text = textEl.value;
+  const len = text.length;
+  let label = `${len.toLocaleString()} / 500,000`;
+
+  // Author-mode extras: word count + read-aloud time estimate. Hidden by
+  // default so a reader who's pasting articles doesn't see writing stats
+  // they don't care about.
+  if (isAuthorMode()) {
+    const words = _countWords(text);
+    const wpm = Number(rateEl.value) || 180;
+    const sec = _estimateReadSeconds(words, wpm);
+    if (words > 0) {
+      label += ` · ${words.toLocaleString()} words · ~${formatTime(sec)} at ${wpm} wpm`;
+    } else {
+      label += ` · 0 words`;
+    }
+  }
+
+  charCountEl.textContent = label;
 }
 
 rateEl.addEventListener("input", () => {
   rateValueEl.textContent = rateEl.value;
+  // Author mode shows "~M:SS at N wpm" in the textarea meta — the
+  // estimate depends on the current rate, so refresh it as the slider moves.
+  if (isAuthorMode()) updateCounts();
 });
 
 volumeEl.addEventListener("input", () => {
@@ -923,6 +1102,224 @@ presetSaveBtn.addEventListener("click", () => {
 
 renderPresets();
 
+// ---- Character voices (Author mode) -------------------------------------
+// Persisted roster of {id, name, voiceId, speakerId}. When Author mode is
+// on AND the user has defined at least one character, generate() detects
+// attributed dialogue ("...," X said) and routes those sentences through
+// the /api/synthesize/segments/stream endpoint with each segment carrying
+// its assigned voice. Other sentences fall through to the main voice
+// picker (used as "narration").
+const CHARACTERS_STORAGE_KEY = "narrative.characters";
+
+function _loadCharacters() {
+  try {
+    const raw = localStorage.getItem(CHARACTERS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function _saveCharacters(list) {
+  try {
+    localStorage.setItem(CHARACTERS_STORAGE_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.warn("character save failed:", e);
+  }
+}
+
+function _populateVoiceOptions(selectEl, currentVoiceId) {
+  // Mirror the main voice dropdown so the character's voice picker shows
+  // the same installed Piper / SAPI voice list.
+  selectEl.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Default voice";
+  selectEl.appendChild(placeholder);
+
+  for (const og of voiceEl.querySelectorAll("optgroup")) {
+    const newOg = document.createElement("optgroup");
+    newOg.label = og.label;
+    for (const opt of og.querySelectorAll("option")) {
+      const c = document.createElement("option");
+      c.value = opt.value;
+      c.textContent = opt.textContent;
+      newOg.appendChild(c);
+    }
+    selectEl.appendChild(newOg);
+  }
+  selectEl.value = currentVoiceId || "";
+}
+
+function _populateSpeakerOptions(selectEl, voiceId, currentSpeakerId) {
+  selectEl.innerHTML = "";
+  const n = _voiceSpeakerCounts.get(voiceId) || 1;
+  if (n <= 1) {
+    selectEl.hidden = true;
+    return;
+  }
+  selectEl.hidden = false;
+  for (let i = 0; i < n; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `Speaker ${i}`;
+    selectEl.appendChild(opt);
+  }
+  selectEl.value = String(Math.min(Number(currentSpeakerId) || 0, n - 1));
+}
+
+function renderCharacters() {
+  const characters = _loadCharacters();
+  charactersList.innerHTML = "";
+  if (characters.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "characters-empty";
+    empty.textContent =
+      "No characters yet. Add one to start routing dialogue through a different voice.";
+    charactersList.appendChild(empty);
+    return;
+  }
+
+  for (const ch of characters) {
+    const row = document.createElement("div");
+    row.className = "character-row";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "character-name";
+    nameInput.placeholder = "Name (e.g. Sarah)";
+    nameInput.maxLength = 60;
+    nameInput.value = ch.name || "";
+    nameInput.addEventListener("change", () => {
+      _updateCharacter(ch.id, { name: nameInput.value.trim() });
+    });
+
+    const voiceSelect = document.createElement("select");
+    voiceSelect.className = "character-voice";
+    _populateVoiceOptions(voiceSelect, ch.voiceId);
+    voiceSelect.addEventListener("change", () => {
+      _updateCharacter(ch.id, { voiceId: voiceSelect.value || null, speakerId: 0 });
+      _populateSpeakerOptions(speakerSelect, voiceSelect.value, 0);
+    });
+
+    const speakerSelect = document.createElement("select");
+    speakerSelect.className = "character-speaker";
+    _populateSpeakerOptions(speakerSelect, ch.voiceId, ch.speakerId);
+    speakerSelect.addEventListener("change", () => {
+      _updateCharacter(ch.id, { speakerId: Number(speakerSelect.value) || 0 });
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "character-delete";
+    delBtn.textContent = "×";
+    delBtn.title = "Delete character";
+    delBtn.setAttribute("aria-label", `Delete ${ch.name || "character"}`);
+    delBtn.addEventListener("click", () => _deleteCharacter(ch.id));
+
+    row.append(nameInput, voiceSelect, speakerSelect, delBtn);
+    charactersList.appendChild(row);
+  }
+}
+
+function _addCharacter() {
+  const list = _loadCharacters();
+  list.push({
+    id: Date.now(),
+    name: "",
+    voiceId: null,
+    speakerId: null,
+  });
+  _saveCharacters(list);
+  renderCharacters();
+}
+
+function _updateCharacter(id, patch) {
+  const list = _loadCharacters();
+  const i = list.findIndex((c) => c.id === id);
+  if (i < 0) return;
+  list[i] = { ...list[i], ...patch };
+  _saveCharacters(list);
+}
+
+function _deleteCharacter(id) {
+  const list = _loadCharacters().filter((c) => c.id !== id);
+  _saveCharacters(list);
+  renderCharacters();
+}
+
+charactersBtn.addEventListener("click", () => {
+  renderCharacters();
+  charactersDialog.showModal();
+});
+charactersClose.addEventListener("click", () => charactersDialog.close());
+charactersAddBtn.addEventListener("click", _addCharacter);
+
+// Dialogue / attribution heuristic. For each sentence, if it contains
+// any kind of quote AND a character name appears (whole-word, case-
+// insensitive) anywhere in the sentence, that sentence belongs to that
+// character. Consecutive sentences with the same speaker collapse into
+// a single segment to minimize the number of voice-switch boundaries
+// in the synthesized audio.
+function _escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const _DIALOGUE_QUOTE = /["“”'‘’]/;
+
+function segmentTextByCharacter(text, characters, fallbackVoiceId, fallbackSpeakerId) {
+  const sentences = splitSentencesClient(text);
+  const named = characters.filter((c) => c.name && c.name.trim() && c.voiceId);
+  if (named.length === 0) {
+    return [{
+      voiceId: fallbackVoiceId,
+      speakerId: fallbackSpeakerId,
+      text: sentences.join(" "),
+    }];
+  }
+
+  const charRegexes = named.map((c) => ({
+    voiceId: c.voiceId,
+    speakerId: typeof c.speakerId === "number" ? c.speakerId : null,
+    re: new RegExp(`\\b${_escapeRegex(c.name)}\\b`, "i"),
+  }));
+
+  const segments = [];
+  let current = null;
+  for (const sentence of sentences) {
+    let attributedVoice = fallbackVoiceId;
+    let attributedSpeaker = fallbackSpeakerId;
+
+    if (_DIALOGUE_QUOTE.test(sentence)) {
+      for (const c of charRegexes) {
+        if (c.re.test(sentence)) {
+          attributedVoice = c.voiceId;
+          attributedSpeaker = c.speakerId;
+          break;
+        }
+      }
+    }
+
+    if (
+      current &&
+      current.voiceId === attributedVoice &&
+      current.speakerId === attributedSpeaker
+    ) {
+      current.text += " " + sentence;
+    } else {
+      current = {
+        voiceId: attributedVoice,
+        speakerId: attributedSpeaker,
+        text: sentence,
+      };
+      segments.push(current);
+    }
+  }
+  return segments;
+}
+
 // Decode a base64 string to a Uint8Array for Blob construction.
 function base64ToBytes(b64) {
   const bin = atob(b64);
@@ -974,20 +1371,68 @@ async function generate() {
   enterBusyState();
   setStatus(regenTargetId ? "Re-synthesizing…" : "Starting synthesis…");
 
+  // Character-voice mode kicks in only when Author mode is on, the user
+  // has defined at least one character with a voice assigned, AND the
+  // text actually contains attributable dialogue (the detection function
+  // returns >1 segment). Otherwise we fall through to the regular
+  // single-voice synth path.
+  const fallbackVoice = voiceEl.value || null;
+  const fallbackSpeaker = speakerRow.hidden
+    ? null
+    : Number(speakerEl.value || 0);
+  let endpoint = "/api/synthesize/stream";
+  let requestBody;
+  let charactersUsed = 0;
+  if (isAuthorMode()) {
+    const characters = _loadCharacters().filter((c) => c.name && c.voiceId);
+    if (characters.length > 0) {
+      const segs = segmentTextByCharacter(
+        text, characters, fallbackVoice, fallbackSpeaker
+      );
+      // Only flip to the segments endpoint if detection actually
+      // produced more than one segment — otherwise the regular endpoint
+      // is faster and identical in output.
+      if (segs.length > 1) {
+        endpoint = "/api/synthesize/segments/stream";
+        requestBody = JSON.stringify({
+          segments: segs.map((s) => ({
+            text: s.text,
+            voice_id: s.voiceId,
+            speaker_id: s.speakerId,
+          })),
+          rate: Number(rateEl.value),
+          volume: Number(volumeEl.value) / 100,
+        });
+        // Count distinct character voices that actually show up so the
+        // status line can give the user feedback.
+        const used = new Set();
+        for (const s of segs) {
+          if (s.voiceId && s.voiceId !== fallbackVoice) used.add(s.voiceId);
+        }
+        charactersUsed = used.size;
+      }
+    }
+  }
+  if (!requestBody) {
+    requestBody = JSON.stringify({
+      text,
+      voice_id: fallbackVoice,
+      rate: Number(rateEl.value),
+      volume: Number(volumeEl.value) / 100,
+      speaker_id: fallbackSpeaker,
+    });
+  }
+  if (charactersUsed > 0) {
+    setStatus(
+      `Synthesising with ${charactersUsed} character voice${charactersUsed === 1 ? "" : "s"}…`
+    );
+  }
+
   try {
-    const res = await fetch("/api/synthesize/stream", {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text,
-        voice_id: voiceEl.value || null,
-        rate: Number(rateEl.value),
-        volume: Number(volumeEl.value) / 100,
-        // Only send speaker_id when the speaker row is actually visible —
-        // single-speaker voices reject the field harmlessly, but skipping
-        // it keeps the wire payload clean.
-        speaker_id: speakerRow.hidden ? null : Number(speakerEl.value || 0),
-      }),
+      body: requestBody,
       signal: _synthController.signal,
     });
 
@@ -1328,6 +1773,9 @@ saveTextBtn.addEventListener("click", saveCurrentClipText);
 // typing the text for clip B, and the voice you just dialed in carries
 // forward to the next generation.
 function clearForNewClip() {
+  // Cancel any pending auto-advance — the user is clearly starting fresh.
+  _cancelAutoAdvance();
+
   // If we were in the reading view, drop back to the textarea so the user
   // can actually type into the (about to be empty) editor.
   if (!readingView.hidden) exitReadingView();
@@ -1461,6 +1909,11 @@ function formatTime(sec) {
 function formatClipMeta(clip) {
   const parts = [];
   if (clip.voiceName) parts.push(clip.voiceName.split(" · ")[0]);
+  // Compact word-count so the user has a quick "how much is in this card?"
+  // signal alongside the audio duration. "247w" reads fast and fits even
+  // on a phone-width card next to the voice name.
+  const wordCount = _countWords(clip.text);
+  if (wordCount > 0) parts.push(`${wordCount.toLocaleString()}w`);
   // Show resume position if there's a meaningful in-progress checkpoint,
   // otherwise just show the duration.
   if (clip.durationSec) {
@@ -1585,6 +2038,28 @@ librarySearch.addEventListener("keydown", (e) => {
     renderLibrary();
     librarySearch.blur();
   }
+});
+
+// "Hide played" filter — toggles whether clips with a playedAt stamp are
+// rendered. Persisted across reloads so the preference sticks.
+const HIDE_PLAYED_KEY = "narrative.hidePlayed";
+let _hidePlayed = (() => {
+  try { return localStorage.getItem(HIDE_PLAYED_KEY) === "true"; }
+  catch { return false; }
+})();
+
+function _updateHidePlayedBtn() {
+  libraryHidePlayedBtn.textContent = _hidePlayed ? "Show all" : "Hide played";
+  libraryHidePlayedBtn.setAttribute("aria-pressed", String(_hidePlayed));
+}
+_updateHidePlayedBtn();
+
+libraryHidePlayedBtn.addEventListener("click", () => {
+  _hidePlayed = !_hidePlayed;
+  try { localStorage.setItem(HIDE_PLAYED_KEY, _hidePlayed ? "true" : "false"); }
+  catch {}
+  _updateHidePlayedBtn();
+  renderLibrary();
 });
 
 // Returns the id of the clip that should play after `fromId` ends, or null
@@ -1718,6 +2193,9 @@ async function resetClipProgress(id) {
     const clip = await getClip(id);
     if (!clip) return;
     clip.progressSec = 0;
+    // Manual reset means "I want this back in my listening queue" — clear
+    // playedAt so the Hide-played filter shows it again.
+    clip.playedAt = null;
     await saveClip(clip);
     // If the user is hitting reset on the clip they're currently listening
     // to, rewind the player itself too — otherwise the IndexedDB row says
@@ -1863,6 +2341,18 @@ async function renderLibrary() {
   // Sort first, then filter — that way the visible order matches what
   // auto-advance will play next.
   clips = sortClips(clips, _playMode);
+
+  // "Hide played" filter — drop clips that have a playedAt stamp AND are
+  // no longer in progress. In-progress clips (Continue Listening) stay
+  // visible even if previously finished, since the user is replaying.
+  if (_hidePlayed) {
+    clips = clips.filter((c) => {
+      const progress = Number(c.progressSec) || 0;
+      const wasPlayed = !!c.playedAt;
+      if (!wasPlayed) return true;
+      return progress > 1; // played-and-restarted is still in rotation
+    });
+  }
 
   const query = _librarySearch.trim().toLowerCase();
   if (query) {
@@ -2170,6 +2660,7 @@ async function exportLibrary() {
         audioFile,
         audioType: clip.blob.type,
         bookmarks: Array.isArray(clip.bookmarks) ? clip.bookmarks : [],
+        playedAt: clip.playedAt || null,
       });
     }
 
@@ -2272,6 +2763,7 @@ async function importLibraryFromFile(file) {
         // Bookmarks: array of {id, timeSec, note, createdAt}. Older
         // manifests don't have the field — default to empty.
         bookmarks: Array.isArray(mc.bookmarks) ? mc.bookmarks : [],
+        playedAt: mc.playedAt || null,
         createdAt: mc.createdAt || new Date(mc.id).toISOString(),
         blob,
       });
@@ -2344,6 +2836,12 @@ $("library-import-file").addEventListener("change", (e) => {
 async function loadClip(id) {
   const clip = await getClip(id);
   if (!clip) return;
+
+  // Whatever auto-advance had queued is now stale — the user picked
+  // something explicitly.
+  _cancelAutoAdvance();
+  // A-B loop bounds belonged to whatever audio was loaded before.
+  clearAbLoop();
 
   // Drop any in-progress streaming state so the chained-playback / virtualTime
   // logic doesn't try to walk a queue from a previous generate().
@@ -2704,10 +3202,21 @@ function setupMediaSession() {
     await markCurrentClipPlayed();
 
     // Auto-advance to the next clip in the library according to _playMode.
-    // If we're at the end of the queue (or there's only one clip), just stop.
+    // Give the listener a 3-second breath between chapters so transitions
+    // don't slam together — your ear needs a beat to register a chapter
+    // change. Cancellable: if the user starts a different clip or hits
+    // any control during the gap, _autoAdvanceTimer gets cleared by
+    // whatever takes over.
     if (justEndedId) {
       const nextId = await nextClipId(justEndedId);
-      if (nextId) loadClip(nextId);
+      if (nextId) {
+        setStatus("Up next in 3s…");
+        _cancelAutoAdvance();
+        _autoAdvanceTimer = setTimeout(() => {
+          _autoAdvanceTimer = null;
+          loadClip(nextId);
+        }, 3000);
+      }
     }
   });
 

@@ -38,6 +38,309 @@ body {
   padding: 8px 4px 18px;
 }
 
+.hero-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.settings-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 18px;
+  font-family: inherit;
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  /* Pull up toward the H1 baseline so it sits visually balanced with the
+     title rather than below it. */
+  margin-top: 4px;
+  line-height: 1;
+}
+
+.settings-btn:hover {
+  color: var(--accent);
+  background: rgba(124, 156, 255, 0.10);
+  border-color: var(--accent);
+}
+
+/* ---------- Settings dialog ---------- */
+.settings-dialog {
+  width: min(440px, calc(100vw - 24px));
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.settings-dialog::backdrop {
+  background: rgba(11, 16, 32, 0.7);
+}
+
+/* Author-mode-only UI is hidden by default; revealed when the body has
+   the data-author-mode attribute set by setAuthorMode(). Lets us add
+   author-only chrome anywhere in the app with a single class. */
+body:not([data-author-mode]) .author-only {
+  display: none !important;
+}
+
+.settings-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-card-2);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.settings-toggle-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-toggle-label strong {
+  font-size: 14px;
+}
+
+.settings-toggle-desc {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+/* Toggle switch (styled checkbox) — iOS-flavored pill that flips on/off. */
+.settings-switch {
+  flex: 0 0 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 44px;
+  height: 26px;
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.settings-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  transition: left 0.18s ease, background 0.18s ease;
+}
+
+.settings-switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.settings-switch:checked::after {
+  left: 22px;
+  background: #0b1020;
+}
+
+.settings-help-link {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--bg-card-2);
+  color: var(--accent);
+  text-decoration: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.settings-help-link:hover {
+  background: rgba(124, 156, 255, 0.15);
+}
+
+@media (max-width: 480px) {
+  .settings-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    border-radius: 0;
+  }
+}
+
+/* ---------- Characters dialog ---------- */
+.characters-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: 85vh;
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.characters-dialog::backdrop {
+  background: rgba(11, 16, 32, 0.7);
+}
+
+.characters-body {
+  padding: 16px;
+  overflow-y: auto;
+  max-height: calc(85vh - 60px);
+}
+
+.characters-help {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+  margin: 0 0 14px;
+}
+
+.characters-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.character-row {
+  display: grid;
+  /* name | voice | speaker | × */
+  grid-template-columns: 1fr 1.4fr auto auto;
+  gap: 6px;
+  background: var(--bg-card-2);
+  padding: 8px;
+  border-radius: 10px;
+  align-items: center;
+}
+
+.character-row input.character-name {
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+
+.character-row input.character-name:focus {
+  border-color: var(--accent);
+}
+
+.character-row select {
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.character-row select.character-speaker[hidden] {
+  display: none;
+}
+
+.character-delete {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.character-delete:hover {
+  color: var(--danger);
+  background: rgba(255, 124, 124, 0.10);
+}
+
+.characters-empty {
+  font-size: 13px;
+  color: var(--fg-dim);
+  padding: 16px;
+  text-align: center;
+  background: var(--bg-card-2);
+  border-radius: 10px;
+}
+
+.characters-add-btn {
+  width: 100%;
+  background: transparent;
+  color: var(--accent);
+  border: 1px dashed rgba(124, 156, 255, 0.4);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.characters-add-btn:hover {
+  background: rgba(124, 156, 255, 0.08);
+  border-style: solid;
+}
+
+@media (max-width: 480px) {
+  .characters-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+  }
+  .character-row {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 6px;
+  }
+  .character-row input.character-name {
+    grid-column: 1 / 3;
+  }
+  .character-row select.character-voice {
+    grid-column: 1;
+  }
+  .character-row select.character-speaker {
+    grid-column: 1 / 3;
+  }
+  .character-delete {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+  }
+}
+
 .hero h1 {
   margin: 0;
   font-size: 32px;
@@ -514,6 +817,33 @@ button:disabled {
   border-color: var(--accent);
 }
 
+/* A-B loop chip — same pill shape. State machine cycles through:
+   idle "A↔B" → "A 1:23" → "↻ 1:23–2:45" (active loop, accent bg) → idle. */
+.ab-loop-btn {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  min-width: 72px;
+}
+
+.ab-loop-btn:hover {
+  background: rgba(124, 156, 255, 0.18);
+  border-color: var(--accent);
+}
+
+.ab-loop-btn.active {
+  background: var(--accent);
+  color: #0b1020;
+  border-color: var(--accent);
+}
+
 /* Sleep timer chip — same shape as the speed button, slightly wider to
    fit the "💤 14:59" countdown without clipping. Goes "active" (accent
    background) while the timer is running. */
@@ -541,6 +871,30 @@ button:disabled {
   background: var(--accent);
   color: #0b1020;
   border-color: var(--accent);
+}
+
+/* Skip-back chip — "I zoned out for a moment" rewind. Same pill shape
+   as the other player-action chips. */
+.skip-back-btn {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.skip-back-btn:hover {
+  background: rgba(124, 156, 255, 0.18);
+  border-color: var(--accent);
+}
+
+.skip-back-btn:active {
+  transform: scale(0.97);
 }
 
 /* Bookmark chip mirrors the sleep / speed pill shape. Auto-grows a bit to

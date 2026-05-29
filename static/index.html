@@ -20,9 +20,58 @@
   <body>
     <main class="app">
       <header class="hero">
-        <h1>Narrative</h1>
-        <p class="tagline">Type. Listen. Download.</p>
+        <div class="hero-row">
+          <div>
+            <h1>Narrative</h1>
+            <p class="tagline">Type. Listen. Download.</p>
+          </div>
+          <button
+            id="settings-btn"
+            type="button"
+            class="settings-btn"
+            aria-label="Open settings"
+            title="Settings"
+          >⚙</button>
+        </div>
       </header>
+
+      <dialog id="settings-dialog" class="settings-dialog">
+        <div class="voice-browser-head">
+          <h2>Settings</h2>
+          <button
+            id="settings-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close settings"
+          >Close</button>
+        </div>
+        <div class="settings-body">
+          <label class="settings-toggle">
+            <span class="settings-toggle-label">
+              <strong>Author mode</strong>
+              <span class="settings-toggle-desc">
+                Show writing-craft tools (live word count + read-aloud time,
+                long-sentence highlights, filler-word callouts). Off by
+                default — turn on if you're using Narrative to revise your
+                own writing.
+              </span>
+            </span>
+            <input
+              id="author-mode-toggle"
+              type="checkbox"
+              class="settings-switch"
+              aria-label="Toggle author mode"
+            />
+          </label>
+
+          <a
+            href="/manual.html"
+            target="_blank"
+            rel="noopener"
+            class="settings-help-link"
+          >Help &amp; manual →</a>
+        </div>
+      </dialog>
 
       <section class="card">
         <div class="label-row">
@@ -96,6 +145,12 @@
           <label for="voice" class="label">Voice</label>
           <div class="label-row-actions">
             <button
+              id="characters-btn"
+              type="button"
+              class="link-btn author-only"
+              aria-label="Assign voices to characters"
+            >Characters</button>
+            <button
               id="preset-save-btn"
               type="button"
               class="link-btn"
@@ -156,6 +211,13 @@
         <audio id="player" controls preload="auto"></audio>
         <div class="player-actions">
           <button
+            id="skip-back-btn"
+            type="button"
+            class="skip-back-btn"
+            aria-label="Skip back 5 seconds"
+            title="Skip back 5 seconds"
+          >↶ 5s</button>
+          <button
             id="bookmark-add-btn"
             type="button"
             class="bookmark-add-btn"
@@ -170,6 +232,13 @@
             title="Tap to cycle sleep timer (Off / 15 / 30 / 45 / 60 min)"
           >Sleep</button>
           <button
+            id="ab-loop-btn"
+            type="button"
+            class="ab-loop-btn"
+            aria-label="A-B loop"
+            title="Tap to mark A, again for B, again to loop, again to clear"
+          >A↔B</button>
+          <button
             id="speed-btn"
             type="button"
             class="speed-btn"
@@ -181,6 +250,33 @@
       </section>
 
       <p class="status" id="status" aria-live="polite"></p>
+
+      <dialog id="characters-dialog" class="characters-dialog">
+        <div class="voice-browser-head">
+          <h2>Characters</h2>
+          <button
+            id="characters-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close characters dialog"
+          >Close</button>
+        </div>
+        <div class="characters-body">
+          <p class="characters-help">
+            Assign a voice (and speaker, for multi-speaker models like
+            LibriTTS) to each character. When you Generate, sentences
+            containing a character's name near a quote will be narrated
+            in that character's voice. Other text uses the main voice
+            picker.
+          </p>
+          <div id="characters-list" class="characters-list"></div>
+          <button
+            id="characters-add"
+            type="button"
+            class="characters-add-btn"
+          >+ Add character</button>
+        </div>
+      </dialog>
 
       <dialog id="voice-browser" class="voice-browser">
         <div class="voice-browser-head">
@@ -275,6 +371,13 @@
             class="link-btn"
             aria-label="Import a previously-exported library zip"
           >Import</button>
+          <button
+            id="library-hide-played"
+            type="button"
+            class="link-btn"
+            aria-pressed="false"
+            aria-label="Hide clips you've finished"
+          >Hide played</button>
           <input
             id="library-import-file"
             type="file"
