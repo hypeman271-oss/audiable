@@ -12,6 +12,7 @@ import hmac
 import mimetypes
 import os
 import socket
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -198,6 +199,16 @@ async def synthesize_segments_stream(req: SynthesizeSegmentsRequest):
             try:
                 event = await loop.run_in_executor(None, _next_event)
             except Exception as exc:
+                # Full traceback to the server log so we can diagnose
+                # without waiting for the user to paste a stderr scroll.
+                # The frontend only sees the short message; the log gets
+                # the file/line where it actually died.
+                import traceback as _tb
+                print(
+                    "[synthesize/stream] synth iter raised:",
+                    file=sys.stderr, flush=True,
+                )
+                _tb.print_exc()
                 yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
                 break
             if event is _DONE:
@@ -206,6 +217,12 @@ async def synthesize_segments_stream(req: SynthesizeSegmentsRequest):
                 try:
                     event = await loop.run_in_executor(None, _encode_result, event)
                 except Exception as exc:
+                    import traceback as _tb
+                    print(
+                        f"[synthesize/stream] mp3 encode failed: {exc}",
+                        file=sys.stderr, flush=True,
+                    )
+                    _tb.print_exc()
                     yield f"data: {_json.dumps({'type': 'error', 'message': f'mp3 encode failed: {exc}'})}\n\n"
                     break
             yield f"data: {_json.dumps(event)}\n\n"
@@ -416,6 +433,12 @@ async def synthesize_stream(req: SynthesizeRequest):
             try:
                 event = await loop.run_in_executor(None, _next_event)
             except Exception as exc:
+                import traceback as _tb
+                print(
+                    "[synthesize/segments/stream] synth iter raised:",
+                    file=sys.stderr, flush=True,
+                )
+                _tb.print_exc()
                 yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
                 break
             if event is _DONE:
@@ -426,6 +449,12 @@ async def synthesize_stream(req: SynthesizeRequest):
                 try:
                     event = await loop.run_in_executor(None, _encode_result, event)
                 except Exception as exc:
+                    import traceback as _tb
+                    print(
+                        f"[synthesize/segments/stream] mp3 encode failed: {exc}",
+                        file=sys.stderr, flush=True,
+                    )
+                    _tb.print_exc()
                     yield f"data: {_json.dumps({'type': 'error', 'message': f'mp3 encode failed: {exc}'})}\n\n"
                     break
             yield f"data: {_json.dumps(event)}\n\n"

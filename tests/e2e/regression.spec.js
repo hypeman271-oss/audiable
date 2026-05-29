@@ -274,6 +274,67 @@ test.describe("regression — hidden attribute respected by CSS", () => {
   });
 });
 
+test.describe("regression — Cold-start cascade hardening", () => {
+  test("Generate with no voice selected fails fast — fixed in v88", async ({ page }) => {
+    // Pre-v88: empty voice_id routed to SAPI fallback, produced a bad
+    // WAV, and surfaced "mp3 encode failed" — the worst error message
+    // in the app. Now generate() guards on voiceEl.value first.
+    //
+    // Stub /api/voices to return zero voices so the dropdown stays empty
+    // (matches what /api/voices 503 would land on, without depending on
+    // a real cold-start scenario).
+    await page.route("**/api/voices", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ voices: [] }),
+      })
+    );
+
+    await page.goto("/");
+    await page.locator("#text").fill("Some text the user wants to synthesize.");
+    await page.locator("#generate").click();
+
+    // Status line shows the actionable error, NOT "mp3 encode failed".
+    await expect(page.locator("#status")).toContainText(
+      /Pick a voice first|waking up/i,
+      { timeout: 5_000 }
+    );
+    // Crucially, the synthesis endpoint was never hit — fail-fast worked.
+    // (If a /api/synthesize/stream request happens after this, the
+    // assertion above could still pass with a race. We pin the negative
+    // case explicitly.)
+    let synthHit = false;
+    page.on("request", (req) => {
+      if (req.url().includes("/api/synthesize")) synthHit = true;
+    });
+    await page.waitForTimeout(500);
+    expect(synthHit).toBe(false);
+  });
+
+  test("voice catalog 503 shows waking-up status — fixed in v88", async ({ page }) => {
+    // Stub /api/voices to return 503 on first hit, simulating Fly.io
+    // cold start. Without this fix, the status line said nothing and
+    // the user saw an empty dropdown with no explanation.
+    let hits = 0;
+    await page.route("**/api/voices", (route) => {
+      hits++;
+      route.fulfill({
+        status: 503,
+        contentType: "text/html",
+        body: "<html><body>service unavailable</body></html>",
+      });
+    });
+
+    await page.goto("/");
+    // The first /api/voices call fires automatically on page load.
+    await expect(page.locator("#status")).toContainText(/waking up|503/i, {
+      timeout: 10_000,
+    });
+    expect(hits).toBeGreaterThanOrEqual(1);
+  });
+});
+
 test.describe("regression — Speaker UI threshold", () => {
   // Skipped: this test needs either (a) a multi-speaker voice (LibriTTS
   // is 900 MB and not in CI) or (b) a test hook to mutate

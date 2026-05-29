@@ -99,9 +99,26 @@ def _load(voice_id: str) -> PiperVoice:
 
 
 def _synth_one(voice: PiperVoice, text: str, syn_cfg: SynthesisConfig) -> tuple[bytes, int, int]:
-    """Synthesize one sentence. Returns (wav_bytes, frames, sample_rate)."""
+    """Synthesize one sentence. Returns (wav_bytes, frames, sample_rate).
+
+    Defensive against Piper's `synthesize_wav` occasionally returning
+    without calling `setnchannels` on the wave handle (happens on inputs
+    where the text-frontend produces no phonemes — e.g. a sentence that
+    after Piper's own cleaning is just punctuation). Without pre-set
+    params, the `with wave.open` exit would raise
+    `wave.Error: # channels not specified` and abort the whole chapter.
+    We pre-initialize sane defaults (mono, 16-bit, voice's sample rate)
+    so even a no-audio result yields a valid empty WAV.
+    """
+    # Piper's voice config exposes sample_rate; fall back to 22050 (the
+    # default for all the en_US/en_GB Piper models we ship).
+    voice_sr = getattr(getattr(voice, "config", None), "sample_rate", 22050)
+
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(voice_sr)
         voice.synthesize_wav(text, wf, syn_config=syn_cfg)
     data = buf.getvalue()
     with wave.open(io.BytesIO(data), "rb") as r:
@@ -157,8 +174,25 @@ def synthesize_iter(
     for i, sentence in enumerate(sentences):
         # Acquire and release the lock per-sentence so we yield progress
         # between sentences without holding the lock idle.
-        with _synth_lock:
-            data, frames, sr = _synth_one(voice, sentence, syn_cfg)
+        try:
+            with _synth_lock:
+                data, frames, sr = _synth_one(voice, sentence, syn_cfg)
+        except Exception as exc:
+            # One bad sentence shouldn't abort the whole chapter — log it
+            # for diagnosis and fall back to a zero-frame placeholder so
+            # the rest of the synthesis continues and the offsets array
+            # stays aligned with sentence indexes. The user gets silence
+            # where that sentence would have been but the audio doesn't
+            # die mid-listen.
+            import sys as _sys
+            import traceback as _tb
+            print(
+                f"[piper] sentence {i}/{total} synth failed: {exc!r}",
+                file=_sys.stderr, flush=True,
+            )
+            print(f"  text: {sentence!r}", file=_sys.stderr, flush=True)
+            _tb.print_exc()
+            data, frames, sr = _silent_wav(sample_rate or 22050)
         if sample_rate == 0:
             sample_rate = sr
         offset_ms = int(cumulative_frames * 1000 / sr)
@@ -199,6 +233,23 @@ def synthesize(
                 sentence_offsets_ms=event["sentence_offsets_ms"],
             )
     raise RuntimeError("synthesize_iter produced no result")
+
+
+def _silent_wav(sample_rate: int) -> tuple[bytes, int, int]:
+    """Return a zero-frame valid mono WAV at the given sample rate.
+
+    Used as a placeholder when a single sentence synth fails so the rest
+    of the chapter can continue. Frame count is 0 (lengthless silence) so
+    seek math, cumulative offsets, and downstream MP3 encoding all behave.
+    """
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        # No writeframes — header-only WAV. lameenc / browsers handle
+        # zero-length PCM as silence.
+    return buf.getvalue(), 0, sample_rate
 
 
 def _concat_wavs(wav_blobs: list[bytes]) -> bytes:

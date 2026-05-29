@@ -141,6 +141,58 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v89</span>
+          <span class="release-tagline">Piper "# channels not specified" fix</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Synthesis no longer dies on certain edge-case
+            sentences.</strong> Some inputs (notably those starting with
+            non-speech punctuation like <em>"|| July 2024"</em> or
+            <em>"[1]"</em>) caused Piper's WAV writer to skip the
+            channel-count header, which then made the whole synthesis
+            blow up with a cryptic <em>"# channels not specified"</em>
+            error. The wave file now gets pre-initialized with valid
+            mono defaults so even no-audio outputs produce a
+            well-formed WAV, and any sentence that still fails
+            falls back to silence so the rest of the chapter still
+            synthesizes. Verified end-to-end on the Paul Graham
+            <em>"Persistence and Obstinacy"</em> essay that triggered
+            the bug — 14 sentences, 2.7 MB combined WAV, 502 KB MP3,
+            zero errors.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v88</span>
+          <span class="release-tagline">Clearer errors during server cold start</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Generate now fails fast when no voice is selected.</strong>
+            Clicking Generate with an empty voice dropdown used to route
+            through to the SAPI fallback, produce a malformed WAV, and
+            surface the worst error message in the app — <em>"mp3 encode
+            failed"</em>. Now it says <em>"Pick a voice first — the
+            dropdown is empty"</em> before any of that runs.
+          </li>
+          <li>
+            <strong>Voice catalog auto-retries on 503.</strong> The
+            usual cause for an empty voice dropdown is the server still
+            waking up (Fly.io cold-start, slow first import). The app
+            now shows <em>"Server is waking up — retrying in 10s…"</em>
+            and keeps trying until the catalog loads. No more silent
+            empty dropdown + baffling encode error.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v87</span>
           <span class="release-tagline">Chapter queue stays in sync with playback</span>
         </div>

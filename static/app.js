@@ -140,7 +140,7 @@ const whatsNewBadge = settingsWhatsNewLink.querySelector(".whats-new-badge");
 // Bump this number whenever there's a noteworthy change in whats-new.html
 // worth surfacing. The Settings link shows a "NEW" badge until the user
 // opens the changelog, at which point we save this version as "seen."
-const WHATS_NEW_LATEST = 87;
+const WHATS_NEW_LATEST = 89;
 const WHATS_NEW_KEY = "narrative.lastSeenWhatsNew";
 
 function _isWhatsNewUnread() {
@@ -1670,6 +1670,12 @@ updateCounts();
 // Piper voices have num_speakers=1; LibriTTS is the headline 904-speaker model.
 const _voiceSpeakerCounts = new Map();
 
+// Tracks the "voices haven't loaded yet" state so generate() can show a
+// different (gentler) error when the user clicks Generate during a retry
+// loop versus when no voice is genuinely selectable. Cleared on success.
+let _voicesLoadFailed = false;
+let _voicesRetryTimer = null;
+
 async function loadVoices() {
   try {
     const res = await fetch("/api/voices");
@@ -1734,8 +1740,32 @@ async function loadVoices() {
     }
     // Sync the speaker row to whichever voice ended up selected.
     onVoiceChange();
+    // Success — clear any retry state from a previous cold-start cycle.
+    _voicesLoadFailed = false;
+    if (_voicesRetryTimer) {
+      clearTimeout(_voicesRetryTimer);
+      _voicesRetryTimer = null;
+    }
   } catch (err) {
-    setStatus(`Could not load voices: ${err.message}`, true);
+    // Surface the failure prominently and schedule an auto-retry. The
+    // common cause is a Fly.io cold-start 503 — the machine is waking
+    // and the catalog endpoint won't respond until uvicorn is up. Auto-
+    // retrying every 10s gets the user from "dropdown is empty and I
+    // don't know why" to "ah, it's just warming up" without manual
+    // refreshes. Local 503s (real server bug) also get the retry, which
+    // is fine — the worst case is a polite loop until the user reloads.
+    _voicesLoadFailed = true;
+    const m = String(err.message).match(/\b(\d{3})\b/);
+    const httpCode = m ? m[1] : null;
+    const detail = httpCode === "503"
+      ? `Server is waking up (${httpCode}) — retrying in 10s…`
+      : `Could not load voices: ${err.message} — retrying in 10s…`;
+    setStatus(detail, true);
+    if (_voicesRetryTimer) clearTimeout(_voicesRetryTimer);
+    _voicesRetryTimer = setTimeout(() => {
+      _voicesRetryTimer = null;
+      loadVoices();
+    }, 10_000);
   }
 }
 
@@ -2795,6 +2825,26 @@ async function generate() {
   if (!text) {
     setStatus("Type or paste some text first.", true);
     textEl.focus();
+    return;
+  }
+  // Fail fast when no voice is selected — otherwise the empty voice_id
+  // routes through to SAPI's default (or worse, falls into a code path
+  // that produces a malformed WAV that lameenc can't encode and the
+  // user sees a baffling "mp3 encode failed" instead of "pick a voice").
+  // The dropdown is empty when /api/voices failed to load (e.g., Fly.io
+  // cold-start 503); the retry-banner path covers that case.
+  if (!voiceEl.value) {
+    if (_voicesLoadFailed) {
+      setStatus(
+        "Server's still waking up — voices haven't loaded yet. Hold on a moment.",
+        true
+      );
+    } else {
+      setStatus(
+        "Pick a voice first — the dropdown is empty.",
+        true
+      );
+    }
     return;
   }
 
