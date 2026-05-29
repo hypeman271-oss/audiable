@@ -130,7 +130,8 @@ const uploadInput = $("upload-input");
 const settingsBtn = $("settings-btn");
 const settingsDialog = $("settings-dialog");
 const settingsClose = $("settings-close");
-const authorModeToggle = $("author-mode-toggle");
+// (Author-mode toggle is gone in v76; the three-tier Mode picker
+// replaces it. The picker's radios are queried inline.)
 const settingsFeedbackLink = $("settings-feedback-link");
 const settingsFeedbackGmailLink = $("settings-feedback-gmail-link");
 const settingsWhatsNewLink = $("settings-whats-new-link");
@@ -282,23 +283,58 @@ const PROGRESS_SAVE_INTERVAL_MS = 5000;
 // assignment, etc.) behind a user opt-in. Everyone else gets a clean
 // reader-focused UI by default.
 //
-// CSS uses `body[data-author-mode]` selectors, JS uses isAuthorMode().
-const AUTHOR_MODE_KEY = "narrative.authorMode";
+// Three-tier UI mode picker — replaces the boolean Author toggle. CSS
+// reads body[data-ui-mode] selectors:
+//
+//   simple   → reduces chrome; hides advanced player chips, library
+//              tools, stats, audition wizard, drag handles, re-narrate
+//              banner, etc. (.advanced-only is gated off in this mode)
+//   standard → the previous default — everything except writing tools
+//   author   → standard + writing-craft features (.author-only is
+//              revealed: Characters dialog, word count + read-aloud
+//              meta, long-sentence highlighter, filler-word callout)
+//
+// isAuthorMode() is preserved as a thin shim over the new API so the
+// ~5 existing call sites don't need touching.
+const UI_MODE_KEY = "narrative.uiMode";
+const VALID_UI_MODES = ["simple", "standard", "author"];
+const LEGACY_AUTHOR_MODE_KEY = "narrative.authorMode";
 
+function getUIMode() {
+  try {
+    const stored = localStorage.getItem(UI_MODE_KEY);
+    if (VALID_UI_MODES.includes(stored)) return stored;
+    // First-run migration: if a tester had Author mode on before the
+    // three-tier picker shipped, carry them straight to "author"
+    // rather than dropping them to standard.
+    const legacy = localStorage.getItem(LEGACY_AUTHOR_MODE_KEY);
+    if (legacy === "true") {
+      localStorage.setItem(UI_MODE_KEY, "author");
+      localStorage.removeItem(LEGACY_AUTHOR_MODE_KEY);
+      return "author";
+    }
+    if (legacy === "false") {
+      localStorage.removeItem(LEGACY_AUTHOR_MODE_KEY);
+    }
+    return "standard";
+  } catch {
+    return "standard";
+  }
+}
+
+function setUIMode(mode) {
+  if (!VALID_UI_MODES.includes(mode)) mode = "standard";
+  try { localStorage.setItem(UI_MODE_KEY, mode); } catch {}
+  document.body.dataset.uiMode = mode;
+}
+
+// Back-compat shim. ~5 callers still read this to gate writing features.
 function isAuthorMode() {
-  try { return localStorage.getItem(AUTHOR_MODE_KEY) === "true"; }
-  catch { return false; }
+  return getUIMode() === "author";
 }
 
-function setAuthorMode(on) {
-  try { localStorage.setItem(AUTHOR_MODE_KEY, on ? "true" : "false"); }
-  catch {}
-  if (on) document.body.dataset.authorMode = "true";
-  else delete document.body.dataset.authorMode;
-}
-
-// Apply current setting at boot — survives reloads and PWA reinstalls.
-setAuthorMode(isAuthorMode());
+// Apply current mode at boot — survives reloads and PWA reinstalls.
+setUIMode(getUIMode());
 
 // ---- Theme (auto / dark / light) ---------------------------------------
 // The data-theme attribute on <html> drives a separate token block in
@@ -381,9 +417,13 @@ document
 applyTheme(getThemePref());
 
 settingsBtn.addEventListener("click", () => {
-  authorModeToggle.checked = isAuthorMode();
-  // Reflect current theme pref into the radios so the open dialog always
-  // shows the right selection even if the user switched in another tab.
+  // Sync the mode radios to the saved UI mode so the dialog always
+  // reflects current state, even if the user switched in another tab.
+  const mode = getUIMode();
+  document
+    .querySelectorAll('.mode-picker input[name="ui-mode"]')
+    .forEach((r) => { r.checked = r.value === mode; });
+  // Same for the theme radios.
   const pref = getThemePref();
   document
     .querySelectorAll('.theme-picker input[name="theme"]')
@@ -404,12 +444,19 @@ settingsBtn.addEventListener("click", () => {
 
 settingsClose.addEventListener("click", () => settingsDialog.close());
 
-authorModeToggle.addEventListener("change", () => {
-  setAuthorMode(authorModeToggle.checked);
-  // Recompute the textarea meta line so word count + time estimate
-  // appear / disappear immediately when the toggle flips.
-  updateCounts();
-});
+// Mode picker change handler. Apply the new mode, then refresh the
+// textarea meta so the word-count / read-time line appears or
+// disappears immediately when flipping to/from Author.
+document
+  .querySelectorAll('.mode-picker input[name="ui-mode"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.checked) {
+        setUIMode(radio.value);
+        updateCounts();
+      }
+    });
+  });
 
 // Alpha feedback. Two paths so the user can pick whichever works:
 //
@@ -444,7 +491,7 @@ async function _buildFeedbackParts() {
     `UA:        ${navigator.userAgent}`,
     `Window:    ${window.innerWidth}×${window.innerHeight}`,
     `Screen:    ${screen.width}×${screen.height}`,
-    `Author:    ${isAuthorMode() ? "on" : "off"}`,
+    `Mode:      ${getUIMode()}`,
     `Playing:   ${_currentClipId ? `clip ${_currentClipId}` : "(no clip loaded)"}`,
     `When:      ${new Date().toISOString()}`,
   ].join("\n");
@@ -3817,7 +3864,11 @@ function makeClipCard(clip) {
     // No listener here — the whole card toggles selection (see below).
   } else {
     leftCell = document.createElement("div");
-    leftCell.className = "clip-drag";
+    // Drag-to-reorder is a power-user feature; hide the grip in Simple
+    // mode so casual readers don't see clutter for an interaction they
+    // wouldn't use. The drag handler is wired anyway — harmless on a
+    // hidden element.
+    leftCell.className = "clip-drag advanced-only";
     leftCell.setAttribute("aria-label", "Drag to reorder");
     leftCell.title = "Drag to reorder";
     // Two stacked vertical ellipses render reliably as a "grip" affordance

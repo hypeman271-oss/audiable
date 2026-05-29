@@ -282,7 +282,7 @@
           <li><a href="#player">The player</a></li>
           <li><a href="#reading">Reading view</a></li>
           <li><a href="#library">The library</a></li>
-          <li><a href="#settings">Settings &amp; Author mode</a></li>
+          <li><a href="#settings">Settings &amp; modes</a></li>
           <li><a href="#phone">Listening on your phone</a></li>
           <li><a href="#shortcuts">Shortcuts &amp; tips</a></li>
         </ol>
@@ -308,8 +308,8 @@
               </div>
             </header>
             <div class="demo-callout">
-              <strong>Hero</strong> — title + ⚙ Settings (theme, Author
-              mode, listen stats, feedback).
+              <strong>Hero</strong> — title + ⚙ Settings (mode, theme,
+              listen stats, feedback).
             </div>
           </div>
 
@@ -823,27 +823,112 @@
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="settings">7. Settings &amp; Author mode</h2>
+      <h2 id="settings">7. Settings &amp; modes</h2>
       <p>
-        The <strong>⚙</strong> at the top right opens Settings. One
-        toggle for now: <strong>Author mode</strong>. Off by default.
+        The <strong>⚙</strong> at the top right opens Settings. The
+        headline control is the <strong>Mode</strong> picker — pick
+        how much UI you want.
       </p>
-      <p>Flipping it on reveals:</p>
+
+      <figure>
+        <div class="manual-demo">
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Mode</strong>
+              <span class="settings-toggle-desc">
+                <strong>Simple</strong>: just listen — pared-down controls.
+                <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools.
+                <strong>Author</strong>: writing-craft tools (word count,
+                long-sentence + filler-word callouts, character voices).
+              </span>
+            </div>
+            <div class="theme-picker mode-picker" role="radiogroup" aria-label="UI mode">
+              <label><input type="radio" name="manual-mode" value="simple" /><span>Simple</span></label>
+              <label><input type="radio" name="manual-mode" value="standard" checked /><span>Standard</span></label>
+              <label><input type="radio" name="manual-mode" value="author" /><span>Author</span></label>
+            </div>
+          </div>
+        </div>
+        <figcaption>The Mode picker in Settings — three tiers, pick one.</figcaption>
+      </figure>
+
+      <h3>What each mode shows</h3>
+      <table>
+        <tr>
+          <th>Mode</th>
+          <th>What's on the page</th>
+        </tr>
+        <tr>
+          <td><strong>Simple</strong></td>
+          <td>
+            Hero, text card, voice card, Generate / Download, audio
+            player + the two <code>↶ 5s</code> / <code>5s ↷</code>
+            skip chips, library list (title + delete). That's it.
+            Best for: someone who just wants to paste a URL and listen.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Standard</strong></td>
+          <td>
+            Everything in Simple, <em>plus</em>:
+            <strong>🔖 Bookmark</strong>, <strong>Sleep</strong>,
+            <strong>A↔B</strong>, <strong>1×</strong> speed chips;
+            bookmark list; library tools (Export / Import / Hide
+            played / Select); play-mode sort; Save preset; Speaker
+            Audition; Listen stats; drag-to-reorder; the re-narrate
+            banner. <em>The default.</em>
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Author</strong></td>
+          <td>
+            Everything in Standard, <em>plus</em> writing-craft tools:
+            live <strong>word count + read-aloud time</strong> in the
+            textarea meta line; <strong>filler-word callout</strong>
+            (chip strip below the textarea showing crutch-word
+            counts); <strong>long-sentence highlighter</strong>
+            (warm amber wash on sentences over 35 words in the
+            reading view); <strong>Characters</strong> link in the
+            voice card (multi-voice synthesis for dialogue).
+          </td>
+        </tr>
+      </table>
+
+      <div class="tip">
+        Switching modes is live — no reload needed. CSS gates flip the
+        moment the radio changes. Your text, library, voice choice,
+        speed, and bookmarks stay put.
+      </div>
+
+      <h3>Other Settings rows</h3>
       <ul>
         <li>
-          <strong>Word count + read-aloud time</strong> in the
-          textarea meta line:
-          <code>1,247 / 500,000 · 247 words · ~1:22 at 180 wpm</code>.
-          Updates live as you type or move the speed slider.
+          <strong>Theme</strong> — Auto / Dark / Light. Auto follows
+          your device; Light uses a warm cream palette tuned for
+          daytime / outdoor reading.
         </li>
         <li>
-          <strong>Characters link</strong> in the voice card label-row
-          — opens the character roster dialog.
+          <strong>Listen stats</strong> (Standard / Author only) —
+          Today / This week / All-time playback time, top voice, most-
+          listened clip. Reset stats is tap-twice-to-confirm.
         </li>
         <li>
-          More writing-craft features will slot in here (long-
-          sentence highlighter, filler-word callouts, chapter auto-
-          split, etc).
+          <strong>What's new →</strong> — the changelog page. The
+          "NEW" pill stays until you've opened it once per release.
+        </li>
+        <li>
+          <strong>Help &amp; manual →</strong> — this page.
+        </li>
+        <li>
+          <strong>Send feedback (mail app) →</strong> — opens your
+          default mail handler with the address, subject, and an
+          auto-context block (build version, current clip, screen
+          size) pre-filled.
+        </li>
+        <li>
+          <strong>Send feedback (Gmail) →</strong> — same but opens
+          Gmail compose in a browser tab, for testers whose OS
+          default isn't what they actually use.
         </li>
       </ul>
 

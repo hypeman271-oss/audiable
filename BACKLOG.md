@@ -316,6 +316,20 @@ weren't built. Roughly grouped.
 
 ### Quality-of-life
 
+- ~~**Basic / Simple mode.**~~ Shipped in v76. Replaced the boolean
+  Author toggle with a three-tier UI mode picker (Simple / Standard /
+  Author) in Settings — same shape as the Theme picker. Body gets
+  `data-ui-mode=` attr. Two CSS gates do the work:
+  `body[data-ui-mode="author"] .author-only` reveals writing-craft
+  features; `body[data-ui-mode="simple"] .advanced-only { display:
+  none !important }` hides power-user chrome. Marked `.advanced-only`:
+  Sleep / A↔B / Bookmark / Speed player chips; bookmark list; library
+  tools row (Export / Import / Hide played / Select); play-mode +
+  Clear all in the library header; Listen stats panel; Save preset;
+  Speaker Audition button; Re-narrate banner; drag handles. One-time
+  migration from `narrative.authorMode === "true"` carries existing
+  Author testers directly to mode "author"; otherwise default is
+  "standard" (preserves prior reader-focused default).
 - ~~**Re-narrate loaded clip with new voice.**~~ Shipped in v73.
   Voice is baked into the audio at synthesis, so there's no live
   voice switch. Instead: when the user picks a different voice

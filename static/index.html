@@ -102,23 +102,31 @@
           >Close</button>
         </div>
         <div class="settings-body">
-          <label class="settings-toggle">
-            <span class="settings-toggle-label">
-              <strong>Author mode</strong>
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Mode</strong>
               <span class="settings-toggle-desc">
-                Show writing-craft tools (live word count + read-aloud time,
-                long-sentence highlights, filler-word callouts). Off by
-                default — turn on if you're using Narrative to revise your
-                own writing.
+                <strong>Simple</strong>: just listen — pared-down controls.
+                <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools.
+                <strong>Author</strong>: writing-craft tools (word count,
+                long-sentence + filler-word callouts, character voices).
               </span>
-            </span>
-            <input
-              id="author-mode-toggle"
-              type="checkbox"
-              class="settings-switch"
-              aria-label="Toggle author mode"
-            />
-          </label>
+            </div>
+            <div class="theme-picker mode-picker" role="radiogroup" aria-label="UI mode">
+              <label>
+                <input type="radio" name="ui-mode" value="simple" />
+                <span>Simple</span>
+              </label>
+              <label>
+                <input type="radio" name="ui-mode" value="standard" />
+                <span>Standard</span>
+              </label>
+              <label>
+                <input type="radio" name="ui-mode" value="author" />
+                <span>Author</span>
+              </label>
+            </div>
+          </div>
 
           <div class="settings-row">
             <div class="settings-toggle-label">
@@ -146,7 +154,7 @@
 
           <!-- Listen statistics. Read-only summary populated by app.js
                every time the Settings dialog opens. -->
-          <div class="settings-row" id="stats-row">
+          <div class="settings-row advanced-only" id="stats-row">
             <div class="settings-toggle-label">
               <strong>Listen stats</strong>
               <span class="settings-toggle-desc" id="stats-empty" hidden>
@@ -346,7 +354,7 @@
             <button
               id="preset-save-btn"
               type="button"
-              class="link-btn"
+              class="link-btn advanced-only"
               aria-label="Save current voice + speed + volume as a preset"
             >Save preset</button>
             <button
@@ -368,7 +376,7 @@
               <button
                 id="speaker-audition-btn"
                 type="button"
-                class="link-btn"
+                class="link-btn advanced-only"
                 aria-label="Open speaker audition wizard"
               >Audition</button>
               <button
@@ -418,7 +426,7 @@
            Re-narrate triggers the existing in-place regen path;
            dismiss leaves the picker change as the default for the
            next Generate. -->
-      <div id="renarrate-banner" class="chapter-banner renarrate-banner" hidden>
+      <div id="renarrate-banner" class="chapter-banner renarrate-banner advanced-only" hidden>
         <span class="chapter-banner-msg">
           Re-narrate <strong id="renarrate-clip-title">this clip</strong>
           with <strong id="renarrate-voice-name">the new voice</strong>?
@@ -467,33 +475,33 @@
           <button
             id="bookmark-add-btn"
             type="button"
-            class="bookmark-add-btn"
+            class="bookmark-add-btn advanced-only"
             aria-label="Drop a bookmark at the current position"
             title="Drop a bookmark at the current position"
           >🔖 Bookmark</button>
           <button
             id="sleep-btn"
             type="button"
-            class="sleep-btn"
+            class="sleep-btn advanced-only"
             aria-label="Sleep timer"
             title="Tap to cycle sleep timer (Off / 15 / 30 / 45 / 60 min)"
           >Sleep</button>
           <button
             id="ab-loop-btn"
             type="button"
-            class="ab-loop-btn"
+            class="ab-loop-btn advanced-only"
             aria-label="A-B loop"
             title="Tap to mark A, again for B, again to loop, again to clear"
           >A↔B</button>
           <button
             id="speed-btn"
             type="button"
-            class="speed-btn"
+            class="speed-btn advanced-only"
             aria-label="Playback speed"
             title="Tap to cycle playback speed"
           >1×</button>
         </div>
-        <div id="bookmarks-list" class="bookmarks-list" hidden></div>
+        <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
       </section>
 
       <p class="status" id="status" aria-live="polite"></p>
@@ -684,11 +692,11 @@
             <button
               id="play-mode-btn"
               type="button"
-              class="link-btn"
+              class="link-btn advanced-only"
               aria-label="Cycle library sort + playlist order"
               title="Tap to change sort + playlist order"
             >Newest first</button>
-            <button id="library-clear" type="button" class="link-btn">Clear all</button>
+            <button id="library-clear" type="button" class="link-btn advanced-only">Clear all</button>
           </div>
         </div>
         <input
@@ -698,7 +706,7 @@
           autocomplete="off"
         />
         <!-- Idle tools (visible outside select mode) -->
-        <div class="library-tools" id="library-tools-idle">
+        <div class="library-tools advanced-only" id="library-tools-idle">
           <button
             id="library-export"
             type="button"
