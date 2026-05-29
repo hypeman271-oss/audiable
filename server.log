@@ -651,3 +651,66 @@ INFO:     127.0.0.1:59671 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
 INFO:     127.0.0.1:51025 - "GET /api/voices/sample/en_US-libritts-high?speaker=0 HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64412 - "GET /api/voices/catalog HTTP/1.1" 200 OK
 INFO:     127.0.0.1:50424 - "GET /api/voices/sample/en_US-amy-medium HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60808 - "GET /manual.html HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:60808 - "GET /styles.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:60808 - "GET /sw.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:54634 - "GET /api/voices/sample/en_US-libritts-high?speaker=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54634 - "GET /api/voices/sample/en_US-libritts-high?speaker=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51589 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51589 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51589 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51589 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64013 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:62837 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:62837 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51589 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET /whats-new.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62837 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51589 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57229 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51380 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53344 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50155 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53260 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55377 - "POST /api/synthesize/segments/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64180 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58295 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64180 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64180 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64180 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58295 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61231 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58295 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58295 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58295 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58295 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64180 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58295 - "GET /whats-new.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64180 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58295 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56754 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55665 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53162 - "GET /styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50424 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53162 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53162 - "GET /icons/favicon.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53162 - "GET /icons/icon-192.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50424 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52649 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50424 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50424 - "GET /api/voices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50424 - "GET /sw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50424 - "GET /index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53162 - "GET /manual.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50424 - "GET /whats-new.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50424 - "GET /icons/icon-512.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53162 - "GET /icons/icon-180.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58057 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58057 - "POST /api/synthesize/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54342 - "GET /sw.js HTTP/1.1" 304 Not Modified

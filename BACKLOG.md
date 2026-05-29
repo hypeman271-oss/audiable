@@ -316,14 +316,32 @@ weren't built. Roughly grouped.
 
 ### Quality-of-life
 
+- ~~**Re-narrate loaded clip with new voice.**~~ Shipped in v73.
+  Voice is baked into the audio at synthesis, so there's no live
+  voice switch. Instead: when the user picks a different voice
+  while a clip is loaded, a banner appears offering to re-synthesize
+  the loaded clip in the new voice. Confirm fires the existing
+  `_regenTargetClipId` path (same as Save-text auto-regen) so the
+  new audio replaces the old blob in place; bookmarks/title carry
+  through. Dismiss keeps the picker change as default for next
+  Generate. Per-clip dismiss tracker so toggling between voices on
+  the same clip doesn't keep re-prompting after the user said no.
+
 - ~~**5-second skip-forward**~~ Shipped in v48. Mirrors the existing
   ↶5s back chip; shares CSS via grouped selectors. Handler uses the
   same virtualTime + seekToTime path so it works in both streaming and
   combined-WAV modes; seekToTime's existing duration clamp handles
   overshoot at the end of a clip.
-- **Auto-pause on phone call / notification.** Standard MediaSession
-  handles some of this; explicit handling of `interruptionend` could
-  make resume cleaner.
+- ~~**Auto-pause on phone call / notification.**~~ Shipped in v72.
+  Tracks "external" vs "user-initiated" pauses by checking
+  `document.visibilityState` at the pause moment: hidden → call /
+  notification / lock interrupt; visible → user clicked the native
+  audio bar. JS-initiated pauses (sleep timer expiry, mini-player
+  button, MediaSession lock-screen pause / stop) route through a
+  `_pauseAsUser()` helper that suppresses the external flag so they
+  don't get misread. visibilitychange to visible re-fires play() when
+  the flag is set, with a swallowed catch for browsers that block
+  unattended resume.
 - ~~**Bulk library operations.**~~ Shipped in v67. "Select" link in
   the library-tools row flips renderLibrary into multi-select mode:
   drag-handle slot becomes a `☐ / ☑` checkbox, tapping the card
@@ -340,10 +358,18 @@ weren't built. Roughly grouped.
 
 ### Tools that aren't features but would help maintenance
 
-- **End-to-end Playwright tests.** Manual smoke testing every clip
-  state across 40+ shell versions adds up. A short Playwright suite
-  hitting "generate → save → load → bookmark → reset → delete" would
-  catch regressions cheaply.
+- ~~**End-to-end Playwright tests.**~~ Shipped in v71. `package.json`
+  + `playwright.config.js` at the repo root spin up a dedicated
+  `python server.py` on port 8001 with `NARRATIVE_KEY=""` so /api/* is
+  open. `tests/e2e/smoke.spec.js` covers the headline path: paste →
+  Generate → wait for player → verify library → reload → click → drop
+  bookmark → delete. `tests/e2e/regression.spec.js` pins the specific
+  bugs that have already broken once (mailto encoding from v62,
+  voice-id prefix from v57, theme persistence from v46, speaker
+  dropdown threshold from v71). Each regression test names the
+  version it guards so a future failure points at the relevant
+  commit. `tests/README.md` documents install + run. .dockerignore
+  excludes Node artifacts so the Fly image stays Python-only.
 - **Bundle size budget.** `app.js` is now ~70 KB. Worth periodic
   review to catch accidental copies, dead code, etc.
 

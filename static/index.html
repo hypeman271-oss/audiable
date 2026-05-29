@@ -412,6 +412,32 @@
         </div>
       </section>
 
+      <!-- Re-narrate banner. Shown when the user picks a different
+           voice while a clip is loaded — voice is baked into the
+           audio at synthesis, so changing voice means re-synthesizing.
+           Re-narrate triggers the existing in-place regen path;
+           dismiss leaves the picker change as the default for the
+           next Generate. -->
+      <div id="renarrate-banner" class="chapter-banner renarrate-banner" hidden>
+        <span class="chapter-banner-msg">
+          Re-narrate <strong id="renarrate-clip-title">this clip</strong>
+          with <strong id="renarrate-voice-name">the new voice</strong>?
+        </span>
+        <span class="chapter-banner-actions">
+          <button
+            id="renarrate-confirm"
+            type="button"
+            class="chapter-banner-btn primary"
+          >Re-narrate</button>
+          <button
+            id="renarrate-dismiss"
+            type="button"
+            class="chapter-banner-btn"
+            aria-label="Dismiss re-narrate suggestion"
+          >Dismiss</button>
+        </span>
+      </div>
+
       <div class="actions">
         <button id="generate" class="primary">
           <span class="label-text">Generate</span>

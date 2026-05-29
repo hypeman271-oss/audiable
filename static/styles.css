@@ -969,6 +969,14 @@ body[data-author-mode]
   color: var(--fg);
 }
 
+/* Re-narrate banner sits in the gap between the voice card and the
+   actions row instead of inside a card; add bottom margin so it
+   doesn't crowd the Generate / Download buttons. */
+.renarrate-banner {
+  margin-top: 14px;
+  margin-bottom: 4px;
+}
+
 .chapter-banner-msg {
   flex: 1 1 220px;
   min-width: 0;

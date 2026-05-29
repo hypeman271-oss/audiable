@@ -44,6 +44,15 @@ scripts/tunnel.py
 test_samples/
 tests/
 
+# Node + Playwright artifacts (test-only; runtime is pure Python)
+node_modules/
+package.json
+package-lock.json
+playwright.config.js
+test-results/
+playwright-report/
+playwright/.cache/
+
 # Anything else local-machine-only
 *.swp
 *.bak

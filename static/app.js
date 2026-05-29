@@ -182,6 +182,63 @@ const genSpinner = generateBtn.querySelector(".spinner");
 
 let lastBlobUrl = null;
 let lastBlob = null;
+
+// ---- Interruption-aware auto-resume -------------------------------------
+// When a phone call, Siri, Google Assistant, or system notification
+// interrupts playback, the OS pauses the audio and (depending on platform)
+// may or may not auto-resume after. iOS and Android both reliably push
+// the tab to a hidden state during the interruption, then back to visible
+// when it ends — which gives us a clean signal:
+//
+//   pause fires while visibilityState === "hidden"  →  external interrupt
+//   pause fires while visibilityState === "visible" →  user-initiated
+//
+// _pauseAsUser() flags the four code paths that intentionally call
+// playerEl.pause() from JS (sleep timer expiry, mini-player button,
+// MediaSession pause/stop) so they don't get misread as external just
+// because they happened during a background tab. Native audio-control
+// pauses bypass JS entirely; they're caught by the visibility check.
+let _externallyPaused = false;
+let _suppressNextPauseFlag = false;
+
+function _pauseAsUser() {
+  _suppressNextPauseFlag = true;
+  playerEl.pause();
+}
+
+playerEl.addEventListener("pause", () => {
+  if (_suppressNextPauseFlag) {
+    _suppressNextPauseFlag = false;
+    _externallyPaused = false;
+    return;
+  }
+  // Native audio-bar pause: user is looking at the page, this is
+  // intentional. OS interrupt: page is hidden, the interrupt killed
+  // playback while the user wasn't there to opt in.
+  if (document.visibilityState !== "visible" && !playerEl.ended) {
+    _externallyPaused = true;
+  }
+});
+
+playerEl.addEventListener("play", () => {
+  _externallyPaused = false;
+  _suppressNextPauseFlag = false;
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (
+    document.visibilityState === "visible" &&
+    _externallyPaused &&
+    !playerEl.ended &&
+    playerEl.src
+  ) {
+    _externallyPaused = false;
+    // play() may reject if the browser blocks unattended resume (rare on
+    // iOS/Android post-interruption, but possible). Swallow — the user
+    // can hit play manually.
+    playerEl.play().catch(() => {});
+  }
+});
 // Start time (in seconds) of each sentence in the current clip. Filled from
 // the SSE result event after each generate. The MediaSession seek-backward /
 // seek-forward handlers use this to jump between sentence boundaries.
@@ -487,9 +544,87 @@ function startNextStreamSentence() {
   }
   if (_streamPlayhead < _streamQueue.length) {
     playerEl.src = _streamQueue[_streamPlayhead].url;
-    playerEl.play().catch(() => {});
+    // Re-narrate suppresses streaming audio: the user shouldn't hear
+    // Sarah's voice from sentence 0 onward while they were already
+    // listening at sentence 5. Sentences keep queueing in the
+    // background; playback resumes at the captured position via
+    // _maybeStartRenarrateResume() as soon as we've synthesized far
+    // enough to cover that point.
+    if (!_regenSuppressStreaming) {
+      playerEl.play().catch(() => {});
+    }
   }
-  // else: waiting for next sentence to arrive, or for the final swap.
+}
+
+// During a re-narrate, called on every sentence event while playback is
+// still suppressed. As soon as enough sentence offsets have arrived to
+// know which sentence covers the resume position, hijack the stream:
+// jump _streamPlayhead to that sentence, set _streamElapsed so
+// virtualTime() math stays correct, load and play that sentence, then
+// seek inside it to land at the captured resume time. The normal
+// "ended → startNextStreamSentence" chain takes over from there, so
+// subsequent sentences play in sequence and the eventual swap to
+// combined audio just continues the same playhead.
+function _maybeStartRenarrateResume(totalSentences) {
+  const resume = _regenResumeAtSec;
+  if (resume == null) return;
+
+  // Find the sentence containing resume. A sentence covers [start, end)
+  // where end is the start of the next sentence (or +Infinity for the
+  // last one). We can only commit to a target when we either (a) know
+  // the next sentence's offset, or (b) know this is the final sentence.
+  let target = -1;
+  for (let i = 0; i < sentenceOffsetsSec.length; i++) {
+    const start = sentenceOffsetsSec[i];
+    if (start === undefined) continue;
+    const nextStart = sentenceOffsetsSec[i + 1];
+    const isLast = i === totalSentences - 1;
+    const end = nextStart !== undefined ? nextStart : (isLast ? Infinity : null);
+    if (end == null) break; // can't determine yet — wait for more
+    if (resume >= start && resume < end) {
+      target = i;
+      break;
+    }
+  }
+  if (target < 0) return;
+
+  // Skip empty (URL-less) targets — point at the next sentence with
+  // audio. Edge case: resume falls inside an empty SAPI chunk; we drift
+  // forward to the next playable sentence, which is the closest we can
+  // get without a frame-accurate scrub through silence.
+  let usable = target;
+  while (
+    usable < _streamQueue.length &&
+    (!_streamQueue[usable] || !_streamQueue[usable].url)
+  ) {
+    usable++;
+  }
+  if (usable >= _streamQueue.length) return; // not queued yet — wait
+
+  // Lock state to "playing from sentence usable" so the chain handlers
+  // and highlight machinery work. _streamPlayhead is incremented inside
+  // startNextStreamSentence, so we set it one below the target.
+  _regenSuppressStreaming = false;
+  _regenResumeAtSec = null;
+  _streamPlayhead = usable - 1;
+  _streamElapsed = sentenceOffsetsSec[usable] || 0;
+  startNextStreamSentence();
+
+  // Seek inside the loaded sentence to the intra-sentence offset so the
+  // user lands AT the resume position, not at the start of the
+  // containing sentence. Bound to loadedmetadata (currentTime isn't
+  // honored until the audio's duration is known).
+  const intra = Math.max(0, resume - (sentenceOffsetsSec[usable] || 0));
+  if (intra > 0) {
+    const seekInside = () => {
+      try {
+        if (isFinite(playerEl.duration)) {
+          playerEl.currentTime = Math.min(intra, playerEl.duration);
+        }
+      } catch {}
+    };
+    playerEl.addEventListener("loadedmetadata", seekInside, { once: true });
+  }
 }
 
 // ---- Playback speed -----------------------------------------------------
@@ -624,7 +759,7 @@ function _onSleepExpired() {
     if (elapsed >= SLEEP_FADE_MS) {
       clearInterval(_sleepFadeHandle);
       _sleepFadeHandle = null;
-      playerEl.pause();
+      _pauseAsUser(); // intentional — don't auto-resume on next visibility
       // Restore volume so next manual play isn't silent.
       playerEl.volume = _sleepFadeStartVol;
       _sleepFadeStartVol = null;
@@ -1251,7 +1386,7 @@ _miniObserver.observe(playerCard);
 
 miniPlayPause.addEventListener("click", () => {
   if (playerEl.paused) playerEl.play().catch(() => {});
-  else playerEl.pause();
+  else _pauseAsUser();
 });
 
 // Tap the title block OR the explicit ↑ button to jump back to the full
@@ -1671,9 +1806,86 @@ function onVoiceChange() {
 }
 
 voiceEl.addEventListener("change", onVoiceChange);
+voiceEl.addEventListener("change", _updateRenarrateBanner);
 speakerEl.addEventListener("change", () => {
   stopSpeakerPreview();
   rememberSpeaker(voiceEl.value, Number(speakerEl.value));
+});
+
+// ---- Re-narrate banner --------------------------------------------------
+// Voice is baked into the audio at synthesis time — there's no live voice
+// switch. When the user picks a different voice while a clip is loaded,
+// surface a banner offering to re-synthesize the loaded clip in the new
+// voice. Dismiss keeps the picker change as the default for next Generate;
+// the previous voice on the clip stays put until the user explicitly
+// re-narrates.
+const renarrateBanner = $("renarrate-banner");
+const renarrateClipTitle = $("renarrate-clip-title");
+const renarrateVoiceName = $("renarrate-voice-name");
+const renarrateConfirm = $("renarrate-confirm");
+const renarrateDismiss = $("renarrate-dismiss");
+// User-dismissed banners shouldn't flash back if the user toggles voices
+// again on the same clip — track the last clip we dismissed so we don't
+// nag. Reset on Clear / loadClip.
+let _renarrateDismissedClipId = null;
+
+async function _updateRenarrateBanner() {
+  // Hide the banner when:
+  //   - No clip loaded (voice change is just setting defaults)
+  //   - Synthesis in flight (regen is already happening or about to)
+  //   - Voice picker matches the loaded clip's voice (nothing to do)
+  //   - The user already dismissed for this clip
+  if (
+    !_currentClipId ||
+    _synthController ||
+    _renarrateDismissedClipId === _currentClipId
+  ) {
+    renarrateBanner.hidden = true;
+    return;
+  }
+  const pickerVoice = voiceEl.value;
+  if (!pickerVoice || pickerVoice === _currentPlayingVoiceId) {
+    renarrateBanner.hidden = true;
+    return;
+  }
+  // Look up the title for the labelled prompt. Falls back gracefully
+  // if the clip isn't reachable for some reason.
+  try {
+    const clip = await getClip(_currentClipId);
+    renarrateClipTitle.textContent = clip?.title || "this clip";
+  } catch {
+    renarrateClipTitle.textContent = "this clip";
+  }
+  const voiceName =
+    voiceEl.selectedOptions[0]?.textContent || pickerVoice;
+  renarrateVoiceName.textContent = voiceName;
+  renarrateBanner.hidden = false;
+}
+
+renarrateDismiss.addEventListener("click", () => {
+  _renarrateDismissedClipId = _currentClipId;
+  renarrateBanner.hidden = true;
+});
+
+renarrateConfirm.addEventListener("click", () => {
+  if (!_currentClipId) return;
+  // Capture the user's position BEFORE starting the regen — the new
+  // audio will seek here once the swap completes.
+  _regenResumeAtSec = virtualTime();
+  // Suppress streaming-sentence playback so the user doesn't hear
+  // the new voice rewinding to sentence 0 while we re-synthesize.
+  // Status line still shows synth progress.
+  _regenSuppressStreaming = true;
+  // Pause the old combined audio now so it doesn't keep speaking
+  // Amy while the reading view rebuilds for Sarah.
+  if (!playerEl.paused) _pauseAsUser();
+  // Use the existing in-place regen path. generate() already pulls
+  // voice + speaker + rate + volume from the current picker state, so
+  // we just flag the existing clip id as the regen target.
+  _regenTargetClipId = _currentClipId;
+  renarrateBanner.hidden = true;
+  _renarrateDismissedClipId = null;
+  generate();
 });
 
 // Reuse the voice-browser preview's shared Audio element for the inline
@@ -2505,6 +2717,18 @@ function base64ToBytes(b64) {
 // creating a fresh one. Used by saveCurrentClipText() to re-synthesize
 // when sentence count changes so karaoke alignment stays in sync.
 let _regenTargetClipId = null;
+// Re-narrate flow: capture the user's listening position at the moment
+// they click "Re-narrate," then seek the new combined audio to that
+// position after the swap. Without this, re-narrate effectively
+// restarts the clip from sentence 0 — disorienting if you were
+// halfway through a chapter.
+let _regenResumeAtSec = null;
+// While re-narrating, sentences still stream in via SSE but we don't
+// auto-play them — startNextStreamSentence checks this flag and skips
+// the play() call. The user sees the synthesis progress in the status
+// line; audio resumes at the captured position once the combined swap
+// completes.
+let _regenSuppressStreaming = false;
 
 async function generate() {
   const text = textEl.value.trim();
@@ -2541,6 +2765,13 @@ async function generate() {
   _synthController = new AbortController();
   resetStream();
   sentenceOffsetsSec = [];
+  // Clear the stale reading-view spans too — _maybeStartRenarrateResume
+  // and the regular first-sentence branch both gate "have we rebuilt
+  // the reading view yet?" on sentenceSpans.length === 0. Without this
+  // reset, a re-narrate would never get past the guard since the loaded
+  // clip's reading view leaves sentenceSpans populated.
+  sentenceSpans = [];
+  activeSentenceIdx = -1;
   enterBusyState();
   setStatus(regenTargetId ? "Re-synthesizing…" : "Starting synthesis…");
 
@@ -2651,9 +2882,22 @@ async function generate() {
           synthProgress.value = event.index + 1;
           setStatus(`Synthesising… ${event.index + 1} / ${event.total} sentences`);
 
-          // First usable sentence: build the reading view, wire MediaSession,
-          // start playback. Nothing to listen to until now.
-          if (_streamPlayhead < 0 && url) {
+          // Re-narrate kick-off: we deliberately suppress streaming
+          // playback so the new voice doesn't start at sentence 0 while
+          // the user was at sentence 5. Wait until we've queued enough
+          // sentences to cover the resume position, then start there.
+          if (_regenSuppressStreaming && _streamPlayhead < 0) {
+            // Build the reading view exactly once per regen — once
+            // sentenceSpans is populated for the new text, subsequent
+            // sentence events skip the rebuild.
+            if (sentenceSpans.length === 0) {
+              enterReadingView(text);
+              setMediaMetadata(text);
+              playerCard.hidden = false;
+            }
+            _maybeStartRenarrateResume(event.total);
+          } else if (_streamPlayhead < 0 && url) {
+            // Normal first-sentence path: kick off streaming playback.
             enterReadingView(text);
             setMediaMetadata(text);
             playerCard.hidden = false;
@@ -2681,7 +2925,18 @@ async function generate() {
           lastBlob = combined;
           lastBlobUrl = URL.createObjectURL(combined);
 
-          const targetTime = virtualTime();
+          // Re-narrate overrides: when the user clicked "Re-narrate
+          // with X," _regenResumeAtSec carries the pre-renarrate
+          // virtualTime so we resume there instead of wherever the
+          // streaming playhead happened to land. _regenSuppressStreaming
+          // also tells us to force-resume after the seek (since the
+          // player has been intentionally paused throughout streaming
+          // and wasPlaying would otherwise be false).
+          const renarrateActive = _regenSuppressStreaming;
+          const targetTime =
+            _regenResumeAtSec != null ? _regenResumeAtSec : virtualTime();
+          _regenResumeAtSec = null;
+          _regenSuppressStreaming = false;
           const wasPlaying = !playerEl.paused && !playerEl.ended;
           const startedFresh = _streamPlayhead < 0; // no playback at all yet
           _streamPlayhead = -1;
@@ -2703,7 +2958,11 @@ async function generate() {
             if (isFinite(playerEl.duration)) {
               playerEl.currentTime = Math.min(targetTime, playerEl.duration);
             }
-            if (wasPlaying || startedFresh) {
+            // wasPlaying captures whether the user was hearing audio
+            // before the swap. For re-narrate, streaming was suppressed
+            // so wasPlaying is always false — but the user explicitly
+            // asked to re-narrate, so we resume regardless.
+            if (wasPlaying || startedFresh || renarrateActive) {
               playerEl.play().catch(() => {});
             }
             // Track which library row this player is bound to so the
@@ -2778,6 +3037,12 @@ async function generate() {
   } finally {
     _synthController = null;
     exitBusyState();
+    // Always clear regen state on exit so a stale resume-at doesn't
+    // leak into a fresh, unrelated generate. The "success" path inside
+    // the result event already clears these, but cancellation /
+    // synthesis errors land here without going through that branch.
+    _regenResumeAtSec = null;
+    _regenSuppressStreaming = false;
   }
 }
 
@@ -3216,6 +3481,10 @@ function clearForNewClip() {
   _currentPlayingVoiceId = null;
   _lastProgressSaveAt = 0;
   saveTextBtn.hidden = true;
+  // No clip → no re-narrate banner. Reset the dismiss tracker too so a
+  // future load of a different clip can prompt again.
+  renarrateBanner.hidden = true;
+  _renarrateDismissedClipId = null;
 
   // Wipe the sentence state so any leftover highlight from the previous
   // clip doesn't bleed into the next reading view.
@@ -4468,6 +4737,12 @@ async function loadClip(id) {
   // timeupdate accumulator doesn't have to round-trip IDB on every tick.
   _currentPlayingVoiceId = clip.voiceId || null;
   _lastProgressSaveAt = Date.now();
+  // loadClip sets voiceEl.value to clip.voiceId above, so the picker
+  // matches the clip's voice on entry — re-narrate banner should be
+  // hidden. Reset the dismiss tracker too so a future voice change on
+  // this clip can prompt.
+  renarrateBanner.hidden = true;
+  _renarrateDismissedClipId = null;
 
   enterReadingView(clip.text || "");
   setMediaMetadata(clip.text || "");
@@ -4717,9 +4992,12 @@ function setupMediaSession() {
   };
 
   safeSet("play", () => playerEl.play());
-  safeSet("pause", () => playerEl.pause());
+  // Lock-screen / Bluetooth pause is a user action — flag it so the
+  // pause handler doesn't mistake it for an OS interrupt just because
+  // the tab is in the background.
+  safeSet("pause", () => _pauseAsUser());
   safeSet("stop", () => {
-    playerEl.pause();
+    _pauseAsUser();
     playerEl.currentTime = 0;
   });
 
