@@ -140,7 +140,7 @@ const whatsNewBadge = settingsWhatsNewLink.querySelector(".whats-new-badge");
 // Bump this number whenever there's a noteworthy change in whats-new.html
 // worth surfacing. The Settings link shows a "NEW" badge until the user
 // opens the changelog, at which point we save this version as "seen."
-const WHATS_NEW_LATEST = 86;
+const WHATS_NEW_LATEST = 87;
 const WHATS_NEW_KEY = "narrative.lastSeenWhatsNew";
 
 function _isWhatsNewUnread() {
@@ -3377,7 +3377,18 @@ function _advanceChapterQueue() {
 
 function _cancelChapterQueue() {
   if (_chapterTotalCount <= 0) return;
+  // Wipe ALL queue state, not just the pending list. Previously we
+  // only cleared _chapterQueue; the next save callback then ran
+  // _advanceChapterQueue, hit the empty-queue branch, and flashed a
+  // misleading "All N chapters synthesized" status (the user just
+  // cancelled — they didn't synthesize all of them). Also clear the
+  // pending-advance flag so a later 'ended' event doesn't try to
+  // resume the cancelled queue.
   _chapterQueue = [];
+  _chapterTotalCount = 0;
+  _chapterCurrentIndex = 0;
+  _pendingChapterTitle = null;
+  _queueAdvancePending = false;
   _updateChapterQueueUI();
   setStatus("Chapter queue cancelled — current chapter will still save.");
 }

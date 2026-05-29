@@ -141,6 +141,34 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v87</span>
+          <span class="release-tagline">Chapter queue stays in sync with playback</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Chapter auto-advance now waits for the audio to
+            actually finish.</strong> Previously, chapter N+1 started
+            synthesizing the moment chapter N's synthesis completed —
+            but the user might still be listening to chapter N. When
+            chapter N+1's first sentence arrived, it rebuilt the
+            reading view and stole the player, leaving the audio and
+            text out of sync. Now the next chapter's synthesis and
+            text-swap are deferred until the playerEl 'ended' event
+            fires, so transitions happen at the natural pause between
+            chapters.
+          </li>
+          <li>
+            <strong>Cancel-queue cleanup.</strong> Hitting the × on the
+            chapter queue pill now fully clears the queue state, so a
+            cancelled queue doesn't flash a misleading <em>"All N
+            chapters synthesized"</em> message later.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v86</span>
           <span class="release-tagline">Ghost UI elements purged</span>
         </div>
