@@ -173,6 +173,38 @@
         color: var(--fg);
         font-weight: 600;
       }
+      /* Example-URL list inside the Text-card callout. Tight spacing +
+         smaller code so three lines fit without ballooning the column.
+         Override the parent .manual-layout-demo's pointer-events: none
+         + user-select: none so these URLs are both clickable AND
+         selectable for copy-paste. */
+      .manual .manual-layout-demo .demo-callout-urls {
+        margin: 4px 0 0;
+        padding-left: 16px;
+        font-size: 11.5px;
+        line-height: 1.5;
+        pointer-events: auto;
+        user-select: text;
+        -webkit-user-select: text;
+      }
+      .manual .manual-layout-demo .demo-callout-urls li {
+        margin-bottom: 3px;
+      }
+      .manual .manual-layout-demo .demo-callout-urls a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .manual .manual-layout-demo .demo-callout-urls a:hover {
+        text-decoration: underline;
+      }
+      .manual .manual-layout-demo .demo-callout-urls code {
+        font-size: 10.5px;
+        padding: 0 4px;
+        background: var(--bg-card-2);
+        border-radius: 3px;
+        word-break: break-all;
+        color: inherit;
+      }
       @media (max-width: 600px) {
         .manual .manual-layout-demo .demo-row {
           flex-direction: column;
@@ -333,6 +365,13 @@
             <div class="demo-callout">
               <strong>Text card</strong> — paste, fetch a URL, or upload
               a .txt / .pdf / .epub / .docx.
+              <br><br>
+              <strong>Try Paste URL with:</strong>
+              <ul class="demo-callout-urls">
+                <li><a href="/?prefillUrl=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FProcrastination&amp;autofetch=1"><code>en.wikipedia.org/wiki/Procrastination</code></a> — short article</li>
+                <li><a href="/?prefillUrl=https%3A%2F%2Fpaulgraham.com%2Fpersistence.html&amp;autofetch=1"><code>paulgraham.com/persistence.html</code></a> — essay</li>
+                <li><a href="/?prefillUrl=https%3A%2F%2Fwww.gutenberg.org%2Ffiles%2F74%2F74-h%2F74-h.htm&amp;autofetch=1"><code>gutenberg.org/files/74/74-h/74-h.htm</code></a> — Tom Sawyer (long; chapter auto-split fires)</li>
+              </ul>
             </div>
           </div>
 
@@ -530,6 +569,62 @@
             creates a new clip instead.</td>
         </tr>
       </table>
+
+      <h3>Try it — example URLs</h3>
+      <p>
+        <strong>Click any URL below</strong> to jump back to the app
+        with that URL pre-filled and auto-fetched. (Or copy-paste it
+        into Paste URL manually if you prefer.) Each demonstrates the
+        extractor on a different shape of content:
+      </p>
+      <table>
+        <tr>
+          <th>URL</th>
+          <th>What it shows</th>
+        </tr>
+        <tr>
+          <td>
+            <a href="/?prefillUrl=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FProcrastination&amp;autofetch=1"><code>https://en.wikipedia.org/wiki/Procrastination</code></a>
+          </td>
+          <td>
+            Wikipedia article — short, structured. Extractor drops the
+            sidebar, references list, and edit links; you get just the
+            article body. Good first test (~2,500 words).
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <a href="/?prefillUrl=https%3A%2F%2Fpaulgraham.com%2Fpersistence.html&amp;autofetch=1"><code>https://paulgraham.com/persistence.html</code></a>
+          </td>
+          <td>
+            Classic single-author essay — clean prose, no ads, no
+            navigation chrome. Trafilatura's happy path
+            (~1,500 words).
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <a href="/?prefillUrl=https%3A%2F%2Fwww.gutenberg.org%2Ffiles%2F74%2F74-h%2F74-h.htm&amp;autofetch=1"><code>https://www.gutenberg.org/files/74/74-h/74-h.htm</code></a>
+          </td>
+          <td>
+            <em>The Adventures of Tom Sawyer</em>, Chapter 1 onward —
+            a full book from Project Gutenberg. Tests long-form
+            extraction (~75,000 words). Pair with
+            <strong>Chapter auto-split</strong> — the paste-detector
+            should offer to split each chapter into its own clip.
+          </td>
+        </tr>
+      </table>
+      <div class="tip">
+        Sites that <em>don't</em> work well:
+        <strong>paywalled articles</strong> (NYT, WSJ — the server
+        only sees the snippet), <strong>JavaScript-heavy single-page
+        apps</strong> (Twitter threads, some Substacks — text is
+        rendered client-side and never reaches the extractor), and
+        <strong>private / login-gated pages</strong> (SSRF guard
+        blocks anything non-public anyway). For those, copy the text
+        manually and paste it into the textarea.
+      </div>
 
       <!-- ============================================================= -->
       <h2 id="voice">3. Choosing a voice</h2>

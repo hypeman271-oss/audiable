@@ -3,7 +3,45 @@
 Living document. Captures the thinking from the "I want to sell this"
 conversation. Updated as decisions get made and milestones land.
 
-Last meaningful update: initial draft.
+Last meaningful update: 2026-05-29 — four V1 launch decisions made.
+
+---
+
+## Decisions made (2026-05-29)
+
+After shipping the inline-images feature for URL fetches, four V1 strategy
+questions were decided. These cascade through every other engineering call
+from here.
+
+| Decision | Choice | Reasoning |
+| --- | --- | --- |
+| **Pricing** | One-time **$129 perpetual** | Scrivener precedent (same audience, 20+ years). Writers buy tools once, write a book over years. Avoids SaaS-at-100-users math, no billing lifecycle, no churn marketing. |
+| **Synthesis** | **On-device** (Capacitor + native Piper on mobile; embedded Piper on desktop) | Near-zero recurring infra cost. Privacy story is a Writer-segment differentiator ("your draft never leaves your machine"). Piper already runs locally in the current build. |
+| **Native shell** | **Tauri desktop** wrapper | Writers work at desktops. PWA install already covers mobile listening. Tauri is a weekend; Capacitor + native Piper Kotlin plugin is 3–4 weeks of unfamiliar work. |
+| **Tier model** | **Paid-only with 7-day free trial** | Trial converts focused-intent users; avoids the "never-going-to-pay" support cohort. Reinforces "serious revision tool" positioning over Speechify's "free with ads" feel. |
+
+**Implied consequences:**
+
+- No Stripe subscription product needed for V1 — just one-time Checkout.
+- No hosted synthesis backend — the Fly.toml + Dockerfile already in the
+  repo become V3 (Self-Hosted) artifacts, not V1 infrastructure.
+- Tauri-first means desktop code signing is on the critical path
+  (macOS Developer ID + Windows code sign cert) — those orders take
+  multi-week lead times, start early.
+- Trial gating needs a client-side timer with a server check on launch.
+  Build entitlement gating on first login; trial expiry calls Stripe
+  Checkout in-app.
+- Mobile stays PWA-only for V1. Capacitor + native Piper moves to V2
+  scope when phone-as-primary-listening becomes a target market.
+
+**Not decided yet:**
+
+- Cloud sync layer (Supabase). Strictly an enhancement — V1 ships
+  desktop-local-only and adds optional sync as a v1.1 feature once the
+  account system is needed for license validation anyway.
+- LLC vs Delaware C-corp — accountant call, not a code decision.
+- Direct sale vs app store — Tauri-first sidesteps this. Sell direct
+  through your own site with Stripe Checkout; skip the 30% cut.
 
 ---
 
@@ -114,25 +152,25 @@ already requires — V1 is the same code with Stripe + accounts on top.
 
 These cascade through every other decision. Pick before writing more code.
 
-### Hosting model
+### Hosting model — DECIDED (2026-05-29)
 
 - [ ] **All-cloud** — you pay for synthesis compute, simplest UX, recurring cost.
-- [ ] **On-device** (Capacitor + native Piper plugin) — phone does the work, near-zero cost, harder to ship.
+- [x] **On-device** (Capacitor + native Piper plugin) — phone does the work, near-zero cost, harder to ship. **← V1 choice.**
 - [ ] **Hybrid** — cloud for synthesis, local for library/UI, best balance, most engineering.
 
-**Recommendation:** On-device for V1 (Writers care about privacy). All-cloud for V2 (Readers don't, and volume amortizes hosting).
+V1 ships on-device; V2 (Readers) revisits when volume justifies cloud
+hosting amortization.
 
-### Subscription vs one-time
+### Subscription vs one-time — DECIDED (2026-05-29)
 
 - [ ] **Subscription** ($9/mo) — more revenue per user over time, but
   needs billing lifecycle, churn marketing, app store revenue cuts,
   needs 1000+ paying users to feel sane.
-- [ ] **One-time** ($79–129) — better customer feel, simpler legally,
-  easier to ship, lower lifetime revenue per user.
+- [x] **One-time** ($79–129) — better customer feel, simpler legally,
+  easier to ship, lower lifetime revenue per user. **← V1 at $129.**
 - [ ] **Hybrid** — one-time for desktop, subscription for cloud sync addon.
 
-**Recommendation:** One-time for V1 (Writers respond to it). Subscription
-for V2 (Readers expect it). One-time for V3.
+V1 is one-time $129; V2 / V3 pricing TBD.
 
 ### Accounts + sync (build now, before launch)
 
@@ -312,15 +350,17 @@ works. Cut everything else from V1, ship, learn.
 
 ## Open questions to revisit
 
-- [ ] Subscription or one-time? Make the call before week 4.
-- [ ] On-device or cloud synthesis for V1? Affects backend infrastructure.
-- [ ] Tauri (desktop-first) or Capacitor (mobile-first)? Pick by week 5.
-- [ ] Direct sale via your own site or app store distribution? Affects
-  pricing math significantly (30% Apple / Google cuts vs 2.9% Stripe).
-- [ ] Free tier or paid-only? Free tiers convert better long-term but
-  add support burden.
+- [x] **Subscription or one-time?** → One-time $129. (2026-05-29)
+- [x] **On-device or cloud synthesis for V1?** → On-device. (2026-05-29)
+- [x] **Tauri (desktop-first) or Capacitor (mobile-first)?** → Tauri. (2026-05-29)
+- [x] **Free tier or paid-only?** → Paid-only with 7-day free trial. (2026-05-29)
+- [x] **Direct sale or app store distribution?** → Direct sale via Stripe
+  Checkout (implicit in Tauri-first; no app store presence in V1).
 - [ ] LLC in your home state or Delaware C-corp from the start?
   (Talk to an accountant.)
+- [ ] Cloud sync for desktop (Supabase) — V1.1 enhancement once the
+  account system exists for license validation. Defer for now.
+- [ ] LibriTTS / Piper voice-by-voice licensing audit before public sale.
 
 ---
 

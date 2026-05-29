@@ -140,7 +140,7 @@ const whatsNewBadge = settingsWhatsNewLink.querySelector(".whats-new-badge");
 // Bump this number whenever there's a noteworthy change in whats-new.html
 // worth surfacing. The Settings link shows a "NEW" badge until the user
 // opens the changelog, at which point we save this version as "seen."
-const WHATS_NEW_LATEST = 65;
+const WHATS_NEW_LATEST = 86;
 const WHATS_NEW_KEY = "narrative.lastSeenWhatsNew";
 
 function _isWhatsNewUnread() {
@@ -183,6 +183,11 @@ const genSpinner = generateBtn.querySelector(".spinner");
 
 let lastBlobUrl = null;
 let lastBlob = null;
+// Images extracted from a URL fetch hang around in this module global
+// until the next generate() saves them into the clip. Cleared by
+// clearForNewClip and after a successful save so they don't leak into
+// the next clip the user types from scratch.
+let _pendingImages = [];
 
 // ---- Interruption-aware auto-resume -------------------------------------
 // When a phone call, Siri, Google Assistant, or system notification
@@ -261,6 +266,14 @@ function _cancelAutoAdvance() {
     _autoAdvanceTimer = null;
   }
 }
+
+// Chapter-queue gate. Set true when chapter N's synthesis save fires while
+// a queue is active; consumed by the player's 'ended' handler to advance
+// the queue at the moment chapter N's audio actually finishes playing,
+// not at the moment its synthesis completes. Without this, chapter N+1's
+// first sentence event would rebuild the reading view + steal the player
+// while the user is still mid-listen on chapter N.
+let _queueAdvancePending = false;
 
 const synthProgress = $("synth-progress");
 
@@ -2804,6 +2817,9 @@ async function generate() {
           // shifted slightly, but the user's notes are too valuable to
           // wipe automatically. They can prune misaligned ones manually.
           bookmarks: Array.isArray(existing.bookmarks) ? existing.bookmarks : [],
+          // Preserve URL-extracted images across a regen — the text
+          // didn't change, so positions stay valid.
+          images: Array.isArray(existing.images) ? existing.images : [],
         };
       }
     } catch {}
@@ -2938,14 +2954,24 @@ async function generate() {
             // sentenceSpans is populated for the new text, subsequent
             // sentence events skip the rebuild.
             if (sentenceSpans.length === 0) {
-              enterReadingView(text);
+              enterReadingView(
+                text,
+                regenExistingMeta && Array.isArray(regenExistingMeta.images)
+                  ? regenExistingMeta.images
+                  : (_pendingImages || [])
+              );
               setMediaMetadata(text);
               playerCard.hidden = false;
             }
             _maybeStartRenarrateResume(event.total);
           } else if (_streamPlayhead < 0 && url) {
             // Normal first-sentence path: kick off streaming playback.
-            enterReadingView(text);
+            enterReadingView(
+              text,
+              regenExistingMeta && Array.isArray(regenExistingMeta.images)
+                ? regenExistingMeta.images
+                : (_pendingImages || [])
+            );
             setMediaMetadata(text);
             playerCard.hidden = false;
             startNextStreamSentence();
@@ -2993,7 +3019,12 @@ async function generate() {
           // Make sure the reading view is set up — for very short inputs the
           // sentence event might not have fired the first-sentence branch.
           if (sentenceSpans.length === 0) {
-            enterReadingView(text);
+            enterReadingView(
+              text,
+              regenExistingMeta && Array.isArray(regenExistingMeta.images)
+                ? regenExistingMeta.images
+                : (_pendingImages || [])
+            );
             setMediaMetadata(text);
           }
 
@@ -3042,6 +3073,12 @@ async function generate() {
               progressSec: 0,
               // Empty for fresh clips, preserved across regen.
               bookmarks: regenExistingMeta ? regenExistingMeta.bookmarks : [],
+              // Carry any URL-extracted images onto the clip. Existing
+              // images survive a regen (text didn't change → positions
+              // still valid); only a new URL fetch can replace them.
+              images: regenExistingMeta && Array.isArray(regenExistingMeta.images)
+                ? regenExistingMeta.images
+                : (_pendingImages || []),
               createdAt: regenExistingMeta
                 ? regenExistingMeta.createdAt
                 : new Date().toISOString(),
@@ -3056,10 +3093,25 @@ async function generate() {
                 // Consume the pending chapter title now that the save has
                 // landed; the next chapter (if queued) will set its own.
                 _pendingChapterTitle = null;
-                // If we're inside an auto-continuing chapter sequence,
-                // advance to the next one — this loads its text and kicks
-                // off generate() on a short timer. No-op when no queue.
-                _advanceChapterQueue();
+                // Pending images have been written to the clip — clear so
+                // they don't leak into the next fresh clip the user types.
+                _pendingImages = [];
+                // Chapter queue: advance to the next chapter, but DEFER
+                // it until this chapter's audio actually finishes playing.
+                // Firing _advanceChapterQueue immediately (at synthesis-
+                // complete time) would rebuild the reading view + steal
+                // the player while the user is still mid-listen. The
+                // playerEl 'ended' handler consumes _queueAdvancePending.
+                // Edge case: if playback was already done by the time
+                // synthesis finished (small clip + slow synth), advance
+                // now since 'ended' fired before we set the flag.
+                if (_chapterTotalCount > 0) {
+                  if (playerEl.ended) {
+                    _advanceChapterQueue();
+                  } else {
+                    _queueAdvancePending = true;
+                  }
+                }
               })
               .catch((e) => console.warn("library save failed:", e));
           };
@@ -3174,7 +3226,29 @@ function _detectChapters(text) {
     // Markdown ATX headings (# / ## / ###).
     (line) => {
       const m = line.match(/^(#{1,3})\s+(.+?)\s*#*\s*$/);
-      return m ? m[2].trim() : null;
+      if (!m) return null;
+      const raw = m[2].trim();
+      // Standard Ebooks renders chapter headings as bare Roman numerals
+      // (## I, ## II, ## III) — a title of just "I" is useless in the
+      // library, so promote it to "Chapter I" / "Chapter 12".
+      if (/^[0-9]+$/.test(raw) || /^[ivxlcdm]+$/i.test(raw)) {
+        return `Chapter ${raw.toUpperCase()}`;
+      }
+      // "CHAPTER I" / "Chapter II" / "PART 3" / "Part Three" — Project
+      // Gutenberg headings injected server-side land here in ALL CAPS.
+      // Title-case the keyword and keep whatever comes after it
+      // (numeral + optional subtitle) intact so the library cards read
+      // as "Chapter I" not "CHAPTER I".
+      const k = raw.match(
+        /^(chapter|part|book|section)\b\s*(.*)$/i
+      );
+      if (k) {
+        const word = k[1].charAt(0).toUpperCase() + k[1].slice(1).toLowerCase();
+        const rest = (k[2] || "").trim();
+        return rest ? `${word} ${rest}` : word;
+      }
+      // Real titles like "Preface", "The Garden Party" flow through.
+      return raw;
     },
     // "Chapter N" / "CHAPTER 12" / "Chapter One" / "Part 3" — optional
     // subtitle after a colon, em-dash, period, or just a space.
@@ -3310,9 +3384,12 @@ function _cancelChapterQueue() {
 
 // Single entry point for "text just arrived from outside; check it." All
 // three import paths (paste / file upload / URL fetch) call this.
-// Anything past this is likely a markdown doc with subheadings, not a
-// real chapter list — don't pre-suggest cutting it into ~40 clips.
-const MAX_AUTO_DETECT = 30;
+// 200 covers virtually every novel; books with more (War & Peace at 365,
+// serialized works, devotionals) are rare enough that requiring a manual
+// split is acceptable for them. Original cap of 30 was set thinking of
+// markdown docs with subheadings; turned out to silently swallow real
+// novels like Tom Sawyer (35 chapters) extracted from URLs.
+const MAX_AUTO_DETECT = 200;
 
 function _checkForChapters() {
   // Don't re-banner if a queue is already running — the user has already
@@ -3368,10 +3445,46 @@ function splitSentencesClient(text) {
 // on, so we always tag and let the stylesheet decide.
 const LONG_SENTENCE_WORD_THRESHOLD = 35;
 
-function enterReadingView(text) {
+function enterReadingView(text, images) {
   const sentences = splitSentencesClient(text);
   readingView.innerHTML = "";
+
+  // Bucket images by the sentence they should appear *before*. Each entry
+  // is {sentence_index, src, alt}; the extractor numbers them against the
+  // *cleaned* text (same splitter the server runs), so indexes line up
+  // with the spans we're about to create. Indexes past the last sentence
+  // get appended at the end so a trailing picture isn't silently lost.
+  const imgList = Array.isArray(images) ? images : [];
+  const imgByIndex = new Map();
+  for (const img of imgList) {
+    if (!img || !img.src) continue;
+    const raw = Number(img.sentence_index);
+    const idx = Number.isFinite(raw)
+      ? Math.max(0, Math.min(sentences.length, Math.floor(raw)))
+      : sentences.length;
+    if (!imgByIndex.has(idx)) imgByIndex.set(idx, []);
+    imgByIndex.get(idx).push(img);
+  }
+
+  function flushImagesAt(idx) {
+    const bucket = imgByIndex.get(idx);
+    if (!bucket) return;
+    for (const img of bucket) {
+      const el = document.createElement("img");
+      el.className = "inline-image";
+      el.loading = "lazy";
+      el.decoding = "async";
+      el.src = img.src;
+      el.alt = img.alt || "";
+      // A broken image (404, blocked host, expired hotlink) shouldn't
+      // leave an empty slot in the middle of the reading view — drop it.
+      el.addEventListener("error", () => el.remove(), { once: true });
+      readingView.appendChild(el);
+    }
+  }
+
   sentenceSpans = sentences.map((s, i) => {
+    flushImagesAt(i);
     const span = document.createElement("span");
     span.className = "sentence";
     span.dataset.index = String(i);
@@ -3394,6 +3507,9 @@ function enterReadingView(text) {
     readingView.appendChild(span);
     return span;
   });
+  // Trailing images (anchored past the final sentence, or the catch-all
+  // bucket for malformed indexes) — render them at the bottom.
+  flushImagesAt(sentences.length);
   activeSentenceIdx = -1;
   textEl.hidden = true;
   readingView.hidden = false;
@@ -3462,7 +3578,7 @@ async function saveCurrentClipText() {
       // Typo / capitalization / whitespace fix — same sentence boundaries,
       // audio still aligns. Just refresh the reading-view spans.
       setStatus(`Saved text changes to "${clip.title || "(untitled)"}."`);
-      enterReadingView(newText);
+      enterReadingView(newText, Array.isArray(clip.images) ? clip.images : []);
       renderLibrary();
       return;
     }
@@ -3476,8 +3592,9 @@ async function saveCurrentClipText() {
     );
     _regenTargetClipId = _currentClipId;
     // Re-enter the reading view so the user can watch the new sentences
-    // light up as the per-sentence streaming arrives.
-    enterReadingView(newText);
+    // light up as the per-sentence streaming arrives. Sentence count
+    // changed, so any URL-anchored image positions are stale — drop them.
+    enterReadingView(newText, []);
     // Fire and forget — generate() drives its own status / progress UI.
     generate();
   } catch (e) {
@@ -3532,6 +3649,9 @@ function clearForNewClip() {
   // future load of a different clip can prompt again.
   renarrateBanner.hidden = true;
   _renarrateDismissedClipId = null;
+  // Drop any pending images from a URL fetch so they don't sneak onto
+  // a freshly-typed clip.
+  _pendingImages = [];
 
   // Wipe the sentence state so any leftover highlight from the previous
   // clip doesn't bleed into the next reading view.
@@ -4795,7 +4915,7 @@ async function loadClip(id) {
   renarrateBanner.hidden = true;
   _renarrateDismissedClipId = null;
 
-  enterReadingView(clip.text || "");
+  enterReadingView(clip.text || "", Array.isArray(clip.images) ? clip.images : []);
   setMediaMetadata(clip.text || "");
 
   // Resume from saved position once metadata is in. Only restore if it's a
@@ -4876,6 +4996,31 @@ urlInput.addEventListener("keydown", (e) => {
 
 urlFetchBtn.addEventListener("click", fetchFromUrl);
 
+// Deep-link from the manual: visiting "/?prefillUrl=https%3A%2F%2F..."
+// (optionally with "&autofetch=1") opens the URL row, pre-fills the
+// input, and — when autofetch is set — runs the fetch immediately so
+// a tester can click a sample URL in the manual and land on a loaded
+// article one click later.
+(function _handlePrefillUrlFromQuery() {
+  try {
+    const params = new URLSearchParams(location.search);
+    const u = params.get("prefillUrl");
+    if (!u) return;
+    showUrlRow();
+    urlInput.value = u;
+    const auto = params.get("autofetch") === "1";
+    // Strip the query param so a reload doesn't re-trigger the fetch
+    // (the user expects reload to start fresh, not re-grab the same
+    // article).
+    history.replaceState(null, "", location.pathname);
+    if (auto) {
+      // Defer so the existing setStatus / busy-state UI has time to
+      // render before the fetch's "Fetching…" status overwrites it.
+      setTimeout(() => fetchFromUrl(), 50);
+    }
+  } catch {}
+})();
+
 async function fetchFromUrl() {
   const url = (urlInput.value || "").trim();
   if (!url) return;
@@ -4910,6 +5055,10 @@ async function fetchFromUrl() {
     // Same shape as the file-upload path — keep behavior aligned.
     exitReadingView();
     textEl.value = data.text || "";
+    // Stash any images the server pulled out of the URL. They survive
+    // until the next generate() saves them onto the clip (or until the
+    // user hits Clear, which wipes them).
+    _pendingImages = Array.isArray(data.images) ? data.images : [];
     updateCounts();
     _checkForChapters();
 
@@ -5125,13 +5274,29 @@ function setupMediaSession() {
     const justEndedId = _currentClipId;
     await markCurrentClipPlayed();
 
+    // Chapter queue: if the previous chapter's save callback flagged
+    // an advance, do it now (at audio-end). This is the path that
+    // keeps the reading view + player from jumping mid-listen.
+    // _advanceChapterQueue swaps in chapter N+1's text and kicks off
+    // its synthesis. If it returns true, a queue advance is in
+    // progress — suppress library auto-advance so we don't compete
+    // with it. If false, the queue was already drained on the last
+    // save; fall through to library auto-advance.
+    if (_queueAdvancePending) {
+      _queueAdvancePending = false;
+      const advanced = _advanceChapterQueue();
+      if (advanced) return;
+    }
+
     // Auto-advance to the next clip in the library according to _playMode.
     // Give the listener a 3-second breath between chapters so transitions
     // don't slam together — your ear needs a beat to register a chapter
     // change. Cancellable: if the user starts a different clip or hits
     // any control during the gap, _autoAdvanceTimer gets cleared by
     // whatever takes over.
-    if (justEndedId) {
+    // Suppressed while a chapter queue is active — the queue's own
+    // advance logic owns transitions between its chapters.
+    if (justEndedId && _chapterTotalCount <= 0) {
       const nextId = await nextClipId(justEndedId);
       if (nextId) {
         setStatus("Up next in 3s…");

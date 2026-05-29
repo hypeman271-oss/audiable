@@ -130,6 +130,150 @@ test.describe("regression — Voice browser plumbing", () => {
   });
 });
 
+test.describe("regression — Chapter detection on URL fetch", () => {
+  test("35-chapter novel triggers banner with promoted Roman titles — fixed in v84", async ({ page }) => {
+    // v83 → v84: MAX_AUTO_DETECT was 30, which silently swallowed
+    // Tom Sawyer's 35 chapters (extracted as ## I, ## II, … from
+    // Standard Ebooks markdown). The banner just never appeared.
+    // Also: bare-numeral titles like "I" / "II" were unreadable in
+    // the library — v84 promotes them to "Chapter I" / "Chapter II".
+    //
+    // We stub /api/extract/url so this test (a) doesn't depend on
+    // standardebooks.org being reachable and (b) runs in <1s instead
+    // of the 5-15s the real fetch + trafilatura parse would take.
+    // The stub returns 35 chapter headings in the same `## I` / `## II`
+    // form Standard Ebooks produces, which is the actual format that
+    // exposed the original bug.
+
+    const ROMAN = [
+      "I","II","III","IV","V","VI","VII","VIII","IX","X",
+      "XI","XII","XIII","XIV","XV","XVI","XVII","XVIII","XIX","XX",
+      "XXI","XXII","XXIII","XXIV","XXV","XXVI","XXVII","XXVIII","XXIX","XXX",
+      "XXXI","XXXII","XXXIII","XXXIV","XXXV",
+    ];
+    const stubText = ROMAN
+      .map(
+        (r, i) =>
+          `## ${r}\n\nThis is the body of chapter ${i + 1}. It needs at least one sentence so the splitter sees a real chapter and doesn't drop it as empty.`
+      )
+      .join("\n\n");
+
+    await page.route("**/api/extract/url", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          filename: "example.com",
+          chars: stubText.length,
+          text: stubText,
+          images: [],
+        }),
+      })
+    );
+
+    await page.goto("/");
+    await page.locator("#paste-url-btn").click();
+    await expect(page.locator("#url-row")).toBeVisible();
+
+    await page.locator("#url-input").fill("https://example.com/book");
+    await page.locator("#url-fetch-btn").click();
+
+    const banner = page.locator("#chapter-banner");
+    await expect(banner).toBeVisible({ timeout: 10_000 });
+
+    // Exactly 35 chapters in the stub.
+    await expect(page.locator("#chapter-banner-count")).toHaveText(
+      /35 chapters/
+    );
+  });
+
+  test("31-chapter doc still surfaces (regression for MAX_AUTO_DETECT=30 cap) — fixed in v84", async ({ page }) => {
+    // Belt-and-suspenders test for the off-by-one risk: anything that
+    // detects 31+ chapters used to be silently dropped. Stub a 31-chapter
+    // doc and confirm the banner appears.
+    const text = Array.from(
+      { length: 31 },
+      (_, i) => `# Chapter ${i + 1}\n\nBody paragraph for chapter ${i + 1}.`
+    ).join("\n\n");
+
+    await page.route("**/api/extract/url", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          filename: "example.com",
+          chars: text.length,
+          text,
+          images: [],
+        }),
+      })
+    );
+
+    await page.goto("/");
+    await page.locator("#paste-url-btn").click();
+    await page.locator("#url-input").fill("https://example.com/book2");
+    await page.locator("#url-fetch-btn").click();
+
+    await expect(page.locator("#chapter-banner")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.locator("#chapter-banner-count")).toHaveText(
+      /31 chapters/
+    );
+  });
+});
+
+test.describe("regression — hidden attribute respected by CSS", () => {
+  test("placeholder-text elements stay hidden on first load — fixed in v86", async ({ page }) => {
+    // Pre-v86: 9 elements (.chapter-queue, .chapter-banner, .url-row,
+    // .mini-player, .bookmarks-list, .filler-counts, .presets-list,
+    // .speaker-chip, .whats-new-badge) had class-level `display: flex`
+    // rules that overrode the browser's UA `display: none` for
+    // `[hidden]`. They became visible on every fresh page load,
+    // showing their literal placeholder HTML text — including a stale
+    // "Chapter 1 of 1" queue pill and a "0 chapters detected" banner.
+    // Same class of bug as the v79 Settings dialog regression. Fixed
+    // by a global `[hidden] { display: none !important }` rule.
+    await page.goto("/");
+
+    // These elements all start with the `hidden` attribute in
+    // index.html. None should be visible to the user on a fresh load.
+    const expectedHidden = [
+      "#chapter-banner",
+      "#chapter-queue",
+      "#url-row",
+      "#mini-player",
+      "#bookmarks-list",
+      "#filler-counts",
+      "#presets-list",
+    ];
+    for (const sel of expectedHidden) {
+      await expect(page.locator(sel), `${sel} should be hidden`).toBeHidden();
+    }
+  });
+
+  test("hidden attribute on a known offender hides it post-load — fixed in v86", async ({ page }) => {
+    // Belt-and-suspenders: directly verify the CSS rule wins for
+    // .chapter-queue specifically. If a future CSS edit re-introduces
+    // a high-specificity display rule for one of these classes that
+    // somehow beats the !important global, this test catches it.
+    await page.goto("/");
+    const queue = page.locator("#chapter-queue");
+    // Initially hidden.
+    await expect(queue).toBeHidden();
+    // Force-show via JS then re-hide. The toBeHidden() assertion after
+    // hiding proves the [hidden] rule still wins.
+    await page.evaluate(() => {
+      document.getElementById("chapter-queue").hidden = false;
+    });
+    await expect(queue).toBeVisible();
+    await page.evaluate(() => {
+      document.getElementById("chapter-queue").hidden = true;
+    });
+    await expect(queue).toBeHidden();
+  });
+});
+
 test.describe("regression — Speaker UI threshold", () => {
   // Skipped: this test needs either (a) a multi-speaker voice (LibriTTS
   // is 900 MB and not in CI) or (b) a test hook to mutate

@@ -128,25 +128,81 @@ def fetch_and_extract_url(url: str) -> dict:
     if not html:
         html = raw.decode("utf-8", errors="replace")
 
+    import re
+    import urllib.parse as _urlparse
     import trafilatura
 
-    text = trafilatura.extract(
+    # Markdown output preserves image references as standard ![alt](src)
+    # syntax so we can pull them out with a regex. include_images=True
+    # tells trafilatura not to drop <img> tags during extraction.
+    md = trafilatura.extract(
         html,
         include_comments=False,
         include_tables=True,
         no_fallback=False,
         favor_recall=True,
+        include_images=True,
+        output_format="markdown",
     )
 
-    if not text or not text.strip():
+    if not md or not md.strip():
         raise ExtractionError("no article text found at URL")
 
+    # Trafilatura's body extraction strips <h1>-<h3> tags on some sources
+    # (notably Project Gutenberg's text-page format) — it identifies the
+    # chapter headings as boilerplate and drops them entirely, leaving
+    # the body as one continuous river of prose with blank-line gaps
+    # where the chapter boundaries used to be. The frontend's chapter
+    # auto-split can't see those gaps. Re-inject the headings from a
+    # direct BS4 pass on the raw HTML so `## CHAPTER I` ends up in the
+    # markdown the client receives. No-op when trafilatura already
+    # preserved the headings (Standard Ebooks, most blog posts).
+    md = _inject_html_headings(html, md)
+
+    # Pull images out of the markdown into a structured list with a
+    # rough "after sentence N" position; strip the markers from the text
+    # so synthesis stays clean. Sentence-counting is approximate (just
+    # ., !, ? followed by whitespace or EOL) — image positioning will
+    # be in the right neighborhood, not frame-accurate.
+    IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+[^)]*)?\)")
+    SENT_END_RE = re.compile(r"[.!?](?=\s|$)")
+
+    images = []
+    clean_lines = []
+    sentence_cursor = 0
+
+    for raw_line in md.split("\n"):
+        # Record any images in this line FIRST so they anchor at the
+        # current sentence boundary, then strip them.
+        for m in IMG_RE.finditer(raw_line):
+            src = m.group(2)
+            # Resolve relative URLs against the page URL so <img src="img/foo.jpg">
+            # on en.wikipedia.org becomes the absolute en.wikipedia.org/.../foo.jpg.
+            try:
+                src = _urlparse.urljoin(url, src)
+            except Exception:
+                pass
+            images.append({
+                "sentence_index": sentence_cursor,
+                "src": src,
+                "alt": m.group(1).strip(),
+            })
+        line = IMG_RE.sub("", raw_line).strip()
+        if line:
+            sentence_cursor += max(1, len(SENT_END_RE.findall(line)))
+        clean_lines.append(line)
+
+    text = "\n".join(clean_lines)
     text = _normalize(text)
+
+    if not text.strip():
+        raise ExtractionError("no article text found at URL")
 
     return {
         "filename": parsed.hostname or "url",
         "chars": len(text),
         "text": text,
+        "images": images,
     }
 
 
@@ -430,6 +486,134 @@ def _extract_docx(data: bytes) -> str:
 
 
 # ---- post-processing -----------------------------------------------------
+
+
+def _inject_html_headings(html: str, md: str) -> str:
+    """Re-insert chapter-like HTML headings into a trafilatura markdown
+    extraction that's missing them.
+
+    Trafilatura's content-extraction algorithm sometimes identifies
+    `<h2>CHAPTER I.</h2>`-style tags as boilerplate (notably on Project
+    Gutenberg's text-page format, where chapter headings are wrapped in
+    `<a>` anchors with `class="chapter"` and the algorithm strips them).
+    Without those headings the frontend's chapter auto-split has nothing
+    to grab onto — the entire novel comes out as one clip.
+
+    Strategy: BeautifulSoup the raw HTML for h1-h3 tags. For each one,
+    grab the FIRST PARAGRAPH that follows (its next text-bearing sibling)
+    as an anchor — that paragraph will be in trafilatura's output since
+    it's the body content trafilatura kept. Find the anchor in `md`,
+    insert a `## HEADING` line before it.
+
+    Returns the augmented markdown, or `md` unchanged if:
+        - trafilatura already preserved headings (we trust those)
+        - BeautifulSoup is unavailable or the parse fails
+        - no h1-h3 tags found
+        - none of the anchors locate cleanly in `md`
+    """
+    # Already has headings? Trust trafilatura. The fast-path check uses
+    # MULTILINE so a # at the start of any line counts.
+    if re.search(r"^#{1,3}\s+\S", md, re.MULTILINE):
+        return md
+
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return md
+
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        return md
+
+    # Drop chrome that BS4 would otherwise scan through. The headings
+    # we want are inside the article body, not nav menus.
+    for tag in soup(["script", "style", "nav", "header", "footer"]):
+        tag.decompose()
+
+    anchors: list[tuple[int, str, str]] = []  # (level, heading_text, anchor_snippet)
+    for h in soup.find_all(["h1", "h2", "h3"]):
+        try:
+            level = int(h.name[1])
+        except (TypeError, ValueError):
+            level = 2
+        h_text = h.get_text(" ", strip=True)
+        if not h_text:
+            continue
+        # Skip very long heading text (likely a TOC dump like
+        # "CHAPTER I. ... CHAPTER II. ..." that the source flattened
+        # into a single tag — injecting that as a marker would be worse
+        # than no marker).
+        if len(h_text) > 200:
+            continue
+
+        # Find the first downstream text-bearing element that survives
+        # trafilatura's extraction. Prefer <p>; fall back to <div>.
+        anchor_snippet = None
+        for sib in h.find_all_next(["p", "div"]):
+            txt = sib.get_text(" ", strip=True)
+            if len(txt) >= 30:
+                # 60-80 chars is enough to disambiguate; longer makes
+                # matching brittle against whitespace differences.
+                anchor_snippet = txt[:60]
+                break
+        if not anchor_snippet:
+            continue
+
+        anchors.append((min(level, 3), h_text, anchor_snippet))
+
+    if not anchors:
+        return md
+
+    # Walk anchors in document order, injecting heading lines before
+    # the matching prose. Each search starts from the previous insert
+    # point so we don't keep re-finding the same passage.
+    out_parts: list[str] = []
+    cursor = 0
+    inserted = 0
+    for level, h_text, anchor in anchors:
+        # Trafilatura output may normalize whitespace differently than
+        # BS4. Try the full snippet first, then progressively shorter
+        # prefixes, then a whitespace-collapsed match.
+        idx = -1
+        for probe_len in (60, 40, 25):
+            probe = anchor[:probe_len].strip()
+            if not probe:
+                continue
+            idx = md.find(probe, cursor)
+            if idx >= 0:
+                break
+        if idx < 0:
+            # Try fuzzy: collapse internal whitespace in both sides.
+            md_tail = md[cursor:]
+            md_norm = re.sub(r"\s+", " ", md_tail)
+            anchor_norm = re.sub(r"\s+", " ", anchor[:40]).strip()
+            if anchor_norm and anchor_norm in md_norm:
+                # We know it's in there but our index math doesn't survive
+                # the normalization. Skip — better to miss a chapter than
+                # to insert the heading at the wrong place.
+                pass
+            continue
+
+        # Find the start of the paragraph containing the anchor (the
+        # line after the previous blank-line boundary).
+        para_start = md.rfind("\n\n", 0, idx)
+        if para_start < 0:
+            para_start = 0
+        else:
+            para_start += 2  # skip past the "\n\n"
+
+        prefix = "#" * level
+        marker = f"{prefix} {h_text}\n\n"
+        out_parts.append(md[cursor:para_start])
+        out_parts.append(marker)
+        cursor = para_start
+        inserted += 1
+
+    if inserted == 0:
+        return md
+    out_parts.append(md[cursor:])
+    return "".join(out_parts)
 
 
 def _normalize(text: str) -> str:

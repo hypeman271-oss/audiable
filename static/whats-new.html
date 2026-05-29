@@ -141,6 +141,106 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v86</span>
+          <span class="release-tagline">Ghost UI elements purged</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Stale placeholders no longer appear on page load.</strong>
+            Nine UI elements (the chapter banner, the queue pill, the
+            URL input row, the mini player, and several others) had CSS
+            <em>display: flex</em> rules that quietly overrode the
+            browser's default behavior for the <em>hidden</em>
+            attribute. So they were visible on every fresh page load,
+            showing whatever placeholder text was hardcoded into the
+            HTML — including a phantom <em>"Chapter 1 of 1"</em> queue
+            pill and a <em>"0 chapters detected"</em> banner that
+            weren't real. Fixed by restoring the spec-defined
+            <em>hidden</em> semantics with one CSS rule. Same class of
+            bug as the v79 Settings dialog regression; regression test
+            added.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v85</span>
+          <span class="release-tagline">Project Gutenberg chapter detection</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Tom Sawyer (and every other PG book) now splits
+            into chapters.</strong> Project Gutenberg wraps chapter
+            titles in HTML that trafilatura was identifying as
+            boilerplate and stripping out — the entire novel arrived as
+            one continuous river of prose with nothing for the chapter
+            detector to grab. The server now BeautifulSoup-parses the
+            raw HTML, pulls h1-h3 tags back out, and re-injects them as
+            markdown <em>## CHAPTER I</em> markers in front of the
+            matching prose. Works on Project Gutenberg, Standard Ebooks,
+            and anything else with proper heading tags.
+          </li>
+          <li>
+            <strong>Chapter title cleanup.</strong> Headings that arrive
+            in ALL CAPS (<em>"CHAPTER I"</em>) get title-cased to
+            <em>"Chapter I"</em> in the library so the row labels read
+            consistently with the Standard Ebooks bare-numeral path.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v84</span>
+          <span class="release-tagline">Chapter detection for novel-length URL fetches</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Chapter auto-split now finds chapters in a whole
+            novel.</strong> The cap on suggested chapters was 30, which
+            silently swallowed Tom Sawyer (35 chapters) and most other
+            full-length books extracted from URLs — the banner just
+            never appeared. Raised to 200, which covers virtually every
+            novel.
+          </li>
+          <li>
+            <strong>Roman-numeral chapter headings get readable titles.</strong>
+            Standard Ebooks renders chapter headings as bare Roman
+            numerals (<em>"## I"</em>, <em>"## II"</em>) instead of the
+            usual <em>"## Chapter 1"</em>. The detector now promotes
+            those to <em>"Chapter I"</em> / <em>"Chapter II"</em> so the
+            library cards make sense at a glance.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v83</span>
+          <span class="release-tagline">Illustrations from URL fetches</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Inline images in the reading view.</strong> When you
+            paste a URL with embedded illustrations (Project Gutenberg,
+            Standard Ebooks, a Substack post with a hero image), the
+            pictures now appear between sentences in the reading view as
+            the audio plays. They're stripped from the spoken text so
+            nothing reads <em>"image colon a cat sitting on a fence."</em>
+            Images live with the clip — they survive a save, a reload,
+            and a re-narrate. (Stored as URLs for now; if the source goes
+            down or you go offline, they break gracefully.)
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v65</span>
           <span class="release-tagline">Author — smarter dialogue routing</span>
         </div>

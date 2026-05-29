@@ -95,6 +95,19 @@
   box-sizing: border-box;
 }
 
+/* Restore the spec-defined behavior of the `hidden` attribute. The UA
+   stylesheet sets `display: none` on `[hidden]`, but any class-scoped
+   `display: flex` / `display: block` rule wins on specificity and the
+   element stays visible. Every flex/grid layout in this file would
+   otherwise need its own `:not([hidden])` guard. This catch-all gives
+   us back native `hidden` semantics with one line — caused real bugs
+   when missing (settings dialog v79, chapter queue pill + URL row + the
+   "0 chapters" banner all showing their placeholder text on every page
+   load before this was added). */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -983,6 +996,25 @@ body[data-ui-mode="author"]
 
 .reading-view .sentence.played {
   color: var(--played-fg);
+}
+
+/* Inline images sit between sentence spans in the reading view — block
+   layout so they break the sentence flow naturally, padded so consecutive
+   illustrations don't bump into each other, and constrained so a 4000px
+   PNG can't blow the card height. Lazy-loaded in the markup so a page
+   full of pictures doesn't kill scroll perf. A border-soft frame echoes
+   the card style of the rest of the player UI. */
+.reading-view .inline-image {
+  display: block;
+  max-width: 100%;
+  max-height: 280px;
+  width: auto;
+  height: auto;
+  margin: 12px auto;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-card-3, var(--bg-card-2));
+  object-fit: contain;
 }
 
 /* ---- Chapter auto-split banner ----------------------------------------
