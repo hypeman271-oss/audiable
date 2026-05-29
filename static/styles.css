@@ -127,6 +127,69 @@ body {
   padding-bottom: calc(64px + env(safe-area-inset-bottom));
 }
 
+/* ---------- Adaptive layout ----------
+   Mobile (default, < 768px):  single column inside max-width 640.
+   Tablet (768-1023px):        single column, library cards in 2-up grid.
+   Desktop (1024px+):          two columns. Left = reader workflow (text,
+                               actions, player). Right = settings + library.
+                               Hero spans both. Library cards in 3-up grid. */
+
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  /* Tablet still single-column overall, but with a touch more horizontal
+     breathing room than the strict 640. */
+  .app {
+    max-width: 720px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app {
+    max-width: 1120px;
+    display: grid;
+    grid-template-columns: 640px 1fr;
+    grid-template-areas:
+      "hero    hero"
+      "text    voice"
+      "actions voice"
+      "player  library"
+      "status  library";
+    column-gap: 32px;
+    align-items: start;
+  }
+  .app > .hero          { grid-area: hero; }
+  .app > .card-text     { grid-area: text; }
+  .app > .card-voice    { grid-area: voice; align-self: start; }
+  .app > .card-actions  { grid-area: actions; }
+  .app > #synth-progress { grid-column: 1; }
+  .app > #player-card   { grid-area: player; }
+  .app > #status        { grid-area: status; }
+  .app > #library-card  { grid-area: library; align-self: start; }
+}
+
+/* Library cards in a grid at tablet+ widths so the library uses
+   horizontal space instead of becoming a tall column. The .library-list
+   already renders a flex column of cards; switch it to grid at tablet
+   and lift to 3-up at desktop. The Continue Listening section keeps
+   its own visual treatment (full-width header above the grid). */
+@media (min-width: 768px) {
+  .library-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  /* Section headers ("Continue Listening", "Other Clips") and the
+     empty-state card span the full row width inside the grid. */
+  .library-list > .library-section,
+  .library-list > .library-empty {
+    grid-column: 1 / -1;
+  }
+}
+@media (min-width: 1280px) {
+  .library-list {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 /* ---------- Sticky mini player ---------- */
 /* Slides in from the top when the main player card scrolls off-screen.
    Hidden by default; an IntersectionObserver flips the data-visible
@@ -959,10 +1022,23 @@ input[type="search"]:focus {
   padding: 12px;
   font-size: 16px;
   line-height: 1.55;
-  min-height: 180px;
-  max-height: 360px;
+  /* Viewport-responsive height. 60% of viewport up to a 600px cap so
+     the player chips below stay on screen even on tall desktops. Min
+     of 240px so it never feels cramped on phone landscape. */
+  min-height: 240px;
+  max-height: min(60vh, 600px);
   overflow-y: auto;
   scroll-behavior: smooth;
+}
+
+/* Match the editing textarea to the reading view so the layout doesn't
+   shift when toggling between Edit / reading view. Without this, the
+   textarea's rows="8" attribute pins it to ~200px regardless of screen
+   size, which feels cramped when revising a long chapter. */
+#text {
+  min-height: 240px;
+  max-height: min(60vh, 600px);
+  height: min(40vh, 360px);
 }
 
 .reading-view .sentence {

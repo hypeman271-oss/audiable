@@ -158,6 +158,12 @@ def fetch_and_extract_url(url: str) -> dict:
     # markdown the client receives. No-op when trafilatura already
     # preserved the headings (Standard Ebooks, most blog posts).
     md = _inject_html_headings(html, md)
+    # Same root cause for images: trafilatura also drops <img> tags from
+    # body content it considers boilerplate. Without injection, every PG
+    # illustrated book (Wizard of Oz, Alice, Peter Pan, &c.) extracts as
+    # text-only. Re-inject `![alt](src)` markdown so the IMG_RE loop
+    # below picks them up. No-op when trafilatura already preserved.
+    md = _inject_html_images(html, md, url)
 
     # Pull images out of the markdown into a structured list with a
     # rough "after sentence N" position; strip the markers from the text
@@ -605,6 +611,149 @@ def _inject_html_headings(html: str, md: str) -> str:
 
         prefix = "#" * level
         marker = f"{prefix} {h_text}\n\n"
+        out_parts.append(md[cursor:para_start])
+        out_parts.append(marker)
+        cursor = para_start
+        inserted += 1
+
+    if inserted == 0:
+        return md
+    out_parts.append(md[cursor:])
+    return "".join(out_parts)
+
+
+def _inject_html_images(html: str, md: str, base_url: str) -> str:
+    """Re-insert `<img>` tags into a trafilatura markdown extraction
+    that's missing them.
+
+    Mirror of `_inject_html_headings` for images. Project Gutenberg's
+    illustrated editions (Wizard of Oz, Alice, Peter Pan, etc.) host
+    pictures with `<img src="images/p001.jpg" alt="Dorothy" />` inside
+    paragraph context, but trafilatura's content extractor strips them
+    along with the rest of the page chrome. The downstream image-finder
+    regex sees nothing to extract; the reading view shows text only.
+
+    Strategy: BS4 the raw HTML for img tags. For each img, grab the
+    first ~60 chars of its next text-bearing sibling as an anchor. Find
+    that anchor in `md` and insert `![alt](src)` (resolved to absolute
+    URL) before it. The downstream `IMG_RE.finditer` loop in
+    `fetch_and_extract_url` then pulls these into the structured
+    `images` array and strips the markers from the text the
+    synthesizer sees.
+
+    Returns the augmented markdown, or `md` unchanged when:
+        - trafilatura already preserved images (markdown has `![...](...)`)
+        - BS4 / lxml unavailable
+        - no img tags found
+        - no anchors locate cleanly
+    """
+    import re
+    import urllib.parse as _urlparse
+
+    # Already has images? Trust trafilatura.
+    if re.search(r"!\[[^\]]*\]\([^)]+\)", md):
+        return md
+
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return md
+
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        return md
+
+    # Drop chrome — same rationale as the heading injection.
+    for tag in soup(["script", "style", "nav", "header", "footer"]):
+        tag.decompose()
+
+    anchors: list[tuple[str, str, str]] = []  # (src_abs, alt, anchor_snippet)
+    for img in soup.find_all("img"):
+        src = img.get("src", "").strip()
+        if not src:
+            continue
+        # Project Gutenberg uses tiny inline navigation/decoration sprites
+        # (transparent.png, line-break SVGs, etc.). Skip anything that
+        # looks like a 1-bit decoration so the reading view doesn't get
+        # littered with corner ornaments. Heuristic: <100px wide AND
+        # filename hints at decoration.
+        try:
+            width = int(img.get("width", "999"))
+        except (ValueError, TypeError):
+            width = 999
+        low = src.lower()
+        if width < 100 and any(s in low for s in (
+            "ornament", "divider", "line", "rule", "spacer", "blank", "transparent",
+        )):
+            continue
+
+        alt = (img.get("alt") or "").strip()
+        # Skip if both src looks decorative AND alt is empty / one-char.
+        # Real illustrations have meaningful alt text in PG.
+
+        try:
+            src_abs = _urlparse.urljoin(base_url, src)
+        except Exception:
+            src_abs = src
+
+        # Find an anchor — the first text-bearing element after this img
+        # that survived trafilatura's extraction. <p> is the canonical
+        # surviving block; <div> as fallback.
+        anchor_snippet = None
+        for sib in img.find_all_next(["p", "div"]):
+            txt = sib.get_text(" ", strip=True)
+            if len(txt) >= 30:
+                anchor_snippet = txt[:60]
+                break
+        if not anchor_snippet:
+            # No anchor below — try ABOVE (some PG editions put the
+            # caption-bearing paragraph before the figure).
+            for sib in img.find_all_previous(["p", "div"]):
+                txt = sib.get_text(" ", strip=True)
+                if len(txt) >= 30:
+                    anchor_snippet = txt[:60]
+                    break
+
+        if not anchor_snippet:
+            continue
+        anchors.append((src_abs, alt, anchor_snippet))
+
+    if not anchors:
+        return md
+
+    # Walk anchors in document order, injecting `![alt](src)` markers
+    # before each matching prose paragraph. Each search starts from the
+    # previous insert point so consecutive images near the same anchor
+    # don't all glob onto the same line.
+    out_parts: list[str] = []
+    cursor = 0
+    inserted = 0
+    for src_abs, alt, anchor in anchors:
+        # Try progressively shorter probes — long-prefix first.
+        idx = -1
+        for probe_len in (60, 40, 25):
+            probe = anchor[:probe_len].strip()
+            if not probe:
+                continue
+            idx = md.find(probe, cursor)
+            if idx >= 0:
+                break
+        if idx < 0:
+            continue
+
+        # Insert at the start of the paragraph containing the anchor.
+        para_start = md.rfind("\n\n", 0, idx)
+        if para_start < 0:
+            para_start = 0
+        else:
+            para_start += 2
+
+        # Escape any ) inside the URL since markdown ![](url) would end
+        # the link at the first unescaped paren.
+        safe_src = src_abs.replace(")", "%29")
+        safe_alt = alt.replace("]", "")
+        marker = f"![{safe_alt}]({safe_src})\n\n"
         out_parts.append(md[cursor:para_start])
         out_parts.append(marker)
         cursor = para_start

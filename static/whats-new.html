@@ -141,6 +141,64 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v97</span>
+          <span class="release-tagline">Illustrated books from Project Gutenberg</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Inline images now extract from Project Gutenberg
+            illustrated editions.</strong> Same root cause as v85's
+            heading injection — trafilatura was stripping
+            <em>&lt;img&gt;</em> tags from PG body content the same way
+            it stripped <em>&lt;h2&gt;</em> tags. The server now
+            BeautifulSoup-parses the raw HTML, finds img tags, and
+            re-injects them as markdown <em>![alt](src)</em> markers
+            anchored to the matching paragraph. Verified end-to-end on
+            <em>Huckleberry Finn</em>: <strong>113 illustrations across
+            43 chapters</strong>, all anchored to their proper sentence
+            positions.
+          </li>
+          <li>
+            <strong>Decorative ornament filter.</strong> Small
+            (under 100px) divider / spacer / ornament images get skipped
+            so the reading view isn't littered with section breaks
+            between paragraphs.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v96</span>
+          <span class="release-tagline">Adaptive layout for desktop and tablet</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Two-column layout on desktop screens (1024px+).</strong>
+            The reader workflow (text card &rarr; Generate &rarr; player
+            &rarr; chips) stays in a 640px-wide left column where line
+            width is comfortable for reading; voice picker and library
+            sit in the right column. Side-by-side with Scrivener or
+            Word, you can keep both visible without scrolling.
+          </li>
+          <li>
+            <strong>Library cards in a grid.</strong> 1 column on mobile
+            (unchanged), 2 columns at 768px+, 3 columns at 1280px+. Tom
+            Sawyer's 35 chapters now visible at a glance instead of
+            requiring a long scroll.
+          </li>
+          <li>
+            <strong>Tablet (600-1023px) gets slightly more breathing
+            room</strong> in its single column, sized for iPad-portrait
+            ergonomics.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v94</span>
           <span class="release-tagline">Custom audio player</span>
         </div>

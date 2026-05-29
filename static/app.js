@@ -154,7 +154,7 @@ const whatsNewBadge = settingsWhatsNewLink.querySelector(".whats-new-badge");
 // Bump this number whenever there's a noteworthy change in whats-new.html
 // worth surfacing. The Settings link shows a "NEW" badge until the user
 // opens the changelog, at which point we save this version as "seen."
-const WHATS_NEW_LATEST = 95;
+const WHATS_NEW_LATEST = 97;
 const WHATS_NEW_KEY = "narrative.lastSeenWhatsNew";
 
 function _isWhatsNewUnread() {
