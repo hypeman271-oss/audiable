@@ -91,6 +91,20 @@ const downloadBtn = $("download");
 const playerCard = $("player-card");
 const playerEl = $("player");
 const statusEl = $("status");
+
+// Custom audio player UI ($-fetched at module load; bindings set up later).
+const cpPlayBtn = $("cp-play-btn");
+const cpPlayIcon = $("cp-play-icon");
+const cpPauseIcon = $("cp-pause-icon");
+const cpTimeCurrent = $("cp-time-current");
+const cpTimeDuration = $("cp-time-duration");
+const cpScrubber = $("cp-scrubber");
+const cpBuffered = $("cp-buffered");
+const cpProgress = $("cp-progress");
+const cpThumb = $("cp-thumb");
+const cpMuteBtn = $("cp-mute-btn");
+const cpVolIcon = $("cp-vol-icon");
+const cpMuteIcon = $("cp-mute-icon");
 const readingView = $("reading-view");
 const editTextBtn = $("edit-text");
 const saveTextBtn = $("save-text-btn");
@@ -140,7 +154,7 @@ const whatsNewBadge = settingsWhatsNewLink.querySelector(".whats-new-badge");
 // Bump this number whenever there's a noteworthy change in whats-new.html
 // worth surfacing. The Settings link shows a "NEW" badge until the user
 // opens the changelog, at which point we save this version as "seen."
-const WHATS_NEW_LATEST = 89;
+const WHATS_NEW_LATEST = 95;
 const WHATS_NEW_KEY = "narrative.lastSeenWhatsNew";
 
 function _isWhatsNewUnread() {
@@ -267,13 +281,46 @@ function _cancelAutoAdvance() {
   }
 }
 
-// Chapter-queue gate. Set true when chapter N's synthesis save fires while
-// a queue is active; consumed by the player's 'ended' handler to advance
-// the queue at the moment chapter N's audio actually finishes playing,
-// not at the moment its synthesis completes. Without this, chapter N+1's
-// first sentence event would rebuild the reading view + steal the player
-// while the user is still mid-listen on chapter N.
-let _queueAdvancePending = false;
+// Chapter-queue advance gating. Chapter N → N+1 must wait for BOTH:
+//   1. the chapter's audio playback to finish (streaming queue exhausted
+//      OR combined MP3 'ended' — whichever the user uses to listen)
+//   2. the chapter's synthesis save to land in IndexedDB
+// Two flags + a try-helper. Each flag-setter calls _tryAdvanceQueue;
+// only the second one to set fires the actual advance. Prevents the
+// v90 race where a single flag could be set after the only watcher
+// (a setTimeout) had already fired and stopped looking.
+let _queueAudioComplete = false;
+let _queueSaveComplete = false;
+let _queueAdvanceTimer = null;
+
+function _tryAdvanceQueue() {
+  if (_chapterTotalCount <= 0) return;
+  if (!_queueAudioComplete || !_queueSaveComplete) return;
+  // Both fired — schedule the advance with a 4-second polite breath
+  // so chapters don't slam together. If a second invocation arrives
+  // while the timer is pending (shouldn't, but defensive), the timer
+  // is left in place and the duplicate is a no-op.
+  if (_queueAdvanceTimer) return;
+  _queueAudioComplete = false;
+  _queueSaveComplete = false;
+  // 2s breath — short enough that an attentive listener barely
+  // notices, long enough to register that one chapter ended and
+  // another is starting. Pre-synth means N+1 is loaded instantly
+  // after this delay; the entire perceived gap is just these 2s.
+  _queueAdvanceTimer = setTimeout(() => {
+    _queueAdvanceTimer = null;
+    _advanceChapterQueue();
+  }, 2000);
+}
+
+function _resetQueueAdvanceFlags() {
+  _queueAudioComplete = false;
+  _queueSaveComplete = false;
+  if (_queueAdvanceTimer) {
+    clearTimeout(_queueAdvanceTimer);
+    _queueAdvanceTimer = null;
+  }
+}
 
 const synthProgress = $("synth-progress");
 
@@ -2821,6 +2868,11 @@ let _regenResumeAtSec = null;
 let _regenSuppressStreaming = false;
 
 async function generate() {
+  // Reset chapter-queue advance flags so this chapter starts with a
+  // clean slate (only matters mid-queue — for non-queue generates the
+  // flags should already be false and _chapterTotalCount is 0).
+  _resetQueueAdvanceFlags();
+
   const text = textEl.value.trim();
   if (!text) {
     setStatus("Type or paste some text first.", true);
@@ -3146,20 +3198,26 @@ async function generate() {
                 // Pending images have been written to the clip — clear so
                 // they don't leak into the next fresh clip the user types.
                 _pendingImages = [];
-                // Chapter queue: advance to the next chapter, but DEFER
-                // it until this chapter's audio actually finishes playing.
-                // Firing _advanceChapterQueue immediately (at synthesis-
-                // complete time) would rebuild the reading view + steal
-                // the player while the user is still mid-listen. The
-                // playerEl 'ended' handler consumes _queueAdvancePending.
-                // Edge case: if playback was already done by the time
-                // synthesis finished (small clip + slow synth), advance
-                // now since 'ended' fired before we set the flag.
+                // Chapter queue: mark "save side" complete and try to
+                // advance. The audio side is signaled separately by
+                // streaming exhaustion or the combined MP3's 'ended'.
+                // Both must fire before _tryAdvanceQueue does anything,
+                // and either ordering works (one sets its flag, the
+                // other sees both true and schedules the advance).
                 if (_chapterTotalCount > 0) {
-                  if (playerEl.ended) {
-                    _advanceChapterQueue();
-                  } else {
-                    _queueAdvancePending = true;
+                  _queueSaveComplete = true;
+                  _tryAdvanceQueue();
+                  // Kick off background synthesis of the NEXT chapter
+                  // so it's ready to play instantly when this one ends.
+                  // Skipped when a regen is pending or another pre-synth
+                  // is already in flight (one lookahead at a time).
+                  if (
+                    _chapterQueue.length > 0 &&
+                    !_preSynthChapter &&
+                    !_preSynthController &&
+                    !_regenTargetClipId
+                  ) {
+                    _preSynthesizeChapter(_chapterQueue[0]);
                   }
                 }
               })
@@ -3226,6 +3284,144 @@ textEl.addEventListener("keydown", (e) => {
   }
 });
 
+// ---- Custom audio player wiring ----------------------------------------
+// Bind the visible play/pause/scrubber/mute to the underlying <audio>
+// element. The native element handles MediaSession, blob loading, and
+// chained per-sentence playback unchanged; we just replace its visible
+// chrome. Pause/play events from MediaSession, the keyboard, or our
+// other handlers all flow through the audio element's event stream,
+// so the UI stays in sync automatically.
+
+function _cpFormatTime(sec) {
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+function _cpRefreshPlayIcon() {
+  const playing = !playerEl.paused && !playerEl.ended;
+  cpPlayIcon.hidden = playing;
+  cpPauseIcon.hidden = !playing;
+  cpPlayBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+}
+
+function _cpRefreshTime() {
+  const cur = playerEl.currentTime || 0;
+  const dur = isFinite(playerEl.duration) ? playerEl.duration : 0;
+  cpTimeCurrent.textContent = _cpFormatTime(cur);
+  cpTimeDuration.textContent = _cpFormatTime(dur);
+  const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+  cpProgress.style.width = `${pct}%`;
+  cpThumb.style.left = `${pct}%`;
+  cpScrubber.setAttribute("aria-valuenow", String(Math.round(pct)));
+}
+
+function _cpRefreshBuffered() {
+  const dur = isFinite(playerEl.duration) ? playerEl.duration : 0;
+  if (dur <= 0 || !playerEl.buffered.length) {
+    cpBuffered.style.width = "0%";
+    return;
+  }
+  let end = 0;
+  for (let i = 0; i < playerEl.buffered.length; i++) {
+    end = Math.max(end, playerEl.buffered.end(i));
+  }
+  cpBuffered.style.width = `${Math.min(100, (end / dur) * 100)}%`;
+}
+
+function _cpRefreshMute() {
+  const muted = playerEl.muted || playerEl.volume === 0;
+  cpVolIcon.hidden = muted;
+  cpMuteIcon.hidden = !muted;
+  cpMuteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+}
+
+cpPlayBtn.addEventListener("click", () => {
+  if (playerEl.paused) {
+    playerEl.play().catch(() => {});
+  } else {
+    _pauseAsUser();
+  }
+});
+
+cpMuteBtn.addEventListener("click", () => {
+  playerEl.muted = !playerEl.muted;
+  _cpRefreshMute();
+});
+
+// Scrubber: click anywhere on the track to seek; drag the thumb to scrub.
+// Uses Pointer Events so the same code path handles mouse, touch, and
+// stylus without three implementations.
+let _cpScrubbing = false;
+function _cpSeekFromPointer(ev) {
+  const rect = cpScrubber.getBoundingClientRect();
+  const x = ev.clientX - rect.left;
+  const pct = Math.max(0, Math.min(1, x / rect.width));
+  const dur = isFinite(playerEl.duration) ? playerEl.duration : 0;
+  if (dur > 0) {
+    playerEl.currentTime = pct * dur;
+    _cpRefreshTime();
+  }
+}
+cpScrubber.addEventListener("pointerdown", (ev) => {
+  _cpScrubbing = true;
+  cpScrubber.classList.add("dragging");
+  cpScrubber.setPointerCapture(ev.pointerId);
+  _cpSeekFromPointer(ev);
+});
+cpScrubber.addEventListener("pointermove", (ev) => {
+  if (_cpScrubbing) _cpSeekFromPointer(ev);
+});
+cpScrubber.addEventListener("pointerup", (ev) => {
+  if (!_cpScrubbing) return;
+  _cpScrubbing = false;
+  cpScrubber.classList.remove("dragging");
+  try { cpScrubber.releasePointerCapture(ev.pointerId); } catch {}
+});
+cpScrubber.addEventListener("pointercancel", () => {
+  _cpScrubbing = false;
+  cpScrubber.classList.remove("dragging");
+});
+// Keyboard: ← / → seek by 5s; Home / End jump to start / end.
+cpScrubber.addEventListener("keydown", (ev) => {
+  const dur = isFinite(playerEl.duration) ? playerEl.duration : 0;
+  if (!dur) return;
+  if (ev.key === "ArrowLeft") {
+    playerEl.currentTime = Math.max(0, playerEl.currentTime - 5);
+    ev.preventDefault();
+  } else if (ev.key === "ArrowRight") {
+    playerEl.currentTime = Math.min(dur, playerEl.currentTime + 5);
+    ev.preventDefault();
+  } else if (ev.key === "Home") {
+    playerEl.currentTime = 0;
+    ev.preventDefault();
+  } else if (ev.key === "End") {
+    playerEl.currentTime = dur;
+    ev.preventDefault();
+  }
+});
+
+// Mirror native events into the custom UI. All four are needed: play/
+// pause for the icon, timeupdate for the scrubber, durationchange so
+// freshly-loaded clips show their length immediately, progress so the
+// buffered fill catches up as the audio downloads.
+playerEl.addEventListener("play", _cpRefreshPlayIcon);
+playerEl.addEventListener("pause", _cpRefreshPlayIcon);
+playerEl.addEventListener("ended", _cpRefreshPlayIcon);
+playerEl.addEventListener("timeupdate", _cpRefreshTime);
+playerEl.addEventListener("durationchange", _cpRefreshTime);
+playerEl.addEventListener("loadedmetadata", () => {
+  _cpRefreshTime();
+  _cpRefreshBuffered();
+});
+playerEl.addEventListener("progress", _cpRefreshBuffered);
+playerEl.addEventListener("volumechange", _cpRefreshMute);
+// Initial paint so the controls don't show blank before any audio loads.
+_cpRefreshPlayIcon();
+_cpRefreshTime();
+_cpRefreshMute();
+
 loadVoices();
 setupMediaSession();
 
@@ -3263,9 +3459,57 @@ let _chapterCurrentIndex = 0;    // 1-based; what's loaded in the textarea right
 let _pendingChapterTitle = null; // consumed by generate() in place of makeTitle
 let _detectedChapters = null;    // hangs around between banner show and Split click
 
+// Pre-synthesis lookahead: chapter N+1 gets synthesized in the background
+// while the user listens to chapter N, then loaded instantly from the
+// library when chapter N's audio ends. _preSynthChapter holds {clipId,
+// title} of the ready chapter; _preSynthController aborts any in-flight
+// background fetch (used by cancel / regen / clear paths).
+let _preSynthChapter = null;
+let _preSynthController = null;
+
 // Try each chapter-marker family in priority order. First family with
 // 2+ matches wins; later families are ignored to avoid double-splitting.
 // Returns null when nothing structured was found.
+// Front-matter titles whose body content is reference / list / metadata
+// and not worth synthesizing as audio. Match is case-insensitive against
+// the heading text after the v84 normalization (so "## CONTENTS" lands
+// here as "CONTENTS", and a "Table of Contents" header on another source
+// also matches). PREFACE / FOREWORD / INTRODUCTION are intentionally
+// NOT in this set — those are usually real prose.
+const FRONT_MATTER_TITLES = new Set([
+  "contents",
+  "table of contents",
+  "list of contents",
+  "illustrations",
+  "list of illustrations",
+  "index",
+  "glossary",
+  "bibliography",
+  "references",
+  "colophon",
+  "imprint",
+  "copyright",
+  "acknowledgements",
+  "acknowledgments",
+  "about the author",
+  "about this book",
+]);
+
+function _isSkippableFrontMatter(title, body) {
+  const t = (title || "").trim().toLowerCase().replace(/[:\-—.]+\s*$/, "");
+  if (FRONT_MATTER_TITLES.has(t)) return true;
+  // Belt-and-suspenders: if the body is dominated by short "CHAPTER N"
+  // lines (a flattened TOC that escaped the title filter — happens when
+  // a source uses a non-standard heading like "Table" instead of
+  // "Contents"), treat it as front matter. Threshold: more than half the
+  // non-blank lines are bare chapter references.
+  const lines = body.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (lines.length < 8) return false;
+  const chapterishRe = /^(chapter|part|book|section)\s+[0-9ivxlcdm]+/i;
+  const chapterish = lines.filter((ln) => chapterishRe.test(ln)).length;
+  return chapterish / lines.length > 0.5;
+}
+
 function _detectChapters(text) {
   if (!text || text.length < 400) return null;
   const lines = text.split(/\r?\n/);
@@ -3334,7 +3578,15 @@ function _detectChapters(text) {
       // Skip chapters with nothing in them (a stray "Chapter 1" with no
       // following prose isn't worth a clip — saves the user from a junk
       // entry in their library).
-      if (body) chapters.push({ title: hits[h].title, text: body });
+      if (!body) continue;
+      // Skip common front-matter sections that aren't worth listening to
+      // as audio. The Project Gutenberg heading-injection pass surfaces
+      // these as their own "chapters" — without the filter, TOC content
+      // (35 "CHAPTER N." entries, each treated as a sentence with a
+      // pause after it) ends up as the second clip in the queue.
+      // PREFACE deliberately omitted — it's real prose worth hearing.
+      if (_isSkippableFrontMatter(hits[h].title, body)) continue;
+      chapters.push({ title: hits[h].title, text: body });
     }
     if (chapters.length < 2) continue;
 
@@ -3409,6 +3661,7 @@ function _advanceChapterQueue() {
     _chapterTotalCount = 0;
     _chapterCurrentIndex = 0;
     _pendingChapterTitle = null;
+    _abortPreSynth();
     _updateChapterQueueUI();
     setStatus(`All ${done} chapters synthesized.`);
     return false;
@@ -3416,13 +3669,155 @@ function _advanceChapterQueue() {
   const next = _chapterQueue.shift();
   _chapterCurrentIndex += 1;
   _pendingChapterTitle = next.title;
+  _updateChapterQueueUI();
+
+  // Fast path: chapter was pre-synthesized in the background while the
+  // user listened to the previous one. Load it instantly from the
+  // library and immediately kick off pre-synth for the chapter AFTER
+  // this one so the chain continues. Save was done during pre-synth, so
+  // mark the queue's save flag complete now (no generate() callback
+  // will fire for this chapter).
+  if (_preSynthChapter && _preSynthChapter.title === next.title) {
+    const clipId = _preSynthChapter.clipId;
+    _preSynthChapter = null;
+    _pendingChapterTitle = null;
+    _queueSaveComplete = true;
+    setTimeout(() => loadClip(clipId), 50);
+    if (_chapterQueue.length > 0) {
+      _preSynthesizeChapter(_chapterQueue[0]);
+    }
+    return true;
+  }
+
+  // Slow path: pre-synth wasn't ready (first chapter, or a regen
+  // interrupted the chain). Fall back to inline synthesis.
   textEl.value = next.text;
   updateCounts();
-  _updateChapterQueueUI();
   // Defer so library re-render / save side effects from the previous
   // chapter complete before the next synthesis starts.
   setTimeout(() => generate(), 150);
   return true;
+}
+
+// Headless background synthesis of a queued chapter. Collects the SSE
+// stream events into a buffer (no reading-view / player updates) and
+// saves the result to IndexedDB as a regular clip. Sets _preSynthChapter
+// when the result is ready; _advanceChapterQueue picks it up from there.
+async function _preSynthesizeChapter(chapter) {
+  // Abort any in-flight pre-synth — we only ever look ahead one chapter.
+  _abortPreSynth();
+  _preSynthController = new AbortController();
+  const myController = _preSynthController;
+  const voiceId = voiceEl.value;
+  if (!voiceId || !chapter || !chapter.text) {
+    _preSynthController = null;
+    return;
+  }
+  const rate = Number(rateEl.value);
+  const volume = Number(volumeEl.value) / 100;
+  const speakerId = speakerRow.hidden ? null : Number(speakerEl.value || 0);
+  const voiceName = voiceEl.selectedOptions[0]?.textContent || voiceEl.value || "";
+  try {
+    const res = await fetch("/api/synthesize/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: chapter.text,
+        voice_id: voiceId,
+        rate,
+        volume,
+        speaker_id: speakerId,
+      }),
+      signal: myController.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let combinedMp3 = null;
+    let sentenceOffsetsMs = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, nl);
+        buf = buf.slice(nl + 2);
+        for (const line of chunk.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const event = JSON.parse(line.slice(6));
+          if (event.type === "result") {
+            combinedMp3 = new Blob([base64ToBytes(event.mp3_b64)], {
+              type: "audio/mpeg",
+            });
+            sentenceOffsetsMs = event.sentence_offsets_ms || [];
+          } else if (event.type === "error") {
+            throw new Error(event.message || "synthesis error");
+          }
+        }
+      }
+    }
+    if (!combinedMp3) throw new Error("no audio in result");
+
+    // Get duration via a throwaway <audio> element so the saved clip
+    // has accurate metadata for the library card.
+    const tmpUrl = URL.createObjectURL(combinedMp3);
+    const tmpAudio = new Audio();
+    const duration = await new Promise((resolve) => {
+      tmpAudio.addEventListener(
+        "loadedmetadata",
+        () => resolve(isFinite(tmpAudio.duration) ? tmpAudio.duration : 0),
+        { once: true }
+      );
+      tmpAudio.addEventListener("error", () => resolve(0), { once: true });
+      tmpAudio.src = tmpUrl;
+    });
+    URL.revokeObjectURL(tmpUrl);
+
+    // Cancelled mid-flight (user cancelled queue, started a regen, etc.)?
+    // Don't write a stale clip to the library.
+    if (myController.signal.aborted || _preSynthController !== myController) {
+      return;
+    }
+
+    const newClipId = Date.now() + Math.floor(Math.random() * 1000);
+    await saveClip({
+      id: newClipId,
+      title: chapter.title,
+      note: "",
+      text: chapter.text,
+      voiceId,
+      voiceName,
+      rate,
+      volume,
+      speakerId,
+      sentenceOffsetsSec: sentenceOffsetsMs.map((ms) => ms / 1000),
+      blob: combinedMp3,
+      durationSec: duration,
+      progressSec: 0,
+      bookmarks: [],
+      images: [],
+      createdAt: new Date().toISOString(),
+    });
+    renderLibrary();
+    _preSynthChapter = { clipId: newClipId, title: chapter.title };
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      console.warn("[pre-synth] failed:", err);
+    }
+    _preSynthChapter = null;
+  } finally {
+    if (_preSynthController === myController) _preSynthController = null;
+  }
+}
+
+function _abortPreSynth() {
+  if (_preSynthController) {
+    _preSynthController.abort();
+    _preSynthController = null;
+  }
+  _preSynthChapter = null;
 }
 
 function _cancelChapterQueue() {
@@ -3438,7 +3833,8 @@ function _cancelChapterQueue() {
   _chapterTotalCount = 0;
   _chapterCurrentIndex = 0;
   _pendingChapterTitle = null;
-  _queueAdvancePending = false;
+  _resetQueueAdvanceFlags();
+  _abortPreSynth();
   _updateChapterQueueUI();
   setStatus("Chapter queue cancelled — current chapter will still save.");
 }
@@ -3688,6 +4084,7 @@ function clearForNewClip() {
     _chapterTotalCount = 0;
     _chapterCurrentIndex = 0;
     _pendingChapterTitle = null;
+    _abortPreSynth();
     _updateChapterQueueUI();
   }
   _hideChapterBanner();
@@ -5325,6 +5722,14 @@ function setupMediaSession() {
         startNextStreamSentence();
         return;
       }
+      // Streaming queue exhausted — user has heard every per-sentence
+      // WAV. Mark "audio side" complete. If save already landed,
+      // _tryAdvanceQueue fires the 4-second breath; if save lands
+      // later, IT will fire the breath. Either ordering works.
+      if (_chapterTotalCount > 0) {
+        _queueAudioComplete = true;
+        _tryAdvanceQueue();
+      }
       // Queue exhausted; the next sentence event (or the final swap to the
       // combined WAV) will resume playback.
       return;
@@ -5335,18 +5740,20 @@ function setupMediaSession() {
     const justEndedId = _currentClipId;
     await markCurrentClipPlayed();
 
-    // Chapter queue: if the previous chapter's save callback flagged
-    // an advance, do it now (at audio-end). This is the path that
-    // keeps the reading view + player from jumping mid-listen.
-    // _advanceChapterQueue swaps in chapter N+1's text and kicks off
-    // its synthesis. If it returns true, a queue advance is in
-    // progress — suppress library auto-advance so we don't compete
-    // with it. If false, the queue was already drained on the last
-    // save; fall through to library auto-advance.
-    if (_queueAdvancePending) {
-      _queueAdvancePending = false;
-      const advanced = _advanceChapterQueue();
-      if (advanced) return;
+    // Chapter queue: combined MP3 just finished playing. Mark the
+    // audio side complete and try to advance. If save .then() already
+    // fired (the common case for long chapters that finished synth
+    // well before playback), _tryAdvanceQueue schedules the breath
+    // and we return so library auto-advance doesn't compete. If save
+    // hasn't fired yet, the audio flag waits; when save eventually
+    // sets _queueSaveComplete, the advance fires from there.
+    if (_chapterTotalCount > 0) {
+      _queueAudioComplete = true;
+      _tryAdvanceQueue();
+      // Suppress library auto-advance while a chapter queue is active
+      // regardless of whether _tryAdvanceQueue actually scheduled the
+      // advance this tick (save might still be pending).
+      return;
     }
 
     // Auto-advance to the next clip in the library according to _playMode.

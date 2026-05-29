@@ -456,7 +456,55 @@
       <progress id="synth-progress" value="0" max="1" hidden></progress>
 
       <section class="player card" id="player-card" hidden>
-        <audio id="player" controls preload="auto"></audio>
+        <!-- Native audio element kept for the playback API + MediaSession;
+             the visible controls are our own (see #custom-player below). -->
+        <audio id="player" preload="auto"></audio>
+        <div id="custom-player" class="custom-player">
+          <button
+            id="cp-play-btn"
+            type="button"
+            class="cp-play-btn"
+            aria-label="Play"
+            title="Play / pause"
+          >
+            <svg id="cp-play-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 5v14l11-7z" fill="currentColor"></path>
+            </svg>
+            <svg id="cp-pause-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" hidden>
+              <path d="M6 4h4v16H6zM14 4h4v16h-4z" fill="currentColor"></path>
+            </svg>
+          </button>
+          <span id="cp-time-current" class="cp-time">0:00</span>
+          <div
+            id="cp-scrubber"
+            class="cp-scrubber"
+            role="slider"
+            aria-label="Seek"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            tabindex="0"
+          >
+            <div id="cp-buffered" class="cp-buffered"></div>
+            <div id="cp-progress" class="cp-progress"></div>
+            <div id="cp-thumb" class="cp-thumb"></div>
+          </div>
+          <span id="cp-time-duration" class="cp-time">0:00</span>
+          <button
+            id="cp-mute-btn"
+            type="button"
+            class="cp-mute-btn"
+            aria-label="Mute / unmute"
+            title="Mute / unmute"
+          >
+            <svg id="cp-vol-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 9v6h4l5 5V4L7 9zM16 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" fill="currentColor"></path>
+            </svg>
+            <svg id="cp-mute-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" hidden>
+              <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.17v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" fill="currentColor"></path>
+            </svg>
+          </button>
+        </div>
         <div class="player-actions">
           <button
             id="skip-back-btn"

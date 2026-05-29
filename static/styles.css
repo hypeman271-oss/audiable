@@ -1470,9 +1470,178 @@ button:disabled {
   padding: 14px;
 }
 
+/* The native <audio> element is kept in the DOM as the playback API
+   surface but never rendered; the visible controls below are our own. */
 .player audio {
-  width: 100%;
+  display: none;
+}
+
+/* ---- Custom audio player ----------------------------------------------
+   A single-row layout: [▶/⏸] [time] [scrubber] [time] [🔊/🔇]. Built to
+   stay readable across both themes; the scrubber's progress + thumb
+   resolve through --accent so the theme switch recolors it. */
+.custom-player {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  margin-bottom: 10px;
+}
+/* Defensive fallback by ID so even if the class rule is broken or
+   missing (stale SW cache between versions), the row still lays out. */
+#custom-player {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.cp-play-btn {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+.cp-play-btn:hover {
+  background: var(--accent-strong);
+}
+.cp-play-btn:active {
+  transform: scale(0.95);
+}
+.cp-play-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cp-play-btn svg {
+  width: 22px;
+  height: 22px;
   display: block;
+}
+
+.cp-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  min-width: 36px;
+  text-align: center;
+}
+
+.cp-scrubber {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  height: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.cp-scrubber::before {
+  /* Track */
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-soft);
+}
+.cp-buffered {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  width: 0%;
+  pointer-events: none;
+}
+.cp-progress {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  width: 0%;
+  pointer-events: none;
+}
+.cp-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  left: 0%;
+  pointer-events: none;
+  transition: width 0.12s ease, height 0.12s ease;
+  box-shadow: 0 0 0 3px var(--bg-card-2);
+}
+.cp-scrubber:hover .cp-thumb,
+.cp-scrubber:focus-visible .cp-thumb,
+.cp-scrubber.dragging .cp-thumb {
+  width: 14px;
+  height: 14px;
+}
+.cp-scrubber:focus-visible {
+  outline: none;
+}
+.cp-scrubber:focus-visible::before {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.cp-mute-btn {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.cp-mute-btn:hover {
+  color: var(--fg);
+  background: var(--hover-soft);
+}
+.cp-mute-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+/* Compact below ~360px screens — drop one of the time displays to keep
+   the scrubber wide enough to use comfortably. */
+@media (max-width: 380px) {
+  #cp-time-duration {
+    display: none;
+  }
 }
 
 .player-actions {

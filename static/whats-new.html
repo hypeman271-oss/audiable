@@ -141,6 +141,132 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v94</span>
+          <span class="release-tagline">Custom audio player</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Replaced the browser's native audio control bar
+            with our own.</strong> Single rounded-pill row:
+            play/pause, current time, scrubber with buffered fill,
+            duration, mute. Consistent look in Chrome, Safari, Firefox
+            (no more "looks like Chrome's media controls"). The
+            underlying <em>&lt;audio&gt;</em> element is still doing all
+            the work; we just stopped showing its UI. Skip 5s,
+            bookmark, sleep, A&harr;B loop, and speed cycle chips
+            unchanged below.
+          </li>
+          <li>
+            <strong>Scrubber keyboard support.</strong> Focus the
+            scrubber and use <em>&larr;</em> / <em>&rarr;</em> to seek
+            5s, <em>Home</em> / <em>End</em> to jump to the start/end.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v93</span>
+          <span class="release-tagline">Chapters pre-synthesize in the background</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Chapter N+1 now synthesizes while you listen to
+            chapter N.</strong> The moment chapter N's save completes,
+            a background SSE fetch starts on chapter N+1 and saves the
+            result to your library. When chapter N's audio ends, the
+            next chapter loads instantly from the library instead of
+            making you wait 5-15 seconds for synthesis to start fresh.
+            Side benefit: pre-synthesized chapters show up in your
+            library normally, so you can browse them or jump around.
+          </li>
+          <li>
+            <strong>Polite breath between chapters trimmed from 4s to 2s.</strong>
+            Combined with pre-synth, the total gap between chapters is
+            now ~2 seconds instead of ~5-15. Long enough to register
+            "one chapter ended, another's starting"; short enough that
+            an attentive listener barely notices.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v92</span>
+          <span class="release-tagline">Skip front-matter junk in chapter split</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Table of Contents and similar sections no longer
+            become clips in the chapter queue.</strong> Project
+            Gutenberg books surface CONTENTS, ILLUSTRATIONS, and other
+            front matter as their own headings, and the v85 heading
+            injection was correctly picking them up — but synthesizing
+            <em>"CHAPTER I. (pause) CHAPTER II. (pause)..."</em> 35
+            times in a row isn't a thing anyone wants to listen to.
+            The detector now drops chapters whose title matches a
+            blocklist (Contents, Illustrations, Index, Glossary,
+            Imprint, Copyright, Acknowledgements, About&hellip;), plus
+            a heuristic fallback for TOC content under a non-standard
+            title. <em>Preface</em>, <em>Foreword</em>, and
+            <em>Introduction</em> are intentionally kept — those are
+            usually real prose worth hearing.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v91</span>
+          <span class="release-tagline">Chapter queue advance: two-flag rendezvous</span>
+        </div>
+        <ul>
+          <li>
+            <strong>v90's chapter advance could deadlock</strong> when
+            the synthesis save completed after the audio finished
+            playing (or vice versa) — whichever fired second found the
+            other side's flag already cleared and silently gave up,
+            leaving chapter 2 unstarted forever. Replaced the single
+            flag with two (<em>_queueAudioComplete</em>,
+            <em>_queueSaveComplete</em>) plus a <em>_tryAdvanceQueue</em>
+            helper that fires the 4-second polite breath only when both
+            are true. Either ordering works, neither side can race the
+            other into oblivion.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v90</span>
+          <span class="release-tagline">Chapter queue (really) waits for chapter end</span>
+        </div>
+        <ul>
+          <li>
+            <strong>v87's chapter-queue fix had a race condition.</strong>
+            The check <em>"if the player has already ended, advance
+            now"</em> turned out to fire at exactly the wrong moment —
+            the moment the last per-sentence WAV finished playing, which
+            is the same moment synthesis completes for long chapters.
+            Net effect: chapter 2 still started mid-chapter-1, exactly
+            the bug v87 was meant to fix. v90 removes the immediate-
+            advance branch entirely and relies on two events to trigger
+            the next chapter, with a 4-second polite breath between
+            them: either the combined MP3's <code>ended</code> (user
+            listened through the full file) or the streaming queue's
+            <code>ended</code> (user finished hearing every per-sentence
+            WAV live). Whichever fires first wins.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v89</span>
           <span class="release-tagline">Piper "# channels not specified" fix</span>
         </div>
