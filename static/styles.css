@@ -143,10 +143,16 @@ body {
 }
 
 @media (min-width: 1024px) {
+  /* Two-column desktop: text card dominates with the full remaining
+     width, voice/library sit in a fixed 360px sidebar on the right.
+     Bumped max-width to 1280px so the text column can breathe up to
+     ~880px (~85-90 chars at 16px) — wider than the typographic
+     ideal for sustained reading, but writers SCANNING for revisions
+     benefit from seeing more of the chapter at once. */
   .app {
-    max-width: 1120px;
+    max-width: 1280px;
     display: grid;
-    grid-template-columns: 640px 1fr;
+    grid-template-columns: 1fr 360px;
     grid-template-areas:
       "hero    hero"
       "text    voice"
@@ -166,12 +172,25 @@ body {
   .app > #library-card  { grid-area: library; align-self: start; }
 }
 
+/* On wide desktops (1440px+), let the app stretch further so the text
+   column gets even more dominant real estate. Beyond ~1600px the
+   layout caps at 1520px so reading lines don't blow past 100 chars. */
+@media (min-width: 1440px) {
+  .app {
+    max-width: 1520px;
+  }
+}
+
 /* Library cards in a grid at tablet+ widths so the library uses
    horizontal space instead of becoming a tall column. The .library-list
    already renders a flex column of cards; switch it to grid at tablet
    and lift to 3-up at desktop. The Continue Listening section keeps
    its own visual treatment (full-width header above the grid). */
-@media (min-width: 768px) {
+/* Library card grid: 2-up at tablet widths where the library card
+   spans the full container; reverts to a single column at desktop
+   widths because the library sits in a 360px sidebar there (too
+   narrow for multiple cards per row). */
+@media (min-width: 768px) and (max-width: 1023.98px) {
   .library-list {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -182,11 +201,6 @@ body {
   .library-list > .library-section,
   .library-list > .library-empty {
     grid-column: 1 / -1;
-  }
-}
-@media (min-width: 1280px) {
-  .library-list {
-    grid-template-columns: repeat(3, 1fr);
   }
 }
 

@@ -29,11 +29,54 @@ class ExtractionError(RuntimeError):
 MAX_URL_FETCH_BYTES = 5 * 1024 * 1024  # 5 MB cap on fetched HTML
 
 
-def fetch_and_extract_url(url: str) -> dict:
+_GITHUB_HOSTS = {
+    "github.com",
+    "raw.githubusercontent.com",
+    "www.github.com",
+}
+
+
+def _rewrite_github_url(url: str) -> str:
+    """Convert github.com/.../blob/branch/path URLs to raw.githubusercontent.com.
+
+    Blob URLs return the HTML file-browser page; the raw URLs return the
+    file's actual bytes. The fetcher always wants bytes, so silently
+    rewrite. URLs that don't match the blob pattern (raw URLs, repo
+    roots, gists, etc.) pass through unchanged.
+    """
+    import re
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.hostname not in ("github.com", "www.github.com"):
+        return url
+    # /user/repo/blob/branch/path/to/file.md
+    # /user/repo/raw/branch/path/to/file.md
+    m = re.match(
+        r"^/([^/]+)/([^/]+)/(?:blob|raw)/([^/]+)/(.+)$",
+        parsed.path,
+    )
+    if not m:
+        return url
+    user, repo, branch, path = m.groups()
+    return f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{path}"
+
+
+def fetch_and_extract_url(url: str, github_token: str | None = None) -> dict:
     """Fetch an article URL and return its main text + metadata.
 
+    Args:
+        url: any http(s) URL. GitHub blob URLs are auto-rewritten to
+            their raw form so the fetcher sees the file bytes, not the
+            file-browser HTML.
+        github_token: optional Personal Access Token for private GitHub
+            repos. Sent as `Authorization: Bearer <token>` ONLY when the
+            URL points at github.com / raw.githubusercontent.com — never
+            leaked to other hosts.
+
     Returns:
-        {"filename": <hostname>, "chars": int, "text": str}
+        {"filename": <hostname or filename>, "chars": int, "text": str,
+         "images": list[dict]}
 
     Raises:
         ValueError for bad URLs / SSRF-suspicious targets (the endpoint
@@ -47,7 +90,9 @@ def fetch_and_extract_url(url: str) -> dict:
     import urllib.parse
     import urllib.request
 
-    parsed = urllib.parse.urlparse((url or "").strip())
+    url = _rewrite_github_url((url or "").strip())
+
+    parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError("URL must start with http:// or https://")
     if not parsed.hostname:
