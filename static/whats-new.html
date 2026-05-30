@@ -141,6 +141,457 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v180</span>
+          <span class="release-tagline">Sign in with GitHub (OAuth)</span>
+        </div>
+        <ul>
+          <li>
+            <strong>One-click GitHub sign-in, no more PAT paste.</strong>
+            Settings → GitHub now has a <em>Sign in with GitHub</em>
+            button. Click it, authorize on github.com, you're back
+            on Narrative with the token already saved. Settings shows
+            <em>Signed in as @yourhandle</em>. PAT paste stays as
+            the fallback (fine-grained tokens, GitHub Enterprise,
+            unconfigured servers).
+          </li>
+          <li>
+            <strong>Operator step</strong> (one-time): register a
+            GitHub OAuth App, drop the client ID + secret into env
+            vars. See <code>OAUTH_SETUP.md</code> for the walkthrough.
+            Until configured, the Sign-in button stays disabled with
+            an actionable tooltip — paste keeps working.
+          </li>
+          <li>
+            <strong>Token never hits the access log.</strong> The
+            callback delivers the token via URL fragment (which
+            browsers don't send to the server). Frontend boot reads
+            it, stores it, and clears the URL so a reload doesn't
+            re-process or leak anything.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v179</span>
+          <span class="release-tagline">GitHub: branch picker, gitRef on Edit, folder chips</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Branch dropdown in the picker.</strong> Repos with
+            feature branches now surface a <em>Branch:</em>
+            dropdown above the file list. Switching swaps the tree
+            instantly — no need to edit the URL into
+            <code>/tree/&lt;branch&gt;/</code> form by hand. Powered
+            by a new <code>/api/github/branches</code> endpoint that
+            lists the repo's branches with the default sorted first.
+          </li>
+          <li>
+            <strong>Commit SHA on the Edit dialog.</strong>
+            GitHub-sourced clips now show a "From GitHub:
+            chapter_02.md @ a1b2c3d" line in the Edit dialog —
+            confirm at a glance that the clip matches the commit
+            you just pushed. Hover the SHA pill for the full hash.
+          </li>
+          <li>
+            <strong>"Filter to chapters/" auto-suggest.</strong> When
+            the picker spots a common manuscript folder
+            (<code>chapters/</code>, <code>manuscript/</code>,
+            <code>src/</code>, <code>content/</code>, etc.) with
+            three or more files, it offers one-click filter chips
+            — cuts the visual noise on big repos.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v178</span>
+          <span class="release-tagline">Confetti is testable again</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Replay onboarding tips → actually fires the
+            confetti.</strong> v175 hid confetti behind a 0→≥1
+            transition gate that anyone with clips already on file
+            could never satisfy. Replay now also resets the internal
+            counter so the next library render correctly registers
+            as "first clip" and the burst pops. Confetti's gate
+            decisions also write to the debug log so a "didn't fire"
+            report is one click of "View debug log" away from a
+            diagnosis.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v177</span>
+          <span class="release-tagline">Debug log + empty-text guard</span>
+        </div>
+        <ul>
+          <li>
+            <strong>"chapter X keeps failing" is now diagnosable.</strong>
+            Every GitHub fetch, queue enqueue, synthesis start, HTTP
+            error, SSE error, and retry writes a timestamped entry
+            to an in-app debug log. Open it from
+            <strong>⚙ Settings → View debug log →</strong> or
+            straight from the failures banner's new
+            <em>View log</em> button. Copy, download as .txt, or
+            clear.
+          </li>
+          <li>
+            <strong>Empty-text chapters never reach the queue.</strong>
+            Some files (TOC, image-only chapters, all-frontmatter)
+            return empty text after trafilatura strips boilerplate.
+            Those chapters used to enter the queue and fail with a
+            confusing "no audio in result" — now they're skipped at
+            the fetch stage with a debug-log entry explaining why,
+            and the status bar tells you how many were skipped.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v176</span>
+          <span class="release-tagline">GitHub flow: recents, imported badges, re-narrate outdated</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Up to 5 recent repos.</strong> The "+ Add more
+            from owner/repo" footer is now a row of chips covering
+            your last 5 GitHub projects — flip between books
+            without re-pasting URLs. The Import → GitHub field
+            shows the same chips above the input ("Switch to:")
+            when you have more than one recent.
+          </li>
+          <li>
+            <strong>✓ "Already imported" badges in the picker.</strong>
+            Re-open a repo and the picker now flags files that are
+            either in your library or sitting in the queue with a
+            dim row + a ✓ chip. A new <em>Hide already imported</em>
+            toggle lets you collapse the list to just the chapters
+            you still need to add.
+          </li>
+          <li>
+            <strong>Re-narrate outdated → background queue.</strong>
+            The missing companion to <em>Sync GitHub</em>. After
+            Sync flags clips with newer upstream commits, the new
+            <em>Re-narrate outdated (N)</em> button refetches each
+            one and queues it for re-synthesis. Title, notes,
+            bookmarks, cover, and tags all survive — only the text
+            and audio are replaced.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v175</span>
+          <span class="release-tagline">🎉 Confetti for your first clip</span>
+        </div>
+        <ul>
+          <li>
+            <strong>The first time you save a clip, paper confetti
+            rains from the top of the page.</strong> Fires exactly
+            once — only on the genuine 0 → 1 transition, not when
+            you reload with clips already on file. Respects
+            <code>prefers-reduced-motion</code> if you've turned
+            animations down at the OS level. Want to see it again?
+            ⚙ Settings → <em>Replay onboarding tips →</em>.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v174</span>
+          <span class="release-tagline">"Replay onboarding tips" in Settings</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Bring the tips back.</strong> If you dismissed a
+            first-tap hint, the audition banner, or the first-clip
+            tour and want to see them again, Settings now has a
+            <strong>Replay onboarding tips →</strong> link that
+            clears every once-per-device flag and re-renders the
+            surfaces so the tips pop back without a reload.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v173</span>
+          <span class="release-tagline">First-clip tour moves into the hero</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Tour sits in the empty space between
+            <em>Narrative</em> and the icon rail.</strong> Even at
+            the top of the page it kept getting glanced past;
+            putting it inside the hero row — directly in the
+            left-to-right scan — makes it impossible to miss. On
+            phone widths it wraps to its own line below the title.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v172</span>
+          <span class="release-tagline">First-clip tour at the top of the page</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Tour banner lifted to the top.</strong>
+            Right below the hero, above every card — so it's the
+            first thing you see after Generate finishes, without
+            scrolling past the text card to reach it.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v171</span>
+          <span class="release-tagline">First-clip tour now actually surfaces after Generate</span>
+        </div>
+        <ul>
+          <li>
+            <strong>"This is your first clip" banner above the player.</strong>
+            The v168 onboarding tour lived inside the library dialog,
+            so first-time users only saw it if they manually opened
+            the library after Generate. Moved above the player card
+            so it shows up the moment your first clip lands. Points
+            at the three discoverability surfaces you can act on
+            right now: ✎ Edit (covers), ⋮⋮ drag-to-reorder, and
+            📝 Notes. Dismiss with × — once-per-device.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v170</span>
+          <span class="release-tagline">Audition tip surfaces (for real this time)</span>
+        </div>
+        <ul>
+          <li>
+            <strong>"904 speakers? Tap Audition" banner now actually shows.</strong>
+            The v168 first-tap hint fired a status message that was
+            hidden behind the voice dialog itself, so first-time
+            LibriTTS users never saw it. Replaced with a persistent
+            inline banner that lives next to the Audition link —
+            dismissible with × or auto-hides the moment you open the
+            wizard.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v169</span>
+          <span class="release-tagline">Live elapsed time on the synthesis queue</span>
+        </div>
+        <ul>
+          <li>
+            <strong>"Elapsed 0:45 · ~0:12 left" on the in-flight job.</strong>
+            The background queue panel now shows a live timer for
+            the chapter currently being synthesized. Once a few
+            sentences have completed, an ETA appears next to it so
+            you can tell at a glance whether to wait or step away.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v152</span>
+          <span class="release-tagline">Polish pass — tooltips, shortcuts overlay, clearer copy</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Press <kbd>?</kbd> for a shortcuts overlay.</strong>
+            A new dialog lists every keyboard shortcut Narrative
+            knows about — Ctrl+Enter to generate, Esc to clear
+            search, Enter to fetch URLs, and more. Reach it via
+            <kbd>?</kbd> (when you're not typing in a field) or
+            Settings → Keyboard shortcuts.
+          </li>
+          <li>
+            <strong>"What's a speaker?" link.</strong> The Speaker
+            row in the voice dialog now has a tiny <code>?</code>
+            button that explains what numbered speakers actually
+            are on LibriTTS-style multi-speaker voices.
+          </li>
+          <li>
+            <strong>Re-narrate banner reads clearer.</strong> When
+            you change voices mid-clip, the prompt now spells out
+            what carries over (bookmarks, notes, saved position)
+            and the dismiss button reads <em>"Not now"</em> instead
+            of just <em>Dismiss</em>.
+          </li>
+          <li>
+            <strong>Tooltips on Generate / Download.</strong>
+            Hovering each primary button now reveals a plain-English
+            explanation of what it does — useful for hover-savvy
+            users who land in a fresh tab.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v150</span>
+          <span class="release-tagline">Discoverability pass — cycle chips, covers, and mode unlocks</span>
+        </div>
+        <ul>
+          <li>
+            <strong>First-tap hints on Sleep / A↔B / Speed.</strong>
+            The cycle chips now whisper one-shot hints the first
+            time you tap them ("Tap Sleep again to cycle: 15 / 30 /
+            45 / 60 min · end of chapter · off"). Hint fires
+            once-ever per chip; subsequent taps are silent.
+          </li>
+          <li>
+            <strong>"+ Cover" affordance on cards without art.</strong>
+            Library cards whose swatch is still the title-hash
+            gradient pick up a quiet "+ Cover" chip next to ✎ Edit.
+            Tapping it opens Edit dialog scrolled straight to the
+            cover picker — no hunting through fields. Disappears
+            once the clip has a cover uploaded.
+          </li>
+          <li>
+            <strong>Mode picker shows what you'd unlock.</strong>
+            Settings → Mode now appends an accent-tinted "+ unlocks"
+            note that updates with your pick: Simple sees what both
+            Standard and Author add; Standard sees what Author
+            adds; Author sees nothing (already there).
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v149</span>
+          <span class="release-tagline">First-run discoverability pass — fewer "where do I start?" moments</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Import dropdown items now have descriptions.</strong>
+            Upload file says <em>"PDF, EPUB, DOCX, TXT, MD"</em>;
+            GitHub repo says <em>"Browse a repo and pick chapters"</em>;
+            Scrivener and Obsidian explain what they are. No more
+            guessing what each item does before clicking.
+          </li>
+          <li>
+            <strong>First-run starter card.</strong> Brand-new
+            testers — empty library, empty textarea — get a "Get
+            started" panel with three clickable cards: paste an
+            article URL, upload a file, or browse a GitHub repo.
+            Auto-hides the moment you type or save your first clip.
+          </li>
+          <li>
+            <strong>Drag-to-reorder discovery hint.</strong> The
+            ⋮⋮ drag handles on library cards now come with a
+            one-time tip banner above the list (when you have 2+
+            clips). Auto-dismisses on your first successful drag,
+            or via the ×.
+          </li>
+          <li>
+            <strong>GitHub help opens by default for first-time
+            users.</strong> The "Show me what to copy from GitHub"
+            disclosure in Settings → GitHub is open out of the box
+            when no token is saved (visual guide right there when
+            you need it). Once you've saved a token — or toggled
+            the disclosure manually — it remembers your choice.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v139</span>
+          <span class="release-tagline">Background imports — queue chapters silently while you're away</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Background mode in the import picker.</strong>
+            When you pick multiple chapters from GitHub, Scrivener, or
+            an Obsidian vault, a new <em>Background — don't auto-play</em>
+            checkbox appears next to <em>Use</em>. Tick it and the
+            chapters synthesize one after another in the background;
+            nothing ever loads into the player. Perfect for kicking
+            off an overnight import and coming back to a populated
+            library.
+          </li>
+          <li>
+            <strong>Cancel anytime.</strong> The chapter pill shows
+            <em>Background · chapter 3 of 12 · Next: …</em> while the
+            queue runs. Hit <em>Cancel</em> on the pill and the
+            in-flight chapter aborts immediately; chapters already
+            saved stay in your library.
+          </li>
+          <li>
+            <strong>Voice settings are captured at synthesis time.</strong>
+            If you change the voice mid-queue, the chapter currently
+            synthesizing keeps the voice it started with; subsequent
+            chapters use the new pick.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v138</span>
+          <span class="release-tagline">Per-clip notes — a scratchpad for each chapter</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Free-form notes attached to every clip.</strong>
+            A multi-line scratchpad separate from the one-line Note
+            label — for edits to revisit, voice direction, continuity
+            reminders, beat-sheet thoughts. Edit dialog now has a
+            <em>Notes</em> field below the existing <em>Note</em>.
+          </li>
+          <li>
+            <strong>📝 chip in the player.</strong> While a clip is
+            loaded, the new chip in the player row opens a focused
+            notes editor — just the clip title and a big textarea, so
+            you can jot something mid-listen without leaving the page.
+            Closes saves automatically; cards pick up a small
+            <em>📝 Notes</em> indicator once notes are present.
+          </li>
+          <li>
+            <strong>Round-trips through Export / Import.</strong>
+            Notes travel inside the library zip's manifest alongside
+            bookmarks and tags, so a fresh device picks up everything
+            you've written.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v125</span>
           <span class="release-tagline">Story-board covers per chapter</span>
         </div>

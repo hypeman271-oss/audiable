@@ -443,6 +443,16 @@
         <strong>⚙</strong> Settings) are the only chrome outside the
         text-listen-status flow.
       </p>
+      <div class="tip">
+        <strong>Desktop drawer behavior.</strong> At ≥1024px viewports,
+        Voice and Library slide in as right-side drawers (text content
+        shifts left, drawers don't cover it). When you open BOTH at
+        once, they stack: the most recently clicked one is "active"
+        and gets the full content area; the other shows its content
+        below filling the remaining space. The one not at the top has
+        an accent border + <code>↑</code> chevron on its header —
+        tap it to swap which drawer is on top.
+      </div>
 
       <!-- ============================================================= -->
       <h2 id="text">2. Getting text in</h2>
@@ -488,13 +498,83 @@
       </table>
 
       <h3>Import sources</h3>
-      <p>Each entry in the Import menu routes to a different parser.
-        Single-document sources drop straight into the textarea;
-        multi-document sources (GitHub, Scrivener, Obsidian) open a
-        picker so you choose which chapters to import. Picking many
-        builds a <strong>chapter queue</strong> — pre-synthesized,
-        auto-advancing — that lets you walk through a whole project
-        without touching the app between chapters.</p>
+      <p>Each entry in the Import menu has a one-line subtitle so a
+        first-time tester knows what Scrivener / Obsidian even are
+        before clicking — Upload says <em>"PDF, EPUB, DOCX, TXT, MD —
+        up to 25 MB"</em>, GitHub says <em>"Browse a repo and pick
+        chapters"</em>, etc. Single-document sources drop straight
+        into the textarea; multi-document sources (GitHub, Scrivener,
+        Obsidian) open a picker so you choose which chapters to
+        import. Picking many builds a <strong>chapter queue</strong> —
+        pre-synthesized, auto-advancing — that lets you walk through
+        a whole project without touching the app between chapters.</p>
+      <div class="tip">
+        <strong>New to Narrative?</strong> Land on an empty library
+        with nothing typed and you'll see a "Get started" card with
+        three big clickable starters — paste a URL, upload a file,
+        browse a GitHub repo. Auto-hides the moment you type or save
+        your first clip.
+      </div>
+
+      <h3 id="bg-queue">Background queue — synthesize silently while you work</h3>
+      <p>
+        Two ways into the silent / background pipeline. Both feed the
+        same persistent queue, which you can reorder and add to at any
+        time.
+      </p>
+      <ul>
+        <li>
+          <strong>"Background — don't auto-play"</strong> checkbox in
+          the multi-pick import picker (GitHub / Scrivener / Obsidian).
+          Tick it before clicking <em>Use selected</em> and every
+          chapter lands in the queue silently.
+        </li>
+        <li>
+          <strong>"Queue silently →"</strong> link button below the
+          Generate / Download row. Type or paste text in the textarea,
+          click the link, and that single piece lands at the back of
+          the queue. The textarea clears so you can paste the next
+          thing. Each enqueue snapshots the current voice / speed /
+          volume — change the voice between queueings and only later
+          jobs pick up the new pick.
+        </li>
+      </ul>
+      <p>
+        While the queue runs, the chapter pill at the top shows
+        <em>"Background · Synthesizing [title] · 23/87 sentences · N
+        more queued"</em> with a pulsing accent dot. Generate is
+        disabled (the textarea is yours to use for the next queue
+        item); Cancel × on the pill aborts the in-flight chapter and
+        drains the rest of the queue.
+      </p>
+      <p>
+        Below the pill, a <strong>queue panel</strong> shows the
+        currently-synthesizing job + the pending list. Each pending
+        row has a <code>⋮⋮</code> drag handle (drag to reorder —
+        bring an item to the top by dragging it above the others) and
+        a <code>×</code> remove button. The current job is locked at
+        the top so you can't drag or drop it mid-synthesis (use
+        Cancel × on the pill to kill the whole queue).
+      </p>
+      <div class="tip">
+        <strong>Build-up workflow:</strong> Paste chapter 1 →
+        Queue silently → Paste chapter 2 → Queue silently → discover
+        you want chapter 5 to come next → paste it → Queue silently →
+        drag chapter 5 to the top of the queue panel. Walk away. Come
+        back to a populated library in the order you wanted.
+      </div>
+      <p>
+        <strong>Auto-retry + failures banner.</strong> Every failed
+        chapter gets one automatic retry after a 1.5-second cooldown
+        — most failures are transient (network blip, server cold
+        start) and the retry recovers silently. Chapters that fail
+        both attempts surface in a banner after the queue finishes,
+        with the actual chapter titles + a one-click <em>Retry
+        failed</em> button that re-runs the queue with just those
+        chapters (no re-fetch needed; we kept the original chapter
+        data in memory). Beats <em>"see console"</em> when something
+        actually went wrong.
+      </p>
       <table>
         <tr>
           <th>Source</th>
@@ -521,16 +601,25 @@
         <tr>
           <td><strong>GitHub repo</strong></td>
           <td>Pre-fills the URL input with
-            <code>https://github.com/</code>; finish typing
-            <code>owner/repo</code> (or paste a
-            <code>tree/&lt;branch&gt;</code> URL for a non-default
-            branch) and hit Fetch. A repo browser lists all
-            <code>.md · .txt · .docx · .pdf · .epub</code> files in the
-            tree. Pick one to load like a URL fetch, pick several to
-            build a chapter queue. Private repos need a PAT in
-            Settings → GitHub. Each clip remembers its file SHA so
-            "<strong>Sync all</strong>" in the library can flag clips
-            whose source has been updated upstream.</td>
+            <code>https://github.com/</code> and shows an accent hint
+            above it: <em>"Paste the repo root — like</em>
+            <code>github.com/owner/repo</code> <em>— not a link to a
+            specific file."</em> Finish typing <code>owner/repo</code>
+            (or paste a <code>tree/&lt;branch&gt;</code> URL for a
+            non-default branch) and hit Fetch. A repo browser lists
+            all <code>.md · .txt · .docx · .pdf · .epub</code> files
+            in the tree. Pick one to load like a URL fetch, pick
+            several to build a chapter queue.
+            <strong>If you do paste a file URL</strong>
+            (<code>github.com/owner/repo/blob/&lt;branch&gt;/&lt;path&gt;</code>)
+            or any other <code>/owner/repo/...</code> URL, we strip
+            it back to the repo root and open the picker, with a
+            status line explaining what happened — same outcome,
+            one extra hop. Private repos need a PAT in
+            Settings → GitHub (see § 7 for the visual guide). Each
+            clip remembers its file SHA so "<strong>Sync all</strong>"
+            in the library can flag clips whose source has been
+            updated upstream.</td>
         </tr>
         <tr>
           <td><strong>Scrivener bundle</strong></td>
@@ -729,6 +818,7 @@
             <button type="button" class="ab-loop-btn active">↻ 1:23–2:45</button>
             <button type="button" class="sleep-btn active">💤 14:32</button>
             <button type="button" class="speed-btn">1.5×</button>
+            <button type="button" class="notes-btn">📝 Notes</button>
           </div>
         </div>
         <figcaption>Player chips, left to right. Sleep + A-B shown active (accent fill).</figcaption>
@@ -814,6 +904,27 @@
         armed (no point synthesizing audio you won't hear).
       </p>
 
+      <h3>📝 Notes</h3>
+      <p>
+        Opens a focused dialog tied to the currently-loaded clip — clip
+        title at the top, a big multi-line textarea below. Use it for
+        free-form thoughts while listening: edits to revisit, voice
+        direction, continuity reminders, beat-sheet notes. Closing the
+        dialog saves automatically (no Save button to remember mid-
+        thought); cards pick up a small
+        <code>📝 Notes</code> indicator under their meta line so you
+        can see at a glance which clips have notes attached. The same
+        field is also editable from ✎ Edit → Notes, and it travels
+        through Export / Import along with bookmarks and tags.
+      </p>
+      <div class="tip">
+        Distinct from the one-line <strong>Note</strong> field on
+        ✎ Edit: that one acts as a card subtitle (chapter number,
+        author, status); <strong>Notes</strong> is a free-form
+        scratchpad with no card display, so you can write at length
+        without cluttering the library.
+      </div>
+
       <h3>Playback speed (1×)</h3>
       <p>
         Cycles <code>1× → 1.25× → 1.5× → 1.75× → 2× → 0.75× → 1×</code>.
@@ -882,8 +993,10 @@
         <tr><td><strong>Cover swatch</strong></td><td>By default a hash-derived gradient tile with the title's first letter — same title renders the same swatch on every device. <strong>Upload custom cover art</strong> via ✎ Edit → Cover image (PNG / JPG / WebP / GIF, auto-resized to 256×256 + JPEG-compressed). The card's dominant color also tints the background of the whole card (Libby-style) and, when the clip is loaded, fades in as a heavily blurred wash behind the entire page. Played clips render the swatch dimmer.</td></tr>
         <tr><td><strong>Card body</strong></td><td>Tap anywhere on the title/meta area to load and play this clip.</td></tr>
         <tr><td><strong>Tag chips</strong></td><td>Free-form colored labels (set via ✎ Edit). Same tag always renders in the same hash-derived color. The filter chip row above the library composes AND-style across selected tags.</td></tr>
+        <tr><td><strong>📝 Notes indicator</strong></td><td>Small badge under the meta line, shown whenever the clip has free-form notes attached. Tap the ✎ Edit dialog or the 📝 chip in the player to read or extend them. Empty notes hide the badge so clean cards stay clean.</td></tr>
         <tr><td><strong>↺ Reset</strong></td><td>Only shown for in-progress clips. Wipes the saved resume position so next play starts from the top. If you reset the clip you're currently listening to, the player rewinds too.</td></tr>
-        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, add a note, set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. The cover comes through Export / Import zips along with audio + manifest.</td></tr>
+        <tr><td><strong>+ Cover</strong></td><td>(Only shown for clips without a custom cover.) Quiet dashed-border chip that opens the Edit dialog scrolled straight to the cover picker. Tap → file picker → cover applied + cards re-render with the new tint. Disappears once the clip has a cover. On narrow viewports it collapses to just <code>+</code>.</td></tr>
+        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest.</td></tr>
         <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
       </table>
 
@@ -958,6 +1071,13 @@
         the audiobook just works.
       </p>
       <div class="tip">
+        First time you see the library with 2+ clips, a one-shot
+        accent tip appears above the list: <em>"💡 Tip — drag the
+        ⋮⋮ handle on any card to reorder."</em> The tip
+        auto-dismisses on your first successful drag (or via the ×
+        on the banner) and never returns.
+      </div>
+      <div class="tip">
         Reordering inside Continue Listening reorders within that
         section. When a clip's resume position is cleared (manual ↺
         reset or auto-advance to next), it drops down into Other
@@ -980,7 +1100,7 @@
         Below the search:
       </p>
       <ul>
-        <li><strong>Export</strong> — builds a zip containing every clip as MP3 plus a JSON <code>manifest.json</code> with all metadata (titles, notes, voices, speakers, sentence offsets, resume positions, bookmarks, presets, library order, play mode). Downloads as <code>narrative-library-YYYY-MM-DD.zip</code>.</li>
+        <li><strong>Export</strong> — builds a zip containing every clip as MP3 plus a JSON <code>manifest.json</code> with all metadata (titles, one-line subtitles, free-form Notes scratchpads, voices, speakers, sentence offsets, resume positions, bookmarks, tags, covers, presets, library order, play mode). Downloads as <code>narrative-library-YYYY-MM-DD.zip</code>.</li>
         <li><strong>Import</strong> — pick a previously-exported zip. Clips with IDs that already exist are skipped (so re-imports are safe). Restores presets and custom order too.</li>
       </ul>
       <div class="note">
@@ -1066,6 +1186,14 @@
         moment the radio changes. Your text, library, voice choice,
         speed, and bookmarks stay put.
       </div>
+      <div class="tip">
+        <strong>+ unlocks hint.</strong> Below the Mode picker, an
+        accent-tinted line tells you what each higher tier would
+        unlock — Simple sees what Standard <em>and</em> Author would
+        add; Standard sees what Author would add; Author sees nothing
+        (already there). Designed for the "I don't know what I'm
+        missing" first-tester problem.
+      </div>
 
       <h3>Other Settings rows</h3>
       <ul>
@@ -1078,6 +1206,23 @@
           <strong>Skip interval</strong> — 2 / 5 / 10 / 15 / 30 seconds.
           Controls the ↶ / ↷ chips in the player; their labels update
           live to match.
+        </li>
+        <li>
+          <strong>GitHub</strong> — paste a Personal Access Token to
+          unlock private repos in <em>Import → GitHub</em>. The token
+          stays on this device (localStorage); the server only sees it
+          when it's actively forwarding a request to a github.com
+          host. The section leads with a prominent
+          <strong>✓ Token saved (ending in …xxxx)</strong> banner
+          when one's on file, and the field below stays blank by
+          design so the value can't be read back from the DOM.
+          A collapsible <em>"Show me what to copy from GitHub →"</em>
+          guide opens a faithful mock of GitHub's token-generated
+          screen — useful for first-time PATs, since GitHub only
+          shows the token once and it's easy to scroll past the row
+          you're supposed to copy. The disclosure auto-scrolls
+          itself into view when you tap it, so the mock lands in
+          the visible area instead of off the bottom of the dialog.
         </li>
         <li>
           <strong>Listen stats</strong> (Standard / Author only) —
@@ -1234,7 +1379,16 @@
         <tr><td>URL input</td><td><span class="kbd">Enter</span> / <span class="kbd">Esc</span></td><td>Fetch / Cancel</td></tr>
         <tr><td>Bookmark note</td><td><span class="kbd">Enter</span> / <span class="kbd">Esc</span></td><td>Save / Revert</td></tr>
         <tr><td>Edit-clip title</td><td><span class="kbd">Enter</span></td><td>Save</td></tr>
+        <tr><td>Anywhere (outside an input)</td><td><span class="kbd">?</span></td><td>Open the keyboard shortcuts overlay</td></tr>
       </table>
+      <div class="tip">
+        The full shortcuts list also lives in a dialog you can open
+        with <span class="kbd">?</span> from anywhere, or via
+        <strong>Settings → Keyboard shortcuts →</strong>.
+        The hotkey is suppressed while you're typing in an input or
+        textarea so you can still put <span class="kbd">?</span> into
+        a search or note.
+      </div>
 
       <h3>Workflow ideas</h3>
       <ul>

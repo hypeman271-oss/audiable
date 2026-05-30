@@ -317,6 +317,7 @@ dialog[open]::backdrop {
   /* Section headers ("Continue Listening", "Other Clips") and the
      empty-state card span the full row width inside the grid. */
   .library-list > .library-section,
+  .library-list > .library-section-subtitle,
   .library-list > .library-empty {
     grid-column: 1 / -1;
   }
@@ -439,6 +440,11 @@ dialog[open]::backdrop {
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+  /* v173: allow the first-clip tour banner to wrap below the title
+     row when there's not enough horizontal room. Without flex-wrap
+     the tour would crush the title or the icon rail on narrow
+     viewports. */
+  flex-wrap: wrap;
 }
 
 .settings-btn {
@@ -621,24 +627,93 @@ dialog[open]::backdrop {
     background: transparent;
   }
 
-  /* When BOTH drawers are open, stack them: voice on top half,
-     library on bottom half. Each gets a subtle inset border at the
-     dividing edge so the seam reads as a deliberate boundary.
-     `inset` shorthand is reset explicitly with top + bottom so the
-     height-grow animation runs smoothly. */
-  body.drawer-voice-open.drawer-library-open .voice-dialog {
-    bottom: 50vh;
-    bottom: 50dvh;
-    box-shadow:
-      -8px 0 24px rgba(0, 0, 0, 0.35),
-      0 1px 0 var(--border-soft) inset;
-  }
+  /* v156: swap-to-focus stack. The v117 fixed 50/50 split made the
+     library bottom cards unreachable when the user had several
+     clips — the bottom drawer's allotted ~half-viewport couldn't
+     fit the search/tools/sections/cards/etc. Now: when both
+     drawers are open, the "active" one expands to take the full
+     drawer height minus a bottom strip; the other collapses to
+     just its header bar. Click the strip to swap which is active.
+     JS sets drawer-active-{voice,library} as the user opens or
+     taps each drawer; CSS positions them accordingly. */
+  body.drawer-voice-open.drawer-library-open .voice-dialog,
   body.drawer-voice-open.drawer-library-open .library-dialog {
-    top: 50vh;
-    top: 50dvh;
-    box-shadow:
-      -8px 0 24px rgba(0, 0, 0, 0.35),
-      0 -1px 0 var(--border-soft) inset;
+    /* Defensive — ensure neither dialog ever falls back to the
+       full-height "only one open" rules above when both are open. */
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  }
+  /* v160: stop collapsing the inactive drawer into a 56px strip —
+     show both drawers' content side-by-side, vertically. The
+     "active" drawer is just the one that's pinned to the top; the
+     other one fills all remaining viewport space below it (with
+     its own internal scroll for long content). Clicking either
+     drawer's header still swaps which one is on top, but both
+     contents stay visible the whole time.
+     Top drawer cap (70vh) leaves at least 30vh for the bottom
+     drawer's content — so even with a sky-tall voice catalog the
+     library cards never disappear behind a strip. */
+
+  /* Voice active (top): voice fits content, capped; library fills
+     remaining space below voice. */
+  body.drawer-voice-open.drawer-library-open.drawer-active-voice .voice-dialog {
+    top: 0;
+    bottom: auto;
+    height: auto;
+    max-height: 70vh;
+    max-height: 70dvh;
+  }
+  body.drawer-voice-open.drawer-library-open.drawer-active-voice .library-dialog {
+    top: var(--drawer-active-h, 50dvh);
+    bottom: 0;
+    height: auto;
+    max-height: none;
+  }
+  /* Library active (top): library fits content, capped; voice fills
+     remaining space below library. */
+  body.drawer-voice-open.drawer-library-open.drawer-active-library .library-dialog {
+    top: 0;
+    bottom: auto;
+    height: auto;
+    max-height: 70vh;
+    max-height: 70dvh;
+  }
+  body.drawer-voice-open.drawer-library-open.drawer-active-library .voice-dialog {
+    top: var(--drawer-active-h, 50dvh);
+    bottom: 0;
+    height: auto;
+    max-height: none;
+  }
+  /* v159: make the collapsed strip's header visually unmistakable
+     as a tap-to-expand control. The v156 cursor:pointer alone
+     wasn't enough — a tester clicked Voice, watched the library
+     content vanish into a 56px strip, and reported library had
+     "disappeared." The accent tint + chevron + border together
+     scream "I'm still here, tap me to bring me back." */
+  body.drawer-voice-open.drawer-library-open.drawer-active-voice
+    .library-dialog .voice-browser-head,
+  body.drawer-voice-open.drawer-library-open.drawer-active-library
+    .voice-dialog .voice-browser-head {
+    cursor: pointer;
+    background: var(--accent-tint, rgba(110, 168, 254, 0.14));
+    border-top: 2px solid var(--accent, #6ea8fe);
+    transition: background 140ms ease-out;
+  }
+  /* Chevron prefix on the strip's title indicating it expands
+     upward when tapped. */
+  body.drawer-voice-open.drawer-library-open.drawer-active-voice
+    .library-dialog .voice-browser-head h2::before,
+  body.drawer-voice-open.drawer-library-open.drawer-active-library
+    .voice-dialog .voice-browser-head h2::before {
+    content: "↑ ";
+    color: var(--accent);
+    font-weight: 700;
+    margin-right: 2px;
+  }
+  body.drawer-voice-open.drawer-library-open.drawer-active-voice
+    .library-dialog .voice-browser-head:hover,
+  body.drawer-voice-open.drawer-library-open.drawer-active-library
+    .voice-dialog .voice-browser-head:hover {
+    background: var(--hover-soft);
   }
 
   /* When either drawer is open, body gets right-padding so the .app
@@ -685,6 +760,33 @@ dialog[open]::backdrop {
   border-radius: 0;
   box-shadow: none;
   overflow-y: auto;
+  /* v155: explicit max-height + height so the inner scroll container
+     can't outgrow its flex slot in browsers that compute dialog
+     flex children leniently — without this, in the both-drawers-
+     open stacked mode the bottom cards landed past the visible
+     fold and the user couldn't reach them. */
+  height: 100%;
+  max-height: 100%;
+  /* Visible scrollbar so the user knows there's more content to
+     scroll to; momentum scrolling on iOS; contain prevents the
+     scroll from chaining out to the dialog/body. */
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* Breathing room at the bottom so the last card never feels
+     like it's flush against the edge — visual cue that you've
+     reached the end of the list. */
+  padding-bottom: 16px;
+}
+.library-dialog .card.library::-webkit-scrollbar {
+  width: 8px;
+}
+.library-dialog .card.library::-webkit-scrollbar-thumb {
+  background: var(--border-strong, var(--border));
+  border-radius: 999px;
+}
+.library-dialog .card.library::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* ---------- Settings dialog ---------- */
@@ -862,6 +964,143 @@ body[data-ui-mode="simple"] .advanced-only {
   outline-offset: 2px;
 }
 
+/* v150: "+ unlocks" hint below the Mode picker. Updates in JS based
+   on the selected mode so a Simple-mode user knows what Standard
+   and Author would add, a Standard-mode user knows what Author
+   would add, and an Author-mode user sees nothing (the row hides). */
+.mode-unlock-hint {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.mode-unlock-hint strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* v152: keyboard shortcuts overlay. Opens on "?" key + via Settings.
+   Mirrors the voice browser's dialog chrome so it reads as native
+   to the rest of the dialog set. */
+.shortcuts-dialog {
+  width: min(520px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.shortcuts-dialog::backdrop { background: var(--scrim); }
+.shortcuts-body {
+  padding: 16px;
+  overflow-y: auto;
+  max-height: calc(100vh - 120px);
+  max-height: calc(100dvh - 120px);
+}
+.shortcuts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.shortcuts-table th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.shortcuts-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle;
+}
+.shortcuts-table tr:last-child td { border-bottom: none; }
+.shortcuts-table td:nth-child(2) { white-space: nowrap; }
+.shortcuts-table kbd {
+  display: inline-block;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--fg);
+  margin: 0 1px;
+}
+.shortcuts-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+
+/* v152: speaker label "?" explainer. Tiny circular icon button next
+   to the Speaker label that opens a small status message describing
+   what "speaker N" means on multi-speaker voices like LibriTTS. */
+.speaker-label-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.speaker-help-btn {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 50%;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.speaker-help-btn:hover,
+.speaker-help-btn:focus-visible {
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+.speaker-help-btn[aria-expanded="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent, #0c1424);
+}
+
+/* v153: speaker help popover. Inline reveal between the label-row
+   and the dropdown so the ? button has somewhere to obviously open
+   into / close from. Click ? to toggle. */
+.speaker-help-popover {
+  margin: 6px 0 8px;
+  padding: 10px 12px;
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.speaker-help-popover p { margin: 0; }
+.speaker-help-popover strong { color: var(--accent); }
+
 /* ---- Listen statistics panel ------------------------------------------
    Read-only card inside Settings. Top row is three big-number cells
    (Today / Week / All-time); extras live in a stacked label/value list
@@ -1007,21 +1246,79 @@ body[data-ui-mode="simple"] .advanced-only {
 /* Settings section — visual grouping for things like the GitHub PAT
    input. A thin top border separates it from the feedback links
    above. */
+/* v148: the GitHub section was the lone Settings block sitting naked
+   on the dialog background while Mode / Theme / Skip / Listen stats
+   each lived inside a card. Match the card pattern so a returning
+   user reads it as "another setting" not "a footnote". The label
+   also bumps from 11px uppercase ("GITHUB") to 14px bold ("GitHub")
+   so it shares heading weight with the other sections' Mode/Theme/etc.
+   strong tags. */
 .settings-section {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg-card-2);
+  border-radius: 10px;
 }
 .settings-section-label {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--fg);
+}
+/* v180: GitHub OAuth row in Settings. Sits above the PAT input —
+   primary path is the Sign-in button; PAT paste below is the
+   fallback for fine-grained tokens, GHE, or unconfigured servers. */
+.settings-github-oauth-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.settings-github-oauth-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+  cursor: pointer;
+  width: fit-content;
+  align-self: flex-start;
+}
+.settings-github-oauth-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.settings-github-oauth-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.settings-github-oauth-icon {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+}
+.settings-github-oauth-note {
+  margin: 0;
+  font-size: 12px;
   color: var(--fg-dim);
+}
+.settings-github-oauth-note[data-state="signed-in"] {
+  color: var(--accent);
   font-weight: 600;
 }
+.settings-github-oauth-note[data-state="warn"] {
+  color: var(--fg);
+}
+
 .settings-section-hint {
   margin: 0;
   font-size: 12.5px;
@@ -1060,6 +1357,191 @@ body[data-ui-mode="simple"] .advanced-only {
 .settings-token-clear:hover {
   background: var(--hover-soft);
   color: var(--fg);
+}
+
+/* v140: token-status banner. Lives at the top of the GitHub section
+   so a freshly-saved token is acknowledged exactly where the user is
+   looking (the input below was cleared on save by design, so a
+   confirmation BELOW it was easy to miss — exactly what bit the user
+   reporting this).
+   data-state controls the look:
+     "saved"   — accent-tinted card with a ✓ — "your token is on file"
+     "cleared" — neutral acknowledgement after the Clear button
+     "empty"   — hidden (no token, nothing to acknowledge; the hint
+                 paragraph below already explains the section). */
+.settings-token-status {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-token-status[data-state="empty"] {
+  display: none;
+}
+.settings-token-status[data-state="saved"] {
+  background: var(--accent-tint, rgba(110, 168, 254, 0.12));
+  border: 1px solid var(--accent, #6ea8fe);
+  color: var(--fg);
+}
+.settings-token-status[data-state="saved"]::before {
+  content: "✓";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--accent, #6ea8fe);
+  color: var(--on-accent, #0c1424);
+  font-size: 13px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.settings-token-status[data-state="cleared"] {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-dim);
+}
+
+/* v143: collapsible GitHub PAT visual guide. Sits between the hint
+   line and the input row in the GitHub settings section. Closed by
+   default so the section stays compact for repeat users; opens to
+   reveal a faithful mock of GitHub's "token generated" screen +
+   step-by-step copy so first-time testers know exactly what to
+   look for. */
+.settings-github-help {
+  margin: 4px 0 2px;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.settings-github-help summary {
+  cursor: pointer;
+  color: var(--accent);
+  list-style: none;
+  padding: 4px 0;
+  user-select: none;
+}
+.settings-github-help summary::-webkit-details-marker { display: none; }
+.settings-github-help summary:hover { text-decoration: underline; }
+.settings-github-help[open] summary { margin-bottom: 8px; }
+
+/* v144: two-state summary so the click is unambiguous — "Show me…"
+   when closed, "↑ Hide…" when open. v143 used a single label and
+   testers tapped it twice (once to "open", once because they
+   weren't sure anything happened, which closed it again). */
+.settings-github-help-show,
+.settings-github-help-hide { display: inline; }
+.settings-github-help-hide { display: none; }
+.settings-github-help[open] .settings-github-help-show { display: none; }
+.settings-github-help[open] .settings-github-help-hide { display: inline; }
+.settings-github-help-body {
+  padding: 10px 12px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+.settings-github-steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.settings-github-steps li { margin-bottom: 4px; }
+.settings-github-steps li:last-child { margin-bottom: 0; }
+
+/* Mock of GitHub's PAT success screen. Background and accents
+   approximate GitHub's dark theme so the visual is recognizable —
+   we're not copying their brand, just showing the shape of what the
+   user is about to see (callout, green token row, copy icon). */
+.github-mock {
+  margin: 0;
+  background: #0d1117;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.ghm-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f6fc;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #30363d;
+}
+.ghm-callout {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  background: rgba(56, 139, 253, 0.10);
+  border: 1px solid rgba(56, 139, 253, 0.40);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.ghm-bell { flex: 0 0 auto; }
+.ghm-token-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(46, 160, 67, 0.12);
+  border: 1px solid rgba(46, 160, 67, 0.50);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.ghm-check {
+  color: #3fb950;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.ghm-token {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: #c9d1d9;
+  background: transparent;
+  border: none;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ghm-copy {
+  flex: 0 0 auto;
+  color: #58a6ff;
+  font-size: 14px;
+}
+.ghm-delete {
+  flex: 0 0 auto;
+  color: #f85149;
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border: 1px solid #f85149;
+  border-radius: 4px;
+}
+.ghm-caption {
+  margin: 10px 0 0;
+  color: #8b949e;
+  font-size: 12px;
+  font-style: normal;
+}
+.ghm-caption code {
+  background: #161b22;
+  border: 1px solid #30363d;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: #c9d1d9;
 }
 
 /* "NEW" pill that hangs off the "What's new →" link until the user
@@ -1185,6 +1667,124 @@ body[data-ui-mode="simple"] .advanced-only {
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
 }
+/* v176: already-imported dim treatment + ✓ badge. The row reads as
+   "you can still pick this if you want — but it's already in your
+   library/queue." Opacity drop is enough to read as deprioritized
+   without disabling the row (the user may genuinely want to re-import
+   to overwrite). The badge sits inline with the path. */
+.doc-picker-file-imported {
+  opacity: 0.6;
+}
+.doc-picker-file-imported:hover {
+  opacity: 0.8;
+}
+.doc-picker-file-imported-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+}
+/* v176: "Hide already imported" chip below the filter input. Same
+   pill vocabulary as the other chip-style toggles (sort, hide-played,
+   etc.) — accent-fill when pressed so the state reads at a glance. */
+/* v179: GitHub branch picker row inside the document picker. Compact
+   row that lives between the meta line and the search field, only
+   visible during a GitHub flow. */
+.doc-picker-branches-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 2px;
+  font-size: 12px;
+}
+.doc-picker-branches-label {
+  color: var(--fg-dim);
+  font-weight: 600;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+.doc-picker-branches {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.doc-picker-branches:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* v179: auto-suggested folder filter chips. Pill row that wraps; one
+   accent-filled chip per common manuscript folder (chapters/,
+   manuscript/, …). Clicking sets the path filter; clicking again
+   clears it. .active mirrors the pressed state. */
+.doc-picker-folder-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 2px;
+}
+.doc-picker-folder-chips-label {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+  margin-right: 2px;
+}
+.doc-picker-folder-chip {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.doc-picker-folder-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.doc-picker-folder-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.doc-picker-hide-imported {
+  align-self: flex-start;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  margin: 4px 0 2px;
+}
+.doc-picker-hide-imported:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.doc-picker-hide-imported[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
 .doc-picker-file-empty {
   padding: 24px 12px;
   text-align: center;
@@ -1204,7 +1804,23 @@ body[data-ui-mode="simple"] .advanced-only {
   padding: 12px 16px;
   border-top: 1px solid var(--border-soft);
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
 }
+/* v139: background-mode toggle in the picker action row. margin-right:
+   auto pushes it to the left edge of the action bar so it doesn't
+   compete with the Use button visually. */
+.doc-picker-bg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  font-size: 13px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.doc-picker-bg input { accent-color: var(--accent); }
 .doc-picker-actions button {
   padding: 10px 16px;
   font-weight: 600;
@@ -1240,7 +1856,9 @@ body[data-ui-mode="simple"] .advanced-only {
   top: 100%;
   right: 0;
   margin-top: 4px;
-  min-width: 180px;
+  /* v149: wider to accommodate the per-item subtitles that explain
+     what Scrivener / Obsidian even are. */
+  min-width: 280px;
   background: var(--bg-card);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -1262,12 +1880,210 @@ body[data-ui-mode="simple"] .advanced-only {
   font-size: 13px;
   border-radius: 6px;
   cursor: pointer;
+  /* v149: stack label + subtitle vertically. width:100% keeps the
+     hover background spanning the full row width. */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  font-family: inherit;
 }
 .import-menu button:hover,
 .import-menu button:focus-visible {
   background: var(--hover-soft);
   outline: none;
 }
+.import-menu-label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+}
+.import-menu-sub {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  line-height: 1.35;
+}
+
+/* v149: first-run empty-state. Three clickable starter cards shown
+   only when the user has nothing typed AND no clips ever saved on
+   this device. JS in _updateEmptyState() flips visibility on every
+   meaningful change (text input, clip generated, library imported,
+   clip cleared). */
+.empty-state {
+  margin-top: 14px;
+  padding: 16px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+}
+.empty-state-head {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--fg);
+  font-weight: 600;
+}
+.empty-state-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.empty-state-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background 140ms ease-out, border-color 140ms ease-out, transform 100ms ease-out;
+}
+.empty-state-card:hover,
+.empty-state-card:focus-visible {
+  background: var(--hover-soft);
+  border-color: var(--accent);
+  outline: none;
+}
+.empty-state-card:active { transform: scale(0.98); }
+.empty-state-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+.empty-state-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--fg);
+}
+.empty-state-desc {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+/* v149: one-time drag-to-reorder hint above the library list. Closed
+   forever once the user dismisses it OR performs their first drag.
+   Sits inside the library dialog so it doesn't add chrome to the
+   first-time landing page. */
+.drag-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--fg);
+  line-height: 1.45;
+}
+.drag-hint-icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+}
+.drag-hint-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.drag-hint-text strong {
+  color: var(--accent);
+}
+.drag-hint-dismiss {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.drag-hint-dismiss:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
+}
+
+/* v168 → v173: first-clip onboarding tour banner. v168 in the
+   library dialog (invisible until opened), v171 above the player
+   (scrolled past), v172 below the hero (eye skipped it), v173
+   INSIDE .hero-row as a flex middle item — filling the empty
+   horizontal space between the "Narrative" title block and the
+   icon rail, where the user can't miss it. flex: 1 1 280px grows
+   into available room; max-width prevents it from dwarfing the
+   title on very wide monitors; on phones the .hero-row's
+   flex-wrap drops it to its own line below the title. */
+.first-clip-tour {
+  flex: 1 1 280px;
+  min-width: 0;
+  max-width: 560px;
+  margin: 2px 0 0;
+  padding: 8px 12px;
+  background: var(--accent-tint, rgba(110, 168, 254, 0.12));
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.4;
+}
+.first-clip-tour-body {
+  margin: 0;
+}
+.first-clip-tour-body strong { color: var(--accent); }
+
+/* Narrow viewports: the tour wraps to its own row inside .hero-row
+   (because .hero-row has flex-wrap). Push to full-width so it
+   doesn't sit at an awkward in-between size. */
+@media (max-width: 720px) {
+  .first-clip-tour {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+.first-clip-tour-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.first-clip-tour-icon { font-size: 14px; }
+.first-clip-tour-head strong {
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--fg);
+}
+.first-clip-tour-dismiss {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.first-clip-tour-dismiss:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
+}
+.first-clip-tour-items {
+  margin: 0;
+  padding-left: 20px;
+}
+.first-clip-tour-items li { margin-bottom: 4px; }
+.first-clip-tour-items li:last-child { margin-bottom: 0; }
+.first-clip-tour-items strong { color: var(--accent); }
+/* v156: superseded by the swap-to-focus stacked drawer layout — the
+   library is now full-height-minus-strip when it's the active
+   drawer, so the drag-hint fits comfortably. When library is the
+   collapsed strip, its content is clipped naturally by the dialog's
+   overflow:hidden, so no explicit hide needed. */
 
 .characters-dialog::backdrop {
   background: var(--scrim);
@@ -1509,6 +2325,33 @@ input[type="search"]:focus {
   margin-bottom: 10px;
 }
 
+/* v142: GitHub / URL import hint. Sits above the URL row and explains
+   what shape of URL the current flow expects so first-time testers
+   don't paste a /blob/<path> file URL and wonder why nothing loads.
+   Styled as an accent-tinted callout so it reads as guidance, not
+   chrome. */
+.url-row-hint {
+  margin: 0 0 8px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+  border: 1px solid var(--accent, #6ea8fe);
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.url-row-hint strong {
+  color: var(--accent);
+}
+.url-row-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+}
+
 #url-input {
   flex: 1;
   /* Inherits .url-row's existing input styling via the global input rules
@@ -1729,6 +2572,292 @@ body[data-ui-mode="author"]
   flex: 0 0 auto;
 }
 
+/* v162: background queue panel + "Queue silently" link row.
+   Sits below the chapter queue pill and shows the in-flight job
+   plus the draggable list of pending jobs. The currently-
+   synthesizing job is locked at the top (no drag handle, no
+   remove). Pending jobs get ⋮⋮ to reorder and × to drop. */
+.actions-secondary {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -2px;
+  margin-bottom: 6px;
+}
+#queue-silently {
+  font-size: 12.5px;
+}
+.bg-queue-panel {
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bg-queue-current,
+.bg-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+}
+.bg-queue-current {
+  border-color: var(--accent);
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+}
+.bg-queue-current::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: bg-queue-pulse 1.4s ease-in-out infinite;
+  margin-left: 2px;
+}
+@keyframes bg-queue-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bg-queue-current::before { animation: none; }
+}
+.bg-queue-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--fg);
+}
+.bg-queue-meta {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.bg-queue-drag {
+  flex: 0 0 auto;
+  cursor: grab;
+  color: var(--fg-dim);
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+  user-select: none;
+}
+.bg-queue-drag:active { cursor: grabbing; }
+.bg-queue-item.dragging {
+  opacity: 0.85;
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+.bg-queue-remove {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.bg-queue-remove:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
+}
+
+/* v163: queue panel footer with the quick-add link for the most
+   recently browsed GitHub repo. Shown only when a recent repo
+   exists AND the queue has at least one item (otherwise the panel
+   is hidden entirely). Padded above with a hairline separator so
+   it reads as a distinct "actions" zone, not just another row. */
+.bg-queue-footer {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  /* v176: now hosts a label + chip row rather than a single right-
+     aligned link. Vertical stack so the label sits above the chips
+     and reads as a section, and the chips wrap naturally to fit. */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bg-queue-footer .link-btn {
+  font-size: 12.5px;
+}
+/* v176: recent-repos label + chip row inside the queue panel footer.
+   Chips are pill-shaped to echo the player's chip vocabulary and
+   the hero's icon rail; muted by default + accent on hover so the
+   row reads as discoverable rather than primary. */
+.bg-queue-recents-label {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+}
+.bg-queue-recents-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bg-queue-recent-chip {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bg-queue-recent-chip:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* v176: URL-row recents chip row (above the GitHub input). Same
+   pill vocabulary as the queue panel chips so the two surfaces
+   feel of-a-piece — but the label is "Switch to:" instead of
+   "Recent repos:" because the first entry is already pre-filled. */
+.url-row-recents {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.url-row-recents-label {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+  margin-right: 2px;
+}
+.url-row-recent-chip {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.url-row-recent-chip:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* v161: post-queue failures banner. Shows after a background queue
+   finishes if any chapters failed twice (initial + 1 auto-retry).
+   Mirrors chapter-banner styling but tinted warm to read as
+   "needs attention" without being alarming. */
+.silent-queue-failures {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.silent-queue-failures-msg {
+  line-height: 1.5;
+}
+.silent-queue-failures-list {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.silent-queue-failures-list code {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--fg);
+}
+.silent-queue-failures-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* v177: debug log viewer. Modal sized like the picker/voice browser so
+   it sits comfortably on phones AND desktops. The body is a monospace
+   <pre> with vertical scroll — entries can be long when JSON data
+   payloads are present. Action row mirrors picker actions. */
+.debug-log-dialog {
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  width: min(900px, 92vw);
+  max-height: 86dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.debug-log-dialog::backdrop {
+  background: var(--scrim);
+}
+.debug-log-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.debug-log-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.debug-log-actions .link-btn {
+  font-size: 12.5px;
+}
+.debug-log-clear {
+  /* Pull to the right so the destructive action visually separates
+     from Copy / Download. */
+  margin-left: auto;
+  color: var(--danger, #ff6b6b);
+}
+.debug-log-clear:hover {
+  text-decoration: underline;
+}
+.debug-log-body {
+  flex: 1 1 auto;
+  min-height: 240px;
+  max-height: 70dvh;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg-dim);
+}
+
 .chapter-banner-btn {
   font-family: inherit;
   font-size: 12px;
@@ -1774,6 +2903,55 @@ body[data-ui-mode="author"]
   border-radius: 999px;
   font-size: 13px;
   color: var(--fg);
+}
+
+/* v141: background queues get a distinct accent border + a pulsing
+   dot before the icon so the user has unambiguous "work is in
+   progress" feedback. The pill copy also includes per-sentence
+   counts, but the pulse is the at-a-glance signal — without it,
+   testers stared at a static "chapter 2 of 6" line and assumed the
+   queue had hung. */
+.chapter-queue.background-active {
+  border-color: var(--accent);
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+}
+/* v151: the v141 8px fade-and-shrink dot was too subtle — testers
+   weren't sure if anything was actually happening. Bigger solid dot
+   that stays at full opacity, with an outward-expanding halo ring
+   (box-shadow ping) that radiates every loop. Reads unambiguously
+   as "live activity in progress" rather than "decorative dot." */
+.chapter-queue.background-active::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 6px;
+  box-shadow: 0 0 0 0 var(--accent);
+  animation: chapter-queue-ping 1.6s ease-out infinite;
+}
+@keyframes chapter-queue-ping {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent);
+    transform: scale(1);
+  }
+  70% {
+    /* transparent here so the halo theme-flips with the accent token
+       (light mode gets a different base color) — interpolates as the
+       accent fading to zero alpha. */
+    box-shadow: 0 0 0 12px transparent;
+    transform: scale(1.05);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chapter-queue.background-active::before {
+    animation: none;
+  }
 }
 
 .chapter-queue-icon {
@@ -1843,8 +3021,9 @@ body[data-ui-mode="author"]
   color: var(--fg);
 }
 
-/* Saved synthesis presets — horizontal chip scroller. Hidden when empty
-   so an unused row doesn't waste vertical space. */
+/* Saved synthesis presets — horizontal chip scroller. v166: when
+   empty, shows a one-line explainer so testers understand what
+   "Save preset" does without having to try it first. */
 .presets-list {
   display: flex;
   gap: 6px;
@@ -1854,6 +3033,12 @@ body[data-ui-mode="author"]
   scrollbar-width: thin;
   /* Pad-right so the last chip doesn't kiss the card edge while scrolling. */
   padding-bottom: 2px;
+}
+.presets-empty {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  line-height: 1.45;
 }
 
 .preset-chip {
@@ -2387,9 +3572,31 @@ button:disabled {
    the mini-player is visible (e.g. user scrolled the main player
    offscreen) so we don't double-up on top-anchored chrome. */
 @media (min-width: 1024px) {
-  .player-actions {
+  /* v147: scope the floating bar to `.app .player-actions` so it can
+     ONLY ever apply inside the real app (<main class="app">). The
+     manual lives at <main class="manual"> and re-uses `.player-actions`
+     inside `.manual-demo` mockups so the figures match the real
+     player's styling — the v131-v146 rules targeted EVERY
+     `.player-actions` on the page, which made the demo chip rows
+     float at top-of-viewport over the manual prose. Scoping at the
+     source (rather than overriding inside `.manual-demo`) means
+     there's no cascade to wrestle with, and any future page that
+     embeds a `.player-actions` mockup just works. */
+  .app .player-actions {
     position: fixed;
-    top: 20px;
+    /* v137: drop the bar below the hero icon strip. v136's revert to
+       top: 20px appeared correct on a smaller local browser window
+       only because the narrower viewport happened to compress the
+       chips' centered span enough to clear the right-anchored Voice /
+       Library / Settings icons; at the real remote viewport the bar
+       still extends into the Voice button (chips are max-content, so
+       a 6-chip set is ~500px regardless of viewport, while the hero
+       row's center-to-icons gap stays ~180px at any width ≥ 640px
+       since .app caps there). Moving below the hero is the only
+       layout that doesn't fight the icon strip for the same
+       horizontal band. 92px = .app 24px top padding + hero 8px top +
+       36px icon button + 18px hero bottom + 6px breathing. */
+    top: 92px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 5;
@@ -2401,10 +3608,15 @@ button:disabled {
     border: 1px solid var(--border-soft);
     border-radius: 14px;
     box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
-    /* Cap so the row doesn't sprawl across the hero on ultra-wide
-       displays; the existing overflow-x: auto handles longer chip
-       sets gracefully. */
-    max-width: min(600px, calc(100vw - 700px));
+    /* v134: size the floating pill to its chips so it NEVER shows an
+       internal horizontal scrollbar (the v131 cap of `calc(100vw -
+       700px)` was too tight on mid-width laptops — 5 chips at ~500px
+       triggered scroll under a 1200px viewport). max-content keeps the
+       pill exactly wide enough; the cap is a sanity guard for runaway
+       chip sets, deliberately well above any realistic count. */
+    width: max-content;
+    max-width: calc(100vw - 80px);
+    overflow: visible;
     /* Smooth re-center when a side drawer opens/closes so the bar
        glides into the new content area instead of snapping. */
     transition: transform 220ms ease-out, max-width 220ms ease-out;
@@ -2412,18 +3624,19 @@ button:disabled {
   /* When the sticky mini-player is showing (user scrolled past the
      main player card), hide the floating chip row to avoid the two
      top-anchored bars competing for attention. */
-  body:has(#mini-player:not([hidden])) .player-actions {
+  body:has(#mini-player:not([hidden])) .app .player-actions {
     display: none;
   }
   /* v132: when the right-side Voice / Library drawer is open, shift
      the centered chip bar LEFT by half the drawer width so it stays
      centered in the visible content area (the viewport's right side
      is now occupied by the drawer). Without this, the bar sits at
-     viewport center and overlaps the drawer header. Recalculates
-     the max-width too so the bar can't spill into the drawer. */
-  body:is(.drawer-voice-open, .drawer-library-open) .player-actions {
+     viewport center and overlaps the drawer header. v134: max-width
+     also tightens so the (still max-content-sized) pill can't be
+     wider than the visible content column to the left of the drawer. */
+  body:is(.drawer-voice-open, .drawer-library-open) .app .player-actions {
     transform: translateX(calc(-50% - var(--drawer-width, 400px) / 2));
-    max-width: min(600px, calc(100vw - 700px - var(--drawer-width, 400px)));
+    max-width: calc(100vw - 80px - var(--drawer-width, 400px));
   }
 }
 
@@ -2766,6 +3979,19 @@ button:disabled {
   font-size: 12px;
 }
 
+/* v166: Hide-played toggle's pressed state. Without this the button
+   only signals state via its label (Hide played / Show all), which
+   testers misread once they're a few clips into a session. An
+   accent-tinted pill on the pressed state makes the filter status
+   unambiguous regardless of label. */
+#library-hide-played[aria-pressed="true"] {
+  background: var(--accent-tint, rgba(110, 168, 254, 0.14));
+  border: 1px solid var(--accent, #6ea8fe);
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 2px 8px;
+}
+
 .library-empty {
   padding: 18px 12px;
   text-align: center;
@@ -2783,6 +4009,19 @@ button:disabled {
   color: var(--fg-dim);
   font-weight: 600;
   margin: 14px 4px 4px;
+}
+/* v168: one-line subtitle that explains the section to first-time
+   viewers. Used by Continue listening to spell out "started but
+   didn't finish" so users with auto-split libraries understand
+   why their clips are in two buckets. Spans the full grid row at
+   tablet widths (rule already lives in the media query above for
+   .library-section). */
+.library-section-subtitle {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  font-style: normal;
+  margin: -2px 4px 4px;
+  line-height: 1.4;
 }
 
 .library-section:first-child {
@@ -3067,6 +4306,48 @@ button:disabled {
   background: var(--accent-tint);
 }
 
+/* v150: "+ Cover" affordance — appears next to ✎ Edit only on cards
+   whose swatch is still the title-hash gradient. Quiet by default
+   (dashed border + low contrast) so cards without it don't look
+   weirdly different; brightens on hover. Click → opens Edit dialog
+   focused on the cover picker. */
+.clip-add-cover {
+  flex: 0 0 auto;
+  align-self: center;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--fg-dim);
+  padding: 4px 9px;
+  margin: 0 4px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.clip-add-cover:hover,
+.clip-add-cover:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-tint, rgba(110, 168, 254, 0.10));
+  color: var(--accent);
+  outline: none;
+}
+/* On narrow viewports the action row is tight — collapse the label
+   to just "+" so the row stays single-line. */
+@media (max-width: 480px) {
+  .clip-add-cover {
+    font-size: 0;
+    padding: 4px 8px;
+  }
+  .clip-add-cover::before {
+    content: "+";
+    font-size: 13px;
+  }
+}
+
 /* Optional one-line note shown when clip.note is non-empty. Sits below
    the existing meta row inside the play button so the whole card stays
    one tap-target. */
@@ -3312,8 +4593,47 @@ button:disabled {
   margin-top: 0;
 }
 
+/* v179: GitHub provenance line in the Edit dialog. Reads as a meta
+   strip below the title field — accent-tinted pill chip for the SHA
+   so it pops as a click/select target (full SHA in the tooltip). */
+.clip-edit-gitref {
+  margin: 0;
+  padding: 4px 0 2px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.5;
+}
+.clip-edit-gitref-label {
+  font-weight: 600;
+  color: var(--fg);
+}
+.clip-edit-gitref-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--fg);
+  word-break: break-all;
+  min-width: 0;
+}
+.clip-edit-gitref-sep {
+  color: var(--fg-dim);
+}
+.clip-edit-gitref-sha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
 #clip-edit-title,
-#clip-edit-note {
+#clip-edit-note,
+#clip-edit-notes {
   /* The global input/textarea rules at the top of the file already cover
      dark-theme styling. Just override min-height for the inputs. */
   width: 100%;
@@ -3352,6 +4672,88 @@ button:disabled {
     max-width: 100vw;
     border-radius: 0;
   }
+}
+
+/* ---------- Notes dialog (v138) ----------
+   Focused, single-purpose dialog opened from the player 📝 chip while
+   a clip is loaded. Just the clip title + a big textarea + Close.
+   The textarea autosaves on close so the user can jot a mid-listen
+   thought without remembering to tap Save. */
+.notes-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.notes-dialog::backdrop {
+  background: var(--scrim);
+}
+.notes-dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  gap: 12px;
+}
+.notes-dialog-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#notes-dialog-text {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 16px;
+  min-height: 300px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.notes-dialog-foot {
+  padding: 0 16px 14px;
+  display: flex;
+  justify-content: flex-end;
+  min-height: 18px;
+}
+.notes-dialog-foot .muted {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+@media (max-width: 480px) {
+  .notes-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    border-radius: 0;
+    max-height: 100vh;
+    max-height: 100dvh;
+  }
+  #notes-dialog-text {
+    min-height: 360px;
+  }
+}
+
+/* Card notes indicator — a small 📝 chip on a clip card when
+   clip.notes is non-empty, so the user can see at a glance which
+   clips have writing-room reflection attached. */
+.clip-notes-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-left: 6px;
 }
 
 /* ---------- Voice browser dialog ---------- */
@@ -3443,6 +4845,89 @@ button:disabled {
   font-size: 11.5px;
   color: var(--fg-dim);
   line-height: 1.45;
+}
+
+/* v167: "Star a voice → favorites" affordance banner. Lives inside
+   the voice browser (a fullscreen modal) so it can't be hidden by
+   the dialog overlay the way a global setStatus message could. Auto-
+   shows when zero favorites exist + the user hasn't dismissed it
+   manually; auto-hides after the first star OR the × button. */
+.voice-favorites-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 16px 0;
+  padding: 10px 12px;
+  background: var(--accent-tint, rgba(110, 168, 254, 0.12));
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+.voice-favorites-tip-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+}
+.voice-favorites-tip-text { flex: 1 1 auto; min-width: 0; }
+.voice-favorites-tip-text strong { color: var(--accent); }
+.voice-favorites-tip-dismiss {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.voice-favorites-tip-dismiss:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
+}
+
+/* v170: Audition-link nudge for high-count voices (LibriTTS, 904
+   speakers). Same shape as .voice-favorites-tip — the previous
+   _fireChipHint approach fired but was occluded by the voice dialog,
+   so the user never saw it. Inline + dismissible survives the modal.
+   Margin/padding tuned to fit between the speaker label row and the
+   chip without crowding either. */
+.speaker-audition-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: var(--accent-tint, rgba(110, 168, 254, 0.12));
+  border: 1px solid var(--accent, #6ea8fe);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+.speaker-audition-tip-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+}
+.speaker-audition-tip-text { flex: 1 1 auto; min-width: 0; }
+.speaker-audition-tip-text strong { color: var(--accent); }
+.speaker-audition-tip-dismiss {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.speaker-audition-tip-dismiss:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
 }
 
 .voice-browser-filters {

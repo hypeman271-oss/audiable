@@ -1,5 +1,46 @@
 const $ = (id) => document.getElementById(id);
 
+// ---- Debug log ---------------------------------------------------------
+// v177: ring buffer for diagnosing "chapter X keeps failing to synthesize"
+// reports. Every interesting step in the GitHub fetch → background queue →
+// synthesis pipeline writes an entry here. Settings → "View debug log"
+// surfaces the buffer in a modal with Copy/Download/Clear actions. The
+// failures banner also gets a direct link so the user can go straight
+// from "2 chapters failed" to "why."
+//
+// Cap intentionally generous (1000 entries, FIFO drop) — a typical 50-
+// chapter import + retries fits comfortably, and most entries are short
+// strings. Data field accepts any JSON-serializable value (objects get
+// pretty-printed when rendered).
+const _DEBUG_LOG_CAP = 1000;
+const _debugLog = [];
+function _dlog(category, message, data) {
+  // ISO timestamp is sortable + copy/pasteable into bug reports.
+  const entry = {
+    t: new Date().toISOString(),
+    cat: category || "general",
+    msg: String(message || ""),
+  };
+  if (data !== undefined) entry.data = data;
+  _debugLog.push(entry);
+  // FIFO drop when over the cap. Splice from the front so the most
+  // recent context (where the failure actually surfaced) is always
+  // preserved at the tail of the buffer.
+  if (_debugLog.length > _DEBUG_LOG_CAP) {
+    _debugLog.splice(0, _debugLog.length - _DEBUG_LOG_CAP);
+  }
+  // Mirror to console at info level so developers debugging in DevTools
+  // can correlate timestamps. Skip when data is undefined to avoid the
+  // "[object Object]" noise on bare messages.
+  try {
+    if (data !== undefined) {
+      console.info(`[dlog/${entry.cat}] ${entry.msg}`, data);
+    } else {
+      console.info(`[dlog/${entry.cat}] ${entry.msg}`);
+    }
+  } catch {}
+}
+
 // ---- API key (X-Narrative-Key) -----------------------------------------
 // When the server is started with NARRATIVE_KEY set (typical for the public
 // tunnel), every /api/* request needs an X-Narrative-Key header that matches.
@@ -115,6 +156,12 @@ const libraryList = $("library-list");
 const libraryClearBtn = $("library-clear");
 const libraryHidePlayedBtn = $("library-hide-played");
 const librarySyncGithubBtn = $("library-sync-github");
+const libraryRenarrateOutdatedBtn = $("library-renarrate-outdated");
+// v149: first-run empty-state card refs. _updateEmptyState shows/hides
+// the card based on whether the user has any clips saved AND nothing
+// typed.
+const emptyStateEl = $("empty-state");
+let _libraryHasClips = false;
 // Set when "Sync GitHub" finds upstream changes. Used to badge library
 // cards as outdated in renderLibrary. Cleared when the user refetches
 // the affected clip OR re-runs Sync GitHub and the SHAs match again.
@@ -132,6 +179,7 @@ const clipEditDialog = $("clip-edit");
 const clipEditClose = $("clip-edit-close");
 const clipEditTitle = $("clip-edit-title");
 const clipEditNote = $("clip-edit-note");
+const clipEditNotes = $("clip-edit-notes");
 const clipEditTags = $("clip-edit-tags");
 const clipEditSave = $("clip-edit-save");
 const clipEditCoverPreview = $("clip-edit-cover-preview");
@@ -215,6 +263,8 @@ const settingsClose = $("settings-close");
 // replaces it. The picker's radios are queried inline.)
 const settingsFeedbackLink = $("settings-feedback-link");
 const settingsFeedbackGmailLink = $("settings-feedback-gmail-link");
+const settingsResetHintsLink = $("settings-reset-hints-link");
+const settingsDebugLogLink = $("settings-debug-log-link");
 const settingsWhatsNewLink = $("settings-whats-new-link");
 const whatsNewBadge = settingsWhatsNewLink.querySelector(".whats-new-badge");
 
@@ -250,6 +300,9 @@ settingsWhatsNewLink.addEventListener("click", _markWhatsNewSeen);
 const FEEDBACK_EMAIL = "bachatadonis@gmail.com";
 const clearBtn = $("clear-btn");
 const urlRow = $("url-row");
+// v142: per-flow hint above the URL input. Filled by showUrlRow({hint}).
+const urlRowHint = $("url-row-hint");
+const urlRowRecents = $("url-row-recents");
 const urlInput = $("url-input");
 const urlFetchBtn = $("url-fetch-btn");
 const speedBtn = $("speed-btn");
@@ -258,6 +311,16 @@ const abLoopBtn = $("ab-loop-btn");
 const skipBackBtn = $("skip-back-btn");
 const bookmarkAddBtn = $("bookmark-add-btn");
 const bookmarksList = $("bookmarks-list");
+// v138 per-clip notes (free-form scratchpad). Quick-access player chip
+// opens the dedicated dialog; the Edit dialog also exposes the same
+// underlying clip.notes field.
+const notesBtn = $("notes-btn");
+const notesDialog = $("notes-dialog");
+const notesDialogTitle = $("notes-dialog-title");
+const notesDialogText = $("notes-dialog-text");
+const notesDialogClose = $("notes-dialog-close");
+const notesDialogStatus = $("notes-dialog-status");
+let _notesEditingClipId = null;
 const genLabel = generateBtn.querySelector(".label-text");
 const genSpinner = generateBtn.querySelector(".spinner");
 
@@ -365,6 +428,14 @@ let _queueAdvanceTimer = null;
 
 function _tryAdvanceQueue() {
   if (_chapterTotalCount <= 0) return;
+  // v165: foreground auto-advance only — the background worker
+  // (v162) shares _chapterTotalCount and _chapterQueue with the
+  // foreground queue, so without this guard, playing back a saved
+  // clip while a background queue was running would fire the
+  // foreground "next chapter" path and shift items off the
+  // background queue. (User report: "I started playing a file and
+  // I lost the queue.")
+  if (_silentChapterQueue) return;
   if (!_queueAudioComplete || !_queueSaveComplete) return;
   // End-of-chapter sleep: the chapter just finished, both gates are
   // open, but the listener asked us to stop here. Suppress the advance,
@@ -469,6 +540,33 @@ function setUIMode(mode) {
   if (!VALID_UI_MODES.includes(mode)) mode = "standard";
   try { localStorage.setItem(UI_MODE_KEY, mode); } catch {}
   document.body.dataset.uiMode = mode;
+  _updateModeUnlockHint(mode);
+}
+// v150: dynamic "+ unlocks" copy below the Mode picker. Each mode has
+// a list of what it grants on top of the previous tier; the hint
+// stitches together every tier ABOVE the current one so a Simple
+// user sees both Standard and Author benefits in one sentence,
+// Standard sees only Author, and Author sees nothing.
+function _updateModeUnlockHint(mode) {
+  const el = document.getElementById("mode-unlock-hint");
+  if (!el) return;
+  if (mode === "author") {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  const parts = [];
+  if (mode === "simple") {
+    parts.push(
+      '<strong>+ Standard</strong> unlocks bookmarks, sleep timer, A↔B loop, library tools, listen stats, and the cover-art workflow.'
+    );
+  }
+  // Both Simple and Standard show what Author adds.
+  parts.push(
+    '<strong>+ Author</strong> unlocks live word count, long-sentence + filler-word callouts, character voices, and the 📝 Notes scratchpad chip.'
+  );
+  el.innerHTML = parts.join(" ");
+  el.hidden = false;
 }
 
 // Back-compat shim. ~5 callers still read this to gate writing features.
@@ -613,6 +711,10 @@ function _openAsDrawerOrModal(dialog) {
   if (_isDrawerMode()) {
     dialog.show();
     _syncDrawerBodyClasses();
+    // v156: the just-opened drawer becomes the active (full-height)
+    // one in the stacked layout. The user just chose to open this
+    // drawer — show them the thing they asked for.
+    _promoteDrawer(dialog);
   } else {
     // Modal mode (mobile): only one dialog at a time. Each modal
     // covers the viewport with a backdrop — stacking would be a mess.
@@ -625,11 +727,86 @@ function _openAsDrawerOrModal(dialog) {
 // Body class management. CSS keys off `drawer-voice-open` and
 // `drawer-library-open` independently:
 //   - either present → body gets padding-right (text content shifts left)
-//   - both present   → drawers stack (voice top half, library bottom)
+//   - both present   → drawers stack (active one full height, other
+//     collapses to header strip — see drawer-active-{voice,library})
 function _syncDrawerBodyClasses() {
   document.body.classList.toggle("drawer-voice-open", voiceDialog.open);
   document.body.classList.toggle("drawer-library-open", libraryDialog.open);
+  // v156: when both are open, ensure one of drawer-active-{voice,library}
+  // is set so the stacked CSS picks a layout. When fewer than two are
+  // open, the active class is irrelevant — clear both so reopening
+  // doesn't inherit a stale active state.
+  if (voiceDialog.open && libraryDialog.open) {
+    if (
+      !document.body.classList.contains("drawer-active-voice") &&
+      !document.body.classList.contains("drawer-active-library")
+    ) {
+      document.body.classList.add("drawer-active-voice");
+    }
+    // v158: take a measurement on every state change so the strip's
+    // top anchor moves with the active drawer's content height.
+    requestAnimationFrame(_updateDrawerStackHeight);
+  } else {
+    document.body.classList.remove("drawer-active-voice");
+    document.body.classList.remove("drawer-active-library");
+    // Clear the var so a stale value doesn't leak when only one
+    // drawer is open (where the var has no effect anyway).
+    document.body.style.removeProperty("--drawer-active-h");
+  }
 }
+
+// v156: promote the given dialog to the active (full-height) one in
+// the stacked drawer layout. No-op when fewer than two drawers are
+// open — the active class only matters when stacking.
+function _promoteDrawer(dialog) {
+  if (!voiceDialog.open || !libraryDialog.open) return;
+  if (dialog === voiceDialog) {
+    document.body.classList.add("drawer-active-voice");
+    document.body.classList.remove("drawer-active-library");
+  } else if (dialog === libraryDialog) {
+    document.body.classList.add("drawer-active-library");
+    document.body.classList.remove("drawer-active-voice");
+  }
+  // v158: re-measure after the class change so the inactive strip
+  // re-anchors immediately. rAF waits for the active drawer to
+  // re-render at its new height before reading offsetHeight.
+  requestAnimationFrame(_updateDrawerStackHeight);
+}
+
+// v158: measure the active drawer's current height and publish it
+// as --drawer-active-h so the inactive strip's `top` lines up
+// flush with the active drawer's bottom — no gap above (active
+// pinned to top: 0) or below (strip immediately below). Without
+// this the strip's `top` falls back to (viewport - strip-h) and
+// the active drawer's empty trailing space becomes visible chrome.
+function _updateDrawerStackHeight() {
+  if (!_isDrawerMode()) return;
+  if (!voiceDialog.open || !libraryDialog.open) return;
+  const isVoiceActive = document.body.classList.contains("drawer-active-voice");
+  const active = isVoiceActive ? voiceDialog : libraryDialog;
+  const h = active.offsetHeight;
+  if (h > 0) {
+    document.body.style.setProperty("--drawer-active-h", `${Math.round(h)}px`);
+  }
+}
+
+// Observe both dialogs — content changes (Browse voices opens, a
+// new clip lands in the library, an Author-mode chip appears) all
+// shift the active drawer's height. Fires on hide too (size goes
+// to 0); guarded inside _updateDrawerStackHeight.
+if (typeof ResizeObserver !== "undefined") {
+  const obs = new ResizeObserver(() => _updateDrawerStackHeight());
+  obs.observe(voiceDialog);
+  obs.observe(libraryDialog);
+}
+window.addEventListener("resize", _updateDrawerStackHeight);
+
+// v156: click anywhere inside a drawer → that drawer becomes active.
+// Lets the user tap the collapsed strip's header to swap which
+// drawer has full height. No-op when only one drawer is open
+// (_promoteDrawer guards on .open).
+voiceDialog.addEventListener("click", () => _promoteDrawer(voiceDialog));
+libraryDialog.addEventListener("click", () => _promoteDrawer(libraryDialog));
 
 // Same sync on close so the classes drop when a drawer is dismissed
 // via Close button, Esc, trigger-toggle, or programmatic .close().
@@ -735,15 +912,78 @@ settingsBtn.addEventListener("click", () => {
     const saved = getGithubToken();
     if (saved) {
       const tail = saved.slice(-4);
-      _ghStatus.textContent = `Token saved (…${tail}). Paste a new value to replace it.`;
+      // v140: prominent banner state — accent border + ✓ icon — so a
+      // returning user sees "yes, your token is on file" at the top
+      // of the GitHub section, not as faint hint text below the
+      // (deliberately cleared) input.
+      _ghStatus.dataset.state = "saved";
+      _ghStatus.textContent =
+        `Token saved (ending in …${tail}). Paste a new value to replace it; the field stays blank for safety.`;
     } else {
-      _ghStatus.textContent = "No token saved. Public URLs work without one.";
+      // No token → no banner. The hint paragraph below the empty
+      // input already explains the section.
+      _ghStatus.dataset.state = "empty";
+      _ghStatus.textContent = "";
     }
+  }
+  // v149: collapsed-by-default help disclosure is right for repeat
+  // users (they know the dance), but a first-time user needs the
+  // visual guide to be visible without an extra click. Open it
+  // automatically when no token is saved; respect the user's choice
+  // once they've toggled it manually (data-user-toggled flag set on
+  // first interaction below).
+  const _ghHelp = $("settings-github-help");
+  if (_ghHelp && !_ghHelp.dataset.userToggled) {
+    _ghHelp.open = !getGithubToken();
+  }
+  // v180: refresh OAuth button state every time Settings opens so a
+  // status change (token saved in another tab, server-side OAuth got
+  // configured) is reflected immediately.
+  if (typeof _refreshGithubOAuthUI === "function") {
+    _refreshGithubOAuthUI();
   }
   settingsDialog.showModal();
 });
 
 settingsClose.addEventListener("click", () => settingsDialog.close());
+
+// v152: keyboard shortcuts overlay. Opens via "?" key (when focus
+// is NOT inside an input/textarea/contenteditable — otherwise the
+// user can't type "?" into a search box) or via the Settings link.
+const shortcutsDialog = $("shortcuts-dialog");
+const shortcutsClose = $("shortcuts-close");
+const shortcutsLink = $("settings-shortcuts-link");
+if (shortcutsClose) {
+  shortcutsClose.addEventListener("click", () => shortcutsDialog.close());
+}
+if (shortcutsLink) {
+  shortcutsLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    // Close Settings so the shortcuts dialog isn't stacked on top —
+    // both use .showModal() and Esc would close the wrong one.
+    if (settingsDialog.open) settingsDialog.close();
+    shortcutsDialog.showModal();
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "?" || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (!t) return;
+  // Don't hijack ? while the user is typing — they need it in
+  // search/URL/notes/etc.
+  if (
+    t.matches &&
+    t.matches("input, textarea, [contenteditable=true], [contenteditable=plaintext-only]")
+  ) {
+    return;
+  }
+  // Don't open while another modal is already showing (e.g. user
+  // hit ? inside the voice browser); let Esc close that first.
+  const anyOpen = document.querySelector("dialog[open]");
+  if (anyOpen) return;
+  e.preventDefault();
+  shortcutsDialog.showModal();
+});
 
 // GitHub PAT input — save on change, with a confirmation hint shown
 // underneath. Token-shape sanity check is loose: GitHub PATs start with
@@ -760,13 +1000,160 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
     if (!v) return; // empty value on change just means user re-opened the dialog
     setGithubToken(v);
     const tail = v.slice(-4);
-    status.textContent = `Token saved (…${tail}). Cleared from this field.`;
+    // v140: flip the banner to the accent-tinted "saved" state so the
+    // user gets a loud visual at the TOP of the section right after
+    // pasting — that's where they're already looking.
+    status.dataset.state = "saved";
+    status.textContent =
+      `Token saved (ending in …${tail}). The field below was cleared so the value can't be read back.`;
     input.value = ""; // don't keep it visible in the DOM
+    // v180: signed-in user line updates from the new token.
+    if (typeof _refreshGithubOAuthUI === "function") _refreshGithubOAuthUI();
   });
   clearBtn.addEventListener("click", () => {
     setGithubToken("");
     input.value = "";
-    status.textContent = "Token cleared.";
+    status.dataset.state = "cleared";
+    status.textContent = "Token cleared from this device.";
+    // v180: signed-in user line clears with the token.
+    if (typeof _refreshGithubOAuthUI === "function") _refreshGithubOAuthUI();
+  });
+
+  // v144: when the "Show me what to copy" disclosure opens, pull its
+  // summary up to the top of the dialog scroll area so the mock
+  // screenshot is in view immediately. Previously the body expanded
+  // below the fold and at least one tester didn't notice anything
+  // happened — they were staring at the (now invisible) input row
+  // and the help they were trying to read was already on screen
+  // just below it.
+  const ghHelp = $("settings-github-help");
+  if (ghHelp) {
+    ghHelp.addEventListener("toggle", () => {
+      // v149: mark that the user has chosen a state so the
+      // "default open when no token" auto-toggle in the dialog
+      // open path leaves their choice alone next time.
+      ghHelp.dataset.userToggled = "1";
+      if (!ghHelp.open) return;
+      // scrollIntoView with block:"start" aligns the summary to the
+      // dialog's scroll container top. Respect reduced-motion by
+      // skipping the smooth scroll there.
+      const reduced =
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      ghHelp.scrollIntoView({
+        behavior: reduced ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+  }
+})();
+
+// v180: GitHub OAuth — Sign-in button wiring + signed-in user display.
+// Fetches /api/github/oauth/status once on Settings open and adjusts
+// the button's enabled / disabled state. When a token is saved (PAT
+// OR OAuth), calls /user via api.github.com to show "Signed in as
+// @user" + an avatar bullet. PAT and OAuth tokens are interchangeable
+// at the API layer — both produce the same Bearer auth — so this
+// works for both.
+let _githubOAuthStatusCache = null;       // null = not fetched yet
+let _githubOAuthInflightUser = null;       // fetch promise dedupe
+let _githubOAuthLastTokenChecked = "";     // skip duplicate /user calls
+
+async function _fetchGithubOAuthStatus() {
+  if (_githubOAuthStatusCache) return _githubOAuthStatusCache;
+  try {
+    const res = await fetch("/api/github/oauth/status");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _githubOAuthStatusCache = await res.json();
+  } catch (err) {
+    _githubOAuthStatusCache = { configured: false, error: err.message };
+  }
+  return _githubOAuthStatusCache;
+}
+
+async function _fetchGithubUser(token) {
+  if (!token) return null;
+  if (token === _githubOAuthLastTokenChecked && _githubOAuthInflightUser) {
+    return _githubOAuthInflightUser;
+  }
+  _githubOAuthLastTokenChecked = token;
+  _githubOAuthInflightUser = (async () => {
+    try {
+      // Direct fetch to api.github.com — same as the rest of the
+      // GitHub flows do via the backend. We hit it client-side here
+      // because the token is already on this device and there's no
+      // value in routing through our server just to log "@octocat".
+      const res = await fetch("https://api.github.com/user", {
+        headers: {
+          "Accept": "application/vnd.github+json",
+          "Authorization": `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  })();
+  return _githubOAuthInflightUser;
+}
+
+async function _refreshGithubOAuthUI() {
+  const btn = document.getElementById("settings-github-oauth-btn");
+  const note = document.getElementById("settings-github-oauth-note");
+  if (!btn || !note) return;
+
+  const status = await _fetchGithubOAuthStatus();
+  const labelEl = btn.querySelector(".settings-github-oauth-label");
+  const token = getGithubToken();
+
+  if (!status.configured) {
+    btn.disabled = true;
+    btn.title =
+      "GitHub OAuth isn't configured on this server. The operator " +
+      "needs to set GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET env vars. " +
+      "See OAUTH_SETUP.md. Or paste a Personal Access Token below.";
+    if (labelEl) labelEl.textContent = "Sign in with GitHub";
+    note.textContent =
+      "OAuth not configured on the server — paste a token below instead.";
+    note.dataset.state = "info";
+    return;
+  }
+
+  btn.disabled = false;
+  btn.title =
+    "Opens GitHub in this tab so you can authorize Narrative. " +
+    "Token comes back via a redirect — never typed.";
+  if (token) {
+    if (labelEl) labelEl.textContent = "Re-authorize with GitHub";
+    // Try to look up "Signed in as @user". Best-effort: failure
+    // (revoked token / no scopes / network) just falls back to the
+    // generic "Token saved" line in the existing #settings-github-status.
+    const user = await _fetchGithubUser(token);
+    if (user && user.login) {
+      note.textContent = `Signed in as @${user.login}.`;
+      note.dataset.state = "signed-in";
+    } else {
+      note.textContent =
+        "Token saved on this device — couldn't fetch the GitHub user " +
+        "(token may have expired or lacks read:user scope).";
+      note.dataset.state = "warn";
+    }
+  } else {
+    if (labelEl) labelEl.textContent = "Sign in with GitHub";
+    note.textContent = "";
+    note.dataset.state = "";
+  }
+}
+
+(() => {
+  const btn = document.getElementById("settings-github-oauth-btn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    // Top-level navigation — fragments + cookies need a real page
+    // load, not a fetch. The /start endpoint 302s us to GitHub.
+    window.location.href = "/api/github/oauth/start";
   });
 })();
 
@@ -875,6 +1262,172 @@ settingsFeedbackLink.addEventListener("click", () =>
 settingsFeedbackGmailLink.addEventListener("click", () =>
   _onFeedbackLinkClick("Gmail")
 );
+
+// v174: replay every onboarding tip + first-tap hint. Useful after
+// dismissing one by accident — or when the user iterated through
+// several builds and a stale flag from an earlier round is now
+// suppressing a tip they want to see again. Wipes the known
+// hint/tip localStorage keys (NOT the substantive state — voices,
+// presets, library order, GitHub token, mode, theme, etc., all
+// stay). After clearing, re-render the surfaces that read those
+// flags so the user sees the change immediately without reload.
+const _ONBOARDING_HINT_KEYS = [
+  "narrative.firstClipTourSeen",
+  "narrative.firstClipConfettiSeen",
+  "narrative.dragHintDismissed",
+  "narrative.voiceFavTipDismissed",
+  "narrative.speakerAuditionTipDismissed",
+  "narrative.speakerAuditionTipUsed",
+  "narrative.hintSeen.speed",
+  "narrative.hintSeen.sleep",
+  "narrative.hintSeen.abloop",
+  "narrative.hintSeen.playMode",
+  "narrative.hintSeen.hidePlayed",
+  "narrative.hintSeen.speakerAudition",
+];
+if (settingsResetHintsLink) {
+  settingsResetHintsLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    let cleared = 0;
+    try {
+      for (const k of _ONBOARDING_HINT_KEYS) {
+        if (localStorage.getItem(k) !== null) {
+          localStorage.removeItem(k);
+          cleared += 1;
+        }
+      }
+    } catch {}
+    // Re-render every surface that reads the hint flags so the user
+    // immediately sees a tip reappear (rather than having to reload).
+    // renderLibrary() pulls the live clip count and calls
+    // _updateFirstClipTour for us; the other tips re-render directly.
+    // v178: also reset _lastSeenClipCount to 0 BEFORE renderLibrary
+    // runs, so the next _updateFirstClipTour call sees a 0 → N
+    // transition and confetti can re-fire. Without this, users who
+    // upgraded with clips already on file (so prev jumped from -1
+    // straight to N at v175 install) can never satisfy the gate even
+    // after clearing the flag — they'd have to delete every clip
+    // first. Resetting here makes "Replay onboarding tips" the
+    // honest test path the button name promises.
+    try {
+      _lastSeenClipCount = 0;
+      if (typeof renderLibrary === "function") renderLibrary();
+      if (typeof _updateVoiceFavoritesTip === "function") _updateVoiceFavoritesTip();
+      if (typeof _updateSpeakerAuditionTip === "function") {
+        // Re-run with the current voice's speaker count so the banner
+        // pops back if a high-count voice is selected.
+        const n = _voiceSpeakerCounts.get(voiceEl.value) || 0;
+        _updateSpeakerAuditionTip(n > SPEAKER_DROPDOWN_MAX ? n : 0);
+      }
+    } catch (err) { console.warn("reset hints re-render:", err); }
+    setStatus(`Onboarding tips reset — ${cleared} flag${cleared === 1 ? "" : "s"} cleared.`);
+  });
+}
+
+// ---- Debug log viewer --------------------------------------------------
+// v177: surfaces the _debugLog ring buffer in a modal so the user can
+// copy/download it when reporting "chapter X keeps failing" issues.
+const debugLogDialog = $("debug-log-dialog");
+const debugLogClose = $("debug-log-close");
+const debugLogCount = $("debug-log-count");
+const debugLogBody = $("debug-log-body");
+const debugLogCopy = $("debug-log-copy");
+const debugLogDownload = $("debug-log-download");
+const debugLogClear = $("debug-log-clear");
+
+function _formatDebugLogForDisplay() {
+  if (_debugLog.length === 0) {
+    return "(empty — no entries yet. Try a GitHub import or background queue to populate.)";
+  }
+  const lines = [];
+  for (const e of _debugLog) {
+    let line = `${e.t}  [${e.cat}]  ${e.msg}`;
+    if (e.data !== undefined) {
+      let dataStr = "";
+      try { dataStr = JSON.stringify(e.data, null, 2); } catch { dataStr = String(e.data); }
+      // Indent the data block so it visually associates with the line above.
+      line += "\n" + dataStr.split("\n").map((l) => "  " + l).join("\n");
+    }
+    lines.push(line);
+  }
+  return lines.join("\n\n");
+}
+
+function _renderDebugLog() {
+  if (debugLogCount) debugLogCount.textContent = String(_debugLog.length);
+  if (debugLogBody) debugLogBody.textContent = _formatDebugLogForDisplay();
+}
+
+function openDebugLog() {
+  _renderDebugLog();
+  // Scroll to the bottom so the most recent entries (which are usually
+  // what the user wants to see) are visible without manual scroll.
+  if (debugLogBody) {
+    requestAnimationFrame(() => {
+      debugLogBody.scrollTop = debugLogBody.scrollHeight;
+    });
+  }
+  if (debugLogDialog && !debugLogDialog.open) debugLogDialog.showModal();
+}
+
+if (settingsDebugLogLink) {
+  settingsDebugLogLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    // Close Settings first so the debug log opens on top cleanly.
+    if (typeof settingsDialog !== "undefined" && settingsDialog.open) {
+      settingsDialog.close();
+    }
+    openDebugLog();
+  });
+}
+if (debugLogClose) {
+  debugLogClose.addEventListener("click", () => debugLogDialog.close());
+}
+if (debugLogCopy) {
+  debugLogCopy.addEventListener("click", async () => {
+    const text = _formatDebugLogForDisplay();
+    try {
+      await navigator.clipboard.writeText(text);
+      debugLogCopy.textContent = "Copied!";
+      setTimeout(() => { debugLogCopy.textContent = "Copy"; }, 1500);
+    } catch (err) {
+      // Clipboard API blocked (insecure context / permissions). Fall
+      // back to selecting the body so the user can ⌘C / Ctrl+C.
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(debugLogBody);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        debugLogCopy.textContent = "Selected — press Ctrl+C";
+        setTimeout(() => { debugLogCopy.textContent = "Copy"; }, 2500);
+      } catch {}
+    }
+  });
+}
+if (debugLogDownload) {
+  debugLogDownload.addEventListener("click", () => {
+    const text = _formatDebugLogForDisplay();
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    // Local stamp without leaking seconds-precision: YYYY-MM-DDTHH-MM.
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:.]/g, "-");
+    a.href = url;
+    a.download = `narrative-debug-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+}
+if (debugLogClear) {
+  debugLogClear.addEventListener("click", () => {
+    if (!confirm("Clear the debug log? This can't be undone.")) return;
+    _debugLog.length = 0;
+    _renderDebugLog();
+  });
+}
 
 // ---- Streaming playback state -------------------------------------------
 // While synthesis runs, each sentence's WAV arrives over SSE and we play
@@ -1043,6 +1596,27 @@ function applyPlaybackRate() {
   }
 }
 
+// v150: first-tap hint for cycle chips. The Sleep / A↔B / Speed
+// chips all cycle through internal states on tap, but a first-time
+// tester sees the state change with no signal that more taps will
+// keep cycling. _maybeChipHint returns a hint string the first time
+// a given key is hit, then locks it; the chip handlers fire a
+// follow-up setStatus 1.2s later so the original action status
+// (e.g. "Sleep timer 15 min.") reads first and the hint reinforces.
+function _maybeChipHint(key, message) {
+  try {
+    if (localStorage.getItem(key) === "1") return null;
+    localStorage.setItem(key, "1");
+    return message;
+  } catch {
+    return null;
+  }
+}
+function _fireChipHint(key, message) {
+  const hint = _maybeChipHint(key, message);
+  if (hint) setTimeout(() => setStatus(hint), 1200);
+}
+
 speedBtn.addEventListener("click", () => {
   const i = SPEEDS.indexOf(_playbackRate);
   _playbackRate = SPEEDS[(i + 1) % SPEEDS.length];
@@ -1051,6 +1625,10 @@ speedBtn.addEventListener("click", () => {
   applyPlaybackRate();
   // Cycle speed → recompute the wall-clock remaining annotation.
   if (typeof _cpRefreshTime === "function") _cpRefreshTime();
+  _fireChipHint(
+    "narrative.hintSeen.speed",
+    "💡 Tap again to cycle: 1× → 1.25× → 1.5× → 1.75× → 2× → 0.75×."
+  );
 });
 
 updateSpeedBtn();
@@ -1198,6 +1776,10 @@ function _onSleepExpired() {
 }
 
 sleepBtn.addEventListener("click", () => {
+  _fireChipHint(
+    "narrative.hintSeen.sleep",
+    "💡 Tap Sleep again to cycle: 15 / 30 / 45 / 60 min · end of chapter · off."
+  );
   // Cycle is Off → 15 → 30 → 45 → 60 → End-of-boundary → Off.
   // SLEEP_IDX_END_OF_BOUNDARY (5) is the final slot before wrapping.
   _sleepIdx = (_sleepIdx + 1) % (SLEEP_DURATIONS_MIN.length + 1);
@@ -1295,6 +1877,10 @@ abLoopBtn.addEventListener("click", () => {
     _loopB = null;
   }
   _updateAbBtn();
+  _fireChipHint(
+    "narrative.hintSeen.abloop",
+    "💡 Tap A↔B once to mark A · again at B · again to loop · again to clear."
+  );
 });
 
 // Loop enforcement: when both bounds are set, seek back to A whenever the
@@ -2084,8 +2670,48 @@ volumeEl.addEventListener("input", () => {
   volumeValueEl.textContent = `${volumeEl.value}%`;
 });
 
-textEl.addEventListener("input", updateCounts);
+textEl.addEventListener("input", () => {
+  updateCounts();
+  _updateEmptyState();
+});
 updateCounts();
+
+// v149: first-run empty-state. Visible only when the user has NEVER
+// generated/imported a clip AND has nothing typed. Click handlers
+// route to the same import paths the dropdown uses.
+function _updateEmptyState() {
+  if (!emptyStateEl) return;
+  // Reading view active → the user is listening to something already.
+  // Clip loaded → not the empty case either. Suppress in both cases.
+  const hasText = (textEl.value || "").trim().length > 0;
+  const inReadingView = !textEl.parentNode || textEl.hidden;
+  const show = !_libraryHasClips && !hasText && !_currentClipId && !inReadingView;
+  emptyStateEl.hidden = !show;
+}
+// Card clicks reuse the existing Import-dropdown paths so the action
+// behavior stays in one place (no duplicate file pickers, no
+// duplicate showUrlRow callers).
+document.querySelectorAll("[data-empty-action]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const action = btn.dataset.emptyAction;
+    if (action === "url") {
+      if (urlRow.hidden) showUrlRow({ placeholder: "https://… (article URL)" });
+      else urlInput.focus();
+    } else if (action === "file") {
+      uploadInput.click();
+    } else if (action === "github") {
+      showUrlRow({
+        placeholder: "github.com/owner/repo",
+        prefill: "https://github.com/",
+        hint:
+          'Paste the <strong>repo root</strong> — like ' +
+          '<code>github.com/owner/repo</code> — not a link to a ' +
+          'specific file. We\'ll open a picker so you can choose ' +
+          'which chapters to import.',
+      });
+    }
+  });
+});
 
 // voice_id → num_speakers, populated from /api/voices. Used by onVoiceChange
 // to decide whether to surface the speaker picker. SAPI voices and most
@@ -2243,6 +2869,83 @@ function getGithubToken() {
   }
 }
 
+// v163: remember recently-browsed GitHub repos so the user can
+// re-open them with one click — both from Import → GitHub (chip
+// row above the URL field) and from the queue panel (chips at the
+// bottom). v176: expanded from a single most-recent value to a
+// list of up to 5, most-recent-first, deduped by URL.
+const LAST_GITHUB_REPO_KEY = "narrative.lastGithubRepo";       // legacy (single)
+const RECENT_GITHUB_REPOS_KEY = "narrative.recentGithubRepos"; // v176 list
+const RECENT_GITHUB_REPOS_MAX = 5;
+
+// v176 helpers -----------------------------------------------------------
+// Read the recent-repos list. On first read after a v176 upgrade we
+// also migrate the legacy single-value key into the new list so the
+// user doesn't lose their last-opened repo.
+function _getRecentGithubRepos() {
+  try {
+    const raw = localStorage.getItem(RECENT_GITHUB_REPOS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return arr.filter(
+          (r) => r && r.url && r.owner && r.repo
+        ).slice(0, RECENT_GITHUB_REPOS_MAX);
+      }
+    }
+    // Migrate from the v163 single-value key if present.
+    const legacyRaw = localStorage.getItem(LAST_GITHUB_REPO_KEY);
+    if (legacyRaw) {
+      const obj = JSON.parse(legacyRaw);
+      if (obj && obj.url && obj.owner && obj.repo) {
+        const seed = [obj];
+        try {
+          localStorage.setItem(RECENT_GITHUB_REPOS_KEY, JSON.stringify(seed));
+        } catch {}
+        return seed;
+      }
+    }
+  } catch {}
+  return [];
+}
+
+// Push (or move-to-front) a repo on the recent list. Dedupes by url
+// and caps at RECENT_GITHUB_REPOS_MAX. Also writes through the
+// legacy single-value key so any code path still reading the old key
+// keeps working until it's migrated.
+function _pushRecentGithubRepo(info) {
+  if (!info || !info.url || !info.owner || !info.repo) return;
+  const list = _getRecentGithubRepos();
+  const url = info.url;
+  const filtered = list.filter((r) => r.url !== url);
+  filtered.unshift({
+    url: info.url,
+    owner: info.owner,
+    repo: info.repo,
+    branch: info.branch || null,
+  });
+  const capped = filtered.slice(0, RECENT_GITHUB_REPOS_MAX);
+  try {
+    localStorage.setItem(RECENT_GITHUB_REPOS_KEY, JSON.stringify(capped));
+    localStorage.setItem(LAST_GITHUB_REPO_KEY, JSON.stringify(capped[0]));
+  } catch {}
+  if (typeof _renderBgQueuePanel === "function") _renderBgQueuePanel();
+}
+
+// Backward-compat: callers that need "most recent" still work. Reads
+// from the new list (which auto-migrates from the legacy key) and
+// returns the head, or null if the list is empty.
+function _getLastGithubRepo() {
+  const list = _getRecentGithubRepos();
+  return list.length > 0 ? list[0] : null;
+}
+
+// Kept as an alias so older v163 call sites continue to compile.
+// New code should call _pushRecentGithubRepo directly.
+function _setLastGithubRepo(info) {
+  _pushRecentGithubRepo(info);
+}
+
 function setGithubToken(token) {
   try {
     if (token && token.trim()) {
@@ -2252,6 +2955,82 @@ function setGithubToken(token) {
     }
   } catch {}
 }
+
+// v180: GitHub OAuth — capture the access token from the URL fragment
+// after the server's /api/github/oauth/callback redirects back to /.
+// The fragment carries `#gh_token=...` so the token never appears in
+// access logs or Referer headers. We store it via setGithubToken (same
+// path the PAT paste uses), surface a one-shot success status, then
+// clear the fragment + the query param via history.replaceState so a
+// reload doesn't re-process the same token.
+function _captureGithubOAuthRedirect() {
+  try {
+    const hash = window.location.hash || "";
+    const search = window.location.search || "";
+    let captured = null;
+    let success = false;
+    let errMsg = null;
+
+    // Parse the fragment for gh_token=...
+    if (hash.startsWith("#") && hash.includes("gh_token=")) {
+      const params = new URLSearchParams(hash.slice(1));
+      const tok = params.get("gh_token");
+      if (tok) captured = tok;
+    }
+    // Parse the query for the success / error signals.
+    if (search) {
+      const q = new URLSearchParams(search);
+      success = q.get("gh_oauth") === "success";
+      errMsg = q.get("gh_oauth_error");
+    }
+
+    if (captured) {
+      setGithubToken(captured);
+      _dlog && _dlog("oauth", "GitHub OAuth captured token from fragment", {
+        chars: captured.length,
+      });
+      // Clear fragment + query so a reload doesn't re-show the toast
+      // and the token isn't sitting in window.location for any rogue
+      // script to read.
+      try {
+        history.replaceState({}, "", window.location.pathname);
+      } catch {}
+      // Defer status until setStatus is wired (it's declared later in
+      // the file). On a typical run this fires after init though.
+      setTimeout(() => {
+        try {
+          if (typeof setStatus === "function") {
+            setStatus("✓ Signed in with GitHub — token saved.");
+          }
+        } catch {}
+      }, 0);
+      // Best-effort: surface signed-in user display once Settings
+      // opens. _refreshGithubOAuthUI handles both cases.
+      if (typeof _refreshGithubOAuthUI === "function") {
+        _refreshGithubOAuthUI();
+      }
+    } else if (errMsg) {
+      _dlog && _dlog("oauth", `GitHub OAuth error from server: ${errMsg}`, {});
+      try { history.replaceState({}, "", window.location.pathname); } catch {}
+      setTimeout(() => {
+        try {
+          if (typeof setStatus === "function") {
+            setStatus(`GitHub sign-in failed: ${errMsg}`, true);
+          }
+        } catch {}
+      }, 0);
+    } else if (success) {
+      // Success flag without a token is unexpected but harmless. Tidy
+      // the URL so a reload doesn't re-trigger the branch.
+      try { history.replaceState({}, "", window.location.pathname); } catch {}
+    }
+  } catch (err) {
+    // Defensive: never let URL parsing break boot. The user can still
+    // paste a PAT manually.
+    console.warn("[oauth] capture failed:", err);
+  }
+}
+_captureGithubOAuthRedirect();
 
 function _isGithubUrl(url) {
   try {
@@ -2359,6 +3138,48 @@ function onVoiceChange() {
   if (useChip) _updateSpeakerChipLabel();
 
   speakerRow.hidden = false;
+
+  // v170: inline tip for high-count voices, replacing the v168
+  // _fireChipHint approach that wrote to the global status bar —
+  // which is occluded by this very dialog, so users never saw it
+  // (and the localStorage flag got "consumed" sight-unseen). The
+  // banner is dismissible (×) and auto-hides once the user has
+  // actually opened the Audition wizard; both states persist in
+  // localStorage so a returning user isn't nagged.
+  _updateSpeakerAuditionTip(useChip ? n : 0);
+}
+
+// v170: inline tip pointing at the Audition link. The voice dialog
+// is fullscreen on phones — a setStatus-based hint is invisible
+// behind it. The banner shows when a high-count voice loads AND the
+// user has neither dismissed it nor opened Audition yet.
+const SPEAKER_AUDITION_TIP_DISMISSED_KEY = "narrative.speakerAuditionTipDismissed";
+const SPEAKER_AUDITION_TIP_USED_KEY = "narrative.speakerAuditionTipUsed";
+function _updateSpeakerAuditionTip(speakerCount) {
+  const tip = document.getElementById("speaker-audition-tip");
+  if (!tip) return;
+  let dismissed = false, used = false;
+  try {
+    dismissed = localStorage.getItem(SPEAKER_AUDITION_TIP_DISMISSED_KEY) === "1";
+    used = localStorage.getItem(SPEAKER_AUDITION_TIP_USED_KEY) === "1";
+  } catch {}
+  if (!speakerCount || dismissed || used) {
+    tip.hidden = true;
+    return;
+  }
+  const countEl = document.getElementById("speaker-audition-tip-count");
+  if (countEl) countEl.textContent = String(speakerCount);
+  tip.hidden = false;
+}
+const _speakerAuditionTipDismissBtn = document.getElementById(
+  "speaker-audition-tip-dismiss"
+);
+if (_speakerAuditionTipDismissBtn) {
+  _speakerAuditionTipDismissBtn.addEventListener("click", () => {
+    try { localStorage.setItem(SPEAKER_AUDITION_TIP_DISMISSED_KEY, "1"); } catch {}
+    const tip = document.getElementById("speaker-audition-tip");
+    if (tip) tip.hidden = true;
+  });
 }
 
 voiceEl.addEventListener("change", onVoiceChange);
@@ -2720,11 +3541,50 @@ function openSpeakerWizard() {
   speakerWizard.showModal();
 }
 
-speakerAuditionBtn.addEventListener("click", openSpeakerWizard);
+speakerAuditionBtn.addEventListener("click", () => {
+  // v170: opening the wizard from the link means the user found
+  // the affordance — mark the tip "used" so it never shows again.
+  try { localStorage.setItem(SPEAKER_AUDITION_TIP_USED_KEY, "1"); } catch {}
+  const tip = document.getElementById("speaker-audition-tip");
+  if (tip) tip.hidden = true;
+  openSpeakerWizard();
+});
+
+// v152: speaker explainer link. Toggles an inline popover (v153)
+// so a repeat click visibly closes it again — the original v152
+// setStatus fired the same message both times, which the user
+// couldn't tell was a real second-click reaction.
+const speakerHelpBtn = $("speaker-help-btn");
+const speakerHelpPopover = $("speaker-help-popover");
+if (speakerHelpBtn && speakerHelpPopover) {
+  speakerHelpBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = !speakerHelpPopover.hidden;
+    speakerHelpPopover.hidden = isOpen;
+    speakerHelpBtn.setAttribute("aria-expanded", isOpen ? "false" : "true");
+  });
+  // Tap outside the popover (anywhere in the voice dialog body)
+  // closes it. Click on the popover itself doesn't bubble close.
+  speakerHelpPopover.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", (e) => {
+    if (speakerHelpPopover.hidden) return;
+    if (e.target === speakerHelpBtn) return;
+    if (speakerHelpPopover.contains(e.target)) return;
+    speakerHelpPopover.hidden = true;
+    speakerHelpBtn.setAttribute("aria-expanded", "false");
+  });
+}
 // Chip click is the primary path for high-count voices — the native
 // dropdown is hidden in that mode, so the chip carries both the current-
 // value display AND the "change" affordance in a single tap target.
-speakerChip.addEventListener("click", openSpeakerWizard);
+speakerChip.addEventListener("click", () => {
+  // v170: chip also routes through the wizard — same "found it"
+  // signal as the Audition link.
+  try { localStorage.setItem(SPEAKER_AUDITION_TIP_USED_KEY, "1"); } catch {}
+  const tip = document.getElementById("speaker-audition-tip");
+  if (tip) tip.hidden = true;
+  openSpeakerWizard();
+});
 speakerWizardClose.addEventListener("click", () => speakerWizard.close());
 speakerWizard.addEventListener("close", _stopWizardPreview);
 
@@ -2852,7 +3712,17 @@ function renderPresets() {
   const list = _loadPresets();
   presetsList.innerHTML = "";
   if (list.length === 0) {
-    presetsList.hidden = true;
+    // v166: show a one-line explainer when no presets exist instead
+    // of hiding the row entirely — testers had no idea what "Save
+    // preset" would produce. Becomes a real chip list once they
+    // save one. Hidden on Simple mode (advanced-only) so casual
+    // readers never see writing-craft chrome.
+    presetsList.hidden = false;
+    const empty = document.createElement("p");
+    empty.className = "presets-empty advanced-only";
+    empty.textContent =
+      "💡 Tip — Save preset stores the current voice + speed + volume as a named combo. Useful when juggling two voices for different content (fiction vs. tech docs, narrator vs. character).";
+    presetsList.appendChild(empty);
     return;
   }
   presetsList.hidden = false;
@@ -3301,6 +4171,16 @@ let _regenResumeAtSec = null;
 let _regenSuppressStreaming = false;
 
 async function generate() {
+  // v141: belt-and-braces guard. The Generate button is also
+  // disabled while a background queue runs, but a programmatic
+  // call (e.g. _advanceChapterQueue racing the cancel path) could
+  // still reach here — short-circuit with a clearer message than
+  // "Type or paste some text first", which sent at least one
+  // tester reaching for reload.
+  if (_silentChapterQueue) {
+    setStatus("Background queue is running — cancel it to generate manually.", true);
+    return;
+  }
   // Reset chapter-queue advance flags so this chapter starts with a
   // clean slate (only matters mid-queue — for non-queue generates the
   // flags should already be false and _chapterTotalCount is 0).
@@ -3950,6 +4830,20 @@ let _chapterTotalCount = 0;      // fixed for the life of the queue
 let _chapterCurrentIndex = 0;    // 1-based; what's loaded in the textarea right now
 let _pendingChapterTitle = null; // consumed by generate() in place of makeTitle
 let _detectedChapters = null;    // hangs around between banner show and Split click
+// v139: background-mode queue. When true, _startBackgroundChapterQueue
+// drives the chapter loop via _preSynthesizeChapter sequentially; no
+// audio ever loads into the player, and _advanceChapterQueue (the
+// foreground autoplay path) is bypassed entirely.
+let _silentChapterQueue = false;
+// v141: live per-chapter progress for the silent queue, sourced from
+// the synthesizer's SSE `sentence` events. Without these the pill
+// only ticked once per chapter (which can be MINUTES for a long
+// one), making the queue look stuck. _bgSynthCurrentTitle holds the
+// chapter whose synthesis is in flight; _bgSynthSentence /
+// _bgSynthTotal are the latest counter and target.
+let _bgSynthCurrentTitle = "";
+let _bgSynthSentence = 0;
+let _bgSynthTotal = 0;
 
 // Pre-synthesis lookahead: chapter N+1 gets synthesized in the background
 // while the user listens to chapter N, then loaded instantly from the
@@ -4111,7 +5005,12 @@ function _hideChapterBanner() {
 }
 
 function _updateChapterQueueUI() {
-  if (_chapterTotalCount <= 0) {
+  // v162: silent queue may be active even when _chapterTotalCount is
+  // 0 (a single job was queued, picked up, and is in flight; the
+  // queue array is empty but _bgCurrent isn't). Treat either signal
+  // as "we have something to show in the pill."
+  const silentActive = _silentChapterQueue || _bgCurrent;
+  if (_chapterTotalCount <= 0 && !silentActive) {
     chapterQueueEl.hidden = true;
     return;
   }
@@ -4119,6 +5018,33 @@ function _updateChapterQueueUI() {
   const idx = _chapterCurrentIndex;
   const total = _chapterTotalCount;
   const nextTitle = _chapterQueue.length > 0 ? _chapterQueue[0].title : null;
+  // v139: background-mode pill makes it explicit that nothing's
+  // about to play — the user opted in for silent upload while away.
+  // v141: add the current chapter's title + live sentence progress
+  // (sourced from SSE in _preSynthesizeChapter) so a long chapter
+  // doesn't look stuck. Also mark the pill .background-active so
+  // the CSS pulse dot kicks in.
+  if (silentActive) {
+    chapterQueueEl.classList.add("background-active");
+    const curTitle = _bgSynthCurrentTitle || (_bgCurrent && _bgCurrent.title) || "";
+    const progress = _bgSynthTotal > 0
+      ? ` · ${_bgSynthSentence}/${_bgSynthTotal} sentences`
+      : "";
+    const curLabel = curTitle ? `: ${curTitle}` : "";
+    // v162: drop "X of Y" — the persistent queue can grow mid-flight,
+    // so a fixed-total count goes stale. Show the current title +
+    // sentence progress + pending count instead.
+    const pendingTail = _chapterQueue.length
+      ? ` · ${_chapterQueue.length} more queued`
+      : "";
+    chapterQueueText.textContent =
+      `Background · Synthesizing${curLabel}${progress}${pendingTail}`;
+    return;
+  }
+  // Foreground mode: drop the active class so the pulse dot doesn't
+  // bleed across modes (e.g. if a foreground queue starts after a
+  // background queue completes within the same session).
+  chapterQueueEl.classList.remove("background-active");
   const head = `Chapter ${idx} of ${total}`;
   chapterQueueText.textContent = nextTitle
     ? `${head} · Next: ${nextTitle}`
@@ -4143,6 +5069,565 @@ function _startChapterQueue(chapters) {
   setStatus(
     `Chapter 1 of ${_chapterTotalCount} loaded. Click Generate — the rest will auto-continue.`
   );
+}
+
+// v161: post-queue failures banner. _silentQueueFailures persists the
+// chapter objects across the queue's exit so the Retry button can
+// re-run them; the banner element shows the chapter names and the
+// Retry / Dismiss actions.
+let _silentQueueFailures = [];
+const silentQueueFailuresEl = $("silent-queue-failures");
+const silentQueueFailuresCount = $("silent-queue-failures-count");
+const silentQueueFailuresList = $("silent-queue-failures-list");
+const silentQueueFailuresRetry = $("silent-queue-failures-retry");
+const silentQueueFailuresLog = $("silent-queue-failures-log");
+const silentQueueFailuresDismiss = $("silent-queue-failures-dismiss");
+
+function _showSilentQueueFailuresBanner(failed) {
+  if (!silentQueueFailuresEl) return;
+  _silentQueueFailures = failed.slice();
+  const n = failed.length;
+  silentQueueFailuresCount.textContent =
+    n === 1 ? "1 chapter" : `${n} chapters`;
+  silentQueueFailuresList.innerHTML = "";
+  for (const ch of failed) {
+    const code = document.createElement("code");
+    code.textContent = ch.title || "(untitled)";
+    silentQueueFailuresList.appendChild(code);
+  }
+  silentQueueFailuresEl.hidden = false;
+}
+function _hideSilentQueueFailuresBanner() {
+  if (!silentQueueFailuresEl) return;
+  silentQueueFailuresEl.hidden = true;
+  _silentQueueFailures = [];
+}
+if (silentQueueFailuresRetry) {
+  silentQueueFailuresRetry.addEventListener("click", () => {
+    if (!_silentQueueFailures.length) return;
+    const retry = _silentQueueFailures.slice();
+    _hideSilentQueueFailuresBanner();
+    _startBackgroundChapterQueue(retry);
+  });
+}
+if (silentQueueFailuresDismiss) {
+  silentQueueFailuresDismiss.addEventListener(
+    "click",
+    _hideSilentQueueFailuresBanner,
+  );
+}
+if (silentQueueFailuresLog) {
+  // v177: one-click jump from "2 chapters failed" → debug log with
+  // the per-chapter error context already captured.
+  silentQueueFailuresLog.addEventListener("click", () => {
+    if (typeof openDebugLog === "function") openDebugLog();
+  });
+}
+
+// v162: persistent background queue + reorder + add-while-running.
+//
+// _chapterQueue (existing array) holds PENDING jobs only. _bgCurrent
+// holds the job currently being synthesized (peeled off before
+// processing so the queue is exclusively "what's next"). The worker
+// is a simple while-loop fed from the front of the queue; when
+// _chapterQueue gains items via _enqueueBg, the worker resumes (or
+// restarts if it had drained) automatically.
+//
+// Each enqueued job snapshots its voice / rate / volume / speaker so
+// the user can change the voice between queueings without
+// retroactively affecting jobs already in the queue.
+//
+// Use case: "I'm reading article A; I find article B I'd rather get
+// to first; I queue B at the top, drag B above A in the queue, and
+// keep working." Or "queue 8 chapters then drag chapters 6-7 to
+// the top because those are the ones I want to listen to tonight."
+
+let _bgCurrent = null;       // job in flight, or null
+let _bgRunning = false;      // worker loop active
+let _bgOkCount = 0;          // saved successfully this run
+let _bgFailures = [];        // accumulate persistent failures for the banner
+// v169: elapsed-time clock for the current job. _bgCurrentStartedAt
+// is set each time _bgRunWorker shifts a new job onto _bgCurrent;
+// _bgCurrentTimerId polls every second so the queue panel can show
+// a live "elapsed 0:45 · ~0:12 left" line on the in-flight row.
+let _bgCurrentStartedAt = 0;
+let _bgCurrentTimerId = null;
+function _fmtMmSs(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function _startBgCurrentTimer() {
+  _stopBgCurrentTimer();
+  _bgCurrentTimerId = setInterval(() => {
+    // Cheap re-render: only the current row's meta needs to refresh
+    // each second. Full panel rerender is fine — pending rows hash
+    // by jobId, so the dragging session (if any) is untouched.
+    _renderBgQueuePanel();
+  }, 1000);
+}
+function _stopBgCurrentTimer() {
+  if (_bgCurrentTimerId !== null) {
+    clearInterval(_bgCurrentTimerId);
+    _bgCurrentTimerId = null;
+  }
+}
+
+function _bgJobFromUi(text, title) {
+  const trimmed = (text || "").trim();
+  return {
+    id: `bgjob_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    title: (title || makeTitle(trimmed) || "(untitled)").trim(),
+    text: trimmed,
+    voiceId: voiceEl.value,
+    voiceName: voiceEl.selectedOptions[0]?.textContent || voiceEl.value || "",
+    rate: Number(rateEl.value),
+    volume: Number(volumeEl.value) / 100,
+    speakerId: speakerRow.hidden ? null : Number(speakerEl.value || 0),
+  };
+}
+
+// Public-ish API: add one or many jobs to the background queue.
+// Starts the worker if it isn't running yet. Captures the CURRENT
+// voice settings into each job at enqueue time.
+function _enqueueBg(jobsOrChapters) {
+  const arr = Array.isArray(jobsOrChapters) ? jobsOrChapters : [jobsOrChapters];
+  if (!arr.length) return;
+  if (!voiceEl.value) {
+    setStatus("Pick a voice before queueing silently.", true);
+    return;
+  }
+  for (const j of arr) {
+    // Accept either a fully-built job OR a {title, text, ...chapter}
+    // shape. Snapshot voice settings if missing.
+    _chapterQueue.push({
+      id: j.id || `bgjob_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      title: (j.title || makeTitle(j.text || "") || "(untitled)").trim(),
+      text: (j.text || "").trim(),
+      voiceId: j.voiceId || voiceEl.value,
+      voiceName: j.voiceName || (voiceEl.selectedOptions[0]?.textContent || voiceEl.value || ""),
+      rate: typeof j.rate === "number" ? j.rate : Number(rateEl.value),
+      volume: typeof j.volume === "number" ? j.volume : Number(volumeEl.value) / 100,
+      speakerId:
+        j.speakerId !== undefined
+          ? j.speakerId
+          : speakerRow.hidden
+          ? null
+          : Number(speakerEl.value || 0),
+      // v176: source provenance so the picker can flag "this file is
+      // already in the queue" with a ✓ badge. gitRef carries repoUrl
+      // + path; targetClipId, when set, tells _bgTrySynth/saveClip to
+      // overwrite an existing clip instead of creating a new one (used
+      // by the v176 "Re-narrate outdated" path).
+      gitRef: j.gitRef || null,
+      targetClipId: j.targetClipId || null,
+    });
+  }
+  _hideSilentQueueFailuresBanner();
+  _renderBgQueuePanel();
+  _updateChapterQueueUI();
+  if (!_bgRunning) _bgRunWorker();
+}
+
+// Try one job through the existing pre-synthesis pipeline.
+// _preSynthesizeChapter takes a {title, text} object — pass through.
+// It captures voice/rate/volume from the UI at synthesis time, so we
+// briefly swap UI values to the job's snapshot before calling, then
+// restore (the user might be changing settings mid-queue for the
+// next item they're about to queue).
+async function _bgTrySynth(job) {
+  _preSynthChapter = null;
+  // Snapshot the UI so we can restore after.
+  const prev = {
+    voice: voiceEl.value,
+    rate: rateEl.value,
+    volume: volumeEl.value,
+    speaker: speakerEl.value,
+  };
+  // Best-effort: only swap if the values are actually different (avoids
+  // dispatching a stream of change events when most queued items share
+  // the user's current voice).
+  let swapped = false;
+  if (job.voiceId && job.voiceId !== voiceEl.value) {
+    voiceEl.value = job.voiceId;
+    swapped = true;
+  }
+  if (typeof job.rate === "number" && String(job.rate) !== rateEl.value) {
+    rateEl.value = String(job.rate);
+    swapped = true;
+  }
+  const volPct = String(Math.round((job.volume || 1) * 100));
+  if (volPct !== volumeEl.value) {
+    volumeEl.value = volPct;
+    swapped = true;
+  }
+  if (job.speakerId !== null && job.speakerId !== undefined) {
+    speakerEl.value = String(job.speakerId);
+  }
+  try {
+    // v177: log the job's preflight state — voice, lengths, gitRef —
+    // so a "chapter 2 keeps failing" report contains everything
+    // needed to reproduce. Title + chars almost always pin the cause.
+    _dlog("bg-queue", `synth start: ${job.title}`, {
+      chars: (job.text || "").length,
+      voiceId: job.voiceId,
+      rate: job.rate,
+      volume: job.volume,
+      speakerId: job.speakerId,
+      targetClipId: job.targetClipId || null,
+      gitRefPath: job.gitRef ? job.gitRef.path : null,
+    });
+    // v176: thread targetClipId + gitRef so the synth path can
+    // overwrite an existing clip (Re-narrate outdated) instead of
+    // creating a new one. Re-imports preserve title/notes/bookmarks
+    // through saveClip below.
+    await _preSynthesizeChapter({
+      title: job.title,
+      text: job.text,
+      targetClipId: job.targetClipId || null,
+      gitRef: job.gitRef || null,
+    });
+  } catch (err) {
+    _dlog("bg-queue", `synth threw: ${job.title}`, {
+      errName: err && err.name,
+      errMsg: err && err.message,
+      stack: err && err.stack,
+    });
+    console.warn("[bg queue] synth threw:", job.title, err);
+    if (swapped) {
+      voiceEl.value = prev.voice;
+      rateEl.value = prev.rate;
+      volumeEl.value = prev.volume;
+      speakerEl.value = prev.speaker;
+    }
+    return false;
+  }
+  if (swapped) {
+    voiceEl.value = prev.voice;
+    rateEl.value = prev.rate;
+    volumeEl.value = prev.volume;
+    speakerEl.value = prev.speaker;
+  }
+  const ok = !!(
+    _preSynthChapter && _preSynthChapter.title === job.title
+  );
+  _preSynthChapter = null;
+  return ok;
+}
+
+// The worker. Pulls jobs off the front of _chapterQueue one at a
+// time, runs them through _bgTrySynth with one auto-retry on
+// failure, and continues until the queue drains or is cancelled.
+// New items added via _enqueueBg while the worker is running just
+// land at the queue's back and get processed when their turn comes.
+async function _bgRunWorker() {
+  if (_bgRunning) return;
+  if (_chapterQueue.length === 0) return;
+  _bgRunning = true;
+  _silentChapterQueue = true;
+  _chapterTotalCount = _chapterQueue.length;
+  _chapterCurrentIndex = 0;
+  _bgOkCount = 0;
+  _bgFailures = [];
+  _hideSilentQueueFailuresBanner();
+  generateBtn.disabled = true;
+  generateBtn.title = "Background queue is running — cancel it to generate manually.";
+  _renderBgQueuePanel();
+  setStatus(
+    `Background queue started — ${_chapterQueue.length} item${_chapterQueue.length === 1 ? "" : "s"} pending.`
+  );
+  while (_chapterQueue.length > 0 && _silentChapterQueue) {
+    _bgCurrent = _chapterQueue.shift();
+    _chapterCurrentIndex += 1;
+    _bgSynthCurrentTitle = _bgCurrent.title || "";
+    _bgSynthSentence = 0;
+    _bgSynthTotal = 0;
+    // v169: record start time + run a 1s tick so the queue panel
+    // shows live "elapsed 0:45" + ETA from sentence progress.
+    _bgCurrentStartedAt = Date.now();
+    _startBgCurrentTimer();
+    _updateChapterQueueUI();
+    _renderBgQueuePanel();
+    let success = await _bgTrySynth(_bgCurrent);
+    if (!success && _silentChapterQueue) {
+      _dlog("bg-queue", `RETRY ${_bgCurrent.title} after 1.5s`, {
+        chars: (_bgCurrent.text || "").length,
+      });
+      console.warn(
+        `[bg queue] retrying "${_bgCurrent.title}" after 1.5s…`
+      );
+      await new Promise((r) => setTimeout(r, 1500));
+      if (_silentChapterQueue) success = await _bgTrySynth(_bgCurrent);
+    }
+    if (success) {
+      _dlog("bg-queue", `OK ${_bgCurrent.title}`, {
+        chars: (_bgCurrent.text || "").length,
+      });
+      _bgOkCount += 1;
+    } else if (_silentChapterQueue) {
+      _dlog("bg-queue", `FAIL ${_bgCurrent.title} (both attempts)`, {
+        chars: (_bgCurrent.text || "").length,
+        gitRefPath: _bgCurrent.gitRef ? _bgCurrent.gitRef.path : null,
+      });
+      _bgFailures.push(_bgCurrent);
+    }
+    _bgCurrent = null;
+    // v169: tear down the 1s tick when the job ends. If the worker
+    // shifts another job on the next iteration, _startBgCurrentTimer
+    // will restart it; otherwise the loop exits and the panel is hidden.
+    _stopBgCurrentTimer();
+    _renderBgQueuePanel();
+  }
+  const cancelled = !_silentChapterQueue;
+  _silentChapterQueue = false;
+  _bgRunning = false;
+  _chapterTotalCount = 0;
+  _chapterCurrentIndex = 0;
+  _preSynthChapter = null;
+  _bgSynthCurrentTitle = "";
+  _bgSynthSentence = 0;
+  _bgSynthTotal = 0;
+  generateBtn.disabled = false;
+  generateBtn.title = "";
+  _updateChapterQueueUI();
+  _renderBgQueuePanel();
+  if (cancelled) {
+    setStatus(`Background queue cancelled — ${_bgOkCount} saved.`);
+  } else if (_bgFailures.length > 0) {
+    _showSilentQueueFailuresBanner(_bgFailures);
+    setStatus(
+      `Background queue done — ${_bgOkCount} saved, ${_bgFailures.length} need a retry.`,
+      false
+    );
+  } else if (_bgOkCount > 0) {
+    setStatus(`Background queue done — ${_bgOkCount} chapter${_bgOkCount === 1 ? "" : "s"} in your library.`);
+  }
+}
+
+// v139 compat: keeps the existing import-picker callers
+// (_startBackgroundChapterQueue) working — they just enqueue and
+// trust the worker to run.
+async function _startBackgroundChapterQueue(chapters) {
+  if (!chapters || chapters.length === 0) return;
+  _enqueueBg(chapters);
+}
+
+// v162: render the queue panel — current job (if any) + the pending
+// list. Idempotent; safe to call from anywhere the queue state
+// changes (enqueue, dequeue, reorder, remove, cancel).
+const bgQueuePanel = $("bg-queue-panel");
+const bgQueueCurrent = $("bg-queue-current");
+const bgQueuePending = $("bg-queue-pending");
+const bgQueueFooter = $("bg-queue-footer");
+function _renderBgQueuePanel() {
+  if (!bgQueuePanel) return;
+  const hasCurrent = !!_bgCurrent;
+  const pendingCount = _chapterQueue.length;
+  bgQueuePanel.hidden = !hasCurrent && pendingCount === 0;
+  if (hasCurrent) {
+    bgQueueCurrent.hidden = false;
+    bgQueueCurrent.innerHTML = "";
+    const title = document.createElement("span");
+    title.className = "bg-queue-title";
+    title.textContent = _bgCurrent.title || "(untitled)";
+    const meta = document.createElement("span");
+    meta.className = "bg-queue-meta";
+    // v169: live elapsed + ETA. ETA is derived from sentence-rate
+    // (elapsed / sentences_done * sentences_remaining), so it only
+    // shows up once at least a few sentences have completed — early
+    // estimates from "0 sentences done" would be infinite or wildly
+    // off and read as confusing noise.
+    const parts = [];
+    if (_bgSynthTotal > 0) {
+      parts.push(`${_bgSynthSentence}/${_bgSynthTotal} sentences`);
+    } else {
+      parts.push("synthesizing…");
+    }
+    const elapsedMs = _bgCurrentStartedAt > 0 ? Date.now() - _bgCurrentStartedAt : 0;
+    parts.push(`elapsed ${_fmtMmSs(elapsedMs)}`);
+    if (
+      _bgSynthSentence >= 5 &&
+      _bgSynthTotal > _bgSynthSentence &&
+      elapsedMs > 1000
+    ) {
+      const perSent = elapsedMs / _bgSynthSentence;
+      const remaining = (_bgSynthTotal - _bgSynthSentence) * perSent;
+      parts.push(`~${_fmtMmSs(remaining)} left`);
+    }
+    meta.textContent = parts.join(" · ");
+    bgQueueCurrent.append(title, meta);
+  } else {
+    bgQueueCurrent.hidden = true;
+    bgQueueCurrent.innerHTML = "";
+  }
+  bgQueuePending.innerHTML = "";
+  for (let i = 0; i < _chapterQueue.length; i++) {
+    const job = _chapterQueue[i];
+    const row = document.createElement("div");
+    row.className = "bg-queue-item";
+    row.dataset.jobId = job.id;
+    const drag = document.createElement("span");
+    drag.className = "bg-queue-drag";
+    drag.setAttribute("aria-label", "Drag to reorder");
+    drag.title = "Drag to reorder";
+    drag.textContent = "⋮⋮";
+    _attachBgDragHandle(drag, row);
+    const title = document.createElement("span");
+    title.className = "bg-queue-title";
+    title.textContent = job.title || "(untitled)";
+    const meta = document.createElement("span");
+    meta.className = "bg-queue-meta";
+    const words = Math.max(1, Math.round((job.text || "").length / 5));
+    const mins = Math.max(1, Math.round(words / 180));
+    meta.textContent = `~${mins} min`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "bg-queue-remove";
+    remove.setAttribute("aria-label", "Remove from queue");
+    remove.title = "Remove from queue";
+    remove.textContent = "×";
+    remove.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = _chapterQueue.findIndex((j) => j.id === job.id);
+      if (idx >= 0) {
+        _chapterQueue.splice(idx, 1);
+        _renderBgQueuePanel();
+        _updateChapterQueueUI();
+      }
+    });
+    row.append(drag, title, meta, remove);
+    bgQueuePending.appendChild(row);
+  }
+  // v163 / v176: recent-repos shortcut row at the bottom of the
+  // queue panel. v163 showed a single "+ Add more from owner/repo"
+  // link for the most recent. v176 surfaces up to RECENT_REPOS_MAX
+  // (5) past repos as chips so a user juggling multiple book projects
+  // can flip between them without re-pasting URLs.
+  if (bgQueueFooter) {
+    const recents = _getRecentGithubRepos();
+    if (recents.length > 0) {
+      bgQueueFooter.hidden = false;
+      bgQueueFooter.innerHTML = "";
+      // Section label so the chip row reads as deliberate UI, not
+      // mystery buttons hanging off the queue.
+      const label = document.createElement("span");
+      label.className = "bg-queue-recents-label";
+      label.textContent =
+        recents.length === 1 ? "Recent repo:" : "Recent repos:";
+      bgQueueFooter.appendChild(label);
+      const chipRow = document.createElement("div");
+      chipRow.className = "bg-queue-recents-chips";
+      for (const r of recents) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "bg-queue-recent-chip";
+        chip.title = `Re-open the GitHub picker for ${r.owner}/${r.repo}`;
+        chip.textContent = `${r.owner}/${r.repo}`;
+        chip.addEventListener("click", () => {
+          // Defer to openGithubBrowser so the chip flows through the
+          // same picker / background-mode path as a fresh Import →
+          // GitHub. _pushRecentGithubRepo on the fetch will bubble
+          // this entry back to the front of the list.
+          openGithubBrowser(r.url);
+        });
+        chipRow.appendChild(chip);
+      }
+      bgQueueFooter.appendChild(chipRow);
+    } else {
+      bgQueueFooter.hidden = true;
+      bgQueueFooter.innerHTML = "";
+    }
+  }
+}
+
+// Drag-to-reorder for pending queue rows. Mirrors the library card
+// drag pattern (Pointer Events + visual translateY + midpoint-based
+// insertion math), just scoped to .bg-queue-pending.
+let _bgDragSession = null;
+function _attachBgDragHandle(handle, rowEl) {
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 && e.button !== undefined && e.pointerType === "mouse") {
+      return;
+    }
+    e.preventDefault();
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+    _bgDragSession = {
+      rowEl,
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      jobId: rowEl.dataset.jobId,
+    };
+    rowEl.classList.add("dragging");
+    handle.addEventListener("pointermove", _onBgDragMove);
+    handle.addEventListener("pointerup", _onBgDragEnd);
+    handle.addEventListener("pointercancel", _onBgDragEnd);
+  });
+}
+function _onBgDragMove(e) {
+  if (!_bgDragSession || e.pointerId !== _bgDragSession.pointerId) return;
+  e.preventDefault();
+  const dy = e.clientY - _bgDragSession.startY;
+  _bgDragSession.rowEl.style.transform = `translateY(${dy}px)`;
+}
+function _onBgDragEnd(e) {
+  if (!_bgDragSession || e.pointerId !== _bgDragSession.pointerId) return;
+  const { rowEl, jobId } = _bgDragSession;
+  const handle = e.currentTarget;
+  try { handle.releasePointerCapture(e.pointerId); } catch {}
+  handle.removeEventListener("pointermove", _onBgDragMove);
+  handle.removeEventListener("pointerup", _onBgDragEnd);
+  handle.removeEventListener("pointercancel", _onBgDragEnd);
+  const draggedRect = rowEl.getBoundingClientRect();
+  const draggedMid = draggedRect.top + draggedRect.height / 2;
+  rowEl.style.transform = "";
+  rowEl.classList.remove("dragging");
+  _bgDragSession = null;
+  const siblings = Array.from(bgQueuePending.children).filter(
+    (c) => c !== rowEl
+  );
+  let insertIdx = siblings.length;
+  for (let i = 0; i < siblings.length; i++) {
+    const r = siblings[i].getBoundingClientRect();
+    if (draggedMid < r.top + r.height / 2) {
+      insertIdx = i;
+      break;
+    }
+  }
+  const fromIdx = _chapterQueue.findIndex((j) => j.id === jobId);
+  if (fromIdx === -1) return;
+  const [job] = _chapterQueue.splice(fromIdx, 1);
+  _chapterQueue.splice(insertIdx, 0, job);
+  _renderBgQueuePanel();
+  _updateChapterQueueUI();
+}
+
+// "Queue silently" button — captures the current textarea as a job
+// and clears the textarea so the next paste starts fresh.
+const queueSilentlyBtn = $("queue-silently");
+if (queueSilentlyBtn) {
+  queueSilentlyBtn.addEventListener("click", () => {
+    const text = (textEl.value || "").trim();
+    if (!text) {
+      setStatus("Type or paste some text first to queue it.", true);
+      textEl.focus();
+      return;
+    }
+    if (!voiceEl.value) {
+      setStatus("Pick a voice before queueing silently.", true);
+      return;
+    }
+    const title = _pendingChapterTitle || makeTitle(text);
+    _enqueueBg([{ title, text }]);
+    textEl.value = "";
+    updateCounts();
+    _pendingChapterTitle = null;
+    _hideChapterBanner();
+    setStatus(
+      `Queued "${title}" silently — ${_chapterQueue.length} in the queue.`
+    );
+    if (typeof _updateEmptyState === "function") _updateEmptyState();
+  });
 }
 
 // Called from generate()'s save path. If there are more chapters waiting,
@@ -4231,7 +5716,21 @@ async function _preSynthesizeChapter(chapter) {
       }),
       signal: myController.signal,
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // v177: capture the response body — synthesis errors often
+      // include the actual reason (voice not found, OOM, etc.) in
+      // the JSON detail. Clone so the read here doesn't block the
+      // synth path's own reader.
+      let body = "";
+      try { body = await res.clone().text(); } catch {}
+      _dlog("synth", `HTTP ${res.status} for chapter`, {
+        status: res.status,
+        title: chapter.title,
+        chars: (chapter.text || "").length,
+        body: body.slice(0, 500),
+      });
+      throw new Error(`HTTP ${res.status}`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -4248,18 +5747,48 @@ async function _preSynthesizeChapter(chapter) {
         for (const line of chunk.split("\n")) {
           if (!line.startsWith("data: ")) continue;
           const event = JSON.parse(line.slice(6));
+          // v141: surface per-sentence progress into the silent-queue
+          // pill so the user has something to watch during a long
+          // chapter. Skip when the silent queue isn't active so the
+          // lookahead pre-synth path (during a foreground queue)
+          // doesn't fight the foreground status text.
+          if (event.type === "sentence" && _silentChapterQueue) {
+            _bgSynthSentence = (event.index || 0) + 1;
+            _bgSynthTotal = event.total || 0;
+            _updateChapterQueueUI();
+          }
           if (event.type === "result") {
             combinedMp3 = new Blob([base64ToBytes(event.mp3_b64)], {
               type: "audio/mpeg",
             });
             sentenceOffsetsMs = event.sentence_offsets_ms || [];
           } else if (event.type === "error") {
+            // v177: log the SSE error message + position so a "chapter
+            // 2 fails" report contains the sentence number where it
+            // broke (useful for "the third sentence has a weird char").
+            _dlog("synth", `SSE error: ${event.message || "(no msg)"}`, {
+              title: chapter.title,
+              atSentence: _bgSynthSentence,
+              ofTotal: _bgSynthTotal,
+            });
             throw new Error(event.message || "synthesis error");
           }
         }
       }
     }
-    if (!combinedMp3) throw new Error("no audio in result");
+    if (!combinedMp3) {
+      // v177: the SSE stream ended without a result event. Almost
+      // always means upstream sent only `sentence` events that
+      // produced no audio (all-whitespace text, voice misroute,
+      // server crashed mid-stream). Log everything we know.
+      _dlog("synth", "no audio in result", {
+        title: chapter.title,
+        chars: (chapter.text || "").length,
+        sentencesSeen: _bgSynthSentence,
+        totalAdvertised: _bgSynthTotal,
+      });
+      throw new Error("no audio in result");
+    }
 
     // Get duration via a throwaway <audio> element so the saved clip
     // has accurate metadata for the library card.
@@ -4282,11 +5811,27 @@ async function _preSynthesizeChapter(chapter) {
       return;
     }
 
-    const newClipId = Date.now() + Math.floor(Math.random() * 1000);
+    // v176: if the queue item carries a targetClipId (Re-narrate
+    // outdated), overwrite that clip instead of creating a new one.
+    // Carry the existing clip's title/note/bookmarks/cover so a
+    // re-narrate is transparent — only text + audio + gitRef change.
+    let existingClip = null;
+    if (chapter.targetClipId) {
+      try { existingClip = await getClip(chapter.targetClipId); } catch {}
+    }
+    const newClipId = existingClip
+      ? existingClip.id
+      : Date.now() + Math.floor(Math.random() * 1000);
     await saveClip({
       id: newClipId,
-      title: chapter.title,
-      note: "",
+      title: existingClip ? existingClip.title : chapter.title,
+      note: existingClip ? existingClip.note || "" : "",
+      // v176: re-narrate updates the source text and audio in place;
+      // everything else (notes, tags, cover, bookmarks) is the user's
+      // metadata and must survive the refresh untouched.
+      notes: existingClip ? existingClip.notes || "" : "",
+      tags: existingClip ? existingClip.tags || [] : [],
+      cover: existingClip ? existingClip.cover || undefined : undefined,
       text: chapter.text,
       voiceId,
       voiceName,
@@ -4296,11 +5841,29 @@ async function _preSynthesizeChapter(chapter) {
       sentenceOffsetsSec: sentenceOffsetsMs.map((ms) => ms / 1000),
       blob: combinedMp3,
       durationSec: duration,
+      // Reset playhead on a re-narrate — the new audio's timeline is
+      // different from the old one, so the old position is meaningless.
       progressSec: 0,
-      bookmarks: [],
-      images: [],
-      createdAt: new Date().toISOString(),
+      // Carry bookmarks: text didn't fundamentally change, just got
+      // re-fetched. User's marks are too valuable to wipe.
+      bookmarks: existingClip && Array.isArray(existingClip.bookmarks)
+        ? existingClip.bookmarks
+        : [],
+      images: existingClip && Array.isArray(existingClip.images)
+        ? existingClip.images
+        : [],
+      // gitRef: prefer the fresh one from the re-narrate fetch so
+      // the new SHA is recorded; fall back to the existing clip's
+      // ref if for some reason we don't have a new one.
+      gitRef: chapter.gitRef || (existingClip ? existingClip.gitRef : null),
+      createdAt: existingClip
+        ? existingClip.createdAt
+        : new Date().toISOString(),
     });
+    if (existingClip) {
+      // Drop the outdated flag now that the clip is current.
+      _outdatedClipIds.delete(existingClip.id);
+    }
     renderLibrary();
     _preSynthChapter = { clipId: newClipId, title: chapter.title };
   } catch (err) {
@@ -4330,14 +5893,45 @@ function _cancelChapterQueue() {
   // cancelled — they didn't synthesize all of them). Also clear the
   // pending-advance flag so a later 'ended' event doesn't try to
   // resume the cancelled queue.
+  // v139: flip the silent flag so a running background loop bails out
+  // of its next iteration. _abortPreSynth (below) terminates the
+  // in-flight fetch so the current chapter aborts immediately rather
+  // than running to completion. The "current chapter will still save"
+  // language stays for foreground queues — in background mode, an
+  // in-flight aborted chapter does NOT save (pre-synth bails before
+  // saveClip on AbortError), which matches user expectation: they
+  // hit cancel because they don't want it.
+  const wasSilent = _silentChapterQueue;
+  _silentChapterQueue = false;
   _chapterQueue = [];
   _chapterTotalCount = 0;
   _chapterCurrentIndex = 0;
   _pendingChapterTitle = null;
   _resetQueueAdvanceFlags();
   _abortPreSynth();
+  // v141: restore Generate when cancelling a background queue. (For
+  // foreground queues these are already at the right state.)
+  if (wasSilent) {
+    _bgSynthCurrentTitle = "";
+    _bgSynthSentence = 0;
+    _bgSynthTotal = 0;
+    generateBtn.disabled = false;
+    generateBtn.title = "";
+    // v162: clear the persistent-worker state so the next enqueue
+    // starts a fresh run instead of resuming with a stale current.
+    _bgCurrent = null;
+    _bgRunning = false;
+    // v169: stop the elapsed-time tick so it doesn't keep firing
+    // _renderBgQueuePanel after the panel is hidden.
+    _stopBgCurrentTimer();
+    if (typeof _renderBgQueuePanel === "function") _renderBgQueuePanel();
+  }
   _updateChapterQueueUI();
-  setStatus("Chapter queue cancelled — current chapter will still save.");
+  setStatus(
+    wasSilent
+      ? "Background queue cancelled."
+      : "Chapter queue cancelled — current chapter will still save."
+  );
 }
 
 // Single entry point for "text just arrived from outside; check it." All
@@ -4614,6 +6208,9 @@ function clearForNewClip() {
   // a freshly-typed clip.
   _pendingImages = [];
   _pendingGitRef = null;
+  // v149: textarea + clip just got wiped — give the empty-state card
+  // a chance to re-appear if the library is also empty.
+  _updateEmptyState();
 
   // Wipe the sentence state so any leftover highlight from the previous
   // clip doesn't bleed into the next reading view.
@@ -4847,6 +6444,16 @@ playModeBtn.addEventListener("click", () => {
   updatePlayModeBtn();
   // Re-render the library so the new sort applies immediately.
   renderLibrary();
+  // v166: first-tap hint — the sort chip cycles through six modes
+  // (Newest / Oldest / Longest / Shortest / Custom / Shuffle) but a
+  // first-time tester sees the label change once and has no signal
+  // that more taps keep cycling. Matches the v150 hint pattern.
+  if (typeof _fireChipHint === "function") {
+    _fireChipHint(
+      "narrative.hintSeen.playMode",
+      "💡 Tap the sort chip again to cycle: Newest · Oldest · Longest · Shortest · Custom · Shuffle.",
+    );
+  }
 });
 
 updatePlayModeBtn();
@@ -4885,6 +6492,18 @@ libraryHidePlayedBtn.addEventListener("click", () => {
   catch {}
   _updateHidePlayedBtn();
   renderLibrary();
+  // v166: first-tap status confirms which state we just flipped into,
+  // so a tester who can't tell whether they're now hiding or showing
+  // gets an unambiguous signal once. CSS aria-pressed styling carries
+  // the state visually after that.
+  if (typeof _fireChipHint === "function") {
+    _fireChipHint(
+      "narrative.hintSeen.hidePlayed",
+      _hidePlayed
+        ? "💡 Played clips are now hidden — the button reads 'Show all' while filtered."
+        : "💡 Showing every clip again. Tap 'Hide played' to filter finished ones out.",
+    );
+  }
 });
 
 // "Sync GitHub" — batch-check every git-sourced clip in the library
@@ -4977,6 +6596,91 @@ async function syncAllFromGithub() {
 }
 
 librarySyncGithubBtn.addEventListener("click", syncAllFromGithub);
+
+// v176: companion to Sync all. The Sync flow populates
+// _outdatedClipIds with library clips whose upstream SHA has moved.
+// This handler closes the loop by refetching each outdated clip and
+// dropping it into the background queue with targetClipId set, so
+// _preSynthesizeChapter overwrites the existing clip rather than
+// minting a new one. Title, notes, bookmarks, cover, tags all
+// survive (see saveClip block in _preSynthesizeChapter).
+async function renarrateAllOutdated() {
+  if (!_outdatedClipIds || _outdatedClipIds.size === 0) return;
+  const token = getGithubToken();
+  if (!token) {
+    setStatus("Set a GitHub PAT in Settings before re-narrating.", true);
+    return;
+  }
+  if (!voiceEl.value) {
+    setStatus("Pick a voice before re-narrating.", true);
+    return;
+  }
+  // Snapshot so the iteration is stable even if the worker drops
+  // entries from the set as each re-narrate lands.
+  const ids = Array.from(_outdatedClipIds);
+  libraryRenarrateOutdatedBtn.disabled = true;
+  const originalLabel = libraryRenarrateOutdatedBtn.textContent;
+  libraryRenarrateOutdatedBtn.textContent = "Refetching…";
+  let enqueued = 0;
+  let failed = 0;
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    setStatus(`Refetching ${i + 1}/${ids.length} outdated clips…`);
+    try {
+      const clip = await getClip(id);
+      if (!clip || !clip.gitRef || !clip.gitRef.repoUrl || !clip.gitRef.path) {
+        failed++;
+        continue;
+      }
+      const { repoUrl, branch, path } = clip.gitRef;
+      const m = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!m) { failed++; continue; }
+      const owner = m[1];
+      const repo = m[2];
+      const rawUrl =
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch || "main"}/${encodeURI(path)}`;
+      const res = await fetch("/api/extract/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: rawUrl,
+          github_token: token || undefined,
+          // No git_sha here — we WANT the latest, not a pinned version.
+        }),
+      });
+      if (!res.ok) { failed++; continue; }
+      const data = await res.json();
+      // Drop it into the background queue. _bgRunWorker will pick it
+      // up, _preSynthesizeChapter will overwrite the existing clip
+      // because targetClipId is set.
+      _enqueueBg([{
+        title: clip.title,
+        text: (data.text || "").trim(),
+        targetClipId: clip.id,
+        gitRef: data.gitRef || clip.gitRef,
+      }]);
+      enqueued++;
+    } catch (err) {
+      console.warn("[renarrate] failed for clip", id, err);
+      failed++;
+    }
+  }
+  libraryRenarrateOutdatedBtn.disabled = false;
+  libraryRenarrateOutdatedBtn.textContent = originalLabel;
+  const tail = failed
+    ? ` (${failed} couldn't be refetched)`
+    : "";
+  if (enqueued === 0) {
+    setStatus(`No clips could be refetched.${tail}`, true);
+  } else {
+    setStatus(
+      `Queued ${enqueued} re-narrate${enqueued === 1 ? "" : "s"} — watch the queue panel for progress.${tail}`
+    );
+  }
+}
+if (libraryRenarrateOutdatedBtn) {
+  libraryRenarrateOutdatedBtn.addEventListener("click", renarrateAllOutdated);
+}
 
 // Returns the id of the clip that should play after `fromId` ends, or null
 // if we're at the end of the queue (or shuffle has no other clips). Walks
@@ -5154,6 +6858,16 @@ function makeClipCard(clip) {
     noteEl.textContent = clip.note.trim();
     titleStack.appendChild(noteEl);
   }
+  // v138 notes indicator. Free-form scratchpad presence — just an
+  // icon, no content preview, so the card stays compact and the
+  // user opens Notes (Edit dialog or 📝 chip) to read or edit.
+  if (clip.notes && clip.notes.trim()) {
+    const notesEl = document.createElement("span");
+    notesEl.className = "clip-notes-indicator";
+    notesEl.title = "This clip has notes attached";
+    notesEl.textContent = "📝 Notes";
+    titleStack.appendChild(notesEl);
+  }
   // Tag chips. Each chip carries the tag-hash color as a left border so
   // the same tag is always the same color across cards. Inside the play
   // button so a single tap still loads the clip (no nested interactives).
@@ -5231,14 +6945,45 @@ function makeClipCard(clip) {
     renderLibrary();
   });
 
+  // v150: "+ Cover" affordance — only rendered for clips that don't
+  // have an uploaded cover yet. Cover upload was previously invisible
+  // unless the user opened ✎ Edit and scrolled to the right row;
+  // testers never knew the feature existed. The button is a quiet
+  // dashed-border chip (low chrome) that opens Edit dialog and
+  // scrolls the cover picker into view.
+  let addCoverBtn = null;
+  if (!clip.cover || !clip.cover.blob) {
+    addCoverBtn = document.createElement("button");
+    addCoverBtn.className = "clip-add-cover";
+    addCoverBtn.type = "button";
+    addCoverBtn.setAttribute("aria-label", `Add cover image to ${clip.title}`);
+    addCoverBtn.title = "Add a cover image";
+    addCoverBtn.textContent = "+ Cover";
+    addCoverBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openClipEdit(clip.id);
+      // Let the dialog finish rendering, then nudge the cover picker
+      // into view + focus so the user lands exactly at the next step.
+      setTimeout(() => {
+        const coverPick = document.getElementById("clip-edit-cover-pick");
+        if (coverPick) {
+          coverPick.scrollIntoView({ behavior: "smooth", block: "center" });
+          coverPick.focus();
+        }
+      }, 120);
+    });
+  }
+
   // In select mode, hide the per-clip action buttons — bulk delete /
   // export live in the tools row instead. Just checkbox + body.
   if (_libraryMultiSelect) {
     item.append(leftCell, playBtn);
   } else if (resetBtn) {
-    item.append(leftCell, playBtn, resetBtn, editBtn, delBtn);
+    const tail = [resetBtn, addCoverBtn, editBtn, delBtn].filter(Boolean);
+    item.append(leftCell, playBtn, ...tail);
   } else {
-    item.append(leftCell, playBtn, editBtn, delBtn);
+    const tail = [addCoverBtn, editBtn, delBtn].filter(Boolean);
+    item.append(leftCell, playBtn, ...tail);
   }
   return item;
 }
@@ -5275,6 +7020,197 @@ async function resetClipProgress(id) {
 // the dragged card's midpoint.
 
 let _dragSession = null; // {cardEl, pointerId, startY}
+
+// v168: first-clip tour banner. Once-per-device, shown above the
+// library list as soon as the user has at least one clip on file.
+// Connects three discoverability surfaces in a single banner —
+// covers (✎ Edit), drag-to-reorder, and the 📝 Notes chip — at the
+// moment the user has a clip those features apply to.
+const FIRST_CLIP_TOUR_KEY = "narrative.firstClipTourSeen";
+// v175: separate flag for the confetti burst so it stays once-only
+// even if the tour banner is re-dismissed or cleared. Cleared by the
+// Settings "Replay onboarding tips" link (along with the tour flag).
+const FIRST_CLIP_CONFETTI_KEY = "narrative.firstClipConfettiSeen";
+function _isFirstClipTourSeen() {
+  try { return localStorage.getItem(FIRST_CLIP_TOUR_KEY) === "1"; } catch { return false; }
+}
+function _dismissFirstClipTour() {
+  try { localStorage.setItem(FIRST_CLIP_TOUR_KEY, "1"); } catch {}
+  const el = document.getElementById("first-clip-tour");
+  if (el) el.hidden = true;
+}
+// v175: track previous clip count across renderLibrary calls so we
+// can detect the 0 → ≥1 transition. -1 sentinel = "first call this
+// session, no transition info yet" — used to suppress confetti on
+// page load with existing clips (returning user shouldn't celebrate
+// every reload). Only the genuine 0 → 1 jump fires confetti.
+let _lastSeenClipCount = -1;
+function _updateFirstClipTour(clipCount) {
+  const el = document.getElementById("first-clip-tour");
+  if (!el) return;
+  el.hidden = _isFirstClipTourSeen() || clipCount <= 0;
+
+  // v175 / v178: confetti burst on the user's first ever clip save.
+  // Two gates:
+  // 1. Transition gate: prev === 0 AND new >= 1. Page-init calls
+  //    arrive with prev === -1 and are ignored regardless of count
+  //    (a returning user with 5 clips doesn't re-celebrate). The
+  //    only path that satisfies prev === 0 is "user started this
+  //    session empty, just saved their first clip."
+  // 2. One-shot gate: localStorage flag. Once fired, never again
+  //    (unless cleared by Settings → Replay onboarding tips).
+  // v178: log every evaluation so a "confetti didn't pop" report has
+  // diagnosis-ready entries showing which gate blocked the fire.
+  const prev = _lastSeenClipCount;
+  _lastSeenClipCount = clipCount;
+  let confettiSeen = false;
+  try {
+    confettiSeen = localStorage.getItem(FIRST_CLIP_CONFETTI_KEY) === "1";
+  } catch {}
+  const transitionFires = prev === 0 && clipCount >= 1;
+  if (transitionFires && !confettiSeen) {
+    _dlog("confetti", `FIRE — first clip transition`, {
+      prev, clipCount, confettiSeen,
+    });
+    try { localStorage.setItem(FIRST_CLIP_CONFETTI_KEY, "1"); } catch {}
+    _playConfetti();
+  } else if (transitionFires && confettiSeen) {
+    _dlog("confetti", "skip — transition fires but flag already set", {
+      prev, clipCount, flagKey: FIRST_CLIP_CONFETTI_KEY,
+    });
+  } else if (clipCount >= 1 && !confettiSeen) {
+    // Most common "why didn't it pop?" cause: user upgraded to v175
+    // with clips already on file, so prev jumps from -1 directly to
+    // their existing count and the transition gate is impossible to
+    // satisfy. Log it so the debug view surfaces the diagnosis.
+    _dlog("confetti", "skip — no 0→≥1 transition (gate blocked)", {
+      prev, clipCount, confettiSeen, hint: "use Settings → Replay onboarding tips to test"
+    });
+  }
+}
+
+// v175: lightweight canvas confetti — no dependency, ~140 paper
+// rectangles falling from the top with gravity + drag + per-particle
+// rotation. Fires once on the 0 → ≥1 clip transition. Respects
+// prefers-reduced-motion (skips entirely). High-DPI canvas scaling
+// via devicePixelRatio so it's crisp on retina screens. Particles
+// auto-clean up after 4.5s — the canvas removes itself when the
+// last particle is either offscreen or fully faded.
+function _playConfetti() {
+  // Accessibility: users who've asked for reduced motion get no
+  // surprise animation. The tour banner still appears as their
+  // first-clip cue.
+  try {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  } catch {}
+  // Don't stack bursts — if one is already mid-flight, leave it.
+  if (document.getElementById("confetti-canvas")) return;
+
+  const canvas = document.createElement("canvas");
+  canvas.id = "confetti-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  const dpr = window.devicePixelRatio || 1;
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.cssText =
+    "position:fixed;inset:0;width:100%;height:100%;" +
+    "pointer-events:none;z-index:9999;";
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  // Accent-palette-aligned colors. The blue matches the app accent;
+  // the other five give the burst variety without going garish.
+  const COLORS = ["#6ea8fe", "#ffb86c", "#ff6b6b", "#a78bfa", "#34d399", "#fbbf24"];
+  const COUNT = 140;
+  const GRAVITY = 0.18;
+  const DRAG = 0.003;
+  const LIFETIME_MS = 4500;
+  const FADE_FRACTION = 0.7; // start fading at 70% of lifetime
+
+  // Spawn from the top — slightly biased toward center so the burst
+  // reads as coming from "the page" rather than the edges. vy is
+  // gentle (1.5-4.5) so they drift down rather than fall like rocks.
+  const particles = [];
+  for (let i = 0; i < COUNT; i++) {
+    particles.push({
+      x: W / 2 + (Math.random() - 0.5) * (W * 0.6),
+      y: -20 - Math.random() * 80,
+      vx: (Math.random() - 0.5) * 8,
+      vy: 1.5 + Math.random() * 3,
+      angle: Math.random() * Math.PI * 2,
+      angVel: (Math.random() - 0.5) * 0.3,
+      color: COLORS[(Math.random() * COLORS.length) | 0],
+      w: 5 + Math.random() * 5,
+      h: 9 + Math.random() * 6,
+    });
+  }
+
+  const start = performance.now();
+  let rafId = 0;
+  function frame(now) {
+    const elapsed = now - start;
+    ctx.clearRect(0, 0, W, H);
+    let alive = false;
+    const fadeStart = LIFETIME_MS * FADE_FRACTION;
+    const alphaFromElapsed = elapsed > fadeStart
+      ? Math.max(0, 1 - (elapsed - fadeStart) / (LIFETIME_MS * (1 - FADE_FRACTION)))
+      : 1;
+    for (const p of particles) {
+      p.vy += GRAVITY;
+      p.vx -= p.vx * DRAG;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.angle += p.angVel;
+      if (alphaFromElapsed > 0 && p.y < H + 50) {
+        alive = true;
+        ctx.save();
+        ctx.globalAlpha = alphaFromElapsed;
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+    }
+    if (alive && elapsed < LIFETIME_MS) {
+      rafId = requestAnimationFrame(frame);
+    } else {
+      cancelAnimationFrame(rafId);
+      canvas.remove();
+    }
+  }
+  rafId = requestAnimationFrame(frame);
+}
+const _firstClipTourDismissBtn = document.getElementById("first-clip-tour-dismiss");
+if (_firstClipTourDismissBtn) {
+  _firstClipTourDismissBtn.addEventListener("click", _dismissFirstClipTour);
+}
+
+// v149: one-time drag-to-reorder hint. Sits inside the library
+// dialog and appears the first time the user has 2+ clips. Dismissed
+// permanently on either the × button click or the user's first
+// successful drag (set in _onDragEnd).
+const DRAG_HINT_KEY = "narrative.dragHintDismissed";
+function _isDragHintDismissed() {
+  try { return localStorage.getItem(DRAG_HINT_KEY) === "1"; } catch { return false; }
+}
+function _dismissDragHint() {
+  try { localStorage.setItem(DRAG_HINT_KEY, "1"); } catch {}
+  const el = document.getElementById("drag-hint");
+  if (el) el.hidden = true;
+}
+function _updateDragHint(clipCount) {
+  const el = document.getElementById("drag-hint");
+  if (!el) return;
+  el.hidden = _isDragHintDismissed() || clipCount < 2;
+}
+const _dragHintDismissBtn = document.getElementById("drag-hint-dismiss");
+if (_dragHintDismissBtn) {
+  _dragHintDismissBtn.addEventListener("click", _dismissDragHint);
+}
 
 function _attachDragHandle(handle, cardEl) {
   handle.addEventListener("pointerdown", (e) => {
@@ -5322,6 +7258,9 @@ async function _onDragEnd(e) {
   cardEl.style.transform = "";
   cardEl.classList.remove("dragging");
   _dragSession = null;
+  // v149: first successful drag = user discovered the feature, kill
+  // the hint banner forever.
+  if (!_isDragHintDismissed()) _dismissDragHint();
 
   // Find first sibling whose midpoint is below ours — that's the insertion
   // point. Only consider cards in the SAME parent (so the drag is bounded
@@ -5371,11 +7310,21 @@ async function _commitDragOrder() {
   renderLibrary();
 }
 
-function _appendSectionHeader(label) {
+function _appendSectionHeader(label, subtitle) {
   const h = document.createElement("div");
   h.className = "library-section";
   h.textContent = label;
   libraryList.appendChild(h);
+  // v168: optional one-line subtitle under the section header. Used
+  // to explain "Continue listening" to anyone who arrives at a
+  // library that's been auto-split into two sections and doesn't
+  // know why. Other sections just pass null and skip it.
+  if (subtitle) {
+    const sub = document.createElement("div");
+    sub.className = "library-section-subtitle";
+    sub.textContent = subtitle;
+    libraryList.appendChild(sub);
+  }
 }
 
 // Build + render the tag-filter chip row above the library list.
@@ -5458,6 +7407,18 @@ async function renderLibrary() {
   } catch (e) {
     console.warn("library read failed:", e);
   }
+  // v149: track whether any clip exists so _updateEmptyState can
+  // hide the first-run starter card the moment the user has even
+  // one clip in their library.
+  _libraryHasClips = clips.length > 0;
+  _updateEmptyState();
+  // v149: drag-to-reorder discovery hint inside the library dialog.
+  // Show only when there are 2+ clips (sorting one is meaningless)
+  // and the user hasn't already dismissed or used the feature.
+  _updateDragHint(clips.length);
+  // v168: first-clip tour banner — bridges Edit / drag / Notes
+  // discoverability the moment any clip lands in the library.
+  _updateFirstClipTour(clips.length);
   // Snapshot the unfiltered list before sort/filter mutations so the tag
   // filter row can show every tag that exists (not just ones surviving
   // the current search). Prune _libraryTagFilter of any tag that no
@@ -5502,6 +7463,18 @@ async function renderLibrary() {
     (c) => c.gitRef && c.gitRef.repoUrl && c.gitRef.path
   );
   librarySyncGithubBtn.hidden = !hasGitClips;
+  // v176: "Re-narrate outdated" surfaces only after Sync has actually
+  // flagged something. Reading from the _outdatedClipIds Set keeps the
+  // button honest — if a user re-imported a clip via another path, it
+  // drops out of the set and the button hides.
+  if (libraryRenarrateOutdatedBtn) {
+    const outdatedCount = _outdatedClipIds ? _outdatedClipIds.size : 0;
+    libraryRenarrateOutdatedBtn.hidden = outdatedCount === 0;
+    libraryRenarrateOutdatedBtn.textContent =
+      outdatedCount > 0
+        ? `Re-narrate outdated (${outdatedCount})`
+        : "Re-narrate outdated";
+  }
 
   // "All bookmarks" only earns a slot in the tools row once there's at
   // least one bookmark somewhere — otherwise it's a dead button.
@@ -5594,7 +7567,10 @@ async function renderLibrary() {
   const others = clips.filter((c) => !inProgressIds.has(c.id));
 
   if (inProgress.length > 0) {
-    _appendSectionHeader(`Continue listening · ${inProgress.length}`);
+    _appendSectionHeader(
+      `Continue listening · ${inProgress.length}`,
+      "Clips you started but didn't finish — picks up where you left off.",
+    );
     for (const clip of inProgress) libraryList.appendChild(makeClipCard(clip));
     if (others.length > 0) {
       _appendSectionHeader(`Other clips · ${others.length}`);
@@ -5760,7 +7736,26 @@ async function openClipEdit(clipId) {
   _editingClipId = clipId;
   clipEditTitle.value = clip.title || "";
   clipEditNote.value = clip.note || "";
+  clipEditNotes.value = clip.notes || "";
   clipEditTags.value = Array.isArray(clip.tags) ? clip.tags.join(", ") : "";
+  // v179: show source path + short SHA for GitHub-sourced clips. The
+  // user can confirm "this is the chapter I just pushed" without
+  // alt-tabbing to GitHub. Tooltip on the SHA chip shows the full hash.
+  const gitRefEl = document.getElementById("clip-edit-gitref");
+  if (gitRefEl) {
+    if (clip.gitRef && clip.gitRef.sha && clip.gitRef.path) {
+      const pathEl = document.getElementById("clip-edit-gitref-path");
+      const shaEl = document.getElementById("clip-edit-gitref-sha");
+      if (pathEl) pathEl.textContent = clip.gitRef.path;
+      if (shaEl) {
+        shaEl.textContent = clip.gitRef.sha.slice(0, 7);
+        shaEl.title = `Full commit SHA: ${clip.gitRef.sha}`;
+      }
+      gitRefEl.hidden = false;
+    } else {
+      gitRefEl.hidden = true;
+    }
+  }
   // Cover staging. `_editPendingCover` represents the cover that will
   // be saved — initially mirrors the clip's current cover (or null if
   // none). User upload / remove mutates it; save persists it.
@@ -5795,9 +7790,11 @@ async function saveClipEdit() {
     if (!clip) return closeClipEdit();
     const newTitle = (clipEditTitle.value || "").trim() || "(untitled)";
     const newNote = (clipEditNote.value || "").trim();
+    const newNotes = (clipEditNotes.value || "").trim();
     const newTags = _normalizeTags(clipEditTags.value);
     clip.title = newTitle;
     clip.note = newNote;
+    clip.notes = newNotes;
     clip.tags = newTags;
     // Apply the staged cover. null = "remove cover".
     if (_editPendingCover && _editPendingCover.blob) {
@@ -5854,6 +7851,55 @@ clipEditTitle.addEventListener("keydown", (e) => {
     e.preventDefault();
     saveClipEdit();
   }
+});
+
+// ----- Notes dialog (v138) -----
+// Lightweight focused editor for clip.notes. Opens from the 📝 chip
+// in player-actions while a clip is loaded. Saves on close so the
+// user doesn't have to remember a Save button mid-thought.
+async function openNotesDialog(clipId) {
+  if (!clipId) return;
+  const clip = await getClip(clipId);
+  if (!clip) return;
+  _notesEditingClipId = clipId;
+  notesDialogTitle.textContent = clip.title || "Notes";
+  notesDialogText.value = clip.notes || "";
+  notesDialogStatus.textContent = "";
+  notesDialog.showModal();
+  notesDialogText.focus();
+}
+
+async function _commitNotes() {
+  const id = _notesEditingClipId;
+  if (!id) return;
+  try {
+    const clip = await getClip(id);
+    if (!clip) return;
+    const newNotes = (notesDialogText.value || "").trim();
+    // Skip the write if nothing changed — avoids touching the
+    // IndexedDB record (and its updatedAt-like fields) on every close.
+    if ((clip.notes || "") === newNotes) return;
+    clip.notes = newNotes;
+    await saveClip(clip);
+    // Refresh the library so the 📝 card indicator appears/disappears
+    // without requiring a reload.
+    renderLibrary();
+  } catch (e) {
+    console.warn("notes save failed:", e);
+  }
+}
+
+notesBtn.addEventListener("click", () => {
+  if (!_currentClipId) {
+    setStatus("Load a clip first to open its notes.", true);
+    return;
+  }
+  openNotesDialog(_currentClipId);
+});
+notesDialogClose.addEventListener("click", () => notesDialog.close());
+notesDialog.addEventListener("close", async () => {
+  await _commitNotes();
+  _notesEditingClipId = null;
 });
 
 // ---- Library export / import (zip backup) -------------------------------
@@ -6064,6 +8110,7 @@ async function exportLibrary(idsFilter = null) {
         id: clip.id,
         title: clip.title || "",
         note: clip.note || "",
+        notes: clip.notes || "",
         text: clip.text || "",
         voiceId: clip.voiceId || null,
         voiceName: clip.voiceName || "",
@@ -6185,6 +8232,9 @@ async function importLibraryFromFile(file) {
         id: mc.id,
         title: mc.title || "(untitled)",
         note: mc.note || "",
+        // v138: per-clip notes scratchpad. Older manifests don't
+        // carry it — default to empty.
+        notes: mc.notes || "",
         text: mc.text || "",
         voiceId: mc.voiceId || null,
         voiceName: mc.voiceName || "",
@@ -6541,9 +8591,26 @@ importMenu.addEventListener("click", (e) => {
     // Open the URL row pre-primed for a github.com/owner/repo paste.
     // _isGithubRepoRoot() in fetchFromUrl will route this to
     // openGithubBrowser, so we don't need a separate code path here.
+    // v142: hint up top spells out repo root vs file URL — testers
+    // were pasting /blob/<branch>/<path> URLs from individual
+    // chapter files and getting confused when nothing loaded.
+    // v163 / v176: pre-fill with the most recently browsed repo and
+    // (v176) surface up to RECENT_REPOS_MAX recents as one-click
+    // chips so a user juggling multiple projects can flip between
+    // them without re-pasting URLs. Single recent → just the prefill
+    // + hint; 2+ recents → also show the chip row.
+    const recents = _getRecentGithubRepos();
+    const lastRepo = recents.length > 0 ? recents[0] : null;
     showUrlRow({
       placeholder: "github.com/owner/repo",
-      prefill: "https://github.com/",
+      prefill: lastRepo ? lastRepo.url : "https://github.com/",
+      hint: lastRepo
+        ? `Last opened: <strong>${lastRepo.owner}/${lastRepo.repo}</strong>. Hit Fetch to re-open it, or paste a different repo URL.`
+        : 'Paste the <strong>repo root</strong> — like ' +
+          '<code>github.com/owner/repo</code> — not a link to a ' +
+          'specific file. We\'ll open a picker so you can choose ' +
+          'which chapters to import.',
+      recentRepos: recents,
     });
   } else if (source === "scrivener") {
     scrivenerInput.click();
@@ -6565,6 +8632,50 @@ function showUrlRow(opts) {
   urlFetchBtn.disabled = false;
   if (opts && opts.placeholder) urlInput.placeholder = opts.placeholder;
   if (opts && opts.prefill != null) urlInput.value = opts.prefill;
+  // v142: per-flow hint above the row. innerHTML so callers can
+  // emphasize key shapes with <strong>/<code>; copy is hard-coded
+  // by the caller so we're not interpolating untrusted input.
+  if (opts && opts.hint) {
+    urlRowHint.innerHTML = opts.hint;
+    urlRowHint.hidden = false;
+  } else {
+    urlRowHint.innerHTML = "";
+    urlRowHint.hidden = true;
+  }
+  // v176: recent-repos chip row. Only the GitHub flow passes
+  // opts.recentRepos; other callers leave this hidden. Each chip
+  // pre-fills the URL field + auto-submits Fetch so a user juggling
+  // multiple book projects can flip between them without re-pasting.
+  if (urlRowRecents) {
+    if (opts && Array.isArray(opts.recentRepos) && opts.recentRepos.length > 1) {
+      urlRowRecents.hidden = false;
+      urlRowRecents.innerHTML = "";
+      const label = document.createElement("span");
+      label.className = "url-row-recents-label";
+      label.textContent = "Switch to:";
+      urlRowRecents.appendChild(label);
+      // Skip index 0 — that's already pre-filled. Surface the rest.
+      for (let i = 1; i < opts.recentRepos.length; i++) {
+        const r = opts.recentRepos[i];
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "url-row-recent-chip";
+        chip.title = `Switch to ${r.owner}/${r.repo}`;
+        chip.textContent = `${r.owner}/${r.repo}`;
+        chip.addEventListener("click", (e) => {
+          e.preventDefault();
+          urlInput.value = r.url;
+          // Auto-submit so the picker opens immediately — the user
+          // explicitly picked this repo, no need for a second click.
+          fetchFromUrl();
+        });
+        urlRowRecents.appendChild(chip);
+      }
+    } else {
+      urlRowRecents.hidden = true;
+      urlRowRecents.innerHTML = "";
+    }
+  }
   urlInput.focus();
   // For prefilled-with-prefix cases (github), put the caret at end so
   // the user can keep typing the owner/repo without clearing the prefix.
@@ -6579,6 +8690,14 @@ function showUrlRow(opts) {
 function hideUrlRow() {
   urlRow.hidden = true;
   urlInput.value = "";
+  urlRowHint.hidden = true;
+  urlRowHint.innerHTML = "";
+  // v176: also clear recents chips so they don't bleed into the next
+  // showUrlRow call (e.g. Paste URL after GitHub).
+  if (urlRowRecents) {
+    urlRowRecents.hidden = true;
+    urlRowRecents.innerHTML = "";
+  }
 }
 
 urlInput.addEventListener("keydown", (e) => {
@@ -6796,6 +8915,18 @@ const docPickerMeta = $("doc-picker-meta");
 const docPickerFilter = $("doc-picker-filter");
 const docPickerList = $("doc-picker-list");
 const docPickerSummary = $("doc-picker-summary");
+// v176: "Hide already imported" filter chip. Only revealed when the
+// caller passes an isImported callback (GitHub flow today).
+const docPickerHideImported = $("doc-picker-hide-imported");
+// v179: GitHub branch picker + folder suggestion chips. Both are
+// populated by openGithubBrowser and hidden for non-GitHub sources.
+const docPickerBranchesRow = $("doc-picker-branches-row");
+const docPickerBranches = $("doc-picker-branches");
+const docPickerFolderChips = $("doc-picker-folder-chips");
+// v139: background-mode toggle row. Shown only when 2+ items are
+// selected (single picks bypass the queue entirely).
+const docPickerBgLabel = $("doc-picker-bg-label");
+const docPickerBgToggle = $("doc-picker-bg-toggle");
 
 let _docPickerState = null;
 
@@ -6825,19 +8956,37 @@ function _docPickerRender() {
   const s = _docPickerState;
   const q = (docPickerFilter.value || "").trim().toLowerCase();
   const items = s.items || [];
-  const filtered = q
+  // v176: precompute imported-set so we don't call isImported(it)
+  // twice per row (once for badge, once for the hide filter).
+  // Cache lives only for this render — small Map<id, true>.
+  const importedIds = new Set();
+  if (typeof s.isImported === "function") {
+    for (const it of items) {
+      try {
+        if (s.isImported(it)) importedIds.add(it.id);
+      } catch {}
+    }
+  }
+  let filtered = q
     ? items.filter(
         (it) =>
           it.title.toLowerCase().includes(q) ||
           (it.subtitle || "").toLowerCase().includes(q)
       )
     : items;
+  // v176: optional "Hide already imported" filter — applied after the
+  // text filter so the running count reflects both filters together.
+  if (s.hideImported && importedIds.size > 0) {
+    filtered = filtered.filter((it) => !importedIds.has(it.id));
+  }
   docPickerList.innerHTML = "";
   if (!filtered.length) {
     const empty = document.createElement("div");
     empty.className = "doc-picker-file-empty";
     empty.textContent = q
       ? s.noMatchText || "No matching items."
+      : s.hideImported && importedIds.size > 0
+      ? "Every file in this repo is already in your library or queue."
       : s.emptyText || "No items.";
     docPickerList.appendChild(empty);
     return;
@@ -6845,6 +8994,8 @@ function _docPickerRender() {
   for (const it of filtered) {
     const label = document.createElement("label");
     label.className = "doc-picker-file";
+    const imported = importedIds.has(it.id);
+    if (imported) label.classList.add("doc-picker-file-imported");
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = s.selected.has(it.id);
@@ -6858,6 +9009,18 @@ function _docPickerRender() {
     pathSpan.textContent = it.subtitle
       ? `${it.title}  (${it.subtitle})`
       : it.title;
+    // v176: ✓ badge for already-imported files. Sits between the path
+    // and the size so it's near the start (right after the path) and
+    // can be skimmed at a glance — the dim class on the whole row
+    // reinforces it. Tooltip explains the badge.
+    if (imported) {
+      const badge = document.createElement("span");
+      badge.className = "doc-picker-file-imported-badge";
+      badge.textContent = "✓ imported";
+      badge.title = "Already in your library or sitting in the queue";
+      pathSpan.appendChild(document.createTextNode(" "));
+      pathSpan.appendChild(badge);
+    }
     const sizeSpan = document.createElement("span");
     sizeSpan.className = "doc-picker-file-size";
     sizeSpan.textContent = _docPickerItemSize(it);
@@ -6891,6 +9054,10 @@ function _docPickerUpdateSummary() {
     n > 1
       ? (s.useLabelMulti && s.useLabelMulti(n)) || `Open as ${n}-chapter queue`
       : s.useLabelSingle || "Use selected";
+  // v139: background toggle only makes sense for multi-pick (singles
+  // bypass the queue entirely). Hide on 0/1 to avoid implying we'd
+  // skip playback on a one-chapter load.
+  docPickerBgLabel.hidden = n < 2;
 }
 
 function openDocumentPicker(config) {
@@ -6905,6 +9072,13 @@ function openDocumentPicker(config) {
     noMatchText: config.noMatchText,
     useLabelSingle: config.useLabelSingle,
     useLabelMulti: config.useLabelMulti,
+    // v176: caller-supplied predicate. Returns true if the item
+    // should be flagged as "already imported" (library + queue
+    // both count). When provided, the picker reveals the "Hide
+    // already imported" toggle chip and shows ✓ badges + dim row
+    // styling on each matching row.
+    isImported: typeof config.isImported === "function" ? config.isImported : null,
+    hideImported: false,
   };
   docPickerTitle.textContent = config.title || "Pick items";
   docPickerMeta.textContent = config.meta || "";
@@ -6913,6 +9087,34 @@ function openDocumentPicker(config) {
   docPickerSummary.textContent = "";
   docPickerUse.disabled = true;
   docPickerUse.textContent = config.useLabelSingle || "Use selected";
+  // v176: surface the hide-imported chip only when the caller can
+  // tell us what's already imported. Reset its pressed state.
+  if (docPickerHideImported) {
+    const showChip = !!_docPickerState.isImported;
+    docPickerHideImported.hidden = !showChip;
+    docPickerHideImported.setAttribute("aria-pressed", "false");
+  }
+  // v179: reset branch picker + folder chips on every open. The
+  // GitHub caller will fill them in via the returned handle once
+  // /api/github/branches lands and the tree is parsed.
+  if (docPickerBranchesRow) {
+    docPickerBranchesRow.hidden = true;
+    if (docPickerBranches) docPickerBranches.innerHTML = "";
+  }
+  if (docPickerFolderChips) {
+    docPickerFolderChips.hidden = true;
+    docPickerFolderChips.innerHTML = "";
+  }
+  // v139: reset background toggle on every open so a previously
+  // ticked checkbox doesn't silently affect a fresh import.
+  // v163: if the background queue is currently running, default the
+  // checkbox to on so a quick-add round-trip ("+ Add more from
+  // owner/repo") drops new picks straight into the queue instead
+  // of forcing the user to remember to tick the box every time.
+  // The label still hides until 2+ items are selected (see
+  // _docPickerUpdateSummary), but the checked state is preserved.
+  docPickerBgToggle.checked = !!_bgRunning;
+  docPickerBgLabel.hidden = true;
   if (_docPickerState.items === null) {
     docPickerList.innerHTML = "";
   } else {
@@ -6932,6 +9134,69 @@ function openDocumentPicker(config) {
       _docPickerRender();
       _docPickerUpdateSummary();
     },
+    // v179: populate the GitHub branch dropdown. `onChange` fires with
+    // the new branch name when the user picks a different one — the
+    // caller is responsible for re-fetching the tree on that branch.
+    setBranches(list, current, onChange) {
+      if (!docPickerBranchesRow || !docPickerBranches) return;
+      if (!Array.isArray(list) || list.length === 0) {
+        docPickerBranchesRow.hidden = true;
+        return;
+      }
+      docPickerBranches.innerHTML = "";
+      for (const name of list) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        if (name === current) opt.selected = true;
+        docPickerBranches.appendChild(opt);
+      }
+      docPickerBranchesRow.hidden = false;
+      docPickerBranches.onchange = () => {
+        if (typeof onChange === "function") onChange(docPickerBranches.value);
+      };
+    },
+    // v179: populate the auto-suggest folder chips. Each entry is
+    // {label, prefix}. Clicking a chip writes the prefix into the
+    // filter input + triggers a re-render.
+    setFolderChips(chips) {
+      if (!docPickerFolderChips) return;
+      if (!Array.isArray(chips) || chips.length === 0) {
+        docPickerFolderChips.hidden = true;
+        docPickerFolderChips.innerHTML = "";
+        return;
+      }
+      docPickerFolderChips.innerHTML = "";
+      const label = document.createElement("span");
+      label.className = "doc-picker-folder-chips-label";
+      label.textContent = "Filter to:";
+      docPickerFolderChips.appendChild(label);
+      for (const c of chips) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "doc-picker-folder-chip";
+        chip.textContent = c.label || c.prefix;
+        chip.title = `Filter to files under ${c.prefix}`;
+        chip.addEventListener("click", () => {
+          // Toggle: if already filtered, clear; else apply.
+          const current = (docPickerFilter.value || "").trim();
+          if (current === c.prefix) {
+            docPickerFilter.value = "";
+            chip.classList.remove("active");
+          } else {
+            docPickerFilter.value = c.prefix;
+            // Clear other active states so only one chip reads as on.
+            docPickerFolderChips
+              .querySelectorAll(".doc-picker-folder-chip.active")
+              .forEach((el) => el.classList.remove("active"));
+            chip.classList.add("active");
+          }
+          _docPickerRender();
+        });
+        docPickerFolderChips.appendChild(chip);
+      }
+      docPickerFolderChips.hidden = false;
+    },
     close() { docPickerDialog.close(); },
   };
 }
@@ -6939,16 +9204,32 @@ function openDocumentPicker(config) {
 docPickerClose.addEventListener("click", () => docPickerDialog.close());
 docPickerCancel.addEventListener("click", () => docPickerDialog.close());
 docPickerFilter.addEventListener("input", _docPickerRender);
+// v176: hide-imported chip toggle. Sets aria-pressed for the styling,
+// flips _docPickerState.hideImported, re-renders.
+if (docPickerHideImported) {
+  docPickerHideImported.addEventListener("click", () => {
+    if (!_docPickerState) return;
+    _docPickerState.hideImported = !_docPickerState.hideImported;
+    docPickerHideImported.setAttribute(
+      "aria-pressed",
+      _docPickerState.hideImported ? "true" : "false"
+    );
+    _docPickerRender();
+  });
+}
 
 docPickerUse.addEventListener("click", async () => {
   if (!_docPickerState || _docPickerState.selected.size === 0) return;
   const s = _docPickerState;
   const picked = (s.items || []).filter((it) => s.selected.has(it.id));
+  // v139: background mode only kicks in for multi-pick imports — a
+  // single-clip load goes straight to the textarea, not a queue.
+  const background = docPickerBgToggle.checked && picked.length > 1;
   // Close first so the caller can drive status updates in the UI
   // without competing with the dialog (e.g. "Fetching 1 of 5…").
   docPickerDialog.close();
   try {
-    await s.onUse(picked);
+    await s.onUse(picked, { background });
   } catch (err) {
     console.error("[doc-picker] onUse failed:", err);
     setStatus(`Failed: ${err.message || err}`, true);
@@ -6964,6 +9245,34 @@ docPickerUse.addEventListener("click", async () => {
 // SHA so the extract endpoint can skip an extra contents-API call.
 
 async function openGithubBrowser(repoUrl) {
+  // v176: build the "already imported" lookup ahead of opening the
+  // picker. We don't know the canonical repoUrl until /api/github/tree
+  // resolves (it might normalize the URL), so we collect both:
+  //  - paths from clips whose gitRef.repoUrl matches this exact input
+  //    URL (most common after a re-open of a previously-imported repo)
+  //  - paths from bg queue items with a matching gitRef.repoUrl
+  // The actual isImported callback below uses these sets; we refresh
+  // them again after the tree call lands (closure mutation) so the
+  // canonical URL also matches.
+  const importedPaths = new Set();
+  const pathsFromUrl = (url) => {
+    if (!url) return;
+    for (const j of _chapterQueue) {
+      if (j && j.gitRef && j.gitRef.repoUrl === url && j.gitRef.path) {
+        importedPaths.add(j.gitRef.path);
+      }
+    }
+  };
+  try {
+    const allClips = await listClips();
+    for (const c of allClips) {
+      if (c.gitRef && c.gitRef.repoUrl === repoUrl && c.gitRef.path) {
+        importedPaths.add(c.gitRef.path);
+      }
+    }
+  } catch {}
+  pathsFromUrl(repoUrl);
+
   const picker = openDocumentPicker({
     title: "Browse GitHub repo",
     meta: "Loading…",
@@ -6971,7 +9280,14 @@ async function openGithubBrowser(repoUrl) {
     filterPlaceholder: "Filter by path…",
     emptyText: "No text-format files found in this repo.",
     noMatchText: "No matching files.",
-    onUse: async (picked) => {
+    // v176: predicate the picker uses for ✓ badge + dim + the
+    // "Hide already imported" filter chip. extra.path is the
+    // GitHub-side file path.
+    isImported: (item) => {
+      const p = item && item.extra && item.extra.path;
+      return p ? importedPaths.has(p) : false;
+    },
+    onUse: async (picked, opts = {}) => {
       // Items carry the raw GitHub file objects in `extra`. Build the
       // raw.githubusercontent URLs and a path→sha lookup for the
       // extract endpoint.
@@ -7014,10 +9330,18 @@ async function openGithubBrowser(repoUrl) {
       }
 
       setStatus(`Fetching ${picked.length} files…`);
+      _dlog("github", `multi-fetch start: ${picked.length} files`, {
+        owner: gh.owner, repo: gh.repo, branch: gh.branch,
+        paths: picked.map((p) => p.extra && p.extra.path).filter(Boolean),
+      });
       const chapters = [];
+      const skipped = []; // {path, reason} for the post-loop summary
       for (let i = 0; i < picked.length; i++) {
         const f = picked[i].extra;
         setStatus(`Fetching ${i + 1} of ${picked.length}: ${f.path}…`);
+        _dlog("github", `fetch [${i + 1}/${picked.length}] ${f.path}`, {
+          sha: f.sha, size: f.size,
+        });
         try {
           const res = await fetch("/api/extract/url", {
             method: "POST",
@@ -7029,23 +9353,76 @@ async function openGithubBrowser(repoUrl) {
             }),
           });
           if (!res.ok) {
-            console.warn(`[github] skipping ${f.path}: HTTP ${res.status}`);
+            let detail = `HTTP ${res.status}`;
+            try {
+              const j = await res.json();
+              if (j && j.detail) detail += ` — ${j.detail}`;
+            } catch {}
+            _dlog("github", `SKIP ${f.path}: ${detail}`, { status: res.status });
+            skipped.push({ path: f.path, reason: detail });
+            console.warn(`[github] skipping ${f.path}: ${detail}`);
             continue;
           }
           const data = await res.json();
+          const rawText = data.text || "";
+          const cleanText = rawText.trim();
+          // v177: empty-text guard. Some files (TOC.md, image-only
+          // chapters, all-frontmatter, etc.) return empty text after
+          // trafilatura strips boilerplate. Pushing an empty-text
+          // chapter into the queue guarantees a downstream synthesis
+          // failure ("no audio in result") with a useless error in
+          // the failures banner. Catch it here so the user sees a
+          // specific "empty content" reason and the synth path never
+          // runs.
+          if (!cleanText) {
+            _dlog(
+              "github",
+              `SKIP ${f.path}: empty text after extract`,
+              {
+                rawChars: rawText.length,
+                cleanChars: 0,
+                images: Array.isArray(data.images) ? data.images.length : 0,
+              }
+            );
+            skipped.push({ path: f.path, reason: "empty after extract" });
+            continue;
+          }
           const title = f.path.split("/").pop().replace(/\.[^.]+$/, "");
+          _dlog("github", `OK ${f.path}`, {
+            title,
+            chars: cleanText.length,
+            sha: (data.gitRef && data.gitRef.sha) || f.sha || null,
+            images: Array.isArray(data.images) ? data.images.length : 0,
+          });
           chapters.push({
             title,
-            text: (data.text || "").trim(),
+            text: cleanText,
             gitRef: data.gitRef || null,
           });
         } catch (err) {
+          _dlog("github", `THROW ${f.path}: ${err.message}`, {
+            errName: err.name, stack: err.stack,
+          });
+          skipped.push({ path: f.path, reason: err.message });
           console.warn(`[github] skipping ${f.path}: ${err.message}`);
         }
       }
+      _dlog("github", `multi-fetch done`, {
+        ok: chapters.length, skipped: skipped.length, skips: skipped,
+      });
       if (chapters.length === 0) {
-        setStatus("No files could be fetched.", true);
+        const tail = skipped.length
+          ? ` (${skipped.length} skipped — see Settings → View debug log)`
+          : "";
+        setStatus(`No files could be fetched.${tail}`, true);
         return;
+      }
+      if (skipped.length) {
+        // Non-fatal: some files made it through. Quick toast so the
+        // user notices the gap; the debug log has per-file detail.
+        setStatus(
+          `${chapters.length} fetched, ${skipped.length} skipped — see Settings → View debug log`
+        );
       }
       if (chapters.length === 1) {
         exitReadingView();
@@ -7058,7 +9435,14 @@ async function openGithubBrowser(repoUrl) {
         setStatus(`Loaded ${chapters[0].title} · ready to Generate`);
         return;
       }
-      _startChapterQueue(chapters);
+      // v139: background mode runs synthesis silently — chapters land
+      // in the library without ever loading into the player. Ideal
+      // for unattended overnight imports.
+      if (opts.background) {
+        _startBackgroundChapterQueue(chapters);
+      } else {
+        _startChapterQueue(chapters);
+      }
     },
   });
 
@@ -7087,12 +9471,68 @@ async function openGithubBrowser(repoUrl) {
     }
     const data = await res.json();
     gh = { owner: data.owner, repo: data.repo, branch: data.branch };
+    // v163 / v176: remember this repo on the recents list so the user
+    // can re-open it with one click — chip rows above the URL field
+    // and in the queue panel footer surface up to RECENT_REPOS_MAX
+    // entries, most-recent-first.
+    _pushRecentGithubRepo({
+      url: repoUrl,
+      owner: data.owner,
+      repo: data.repo,
+      branch: data.branch,
+    });
+    // v176: refresh the imported-paths set against the canonical URL
+    // returned by /api/github/tree. clip.gitRef.repoUrl could have
+    // been written by an older path that normalized differently
+    // (trailing slash, .git suffix, www subdomain).
+    try {
+      const allClips = await listClips();
+      for (const c of allClips) {
+        if (
+          c.gitRef &&
+          c.gitRef.path &&
+          (c.gitRef.repoUrl === repoUrl ||
+            (data.owner &&
+              data.repo &&
+              c.gitRef.repoUrl &&
+              c.gitRef.repoUrl.toLowerCase().includes(
+                `${data.owner.toLowerCase()}/${data.repo.toLowerCase()}`
+              )))
+        ) {
+          importedPaths.add(c.gitRef.path);
+        }
+      }
+    } catch {}
+    for (const j of _chapterQueue) {
+      if (
+        j &&
+        j.gitRef &&
+        j.gitRef.path &&
+        j.gitRef.repoUrl &&
+        data.owner &&
+        data.repo &&
+        j.gitRef.repoUrl.toLowerCase().includes(
+          `${data.owner.toLowerCase()}/${data.repo.toLowerCase()}`
+        )
+      ) {
+        importedPaths.add(j.gitRef.path);
+      }
+    }
     const files = Array.isArray(data.files) ? data.files : [];
     picker.setTitle(`${data.owner}/${data.repo}`);
     const truncatedHint = data.truncated
       ? " · ⚠ tree truncated by GitHub (large repo)"
       : "";
-    picker.setMeta(`branch: ${data.branch} · ${files.length} text files${truncatedHint}`);
+    const importedCount = files.reduce(
+      (n, f) => n + (importedPaths.has(f.path) ? 1 : 0),
+      0
+    );
+    const importedNote = importedCount > 0
+      ? ` · ${importedCount} already imported`
+      : "";
+    picker.setMeta(
+      `branch: ${data.branch} · ${files.length} text files${truncatedHint}${importedNote}`
+    );
     picker.setItems(
       files.map((f) => ({
         id: f.path,
@@ -7101,9 +9541,131 @@ async function openGithubBrowser(repoUrl) {
         extra: f,
       }))
     );
+    // v179: detect common manuscript folders so the picker can offer
+    // one-click filter chips. Looks for paths that share a top-level
+    // segment (chapters/, manuscript/, src/, etc.) with >=3 files.
+    // Skips suggestions when the whole repo lives under one folder
+    // (no point offering a filter that doesn't filter anything).
+    if (typeof picker.setFolderChips === "function") {
+      const chips = _suggestFolderChips(files);
+      picker.setFolderChips(chips);
+    }
+    // v179: fetch branches in parallel with rendering. Failure is
+    // non-fatal — the picker still works on the resolved branch.
+    if (typeof picker.setBranches === "function") {
+      try {
+        const bRes = await fetch("/api/github/branches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: repoUrl,
+            github_token: token || undefined,
+          }),
+        });
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          picker.setBranches(
+            bData.branches || [],
+            data.branch,
+            (newBranch) => {
+              if (!newBranch || newBranch === data.branch) return;
+              // Re-open the picker for the same repo on the new
+              // branch. openGithubBrowser builds the /tree/<branch>
+              // URL by parsing the URL, so we need to inject the
+              // branch in the URL form GitHub expects.
+              const swapped = _withGithubBranch(repoUrl, newBranch);
+              picker.close();
+              openGithubBrowser(swapped);
+            }
+          );
+        } else {
+          _dlog("github", "branches fetch failed", { status: bRes.status });
+        }
+      } catch (err) {
+        _dlog("github", `branches fetch threw: ${err.message}`, {});
+      }
+    }
   } catch (err) {
     picker.setMeta(`Failed: ${err.message}`);
     picker.setItems([]);
+  }
+}
+
+// v179: walk the GitHub tree and surface common manuscript folders
+// as suggested filters. A "chip-worthy" folder is one that:
+//   - has at least 3 files under it (otherwise the filter is noise)
+//   - isn't the only folder in the repo (filtering everything ≠ filtering)
+//   - has a known manuscript-y name OR happens to be the densest folder
+// Returns an array of {label, prefix} ready for picker.setFolderChips.
+function _suggestFolderChips(files) {
+  if (!Array.isArray(files) || files.length < 3) return [];
+  // Tally files per top-level folder.
+  const counts = new Map();
+  let rootCount = 0;
+  for (const f of files) {
+    const slash = (f.path || "").indexOf("/");
+    if (slash < 0) {
+      rootCount++;
+    } else {
+      const top = f.path.slice(0, slash);
+      counts.set(top, (counts.get(top) || 0) + 1);
+    }
+  }
+  // If everything is at the root, or all files live in one folder,
+  // a folder filter doesn't help — bail out.
+  if (counts.size === 0) return [];
+  if (counts.size === 1 && rootCount === 0) return [];
+
+  // Folder names common in manuscripts and dev repos that host books.
+  const FAVORED = new Set([
+    "chapters", "chapter", "manuscript", "manuscripts", "src", "content",
+    "book", "books", "novel", "novels", "drafts", "draft", "posts",
+    "essays", "writing", "writings", "docs", "doc", "pages", "story",
+  ]);
+
+  // Build the chip list: favored folders (with >=3 files) first,
+  // then the single densest non-favored folder as a fallback —
+  // capped at 3 chips total so the row doesn't bloat.
+  const chips = [];
+  for (const [name, n] of counts.entries()) {
+    if (n >= 3 && FAVORED.has(name.toLowerCase())) {
+      chips.push({ label: `${name}/`, prefix: `${name}/`, count: n });
+    }
+  }
+  if (chips.length === 0) {
+    // No favored match — surface the densest folder if it covers
+    // a meaningful fraction of the tree.
+    let best = null;
+    for (const [name, n] of counts.entries()) {
+      if (n < 3) continue;
+      if (!best || n > best.count) best = { name, count: n };
+    }
+    if (best && best.count >= Math.max(3, files.length * 0.3)) {
+      chips.push({ label: `${best.name}/`, prefix: `${best.name}/`, count: best.count });
+    }
+  }
+  chips.sort((a, b) => b.count - a.count);
+  return chips.slice(0, 3).map(({ label, prefix }) => ({ label, prefix }));
+}
+
+// v179: swap the branch segment in a github.com URL so the recents
+// list / picker can re-open the same repo on a different branch
+// without the user re-typing. Accepts both the repo-root form
+// (github.com/owner/repo) and the tree form
+// (github.com/owner/repo/tree/<branch>/...) — returns the tree form.
+function _withGithubBranch(url, branch) {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith("github.com")) return url;
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return url;
+    const owner = parts[0];
+    const repo = parts[1].replace(/\.git$/, "");
+    // Drop any existing /tree/<branch>/... suffix; we'll rebuild it.
+    u.pathname = `/${owner}/${repo}/tree/${encodeURIComponent(branch)}`;
+    return u.toString();
+  } catch {
+    return url;
   }
 }
 
@@ -7134,7 +9696,7 @@ function openScrivenerBrowser(data) {
       chars: c.chars,
       extra: c,
     })),
-    onUse: async (picked) => {
+    onUse: async (picked, opts = {}) => {
       if (picked.length === 1) {
         const ch = picked[0].extra;
         exitReadingView();
@@ -7147,9 +9709,15 @@ function openScrivenerBrowser(data) {
         setStatus(`Loaded ${ch.title} · ready to Generate`);
         return;
       }
-      _startChapterQueue(
-        picked.map((p) => ({ title: p.extra.title, text: p.extra.text }))
-      );
+      const chapters = picked.map((p) => ({
+        title: p.extra.title,
+        text: p.extra.text,
+      }));
+      if (opts.background) {
+        _startBackgroundChapterQueue(chapters);
+      } else {
+        _startChapterQueue(chapters);
+      }
     },
   });
 }
@@ -7178,7 +9746,7 @@ function openObsidianBrowser(data) {
       chars: c.chars,
       extra: c,
     })),
-    onUse: async (picked) => {
+    onUse: async (picked, opts = {}) => {
       if (picked.length === 1) {
         const ch = picked[0].extra;
         exitReadingView();
@@ -7191,9 +9759,15 @@ function openObsidianBrowser(data) {
         setStatus(`Loaded ${ch.title} · ready to Generate`);
         return;
       }
-      _startChapterQueue(
-        picked.map((p) => ({ title: p.extra.title, text: p.extra.text }))
-      );
+      const chapters = picked.map((p) => ({
+        title: p.extra.title,
+        text: p.extra.text,
+      }));
+      if (opts.background) {
+        _startBackgroundChapterQueue(chapters);
+      } else {
+        _startChapterQueue(chapters);
+      }
     },
   });
 }
@@ -7247,6 +9821,46 @@ function _isGithubRepoRoot(url) {
   }
 }
 
+// v142: graceful normalization for github URLs the user might
+// reasonably paste but that aren't a repo root — most commonly a
+// /blob/<branch>/<path> URL to a specific chapter file. Returns
+// {rootUrl, original, kind} when the input is a github URL we can
+// strip back to a browseable repo, null otherwise. kind is one of
+// "root" (already a root or tree URL — no correction needed),
+// "file" (/blob/ — stripped to owner/repo), or "other" (issues /
+// pulls / commits / etc — also stripped to owner/repo).
+function _normalizeGithubUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== "github.com" && u.hostname !== "www.github.com") {
+      return null;
+    }
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return null;
+    const owner = parts[0];
+    const repo = parts[1];
+    const rootUrl = `https://github.com/${owner}/${repo}`;
+    if (parts.length === 2) {
+      return { rootUrl, original: url, kind: "root" };
+    }
+    const verb = parts[2];
+    if (verb === "tree") {
+      // owner/repo/tree/<branch>[/<path>] — _isGithubRepoRoot already
+      // routes this directly; surface as "root" so we don't show a
+      // correction message for a URL that was always going to work.
+      return { rootUrl: url, original: url, kind: "root" };
+    }
+    if (verb === "blob") {
+      return { rootUrl, original: url, kind: "file" };
+    }
+    // /issues, /pulls, /commits, /actions, /wiki, /releases, etc.
+    return { rootUrl, original: url, kind: "other" };
+  } catch {
+    return null;
+  }
+}
+
+
 // Extract the branch name from a /tree/<branch>/ URL. Returns null if
 // the URL doesn't carry a branch (we'll let the server look up the
 // repo's default).
@@ -7269,6 +9883,25 @@ async function fetchFromUrl() {
   // chrome, not as a manuscript).
   if (_isGithubRepoRoot(url)) {
     openGithubBrowser(url);
+    return;
+  }
+  // v142: graceful fallback for "wrong-shape" github URLs the user
+  // might paste — a /blob/ file URL, a /pull/ link, etc. Instead of
+  // letting it slide through to trafilatura (which silently fails on
+  // most of those), strip to the repo root and tell the user what
+  // we did so they understand the picker that just opened.
+  const gh = _normalizeGithubUrl(url);
+  if (gh && gh.kind !== "root") {
+    if (gh.kind === "file") {
+      setStatus(
+        "That looked like a link to a specific file. Opening the repo's chapter picker instead — tick the chapter(s) you want.",
+      );
+    } else {
+      setStatus(
+        "Opening the repo's chapter picker — paste the repo root URL next time to skip this step.",
+      );
+    }
+    openGithubBrowser(gh.rootUrl);
     return;
   }
   urlInput.disabled = true;
@@ -7526,7 +10159,11 @@ function setupMediaSession() {
       // WAV. Mark "audio side" complete. If save already landed,
       // _tryAdvanceQueue fires the 4-second breath; if save lands
       // later, IT will fire the breath. Either ordering works.
-      if (_chapterTotalCount > 0) {
+      // v165: also skip when a background queue is running — the
+      // background pipeline doesn't play anything, so any "audio
+      // ended" signal here belongs to a foreground clip the user
+      // started manually and must not poke the chapter queue.
+      if (_chapterTotalCount > 0 && !_silentChapterQueue) {
         _queueAudioComplete = true;
         _tryAdvanceQueue();
       }
@@ -7547,7 +10184,12 @@ function setupMediaSession() {
     // and we return so library auto-advance doesn't compete. If save
     // hasn't fired yet, the audio flag waits; when save eventually
     // sets _queueSaveComplete, the advance fires from there.
-    if (_chapterTotalCount > 0) {
+    // v165: only fire when a FOREGROUND queue is active. A
+    // background queue (_silentChapterQueue) doesn't play anything
+    // through this audio element — if we hit this branch with the
+    // background flag set, the user just played a saved clip from
+    // the library and we must leave the background queue alone.
+    if (_chapterTotalCount > 0 && !_silentChapterQueue) {
       _queueAudioComplete = true;
       _tryAdvanceQueue();
       // Suppress library auto-advance while a chapter queue is active
@@ -7667,17 +10309,26 @@ function _populateLanguageFilter() {
   // remove changes counts) doesn't reset the user's choice.
   const current = voiceLanguageFilter.value;
 
+  // v154: bucket by ISO 639-1 prefix (the part before "_") so all
+  // en_* voices group under a single "English" entry. Previously
+  // the dropdown had separate buckets for en_US and en_GB that
+  // both displayed as "English (N)" — picking the en_GB bucket
+  // hid LibriTTS (en_US, 904 speakers) and a tester reported
+  // "LibriTTS doesn't show up under English." The list itself
+  // still sub-headers by country, so consolidating the dropdown
+  // doesn't lose any locale information.
   const byLang = new Map();
   for (const v of _voiceCatalog) {
     const code = v.language_code || "";
     if (!code) continue;
-    if (!byLang.has(code)) {
-      byLang.set(code, {
-        name: v.language_name || code,
+    const baseLang = code.split("_")[0] || code;
+    if (!byLang.has(baseLang)) {
+      byLang.set(baseLang, {
+        name: v.language_name || baseLang,
         count: 0,
       });
     }
-    byLang.get(code).count += 1;
+    byLang.get(baseLang).count += 1;
   }
 
   // Preserve "All languages" header; rebuild the rest.
@@ -7734,16 +10385,50 @@ async function loadVoiceCatalog(force = false) {
   return _voiceCatalog;
 }
 
+// v167: inline favorites tip — shown in the voice browser when no
+// voice has been starred yet AND the user hasn't dismissed it.
+// Dismiss flag persists in localStorage so a returning user who
+// dismissed it doesn't see it again.
+const VOICE_FAV_TIP_KEY = "narrative.voiceFavTipDismissed";
+function _updateVoiceFavoritesTip() {
+  const tip = document.getElementById("voice-favorites-tip");
+  if (!tip) return;
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(VOICE_FAV_TIP_KEY) === "1"; } catch {}
+  const favCount = getFavoriteVoices().length;
+  tip.hidden = dismissed || favCount > 0;
+}
+const _voiceFavTipDismissBtn = document.getElementById("voice-favorites-tip-dismiss");
+if (_voiceFavTipDismissBtn) {
+  _voiceFavTipDismissBtn.addEventListener("click", () => {
+    try { localStorage.setItem(VOICE_FAV_TIP_KEY, "1"); } catch {}
+    _updateVoiceFavoritesTip();
+  });
+}
+
 function renderVoiceCatalog() {
   if (!_voiceCatalog) return;
   updateInstalledToggle();
+  // v167: keep the tip in sync with the current favorites state on
+  // every render — covers "user opens browser fresh" and "user just
+  // un-starred their last favorite" without extra calls elsewhere.
+  _updateVoiceFavoritesTip();
   updateFavoritesToggle();
   const favSet = new Set(getFavoriteVoices());
   const q = voiceBrowserSearch.value.trim().toLowerCase();
   const matches = _voiceCatalog.filter((v) => {
     if (_installedOnly && !v.installed) return false;
     if (_favoritesOnly && !favSet.has(v.id)) return false;
-    if (_languageFilter && v.language_code !== _languageFilter) return false;
+    // v154: match on the ISO 639-1 prefix so the consolidated
+    // "English" filter (which now stores "en" as its value) matches
+    // both en_US (LibriTTS et al) and en_GB voices. Fall back to
+    // exact match for any catalog entries where the code already
+    // lacks an underscore.
+    if (_languageFilter) {
+      const code = v.language_code || "";
+      const base = code.split("_")[0] || code;
+      if (base !== _languageFilter) return false;
+    }
     if (!q) return true;
     return (
       v.name.toLowerCase().includes(q) ||
@@ -7840,6 +10525,12 @@ function makeCatalogRow(v) {
     // active, and refresh the main picker's "★ Favorites" optgroup.
     renderVoiceCatalog();
     _refreshFavoritesInMainPicker();
+    // v167: re-evaluate the favorites tip banner — it hides once any
+    // favorite exists. The v166 setStatus hint fired but the voice
+    // browser modal occluded the status bar, so the user never saw
+    // it AND the localStorage seen-flag got locked. We're now using
+    // an inline banner instead (see _updateVoiceFavoritesTip).
+    _updateVoiceFavoritesTip();
   });
   row.appendChild(favBtn);
 

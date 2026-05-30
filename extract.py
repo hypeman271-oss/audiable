@@ -159,6 +159,111 @@ def fetch_github_tree(
     }
 
 
+def fetch_github_branches(
+    owner: str,
+    repo: str,
+    github_token: str | None = None,
+) -> dict:
+    """List the branches in a GitHub repo + the default branch name.
+
+    Backs the v179 branch dropdown in the picker. The user might be on
+    a feature branch (`drafts/chapter-10`) while the default branch
+    still points at the last release — we surface both so they can
+    flip between them without re-typing the URL.
+
+    Returns:
+        {"owner": str, "repo": str,
+         "default_branch": str,
+         "branches": [str, ...]}  # sorted, default branch first
+
+    Paginates if the repo has >100 branches (GitHub API max page size).
+    Capped at 5 pages (500 branches) so a runaway monorepo doesn't
+    stall the picker — far more than any manuscript repo needs.
+
+    Raises ExtractionError on API failures; the route handler maps to
+    HTTP 422 with the message preserved (same pattern as fetch_github_tree).
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    if not owner or not repo:
+        raise ExtractionError("invalid GitHub owner/repo")
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Narrative/0.1",
+    }
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    # Default branch name first (so we can sort it to the top of the
+    # branch list). Reusing the same /repos endpoint fetch_github_tree
+    # uses when no branch is supplied.
+    meta_url = f"https://api.github.com/repos/{owner}/{repo}"
+    try:
+        req = urllib.request.Request(meta_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            meta = json.load(resp)
+        default_branch = meta.get("default_branch") or "main"
+    except urllib.error.HTTPError as e:
+        hint = (
+            " — set a Personal Access Token in Settings → GitHub"
+            if e.code in (401, 403, 404)
+            else ""
+        )
+        raise ExtractionError(
+            f"GitHub repo lookup failed: HTTP {e.code}{hint}"
+        ) from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ExtractionError(f"could not reach GitHub: {e}") from e
+
+    # Paginate the /branches endpoint. per_page=100 is the max GitHub
+    # allows; the 5-page cap covers 500 branches — far more than any
+    # manuscript repo would have.
+    branches: list[str] = []
+    for page in range(1, 6):
+        page_url = (
+            f"https://api.github.com/repos/{owner}/{repo}"
+            f"/branches?per_page=100&page={page}"
+        )
+        try:
+            req = urllib.request.Request(page_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                page_data = json.load(resp)
+        except urllib.error.HTTPError as e:
+            raise ExtractionError(
+                f"GitHub branches fetch failed: HTTP {e.code}"
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ExtractionError(f"could not reach GitHub: {e}") from e
+
+        if not isinstance(page_data, list) or not page_data:
+            break
+        for entry in page_data:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if name and isinstance(name, str):
+                branches.append(name)
+        # Short page = last page, stop paginating.
+        if len(page_data) < 100:
+            break
+
+    # Sort: default branch first, then alphabetical. Stable ordering so
+    # the dropdown reads predictably across calls.
+    branches_set = sorted(set(branches), key=lambda s: s.lower())
+    if default_branch in branches_set:
+        branches_set.remove(default_branch)
+    ordered = [default_branch] + branches_set
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "default_branch": default_branch,
+        "branches": ordered,
+    }
+
+
 def _parse_github_raw_url(url: str) -> tuple[str | None, str | None, str | None, str | None]:
     """Pull (owner, repo, branch, path) out of either a raw URL or a
     github.com blob URL. Returns all-None for anything else."""

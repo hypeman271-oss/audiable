@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import extract
+import github_oauth
 import tts
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap on uploads
@@ -62,6 +63,14 @@ async def require_api_key(request: Request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
     if path.startswith("/api/voices/sample/"):
+        return await call_next(request)
+    # v180: GitHub OAuth round-trip. /start is hit by the user via a
+    # window.location navigation (no X-Narrative-Key header — that
+    # only goes through fetch); /callback is hit by GitHub redirecting
+    # back. Neither can carry the header, so both must be exempt.
+    # /status is exempt so the frontend can decide whether to surface
+    # the Sign-In button before the user has any key set.
+    if path.startswith("/api/github/oauth/"):
         return await call_next(request)
 
     provided = request.headers.get("X-Narrative-Key", "")
@@ -503,6 +512,235 @@ async def github_tree_endpoint(req: GithubTreeRequest):
     except extract.ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return result
+
+
+class GithubBranchesRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2048)
+    github_token: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/github/branches")
+async def github_branches_endpoint(req: GithubBranchesRequest):
+    """List a repo's branches + its default branch.
+
+    Backs the v179 branch dropdown in the document picker so writers
+    using feature branches (drafts/, wip/, etc.) can flip between
+    them without re-typing the URL.
+    """
+    import asyncio
+    import functools
+
+    owner, repo = extract._parse_github_repo_url(req.url)
+    if not owner or not repo:
+        raise HTTPException(
+            status_code=400,
+            detail="not a GitHub repo URL — expected github.com/owner/repo",
+        )
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                extract.fetch_github_branches,
+                owner,
+                repo,
+                github_token=req.github_token,
+            ),
+        )
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
+
+
+# ---- GitHub OAuth ------------------------------------------------------
+# v180: optional Sign-in-with-GitHub flow. Only enabled when the
+# operator registers a GitHub OAuth App and exports its client ID +
+# secret via env vars. When unconfigured these endpoints return a
+# helpful "configure these env vars" message instead of silently
+# failing, so the frontend can show an actionable button state.
+#
+# Env vars (read at request time, not import — so a restart isn't
+# required after `export` + change):
+#   GITHUB_CLIENT_ID            (required)
+#   GITHUB_CLIENT_SECRET        (required)
+#   GITHUB_OAUTH_REDIRECT_URI   (required — must match the OAuth App's
+#                                registered callback URL exactly)
+#   GITHUB_OAUTH_SCOPES         (default "repo" — operator can override
+#                                to "public_repo" or "" for public-only)
+
+_GH_OAUTH_STATE_COOKIE = "narrative_gh_oauth_state"
+
+
+def _github_oauth_config() -> dict:
+    """Snapshot of OAuth-relevant env vars at request time."""
+    return {
+        "client_id": os.environ.get("GITHUB_CLIENT_ID", "").strip(),
+        "client_secret": os.environ.get("GITHUB_CLIENT_SECRET", "").strip(),
+        "redirect_uri": os.environ.get(
+            "GITHUB_OAUTH_REDIRECT_URI",
+            "http://localhost:8000/api/github/oauth/callback",
+        ).strip(),
+        "scopes": os.environ.get("GITHUB_OAUTH_SCOPES", "repo").strip(),
+    }
+
+
+def _urlquote(s: str) -> str:
+    import urllib.parse
+    return urllib.parse.quote(s, safe="")
+
+
+@app.get("/api/github/oauth/status")
+async def github_oauth_status_endpoint():
+    """Tell the frontend whether OAuth is configured.
+
+    Returns just the booleans — never leaks client_id or secret. The
+    frontend uses this to decide whether to show the "Sign in with
+    GitHub" button enabled (configured) or disabled with a "set
+    GITHUB_CLIENT_ID on the server" tooltip (not configured).
+    """
+    cfg = _github_oauth_config()
+    return {
+        "configured": bool(cfg["client_id"] and cfg["client_secret"]),
+        # redirect_uri shown so the operator can sanity-check it
+        # matches what they registered on GitHub. No secrets here.
+        "redirect_uri": cfg["redirect_uri"],
+        "scopes": cfg["scopes"],
+    }
+
+
+@app.get("/api/github/oauth/start")
+async def github_oauth_start_endpoint(request: Request):
+    """Begin the OAuth dance: redirect the user to GitHub authorize.
+
+    Generates a fresh CSRF state token, stashes it in an HttpOnly
+    cookie, builds the GitHub authorize URL, 302s the user there.
+    """
+    from fastapi.responses import RedirectResponse
+
+    cfg = _github_oauth_config()
+    if not cfg["client_id"] or not cfg["client_secret"]:
+        # Return JSON not HTML so a misconfigured deploy gives the
+        # frontend something it can render — rather than silently
+        # 302ing to a half-formed GitHub URL.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "GitHub OAuth is not configured — set GITHUB_CLIENT_ID + "
+                "GITHUB_CLIENT_SECRET env vars on the server. See "
+                "OAUTH_SETUP.md."
+            ),
+        )
+
+    state = github_oauth.generate_state()
+    try:
+        url = github_oauth.build_authorize_url(
+            cfg["client_id"], cfg["redirect_uri"], state, cfg["scopes"]
+        )
+    except github_oauth.OAuthError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    resp = RedirectResponse(url, status_code=302)
+    # HttpOnly so JS can't lift it; SameSite=lax so GitHub's redirect
+    # back to us carries the cookie (lax allows top-level navigation
+    # cookies, which is exactly the round-trip we're in). secure flag
+    # is derived from the redirect URI scheme — http://localhost keeps
+    # the cookie usable in dev; https deploys get the hardened flag.
+    secure = cfg["redirect_uri"].startswith("https://")
+    resp.set_cookie(
+        _GH_OAUTH_STATE_COOKIE,
+        state,
+        max_age=600,  # 10 minutes is plenty; matches GitHub's code TTL
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/api/github/oauth/",
+    )
+    return resp
+
+
+@app.get("/api/github/oauth/callback")
+async def github_oauth_callback_endpoint(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    """GitHub redirects the user back here after they authorize.
+
+    Validates the state cookie matches the query param (CSRF defense),
+    exchanges the code for an access token, then 302s the user back
+    to / with the token in the URL fragment so it doesn't end up in
+    server logs. Frontend boot parses the fragment + stores it.
+    """
+    from fastapi.responses import RedirectResponse
+
+    # GitHub propagates user-side errors (e.g. user clicked Deny) via
+    # ?error. Surface them in the redirect query so the frontend can
+    # show a useful message.
+    if error:
+        detail = error_description or error
+        target = f"/?gh_oauth_error={_urlquote(detail)}"
+        return RedirectResponse(target, status_code=302)
+
+    if not code or not state:
+        raise HTTPException(
+            status_code=400,
+            detail="missing code or state in OAuth callback",
+        )
+
+    cookie_state = request.cookies.get(_GH_OAUTH_STATE_COOKIE) or ""
+    if not hmac.compare_digest(
+        state.encode("utf-8"), cookie_state.encode("utf-8")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth state mismatch — possible CSRF or expired session",
+        )
+
+    cfg = _github_oauth_config()
+    if not cfg["client_id"] or not cfg["client_secret"]:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub OAuth is not configured",
+        )
+
+    # The token exchange blocks on urllib — push it off-thread.
+    import asyncio
+    import functools
+
+    loop = asyncio.get_running_loop()
+    try:
+        token = await loop.run_in_executor(
+            None,
+            functools.partial(
+                github_oauth.exchange_code,
+                cfg["client_id"],
+                cfg["client_secret"],
+                code,
+                cfg["redirect_uri"],
+            ),
+        )
+    except github_oauth.OAuthError as e:
+        # Don't leak the exception type/stack — but DO surface the
+        # message so users see "code expired, try again" instead of
+        # a black-box 500.
+        target = f"/?gh_oauth_error={_urlquote(str(e))}"
+        resp = RedirectResponse(target, status_code=302)
+        resp.delete_cookie(_GH_OAUTH_STATE_COOKIE, path="/api/github/oauth/")
+        return resp
+
+    # Token in the fragment so it never appears in Referer headers or
+    # access logs. Browsers don't send fragments to the server on
+    # subsequent navigations. Frontend boot reads the fragment, stores
+    # the token via setGithubToken, and replaces history so the bare
+    # URL is left behind.
+    target = f"/?gh_oauth=success#gh_token={_urlquote(token)}"
+    resp = RedirectResponse(target, status_code=302)
+    # State served its purpose — burn it so a replay can't reuse it.
+    resp.delete_cookie(_GH_OAUTH_STATE_COOKIE, path="/api/github/oauth/")
+    return resp
 
 
 class ExtractUrlRequest(BaseModel):

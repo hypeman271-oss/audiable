@@ -87,6 +87,35 @@
             <h1>Narrative</h1>
             <p class="tagline">Type. Listen. Download.</p>
           </div>
+          <!-- v173: first-clip onboarding tour banner. Lives INSIDE the
+               hero row so it occupies the empty horizontal space
+               between the title block and the icon rail — impossible
+               to miss because it sits in the viewer's natural
+               left-to-right scan across the top. Earlier homes (v168
+               inside library, v171 above player, v172 below header)
+               kept getting glanced past. The flex middle slot puts
+               the message directly between brand and primary nav.
+               On narrow screens (<860px) it wraps to its own row via
+               .hero-row's flex-wrap so it doesn't crush the title or
+               the icons. Single per-device flag (FIRST_CLIP_TOUR_KEY)
+               — dismiss × hides it permanently. -->
+          <div id="first-clip-tour" class="first-clip-tour" hidden>
+            <div class="first-clip-tour-head">
+              <span class="first-clip-tour-icon" aria-hidden="true">🎉</span>
+              <strong>This is your first clip.</strong>
+              <button
+                id="first-clip-tour-dismiss"
+                type="button"
+                class="first-clip-tour-dismiss"
+                aria-label="Dismiss tour"
+              >×</button>
+            </div>
+            <p class="first-clip-tour-body">
+              Tap <strong>✎ Edit</strong> to add a cover, drag
+              <strong>⋮⋮</strong> to reorder, tap <strong>📝</strong>
+              to write notes.
+            </p>
+          </div>
           <div class="hero-icons">
             <!-- Voice trigger. Label shows the currently-selected voice
                  so the user can see what'll narrate without opening the
@@ -128,8 +157,6 @@
             >⚙</button>
           </div>
         </div>
-      </header>
-
       <dialog id="settings-dialog" class="settings-dialog">
         <div class="voice-browser-head">
           <h2>Settings</h2>
@@ -165,6 +192,11 @@
                 <span>Author</span>
               </label>
             </div>
+            <!-- v150: dynamic "+ unlocks" hint. JS sets the text based
+                 on the current mode so a Simple-mode user sees what
+                 Standard / Author would gain them. Hidden when the
+                 user is already on Author (nothing left to unlock). -->
+            <p id="mode-unlock-hint" class="mode-unlock-hint" hidden></p>
           </div>
 
           <div class="settings-row">
@@ -278,6 +310,15 @@
             rel="noopener"
             class="settings-help-link"
           >Help &amp; manual →</a>
+          <!-- v152: discoverable entry point for the shortcuts dialog
+               so testers who don't know "?" opens it can still find
+               the list. -->
+          <a
+            id="settings-shortcuts-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="Open keyboard shortcuts"
+          >Keyboard shortcuts →</a>
           <a
             id="settings-feedback-link"
             href="#"
@@ -292,6 +333,30 @@
             class="settings-help-link"
             aria-label="Send feedback via Gmail"
           >Send feedback (Gmail) →</a>
+          <!-- v174: replay the discoverability tips. Clears every
+               narrative.hintSeen.*, voice-favorites tip dismissal,
+               drag-hint dismissal, speaker-audition tip flags, and
+               the first-clip tour flag. Useful after dismissing a
+               tip by accident, or while developing/testing the
+               onboarding flow. -->
+          <a
+            id="settings-reset-hints-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="Replay onboarding tips and first-tap hints"
+          >Replay onboarding tips →</a>
+          <!-- v177: in-app debug log viewer. Surfaces the _debugLog
+               ring buffer in a modal with Copy / Download / Clear
+               buttons. Most useful when chasing "chapter X keeps
+               failing to synthesize" reports — every GitHub fetch,
+               queue enqueue, synth attempt, and error writes a
+               timestamped entry. -->
+          <a
+            id="settings-debug-log-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="View the in-app debug log"
+          >View debug log →</a>
 
           <!-- GitHub section: paste a Personal Access Token so URL
                fetch can pull from private repos. Token is stored only
@@ -301,15 +366,100 @@
             <label for="settings-github-token" class="settings-section-label">
               GitHub
             </label>
+            <!-- v140: token status moved to the TOP of the section so
+                 the user sees "Token saved" right where they're
+                 looking after pasting, instead of below the field
+                 they just emptied. .settings-token-status is the
+                 banner; data-state controls the styling (saved vs
+                 empty vs cleared). -->
+            <p
+              id="settings-github-status"
+              class="settings-token-status"
+              data-state="empty"
+              aria-live="polite"
+            ></p>
+            <!-- v180: Sign in with GitHub via OAuth. Lit up only when
+                 the server reports OAuth is configured (GITHUB_CLIENT_ID
+                 + GITHUB_CLIENT_SECRET set). When unconfigured the
+                 button stays visible but disabled with a tooltip
+                 pointing the operator at OAUTH_SETUP.md. PAT paste
+                 below is retained as the fallback. -->
+            <div id="settings-github-oauth-row" class="settings-github-oauth-row">
+              <button
+                id="settings-github-oauth-btn"
+                type="button"
+                class="settings-github-oauth-btn"
+                disabled
+                title="Loading…"
+              >
+                <span class="settings-github-oauth-icon" aria-hidden="true">⌥</span>
+                <span class="settings-github-oauth-label">Sign in with GitHub</span>
+              </button>
+              <p
+                id="settings-github-oauth-note"
+                class="settings-github-oauth-note"
+              ></p>
+            </div>
             <p class="settings-section-hint">
-              Paste a Personal Access Token to fetch from private
-              repos. Token stays on this device.
+              Or paste a Personal Access Token (works for fine-grained
+              tokens, GitHub Enterprise, or if your operator hasn't
+              configured OAuth). Token stays on this device.
               <a
                 href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Narrative"
                 target="_blank"
                 rel="noopener"
               >Create one →</a>
             </p>
+            <!-- v143: collapsible visual guide. The "Create one →" link
+                 above drops you on GitHub's PAT page with scope=repo
+                 pre-selected, but testers still got confused at the
+                 final step — the token is shown ONCE on a green row
+                 with a quick copy icon, then never again. This mock
+                 shows that screen faithfully so the user knows
+                 exactly what to look for. -->
+            <details class="settings-github-help" id="settings-github-help">
+              <summary>
+                <span class="settings-github-help-show">Show me what to copy from GitHub →</span>
+                <span class="settings-github-help-hide">↑ Hide GitHub help</span>
+              </summary>
+              <div class="settings-github-help-body">
+                <ol class="settings-github-steps">
+                  <li>
+                    Click <strong>Create one →</strong> above
+                    — opens GitHub with the right scope already
+                    ticked.
+                  </li>
+                  <li>
+                    Scroll to the bottom and hit the green
+                    <strong>Generate token</strong> button.
+                  </li>
+                  <li>
+                    GitHub shows your token <strong>once</strong>
+                    on a screen like the one below. Click the
+                    copy icon, then paste it into the field below
+                    this guide.
+                  </li>
+                </ol>
+                <figure class="github-mock" aria-label="Mock of the GitHub Personal Access Tokens success screen">
+                  <div class="ghm-header">Personal access tokens (classic)</div>
+                  <div class="ghm-callout">
+                    <span class="ghm-bell" aria-hidden="true">🔔</span>
+                    <span>Make sure to copy your personal access token now. You won't be able to see it again!</span>
+                  </div>
+                  <div class="ghm-token-row">
+                    <span class="ghm-check" aria-hidden="true">✓</span>
+                    <code class="ghm-token">ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>
+                    <span class="ghm-copy" aria-hidden="true">⧉</span>
+                    <span class="ghm-delete">Delete</span>
+                  </div>
+                  <figcaption class="ghm-caption">
+                    ↑ Copy the whole string starting with
+                    <code>ghp_</code>. That's what goes in the
+                    field below.
+                  </figcaption>
+                </figure>
+              </div>
+            </details>
             <div class="settings-token-row">
               <input
                 id="settings-github-token"
@@ -325,7 +475,6 @@
                 aria-label="Clear stored token"
               >Clear</button>
             </div>
-            <p id="settings-github-status" class="settings-section-hint" aria-live="polite"></p>
           </div>
         </div>
       </dialog>
@@ -358,12 +507,30 @@
                 aria-controls="import-menu"
                 aria-label="Import manuscript from a file, URL, or external tool"
               >Import ▾</button>
+              <!-- v149: each item carries a one-line subtitle so a
+                   first-time tester knows what Scrivener / Obsidian
+                   even are without having to open the manual. -->
               <div id="import-menu" class="import-menu" role="menu" hidden>
-                <button role="menuitem" type="button" data-import="file">Upload file</button>
-                <button role="menuitem" type="button" data-import="url">Paste URL</button>
-                <button role="menuitem" type="button" data-import="github">GitHub repo</button>
-                <button role="menuitem" type="button" data-import="scrivener">Scrivener bundle</button>
-                <button role="menuitem" type="button" data-import="obsidian">Obsidian vault</button>
+                <button role="menuitem" type="button" data-import="file">
+                  <span class="import-menu-label">Upload file</span>
+                  <span class="import-menu-sub">PDF, EPUB, DOCX, TXT, MD — up to 25 MB</span>
+                </button>
+                <button role="menuitem" type="button" data-import="url">
+                  <span class="import-menu-label">Paste URL</span>
+                  <span class="import-menu-sub">Any article URL (blog, Wikipedia, news)</span>
+                </button>
+                <button role="menuitem" type="button" data-import="github">
+                  <span class="import-menu-label">GitHub repo</span>
+                  <span class="import-menu-sub">Browse a repo and pick chapters</span>
+                </button>
+                <button role="menuitem" type="button" data-import="scrivener">
+                  <span class="import-menu-label">Scrivener bundle</span>
+                  <span class="import-menu-sub">.scriv project zipped up from Finder / Explorer</span>
+                </button>
+                <button role="menuitem" type="button" data-import="obsidian">
+                  <span class="import-menu-label">Obsidian vault</span>
+                  <span class="import-menu-sub">.zip of your vault folder — picks notes as chapters</span>
+                </button>
               </div>
             </div>
             <button
@@ -400,6 +567,17 @@
           hidden
           accept=".zip,application/zip,application/x-zip-compressed"
         />
+        <!-- v142: per-mode hint that explains what shape of URL the
+             current import flow expects. Empty (and hidden) by
+             default; showUrlRow({hint}) fills it. The GitHub flow in
+             particular calls this out because pasting a single-file
+             blob URL silently fell through to a doomed trafilatura
+             fetch in earlier builds. -->
+        <p id="url-row-hint" class="url-row-hint" hidden></p>
+        <!-- v176: Recent-repos chips. Shown above the URL input only
+             during the GitHub Import flow (showUrlRow injects them).
+             One-click swap between projects without re-pasting URLs. -->
+        <div id="url-row-recents" class="url-row-recents" hidden></div>
         <div id="url-row" class="url-row" hidden>
           <input
             id="url-input"
@@ -457,6 +635,58 @@
           >×</button>
         </div>
 
+        <!-- v162: background queue panel. Renders the in-flight job
+             + a draggable list of pending jobs. Drag ⋮⋮ to reorder
+             what comes next; × to drop a job. The current job is
+             locked at the top — can't be moved or removed mid-
+             synthesis. Hidden when the queue is empty.
+             v163: footer with a "+ More from {recent repo}" link
+             that re-opens the GitHub picker for the most recently
+             browsed repo. Cuts the "I forgot to grab chapter 4"
+             round-trip from re-paste-URL → re-fetch → re-browse
+             down to one click + Use. -->
+        <div id="bg-queue-panel" class="bg-queue-panel" hidden>
+          <div id="bg-queue-current" class="bg-queue-current" hidden></div>
+          <div id="bg-queue-pending" class="bg-queue-pending"></div>
+          <div id="bg-queue-footer" class="bg-queue-footer" hidden></div>
+        </div>
+
+        <!-- v161: post-queue retry banner. Shown after a background
+             queue finishes if any chapters failed twice (initial +
+             1 auto-retry). Lists the failed titles + offers a
+             one-click Retry that re-runs the queue with just those
+             chapters. Dismiss hides until the next failure. -->
+        <div id="silent-queue-failures" class="silent-queue-failures" hidden>
+          <div class="silent-queue-failures-msg">
+            <strong>Background queue:</strong>
+            <span id="silent-queue-failures-count">0 chapters</span>
+            didn't synthesize.
+            <div id="silent-queue-failures-list" class="silent-queue-failures-list"></div>
+          </div>
+          <div class="silent-queue-failures-actions">
+            <button
+              id="silent-queue-failures-retry"
+              type="button"
+              class="chapter-banner-btn primary"
+            >Retry failed</button>
+            <!-- v177: jump straight to the debug log for the failure
+                 context (per-chapter HTTP/SSE errors, char counts,
+                 sentence-where-it-broke). -->
+            <button
+              id="silent-queue-failures-log"
+              type="button"
+              class="chapter-banner-btn"
+              aria-label="Open the debug log"
+            >View log</button>
+            <button
+              id="silent-queue-failures-dismiss"
+              type="button"
+              class="chapter-banner-btn"
+              aria-label="Dismiss"
+            >Dismiss</button>
+          </div>
+        </div>
+
         <div class="meta">
           <span id="char-count">0 / 50000</span>
         </div>
@@ -511,6 +741,7 @@
               type="button"
               class="link-btn advanced-only"
               aria-label="Save current voice + speed + volume as a preset"
+              title="Save the current voice + speed + volume as a named preset. Useful when juggling two voices (e.g. one for fiction, one for tech docs)."
             >Save preset</button>
             <button
               id="voice-defaults-btn"
@@ -533,7 +764,24 @@
              speakers (e.g. LibriTTS = 904). Shown via JS in onVoiceChange. -->
         <div id="speaker-row" class="speaker-row" hidden>
           <div class="label-row">
-            <label for="speaker" class="label">Speaker</label>
+            <span class="speaker-label-wrap">
+              <label for="speaker" class="label">Speaker</label>
+              <!-- v152: "?" link explains what "speaker N" even means
+                   on multi-speaker voices like LibriTTS so first-time
+                   testers don't pick a random number and wonder why.
+                   v153: toggles an inline popover instead of firing
+                   setStatus, so repeat-clicks actually visibly open
+                   and close. -->
+              <button
+                id="speaker-help-btn"
+                type="button"
+                class="speaker-help-btn"
+                aria-label="What is a speaker?"
+                title="What does 'speaker' mean here?"
+                aria-expanded="false"
+                aria-controls="speaker-help-popover"
+              >?</button>
+            </span>
             <div class="label-row-actions">
               <button
                 id="speaker-audition-btn"
@@ -549,6 +797,40 @@
                 title="Preview this speaker"
               >▶</button>
             </div>
+          </div>
+          <!-- v153: speaker help popover. Toggled by the ? button in
+               the label row. Sits between the label and the controls
+               so it doesn't push the dropdown around when open. -->
+          <div id="speaker-help-popover" class="speaker-help-popover" hidden>
+            <p>
+              💡 Multi-speaker voices like
+              <strong>LibriTTS</strong> were trained on hundreds of
+              individual readers — each numbered <em>Speaker</em> is
+              a distinct voice. Try a few via the <strong>Audition</strong>
+              link above to find one you like; star your favorites
+              so they're at the top next time.
+            </p>
+          </div>
+          <!-- v170: persistent inline tip pointing at the Audition link.
+               v168 tried to surface this through _fireChipHint → setStatus,
+               but the voice dialog is fullscreen and occluded the global
+               status bar — same failure mode the voice-favorites tip hit.
+               Inline + dismissible is the only thing that survives inside
+               a modal. Shown only for high-count voices (>20 speakers);
+               hidden once the user clicks Audition or × dismisses. -->
+          <div id="speaker-audition-tip" class="speaker-audition-tip" hidden>
+            <span class="speaker-audition-tip-icon" aria-hidden="true">💡</span>
+            <span class="speaker-audition-tip-text">
+              <strong id="speaker-audition-tip-count">Many</strong> speakers? Tap
+              <strong>Audition</strong> to flip through ones starred by
+              Narrative — preview, ★ favorite, and use the one you like.
+            </span>
+            <button
+              id="speaker-audition-tip-dismiss"
+              type="button"
+              class="speaker-audition-tip-dismiss"
+              aria-label="Dismiss tip"
+            >×</button>
           </div>
           <!-- Native dropdown for voices with a manageable speaker count
                (≤20). LibriTTS at 904 hides this in favor of the chip
@@ -613,7 +895,8 @@
         <input
           id="library-search"
           type="search"
-          placeholder="Search by title, text, or voice…"
+          placeholder="Title, full text, or voice name…"
+          title="Matches against any of: the clip's title, the full source text body, or the voice name. Esc to clear."
           autocomplete="off"
         />
         <!-- Idle tools (visible outside select mode) -->
@@ -650,6 +933,18 @@
             aria-label="Check all GitHub-sourced clips for upstream commits"
             hidden
           >Sync GitHub</button>
+          <!-- v176: "Re-narrate outdated" — the missing companion to
+               Sync all. After Sync flags clips with newer upstream
+               commits, this button re-imports each one through the
+               background queue so the listener-side audio catches up
+               in one click rather than per-clip ✎ → Refetch loops. -->
+          <button
+            id="library-renarrate-outdated"
+            type="button"
+            class="link-btn"
+            aria-label="Re-fetch and re-synthesize every outdated GitHub clip"
+            hidden
+          >Re-narrate outdated</button>
           <button
             id="library-all-bookmarks"
             type="button"
@@ -693,6 +988,27 @@
              distinct tags across all clips. Hidden when no clip has
              any tags so users who don't use tags never see the row. -->
         <div id="library-tag-filters" class="library-tag-filters" hidden></div>
+        <!-- v149: one-time discoverability hint for drag-to-reorder.
+             Shown when the library has 2+ clips AND the user hasn't
+             dismissed or used the feature. Auto-clears on first drag
+             (set in _attachDragHandle's pointerup) or via the ×. -->
+        <div id="drag-hint" class="drag-hint advanced-only" hidden>
+          <span class="drag-hint-icon" aria-hidden="true">💡</span>
+          <span class="drag-hint-text">
+            Tip — drag the <strong>⋮⋮</strong> handle on any card to
+            reorder. Auto-advance plays clips in the order you see them.
+          </span>
+          <button
+            id="drag-hint-dismiss"
+            type="button"
+            class="drag-hint-dismiss"
+            aria-label="Dismiss tip"
+          >×</button>
+        </div>
+        <!-- v168 banner relocated to above the player card in v171 —
+             living inside the library dialog meant the user only saw
+             it if they happened to open the library after their first
+             save. See the new #first-clip-tour above #player-card. -->
         <div id="library-list" class="library-list"></div>
         </div>
       </dialog>
@@ -727,33 +1043,113 @@
       </div>
 
       <div id="renarrate-banner" class="chapter-banner renarrate-banner advanced-only" hidden>
+        <!-- v152: clearer copy. The prior "Re-narrate ___ with ___?"
+             was too terse — testers weren't sure what would happen
+             to bookmarks / notes / saved position. Spell it out so
+             confirming feels safe. -->
         <span class="chapter-banner-msg">
-          Re-narrate <strong id="renarrate-clip-title">this clip</strong>
+          Re-synthesize <strong id="renarrate-clip-title">this clip</strong>
           with <strong id="renarrate-voice-name">the new voice</strong>?
+          Bookmarks, notes, and your saved position all carry over.
         </span>
         <span class="chapter-banner-actions">
           <button
             id="renarrate-confirm"
             type="button"
             class="chapter-banner-btn primary"
+            title="Re-synthesize the audio with the new voice; metadata is preserved."
           >Re-narrate</button>
           <button
             id="renarrate-dismiss"
             type="button"
             class="chapter-banner-btn"
-            aria-label="Dismiss re-narrate suggestion"
-          >Dismiss</button>
+            title="Keep the current audio. The new voice will apply to the next clip you generate."
+            aria-label="Keep current audio"
+          >Not now</button>
         </span>
       </div>
 
       <div class="actions card-actions">
-        <button id="generate" class="primary">
+        <button
+          id="generate"
+          class="primary"
+          title="Synthesize audio with the currently-picked voice (speed + volume from the Voice dialog)."
+          aria-label="Synthesize audio with the currently-picked voice"
+        >
           <span class="label-text">Generate</span>
           <span class="spinner" hidden></span>
         </button>
-        <button id="download" class="secondary" disabled>Download</button>
+        <button
+          id="download"
+          class="secondary"
+          disabled
+          title="Save the generated MP3 to your device."
+          aria-label="Save the generated MP3 to your device"
+        >Download</button>
+      </div>
+      <!-- v162: "Queue silently" — adds the current textarea text to
+           the background queue and clears the textarea so you can
+           paste the next thing. Drops you into a build-up workflow:
+           queue a bunch, drag to reorder, walk away. -->
+      <div class="actions-secondary">
+        <button
+          id="queue-silently"
+          type="button"
+          class="link-btn"
+          aria-label="Add this text to the background queue"
+          title="Add to the background queue (synthesizes silently while you work on something else)."
+        >Queue silently →</button>
       </div>
       <progress id="synth-progress" value="0" max="1" hidden></progress>
+
+      <!-- v149: first-run empty-state. Shown only when the textarea
+           is empty AND the library is empty (no clips ever saved on
+           this device). Gives a brand-new tester three concrete
+           starter actions instead of a blank textarea + Generate
+           button that immediately errors on empty text. Auto-hides
+           the moment any starter condition fails — type a character,
+           generate a clip, and it's gone. _updateEmptyState() in
+           app.js owns visibility. -->
+      <section id="empty-state" class="empty-state" hidden>
+        <p class="empty-state-head">
+          New to Narrative? Try one of these to get started.
+        </p>
+        <div class="empty-state-grid">
+          <button
+            class="empty-state-card"
+            type="button"
+            data-empty-action="url"
+          >
+            <span class="empty-state-emoji" aria-hidden="true">🌐</span>
+            <span class="empty-state-title">Paste an article URL</span>
+            <span class="empty-state-desc">
+              Any blog post, Wikipedia page, news article.
+            </span>
+          </button>
+          <button
+            class="empty-state-card"
+            type="button"
+            data-empty-action="file"
+          >
+            <span class="empty-state-emoji" aria-hidden="true">📄</span>
+            <span class="empty-state-title">Upload a file</span>
+            <span class="empty-state-desc">
+              PDF, EPUB, DOCX, TXT, MD — up to 25 MB.
+            </span>
+          </button>
+          <button
+            class="empty-state-card"
+            type="button"
+            data-empty-action="github"
+          >
+            <span class="empty-state-emoji" aria-hidden="true">📚</span>
+            <span class="empty-state-title">Browse a GitHub repo</span>
+            <span class="empty-state-desc">
+              Pick chapters from a manuscript repo.
+            </span>
+          </button>
+        </div>
+      </section>
 
       <section class="player card" id="player-card" hidden>
         <!-- Native audio element kept for the playback API + MediaSession;
@@ -853,6 +1249,17 @@
             aria-label="Playback speed"
             title="Tap to cycle playback speed"
           >1×</button>
+          <!-- v138: quick-access notes scratchpad. Opens a lightweight
+               dialog focused on the current clip's notes so the user
+               can jot down a thought while listening without leaving
+               the player. -->
+          <button
+            id="notes-btn"
+            type="button"
+            class="notes-btn advanced-only"
+            aria-label="Open clip notes"
+            title="Open notes for this clip"
+          >📝 Notes</button>
         </div>
         <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
       </section>
@@ -873,16 +1280,66 @@
         </div>
         <div class="doc-picker-body">
           <p id="doc-picker-meta" class="doc-picker-meta"></p>
+          <!-- v179: GitHub branch picker. Hidden for non-GitHub sources;
+               openGithubBrowser fills + shows it once /api/github/branches
+               returns. Selecting a different branch re-opens the picker
+               with that branch's tree — no URL re-typing. -->
+          <div
+            id="doc-picker-branches-row"
+            class="doc-picker-branches-row"
+            hidden
+          >
+            <label for="doc-picker-branches" class="doc-picker-branches-label">
+              Branch:
+            </label>
+            <select
+              id="doc-picker-branches"
+              class="doc-picker-branches"
+              aria-label="Switch branch"
+            ></select>
+          </div>
+          <!-- v179: Auto-suggested folder filter chips. Hidden until
+               openGithubBrowser detects common parent folders
+               (chapters/, manuscript/, src/, content/, etc.) and
+               injects chips here. Clicking a chip prefixes the path
+               filter; clicking again clears it. -->
+          <div
+            id="doc-picker-folder-chips"
+            class="doc-picker-folder-chips"
+            hidden
+          ></div>
           <input
             id="doc-picker-filter"
             type="search"
             placeholder="Filter…"
             autocomplete="off"
           />
+          <!-- v176: "Hide already imported" toggle. Only shown when the
+               caller passes an isImported callback (GitHub flow does
+               so the user can spot which chapters are already in their
+               library or sitting in the bg queue). The chip-style
+               toggle reads its pressed state via aria-pressed so a
+               second tap turns it back off. -->
+          <button
+            id="doc-picker-hide-imported"
+            type="button"
+            class="doc-picker-hide-imported"
+            aria-pressed="false"
+            hidden
+          >Hide already imported</button>
           <div id="doc-picker-list" class="doc-picker-list" role="listbox" aria-label="Items"></div>
           <p id="doc-picker-summary" class="doc-picker-summary" aria-live="polite"></p>
         </div>
         <div class="doc-picker-actions">
+          <!-- v139: opt into silent background synthesis for multi-pick
+               imports — chapters synthesize sequentially and land in
+               the library without ever loading into the player. Hidden
+               until 2+ items are selected (single picks just go to the
+               textarea, not a queue). -->
+          <label class="doc-picker-bg" id="doc-picker-bg-label" hidden>
+            <input type="checkbox" id="doc-picker-bg-toggle" />
+            <span>Background — don't auto-play</span>
+          </label>
           <button
             id="doc-picker-cancel"
             type="button"
@@ -894,6 +1351,75 @@
             class="primary"
             disabled
           >Use selected</button>
+        </div>
+      </dialog>
+
+      <!-- v152: keyboard shortcuts overlay. Open via "?" key (when
+           not focused in an input / textarea) or via Settings →
+           Keyboard shortcuts. Lists the same shortcuts the manual
+           §9 documents so a user doesn't need to leave the app to
+           remember Ctrl+Enter generates audio. -->
+      <dialog id="shortcuts-dialog" class="shortcuts-dialog">
+        <div class="voice-browser-head">
+          <h2>Keyboard shortcuts</h2>
+          <button
+            id="shortcuts-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close shortcuts"
+          >Close</button>
+        </div>
+        <div class="shortcuts-body">
+          <table class="shortcuts-table">
+            <tr>
+              <th>Where</th><th>Key</th><th>Does</th>
+            </tr>
+            <tr>
+              <td>Textarea</td>
+              <td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></td>
+              <td>Generate audio</td>
+            </tr>
+            <tr>
+              <td>Player</td>
+              <td><kbd>Space</kbd></td>
+              <td>Play / pause (when player has focus)</td>
+            </tr>
+            <tr>
+              <td>Search box</td>
+              <td><kbd>Esc</kbd></td>
+              <td>Clear search</td>
+            </tr>
+            <tr>
+              <td>URL input</td>
+              <td><kbd>Enter</kbd> / <kbd>Esc</kbd></td>
+              <td>Fetch / Cancel</td>
+            </tr>
+            <tr>
+              <td>Bookmark note</td>
+              <td><kbd>Enter</kbd> / <kbd>Esc</kbd></td>
+              <td>Save / Revert</td>
+            </tr>
+            <tr>
+              <td>Edit dialog</td>
+              <td><kbd>Enter</kbd> (in title)</td>
+              <td>Save</td>
+            </tr>
+            <tr>
+              <td>Anywhere</td>
+              <td><kbd>?</kbd></td>
+              <td>Open this overlay</td>
+            </tr>
+            <tr>
+              <td>Anywhere</td>
+              <td><kbd>Esc</kbd> (in any dialog)</td>
+              <td>Close the dialog</td>
+            </tr>
+          </table>
+          <p class="shortcuts-hint">
+            On a phone or tablet, lock-screen / Bluetooth headphone
+            controls play / pause and skip a whole sentence forward
+            or back.
+          </p>
         </div>
       </dialog>
 
@@ -961,6 +1487,27 @@
             aria-pressed="false"
           >Installed only</button>
         </div>
+        <!-- v167: tip banner shown when no voices are starred yet.
+             Hides automatically once the user stars at least one
+             (the previous attempt at a first-tap status hint fired
+             but was occluded by this very dialog — the user never
+             saw it). Inline + persistent is the only reliable way
+             to surface the affordance from inside a fullscreen
+             modal. -->
+        <div id="voice-favorites-tip" class="voice-favorites-tip" hidden>
+          <span class="voice-favorites-tip-icon" aria-hidden="true">💡</span>
+          <span class="voice-favorites-tip-text">
+            Tap the <strong>☆</strong> on any voice to star it.
+            Starred voices float to the top of the main voice picker
+            as a <strong>★ Favorites</strong> group.
+          </span>
+          <button
+            id="voice-favorites-tip-dismiss"
+            type="button"
+            class="voice-favorites-tip-dismiss"
+            aria-label="Dismiss tip"
+          >×</button>
+        </div>
         <!-- Custom preview text. When empty, ▶ on a row plays the canned
              HuggingFace sample. When filled, ▶ instead synthesizes this
              text with the row's voice — paste a sentence from your
@@ -995,6 +1542,48 @@
         <div id="voice-browser-list" class="voice-browser-list">
           <div class="voice-browser-loading">Loading catalog…</div>
         </div>
+      </dialog>
+
+      <!-- v177: debug log viewer. Modal renders the _debugLog ring
+           buffer (timestamps + category + message + optional data
+           payload) so the user can copy/download it when reporting a
+           "chapter X keeps failing" issue. Linked from Settings →
+           "View debug log →" and from the failures banner. -->
+      <dialog id="debug-log-dialog" class="debug-log-dialog">
+        <div class="voice-browser-head">
+          <div>
+            <h2>Debug log</h2>
+            <p class="debug-log-subtitle">
+              Most recent <span id="debug-log-count">0</span> entries
+              from the GitHub → queue → synth pipeline. Useful for
+              diagnosing "chapter X keeps failing" reports.
+            </p>
+          </div>
+          <button
+            id="debug-log-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close debug log"
+          >Close</button>
+        </div>
+        <div class="debug-log-actions">
+          <button
+            id="debug-log-copy"
+            type="button"
+            class="link-btn"
+          >Copy</button>
+          <button
+            id="debug-log-download"
+            type="button"
+            class="link-btn"
+          >Download .txt</button>
+          <button
+            id="debug-log-clear"
+            type="button"
+            class="link-btn debug-log-clear"
+          >Clear</button>
+        </div>
+        <pre id="debug-log-body" class="debug-log-body"></pre>
       </dialog>
 
       <!-- Speaker audition wizard. Surfaces 6 speakers per page for the
@@ -1108,12 +1697,39 @@
             maxlength="200"
             autocomplete="off"
           />
+          <!-- v179: gitRef meta line. Shown only for GitHub-sourced
+               clips. Surfaces the source path + the short commit SHA
+               so the user can confirm "yes this clip is the chapter
+               I just pushed" without leaving the dialog. Tooltip on
+               the SHA chip shows the full hash. -->
+          <p id="clip-edit-gitref" class="clip-edit-gitref" hidden>
+            <span class="clip-edit-gitref-label">From GitHub:</span>
+            <span id="clip-edit-gitref-path" class="clip-edit-gitref-path"></span>
+            <span class="clip-edit-gitref-sep">@</span>
+            <code
+              id="clip-edit-gitref-sha"
+              class="clip-edit-gitref-sha"
+              title="Full commit SHA"
+            ></code>
+          </p>
           <label for="clip-edit-note" class="label">Note (optional)</label>
           <textarea
             id="clip-edit-note"
             rows="3"
             maxlength="500"
             placeholder="A short reminder about this clip — chapter number, author, status…"
+          ></textarea>
+          <!-- v138: free-form notes scratchpad. Distinct from the
+               one-line "Note" above (which is a label/subtitle shown
+               on the card). This is for chapter-level reflection
+               while listening — edits to revisit, voice direction,
+               continuity reminders, beat-sheet notes. -->
+          <label for="clip-edit-notes" class="label">Notes (optional)</label>
+          <textarea
+            id="clip-edit-notes"
+            rows="6"
+            maxlength="10000"
+            placeholder="Jot anything down — edits to revisit, voice direction, continuity reminders, beat-sheet notes…"
           ></textarea>
           <label for="clip-edit-tags" class="label">
             Tags (optional, comma-separated)
@@ -1159,6 +1775,33 @@
           <div class="clip-edit-actions">
             <button id="clip-edit-save" type="button" class="primary">Save</button>
           </div>
+        </div>
+      </dialog>
+
+      <!-- v138: lightweight notes dialog. Opened from the player
+           "📝 Notes" chip while a clip is loaded. Edits the current
+           clip's notes field directly; saves on close so the user
+           doesn't have to remember a Save button mid-thought. The
+           Edit dialog also exposes the same field; this one is just
+           a focused, no-other-fields view for jotting while listening. -->
+      <dialog id="notes-dialog" class="notes-dialog">
+        <div class="notes-dialog-head">
+          <h3 id="notes-dialog-title">Notes</h3>
+          <button
+            id="notes-dialog-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close notes"
+          >Close</button>
+        </div>
+        <textarea
+          id="notes-dialog-text"
+          rows="14"
+          maxlength="10000"
+          placeholder="Jot anything down — edits to revisit, voice direction, continuity reminders, beat-sheet notes…"
+        ></textarea>
+        <div class="notes-dialog-foot">
+          <span id="notes-dialog-status" class="muted"></span>
         </div>
       </dialog>
 
