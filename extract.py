@@ -29,6 +29,196 @@ class ExtractionError(RuntimeError):
 MAX_URL_FETCH_BYTES = 5 * 1024 * 1024  # 5 MB cap on fetched HTML
 
 
+# File extensions the repo browser surfaces in its file list. Keep in
+# sync with the upload-file accepted types and the fetch_and_extract_url
+# file-URL branch — these are what the existing extract_text dispatcher
+# knows how to parse.
+GITHUB_BROWSE_EXTENSIONS = {
+    ".md",
+    ".markdown",
+    ".txt",
+    ".text",
+    ".docx",
+    ".pdf",
+    ".epub",
+}
+
+
+def _parse_github_repo_url(url: str) -> tuple[str | None, str | None]:
+    """Pull (owner, repo) out of a github.com URL. Accepts repo roots
+    (`github.com/owner/repo`), nested paths (any subpath under it), and
+    `.git` suffix. Returns (None, None) for anything else."""
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse((url or "").strip())
+    if parsed.hostname not in ("github.com", "www.github.com"):
+        return None, None
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 2:
+        return None, None
+    owner = parts[0]
+    repo = parts[1]
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    return owner, repo
+
+
+def fetch_github_tree(
+    owner: str,
+    repo: str,
+    branch: str | None = None,
+    github_token: str | None = None,
+) -> dict:
+    """List the text-format files in a GitHub repo.
+
+    Calls the GitHub REST API directly with the user's PAT (so private
+    repos work). Filters to extensions the file-upload dispatcher can
+    handle. Returns:
+        {"owner": str, "repo": str, "branch": str, "files": [{path, size}],
+         "truncated": bool}
+
+    Raises ExtractionError on API failures so the route handler maps
+    them to a 422 with the message preserved (same pattern as the URL
+    extractor).
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    if not owner or not repo:
+        raise ExtractionError("invalid GitHub owner/repo")
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Narrative/0.1",
+    }
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    # Look up the default branch when one wasn't supplied. Saves the
+    # user from having to guess between main/master/develop/&c.
+    if not branch:
+        meta_url = f"https://api.github.com/repos/{owner}/{repo}"
+        try:
+            req = urllib.request.Request(meta_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                meta = json.load(resp)
+            branch = meta.get("default_branch") or "main"
+        except urllib.error.HTTPError as e:
+            hint = (
+                " — set a Personal Access Token in Settings → GitHub"
+                if e.code in (401, 403, 404)
+                else ""
+            )
+            raise ExtractionError(
+                f"GitHub repo lookup failed: HTTP {e.code}{hint}"
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ExtractionError(f"could not reach GitHub: {e}") from e
+
+    tree_url = (
+        f"https://api.github.com/repos/{owner}/{repo}"
+        f"/git/trees/{branch}?recursive=1"
+    )
+    try:
+        req = urllib.request.Request(tree_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        raise ExtractionError(f"GitHub tree fetch failed: HTTP {e.code}") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ExtractionError(f"could not reach GitHub: {e}") from e
+
+    files: list[dict] = []
+    for entry in data.get("tree", []) or []:
+        if entry.get("type") != "blob":
+            continue
+        path = entry.get("path") or ""
+        if not path:
+            continue
+        ext = PurePath(path).suffix.lower()
+        if ext not in GITHUB_BROWSE_EXTENSIONS:
+            continue
+        files.append({
+            "path": path,
+            "size": int(entry.get("size") or 0),
+            # SHA travels back to the frontend so it can store gitRef on
+            # the saved clip; the sync-check endpoint compares against
+            # this SHA later to detect commits.
+            "sha": entry.get("sha") or "",
+        })
+    files.sort(key=lambda f: f["path"].lower())
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "branch": branch,
+        "files": files,
+        "truncated": bool(data.get("truncated")),
+    }
+
+
+def _parse_github_raw_url(url: str) -> tuple[str | None, str | None, str | None, str | None]:
+    """Pull (owner, repo, branch, path) out of either a raw URL or a
+    github.com blob URL. Returns all-None for anything else."""
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse((url or "").strip())
+    parts = [p for p in parsed.path.split("/") if p]
+    if parsed.hostname == "raw.githubusercontent.com":
+        # /owner/repo/branch/path/to/file.md
+        if len(parts) < 4:
+            return None, None, None, None
+        return parts[0], parts[1], parts[2], "/".join(parts[3:])
+    if parsed.hostname in ("github.com", "www.github.com"):
+        # /owner/repo/blob/branch/path/to/file.md
+        if len(parts) < 5 or parts[2] not in ("blob", "raw"):
+            return None, None, None, None
+        return parts[0], parts[1], parts[3], "/".join(parts[4:])
+    return None, None, None, None
+
+
+def fetch_github_file_sha(
+    owner: str,
+    repo: str,
+    branch: str,
+    path: str,
+    github_token: str | None = None,
+) -> str:
+    """Look up the current SHA for a single file via the GitHub contents
+    API. Used by the sync-check path when the caller didn't pre-supply a
+    SHA (e.g., a Level-1 single-file URL paste).
+
+    Returns the SHA string, or empty string if the lookup fails — caller
+    treats empty as "couldn't check" rather than "no change."
+    """
+    import json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Narrative/0.1",
+    }
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    api_url = (
+        f"https://api.github.com/repos/{owner}/{repo}/contents/"
+        f"{urllib.parse.quote(path)}?ref={urllib.parse.quote(branch)}"
+    )
+    try:
+        req = urllib.request.Request(api_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.load(resp)
+        return data.get("sha") or ""
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+        return ""
+
+
 _GITHUB_HOSTS = {
     "github.com",
     "raw.githubusercontent.com",
@@ -62,7 +252,11 @@ def _rewrite_github_url(url: str) -> str:
     return f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{path}"
 
 
-def fetch_and_extract_url(url: str, github_token: str | None = None) -> dict:
+def fetch_and_extract_url(
+    url: str,
+    github_token: str | None = None,
+    git_sha: str | None = None,
+) -> dict:
     """Fetch an article URL and return its main text + metadata.
 
     Args:
@@ -196,12 +390,27 @@ def fetch_and_extract_url(url: str, github_token: str | None = None) -> dict:
         text = extract_text(filename, raw)
         if not text.strip():
             raise ExtractionError("file is empty or unreadable")
-        return {
+        result = {
             "filename": filename,
             "chars": len(text),
             "text": text,
             "images": [],
         }
+        # If this is a GitHub raw URL, attach a gitRef so the frontend
+        # can store it on the saved clip. Lets the update-checker know
+        # which repo+branch+path to compare against later.
+        owner_, repo_, branch_, path_ = _parse_github_raw_url(url)
+        if owner_ and repo_:
+            sha = git_sha or fetch_github_file_sha(
+                owner_, repo_, branch_, path_, github_token=github_token
+            )
+            result["gitRef"] = {
+                "repoUrl": f"https://github.com/{owner_}/{repo_}",
+                "branch": branch_,
+                "path": path_,
+                "sha": sha,
+            }
+        return result
 
     # Decode using the response charset (Content-Type) when present;
     # fall back to UTF-8, then latin-1, so a stray encoding doesn't crash us.
@@ -573,6 +782,362 @@ def _extract_epub(data: bytes) -> str:
     if not parts:
         raise ExtractionError("EPUB contains no readable text")
     return "\n\n".join(parts)
+
+
+def extract_scrivener_bundle(data: bytes) -> dict:
+    """Parse a Scrivener .scriv.zip bundle and return a chapter list.
+
+    Scrivener stores each scene/chapter as a separate RTF file inside
+    `Files/Docs/{BinderItem ID}.rtf`. The `.scrivx` XML at the top
+    describes the binder hierarchy — folders nest within folders, leaf
+    items of `Type="Text"` carry the prose. We walk the DraftFolder /
+    Manuscript subtree, read each Text item's RTF in binder order, strip
+    formatting via `striprtf`, and return a flat ordered list with the
+    folder path preserved as a hint (Author can see which Scrivener
+    folder a chapter came from in the browser dialog).
+
+    Skips Research / Trash folders by default; the Research folder is
+    usually notes and worldbuilding, not prose the author wants to hear.
+
+    Returns:
+        {
+          "project_name": str (from .scrivx filename),
+          "chapters": [
+            {"id": str, "title": str, "path": "Manuscript/Part One",
+             "text": str, "chars": int},
+            ...
+          ],
+          "skipped": [{"path", "reason"}, ...]   # for UI hints
+        }
+
+    Raises ExtractionError for malformed bundles.
+    """
+    import io
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    try:
+        from striprtf.striprtf import rtf_to_text
+    except ImportError as e:
+        raise ExtractionError(
+            "Scrivener parser needs the `striprtf` package "
+            "(pip install striprtf)"
+        ) from e
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        raise ExtractionError(f"not a valid zip file: {e}") from e
+
+    with zf:
+        # Find the .scrivx file (the project root). Real bundles always
+        # have it at `<projectname>.scriv/<projectname>.scrivx`.
+        names = zf.namelist()
+        scrivx_name = next(
+            (n for n in names if n.lower().endswith(".scrivx")),
+            None,
+        )
+        if not scrivx_name:
+            raise ExtractionError(
+                "not a Scrivener bundle (no .scrivx file inside the zip)"
+            )
+
+        # Project name = the directory containing the scrivx, minus .scriv.
+        project_name = PurePath(scrivx_name).stem
+        bundle_root = str(PurePath(scrivx_name).parent).rstrip("/")
+
+        # Parse the binder XML.
+        try:
+            with zf.open(scrivx_name) as f:
+                tree = ET.parse(f)
+        except ET.ParseError as e:
+            raise ExtractionError(f"malformed .scrivx XML: {e}") from e
+
+        root = tree.getroot()
+        binder = root.find("Binder")
+        if binder is None:
+            raise ExtractionError(".scrivx has no <Binder> element")
+
+        # Walk the binder, collecting Text items under DraftFolder /
+        # Folder (skipping Research/Trash). Folders contribute to the
+        # path display, not to clips themselves.
+        chapters: list[dict] = []
+        skipped: list[dict] = []
+
+        def _walk(node, current_path: list[str], in_manuscript: bool):
+            for item in node.findall("BinderItem"):
+                item_type = item.get("Type") or ""
+                item_id = item.get("ID") or ""
+                title_el = item.find("Title")
+                title = (title_el.text or "").strip() if title_el is not None else ""
+                if not title:
+                    title = f"Untitled {item_id}"
+
+                # Type-based routing. Real Scrivener 3 types we know:
+                # DraftFolder, Folder, Text, ResearchFolder, TrashFolder,
+                # PdfFile, ImageFile, OtherFile. The last three aren't
+                # prose so we drop them quietly.
+                if item_type in ("ResearchFolder", "TrashFolder"):
+                    skipped.append({
+                        "path": "/".join(current_path + [title]),
+                        "reason": item_type,
+                    })
+                    continue
+
+                children = item.find("Children")
+                if item_type == "DraftFolder":
+                    new_path = current_path + [title]
+                    if children is not None:
+                        _walk(children, new_path, in_manuscript=True)
+                elif item_type == "Folder":
+                    new_path = current_path + [title]
+                    if children is not None:
+                        _walk(children, new_path, in_manuscript=in_manuscript)
+                elif item_type == "Text":
+                    if not in_manuscript:
+                        continue
+                    rtf_path = f"{bundle_root}/Files/Docs/{item_id}.rtf"
+                    if rtf_path not in names:
+                        # Real bundles sometimes omit the RTF for empty
+                        # documents — skip them so the import doesn't
+                        # fail outright.
+                        skipped.append({
+                            "path": "/".join(current_path + [title]),
+                            "reason": "no RTF file",
+                        })
+                        continue
+                    try:
+                        rtf_bytes = zf.read(rtf_path)
+                        rtf_str = rtf_bytes.decode("utf-8", errors="replace")
+                        text = rtf_to_text(rtf_str).strip()
+                    except Exception as e:
+                        skipped.append({
+                            "path": "/".join(current_path + [title]),
+                            "reason": f"RTF parse failed: {e}",
+                        })
+                        continue
+                    if not text:
+                        skipped.append({
+                            "path": "/".join(current_path + [title]),
+                            "reason": "empty document",
+                        })
+                        continue
+                    chapters.append({
+                        "id": item_id,
+                        "title": title,
+                        "path": "/".join(current_path),
+                        "text": _normalize(text),
+                        "chars": len(text),
+                    })
+
+        _walk(binder, [], in_manuscript=False)
+
+        if not chapters:
+            raise ExtractionError(
+                "Scrivener bundle has no readable chapters under the "
+                "Manuscript / Draft folder."
+            )
+
+        return {
+            "project_name": project_name,
+            "chapters": chapters,
+            "skipped": skipped,
+        }
+
+
+# Obsidian-specific folder names we never want to import. Mostly config
+# (.obsidian/), trash (.trash/), template scaffolds, and attachment dirs
+# that don't hold prose. Lowercased for case-insensitive match.
+_OBSIDIAN_SKIP_DIRS = {
+    ".obsidian", ".trash", ".git", ".vscode", ".idea",
+    "templates", "_templates", "template",
+    "attachments", "_attachments", "assets", "media", "files",
+    "images", "img",
+}
+
+# Wikilinks survive Obsidian export but are noise for TTS: a literal
+# "[[Other Note]]" read aloud sounds nonsensical. Strip the brackets
+# (and pipe-alias) so just the human-facing text remains. Embeds
+# (![[image.png]] or ![[Other Note]]) drop entirely.
+_OBSIDIAN_WIKILINK_ALIASED = re.compile(r"\[\[([^\]|]+)\|([^\]]+)\]\]")
+_OBSIDIAN_WIKILINK_PLAIN = re.compile(r"\[\[([^\]]+)\]\]")
+_OBSIDIAN_EMBED = re.compile(r"!\[\[[^\]]+\]\]")
+
+
+def _obsidian_strip_frontmatter(md: str) -> tuple[str | None, str]:
+    """Return (title, body) for a possibly-frontmatter'd Markdown doc.
+
+    We only need the title field; the rest of the YAML can be ignored
+    (tags, dates, properties all live there but aren't TTS-relevant).
+    Frontmatter spec: --- at line 1, then YAML, then ---. We accept
+    both LF and CRLF.
+    """
+    if not (md.startswith("---\n") or md.startswith("---\r\n")):
+        return None, md
+    # Find the closing fence — must be at the start of a line.
+    fence = re.search(r"(?m)^---\s*$", md[3:])
+    if not fence:
+        return None, md
+    yaml_block = md[3:3 + fence.start()]
+    body = md[3 + fence.end():].lstrip("\r\n")
+    title = None
+    for line in yaml_block.splitlines():
+        # Only the title field — we don't need a full YAML parser.
+        m = re.match(r"\s*title\s*:\s*(.*)$", line, re.IGNORECASE)
+        if m:
+            t = m.group(1).strip()
+            # Strip a single layer of matching quotes if present.
+            if len(t) >= 2 and t[0] == t[-1] and t[0] in ("'", '"'):
+                t = t[1:-1]
+            if t:
+                title = t
+            break
+    return title, body
+
+
+def extract_obsidian_vault(data: bytes) -> dict:
+    """Parse an Obsidian vault zip and return a notes list.
+
+    Obsidian stores notes as plain `.md` files in a folder hierarchy
+    chosen by the author. There's no "manuscript" abstraction — every
+    note looks the same on disk — so the user picks which notes to
+    import via the shared document picker after this parser surfaces
+    the candidates.
+
+    Filtering rules (default Obsidian conventions):
+      - skip `.obsidian/`, `.trash/`, any dotdir at any depth
+      - skip `templates/`, `attachments/`, `assets/`, `media/`, etc.
+      - skip non-.md files entirely
+      - parse YAML frontmatter for an optional `title:` override
+      - strip wikilinks ([[X]], [[X|Y]]) → human text
+      - drop embeds (![[X]]) — they're images or nested notes, neither
+        useful in a TTS context
+      - drop notes with empty body after stripping
+
+    Returns:
+        {
+          "vault_name": str,
+          "chapters": [
+            {"id": str, "title": str, "path": "Manuscript/Part One",
+             "text": str, "chars": int},
+            ...
+          ],
+          "skipped": [{"path", "reason"}, ...]
+        }
+
+    Raises ExtractionError if the zip is malformed or contains no
+    importable notes.
+    """
+    import io
+    import zipfile
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        raise ExtractionError(f"not a valid zip file: {e}") from e
+
+    chapters: list[dict] = []
+    skipped: list[dict] = []
+
+    with zf:
+        names = zf.namelist()
+
+        # Vault name: the single top-level folder, if there is one.
+        # Authors usually zip the vault folder itself, but some zip the
+        # contents instead — handle both gracefully.
+        roots = {n.split("/")[0] for n in names if "/" in n}
+        folder_roots = {
+            r for r in roots
+            if r and not r.lower().endswith((".md", ".markdown"))
+        }
+        if len(folder_roots) == 1:
+            vault_name = next(iter(folder_roots))
+        else:
+            vault_name = "Obsidian vault"
+
+        for name in names:
+            if name.endswith("/"):
+                continue
+            if not name.lower().endswith((".md", ".markdown")):
+                continue
+
+            parts = name.split("/")
+            # Drop the vault-root prefix from the display path so
+            # "MyVault/Manuscript/Ch1.md" surfaces as "Manuscript".
+            display_parts = (
+                parts[1:] if vault_name != "Obsidian vault"
+                and parts[0] == vault_name
+                else parts
+            )
+
+            # Skip anything sitting under a skip-dir or hidden dotdir
+            # at any depth (check parent dirs only, not the filename).
+            skip_reason = None
+            for p in display_parts[:-1]:
+                if p.startswith("."):
+                    skip_reason = f"hidden folder ({p})"
+                    break
+                if p.lower() in _OBSIDIAN_SKIP_DIRS:
+                    skip_reason = f"in {p}/"
+                    break
+            if skip_reason:
+                skipped.append({"path": name, "reason": skip_reason})
+                continue
+
+            try:
+                md_bytes = zf.read(name)
+                md_str = md_bytes.decode("utf-8", errors="replace")
+            except Exception as e:
+                skipped.append({"path": name, "reason": f"read failed: {e}"})
+                continue
+
+            title, body = _obsidian_strip_frontmatter(md_str)
+            if not title:
+                # Filename minus the .md/.markdown extension. We strip
+                # only the final extension so notes named "v2.0.md" keep
+                # the "v2.0" part.
+                fname = display_parts[-1] if display_parts else parts[-1]
+                title = re.sub(r"\.(md|markdown)$", "", fname, flags=re.IGNORECASE)
+
+            # Order matters: drop embeds FIRST, then strip wikilinks.
+            # ![[map.png]] looks like a wikilink to the plain regex —
+            # if we strip wikilinks first, the leading `!` is left
+            # orphaned ("!map.png") because the embed regex no longer
+            # matches.
+            body = _OBSIDIAN_EMBED.sub("", body)
+            body = _OBSIDIAN_WIKILINK_ALIASED.sub(r"\2", body)
+            body = _OBSIDIAN_WIKILINK_PLAIN.sub(r"\1", body)
+            body = body.strip()
+            if not body:
+                skipped.append({"path": name, "reason": "empty after stripping"})
+                continue
+
+            display_path = "/".join(display_parts[:-1])
+            chapters.append({
+                "id": name,
+                "title": title,
+                "path": display_path,
+                "text": _normalize(body),
+                "chars": len(body),
+            })
+
+    if not chapters:
+        raise ExtractionError(
+            "Obsidian vault has no readable Markdown notes "
+            "(or all notes were in skipped folders like .obsidian/ or "
+            "templates/)."
+        )
+
+    # Sort chapters by folder path then title — authors who use "01 -",
+    # "02 -" filename prefixes get their intended order, and folder
+    # groupings stay together.
+    chapters.sort(key=lambda c: (c["path"], c["title"].lower()))
+
+    return {
+        "vault_name": vault_name,
+        "chapters": chapters,
+        "skipped": skipped,
+    }
 
 
 def _extract_docx(data: bytes) -> str:

@@ -141,6 +141,167 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v125</span>
+          <span class="release-tagline">Story-board covers per chapter</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Upload custom cover art per clip.</strong>
+            Edit → Cover image lets you drop a story-board image (PNG /
+            JPG / WebP / GIF) onto each chapter. It's auto-resized to a
+            256×256 square and JPEG-compressed (~20-30 KB per cover)
+            so 100 chapters add about 2 MB to your library.
+          </li>
+          <li>
+            <strong>Libby-style color tint.</strong> Each upload's
+            dominant color is sampled and used as a soft 12% wash
+            across the matching library card. Clips without an
+            uploaded cover still get a tint — derived from the title
+            hash — so every card has a unique color identity at a
+            glance.
+          </li>
+          <li>
+            <strong>Cover images travel with Export / Import.</strong>
+            Library zip now includes a <code>covers/</code> folder
+            alongside <code>audio/</code>. Older zips without covers
+            still import cleanly; existing clips without covers fall
+            back to the gradient swatch.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v111</span>
+          <span class="release-tagline">Icon-rail UX — text window dominates</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Voice and Library moved into dialogs</strong> opened
+            from icons in the hero: <code>🎤 [Voice Name] ▾</code> and
+            <code>📚 Library</code> (with a clip-count badge). The text
+            window now dominates every viewport — no sidebar, no two-
+            column desktop grid. Same UX from phone to desktop.
+          </li>
+          <li>
+            <strong>Voice trigger shows the active voice</strong> so you
+            always see what'll narrate without opening the dialog.
+          </li>
+          <li>
+            <strong>Library badge shows clip count</strong> in the hero,
+            hidden when the library is empty.
+          </li>
+          <li>
+            <strong>Desktop max-width loosened to 960px / 1080px wide.</strong>
+            Without a 360px sidebar competing for space, the textarea
+            now stretches close to its typographic comfort zone (~85-90
+            chars) on regular desktops and ~100 chars on wide screens.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v109</span>
+          <span class="release-tagline">Libby/Hoopla-inspired listener polish</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Chapter-end sleep timer.</strong> The sleep chip's
+            cycle now ends with "Chapter end" (with a queue) or "Clip end"
+            (without) — stop at the next natural narrative boundary
+            instead of guessing how many minutes are left.
+          </li>
+          <li>
+            <strong>Customizable skip interval.</strong> Settings →
+            Skip interval picks 2 / 5 / 10 / 15 / 30 seconds. The ↶ and
+            ↷ chips update their labels to match.
+          </li>
+          <li>
+            <strong>Global bookmark timeline.</strong> Library tools →
+            "All bookmarks" opens a single view of every bookmark across
+            every clip — grouped by clip, sortable by recency / time-
+            in-clip / title. Each row jumps straight to that bookmark.
+            Made for authors revising a long manuscript.
+          </li>
+          <li>
+            <strong>Clip tags.</strong> Edit a clip to add free-form
+            comma-separated tags ("draft", "needs revision", "fiction").
+            Tags render as colored chips on the card; a filter chip row
+            above the library composes AND-style across selected tags.
+          </li>
+          <li>
+            <strong>Cover-art swatches.</strong> Each library card grows
+            a hash-derived gradient tile with the title initial. Same
+            title → same swatch on every device, making a 50-clip library
+            scannable at a glance.
+          </li>
+          <li>
+            <strong>Speed-aware duration.</strong> At any speed other
+            than 1×, the player shows "· 1h 50m left" beside the
+            duration, computed from current position. The speed chip's
+            tooltip carries the full breakdown.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v107</span>
+          <span class="release-tagline">Import dropdown · Scrivener · Obsidian</span>
+        </div>
+        <ul>
+          <li>
+            <strong>One Import menu replaces the old Upload + Paste
+            URL buttons.</strong> Five sources: Upload file, Paste
+            URL, GitHub repo, Scrivener bundle, Obsidian vault. The
+            text card stays uncluttered as more sources land.
+          </li>
+          <li>
+            <strong>Scrivener bundle import.</strong> Drop in a
+            <em>.scriv.zip</em>; the parser walks the binder XML in
+            author-defined order, reads each scene's RTF, and skips
+            Research / Trash. Pick chapters in a filterable picker;
+            single-select loads to the textarea, multi-select builds
+            a chapter queue.
+          </li>
+          <li>
+            <strong>Obsidian vault import.</strong> Drop in a
+            <em>.zip</em> of your vault; the parser walks every
+            <em>.md</em>, skipping <em>.obsidian/</em>,
+            <em>.trash/</em>, <em>templates/</em>,
+            <em>attachments/</em>. YAML <em>title:</em> frontmatter
+            overrides the filename; <em>[[wikilinks]]</em> are
+            flattened to plain text and <em>![[embeds]]</em> are
+            dropped so nothing nonsense gets read aloud.
+          </li>
+          <li>
+            <strong>GitHub repo browser + auto-sync (shipped over
+            v100–v104).</strong> Paste a
+            <em>github.com/owner/repo</em> URL or pick GitHub repo
+            from Import; the browser lists every
+            <em>.md / .txt / .docx / .pdf / .epub</em> in the tree.
+            Private repos work with a PAT in Settings. Each clip
+            remembers its file SHA; the library's
+            <strong>Sync all from GitHub</strong> button flags any
+            clip whose source has been updated upstream and offers
+            a one-click re-narrate.
+          </li>
+          <li>
+            <strong>Under the hood:</strong> GitHub, Scrivener, and
+            Obsidian browsers now share one document-picker
+            component, so future sources (Word, Google Docs,
+            Ulysses) plug in as new menu items instead of new dialogs.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v97</span>
           <span class="release-tagline">Illustrated books from Project Gutenberg</span>
         </div>

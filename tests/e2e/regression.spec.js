@@ -100,6 +100,10 @@ test.describe("regression — Voice browser plumbing", () => {
     await expect(page.locator("#voice option")).not.toHaveCount(0, {
       timeout: 15_000,
     });
+    // v110: Voice picker + Browse voices live inside a dialog now,
+    // opened from the 🎤 trigger in the hero. Open it first so
+    // #browse-voices-btn is in the layout.
+    await page.locator("#voice-trigger").click();
     await page.locator("#browse-voices-btn").click();
     await expect(page.locator(".catalog-voice")).not.toHaveCount(0, {
       timeout: 15_000,
@@ -172,7 +176,8 @@ test.describe("regression — Chapter detection on URL fetch", () => {
     );
 
     await page.goto("/");
-    await page.locator("#paste-url-btn").click();
+    await page.locator("#import-btn").click();
+    await page.locator('#import-menu button[data-import="url"]').click();
     await expect(page.locator("#url-row")).toBeVisible();
 
     await page.locator("#url-input").fill("https://example.com/book");
@@ -210,7 +215,8 @@ test.describe("regression — Chapter detection on URL fetch", () => {
     );
 
     await page.goto("/");
-    await page.locator("#paste-url-btn").click();
+    await page.locator("#import-btn").click();
+    await page.locator('#import-menu button[data-import="url"]').click();
     await page.locator("#url-input").fill("https://example.com/book2");
     await page.locator("#url-fetch-btn").click();
 
@@ -343,4 +349,54 @@ test.describe("regression — Speaker UI threshold", () => {
   // it's covered well by manual verification on real LibriTTS. Revisit
   // if either a CI voice is added or the logic grows tendrils.
   test.skip("chip replaces native dropdown for >20-speaker voices — shipped in v71", () => {});
+});
+
+test.describe("regression — Player play/pause icon swap", () => {
+  // The custom player's play button has TWO SVGs stacked (play
+  // triangle + pause bars). They're toggled via the `hidden` HTML
+  // attribute when audio plays / pauses. Two bugs combined to break
+  // the toggle until v119:
+  //   1. `.cp-play-btn svg { display: block }` beat `[hidden]` on
+  //      specificity. Fixed by adding `svg[hidden] { display: none }`.
+  //   2. `svg.hidden = true` sets the IDL property but, unlike
+  //      HTMLElement, SVGElement doesn't reflect that to the content
+  //      attribute. The toggle helpers now use setAttribute /
+  //      removeAttribute explicitly via _setSvgHidden().
+  // This test exercises both via the same runtime path the player
+  // uses: setAttribute, then check computed display.
+  test("svg[hidden] beats display:block so the play icon can hide — fixed in v119", async ({ page }) => {
+    await page.goto("/");
+    const result = await page.evaluate(() => {
+      const play = document.getElementById("cp-play-icon");
+      const pause = document.getElementById("cp-pause-icon");
+      // Mirror what _cpRefreshPlayIcon does for "playing" state.
+      play.setAttribute("hidden", "");
+      pause.removeAttribute("hidden");
+      return {
+        playDisplay: getComputedStyle(play).display,
+        pauseDisplay: getComputedStyle(pause).display,
+      };
+    });
+    expect(result.playDisplay).toBe("none");
+    expect(result.pauseDisplay).not.toBe("none");
+  });
+});
+
+test.describe("regression — Manual CSS does not bleed into headings", () => {
+  // The app's textarea has id="text" and the manual's "Getting text in"
+  // section anchor is <h2 id="text">. A bare `#text { min-height: 240px }`
+  // rule in the shared styles.css used to match BOTH — leaving a giant
+  // empty gap under the manual heading. v112 scoped the rule to
+  // `textarea#text` so the H2 is no longer affected. This test pins
+  // that fix so a future CSS author who drops the `textarea` qualifier
+  // gets caught immediately.
+  test("Manual H2 with id=\"text\" stays normal-sized — fixed in v112", async ({ page }) => {
+    await page.goto("/manual.html");
+    const height = await page.evaluate(() =>
+      document.getElementById("text").getBoundingClientRect().height
+    );
+    // Should be ~40-50px (one line of text + padding). The old
+    // bleeding rule forced it to 240px+ via min-height.
+    expect(height).toBeLessThan(100);
+  });
 });

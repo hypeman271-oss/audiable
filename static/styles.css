@@ -125,59 +125,177 @@ body {
   margin: 0 auto;
   padding: 24px 18px 64px;
   padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  /* v127: explicit position + z-index so .app reliably paints above
+     #bg-art (the Libby-style cover backdrop) at every viewport. On
+     mobile especially, without an explicit stacking context the
+     blurred backdrop could bleed through the card backgrounds. */
+  position: relative;
+  z-index: 1;
+}
+
+/* ---- Cover-art page backdrop (v126) ----------------------------------
+   Libby-style atmosphere: the currently-loaded chapter's cover image
+   fades in as a heavily blurred + dimmed wash across the whole
+   viewport, behind everything else. JS sets the inline
+   `background-image` from the clip's cover blob; CSS does the rest.
+   Always rendered (not hidden) so the opacity transition can play
+   when a clip loads / clears. Sits at z-index: -1 so it doesn't
+   interfere with the content, scrim, or dialog stacking. */
+#bg-art {
+  position: fixed;
+  inset: 0;
+  /* Explicit z-index: 0 so the backdrop sits at the bottom of the
+     stacking layer. `.app` gets z-index: 1 (below) so all content
+     paints reliably above. v126 relied on document order alone,
+     which worked on desktop but on mobile (especially with the
+     bg-art's blur/transform creating its own stacking context)
+     the backdrop sometimes painted over the .app. Explicit
+     z-indexes remove the ambiguity. */
+  z-index: 0;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* Heavy blur creates the soft atmosphere; saturate trim keeps the
+     wash from looking neon. Scale up slightly so the blur's soft
+     edges don't show against the viewport edges. */
+  filter: blur(48px) saturate(0.85);
+  transform: scale(1.15);
+  opacity: 0;
+  transition: opacity 600ms ease-out;
+  will-change: opacity;
+}
+#bg-art.active {
+  opacity: 0.45;
+}
+@media (max-width: 767px) {
+  /* Tone down on phone: smaller viewport means the cover wash
+     covers proportionally more of the visible area, and light-mode
+     palettes have less contrast headroom. 0.30 keeps the
+     atmosphere without overwhelming the text. */
+  #bg-art.active { opacity: 0.30; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #bg-art { transition: none; }
+}
+
+/* ---------- Dialog entry / exit animation (v113) ----------
+   Libby/Hoopla-style — dialogs fade + slide in when opening, fade
+   out when closing. Uses @starting-style + transition-behavior:
+   allow-discrete so display: none can transition smoothly (modern
+   CSS feature, well supported since late 2024 in Chrome/Firefox/
+   Safari). Older browsers just skip the animation and show
+   instantly — no functionality lost.
+
+   Per-dialog rules elsewhere still set their own `display: flex`
+   / size / etc. — these rules layer opacity + transform on top of
+   whatever each dialog already does, without overriding it. */
+dialog {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out,
+    overlay 180ms ease-out allow-discrete,
+    display 180ms ease-out allow-discrete;
+}
+dialog[open] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+@starting-style {
+  dialog[open] {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+dialog::backdrop {
+  opacity: 0;
+  transition:
+    opacity 180ms ease-out,
+    overlay 180ms ease-out allow-discrete,
+    display 180ms ease-out allow-discrete;
+}
+dialog[open]::backdrop {
+  opacity: 1;
+}
+@starting-style {
+  dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/* Mobile / phone: bottom-sheet feel — dialogs slide up from below
+   instead of the desktop's subtle scale-fade. Matches the native
+   feel of Libby/Hoopla on phone. */
+@media (max-width: 767px) {
+  dialog {
+    transform: translateY(24px);
+  }
+  @starting-style {
+    dialog[open] {
+      transform: translateY(24px);
+    }
+  }
+}
+
+/* Import dropdown menu in the hero icon rail. Same fade + slide
+   pattern as dialogs, sized for a small popover. */
+.import-menu {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 140ms ease-out,
+    transform 140ms ease-out,
+    display 140ms ease-out allow-discrete;
+}
+.import-menu:not([hidden]) {
+  opacity: 1;
+  transform: translateY(0);
+}
+@starting-style {
+  .import-menu:not([hidden]) {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* Honor the user's reduced-motion preference — show/hide instantly. */
+@media (prefers-reduced-motion: reduce) {
+  dialog,
+  dialog::backdrop,
+  .import-menu {
+    transition: none;
+  }
 }
 
 /* ---------- Adaptive layout ----------
-   Mobile (default, < 768px):  single column inside max-width 640.
-   Tablet (768-1023px):        single column, library cards in 2-up grid.
-   Desktop (1024px+):          two columns. Left = reader workflow (text,
-                               actions, player). Right = settings + library.
-                               Hero spans both. Library cards in 3-up grid. */
+   v110+ shift: voice + library moved into hero-triggered dialogs.
+   Text window now dominates every viewport — no sidebar, no two-
+   column desktop grid. The page is one column of: hero, text card,
+   actions row, player (when audio loaded), status. Library and
+   voice are full-screen modal dialogs invoked from the hero icons. */
 
 @media (min-width: 768px) and (max-width: 1023.98px) {
-  /* Tablet still single-column overall, but with a touch more horizontal
-     breathing room than the strict 640. */
+  /* Tablet — a bit more breathing room than the strict 640. */
   .app {
     max-width: 720px;
   }
 }
 
 @media (min-width: 1024px) {
-  /* Two-column desktop: text card dominates with the full remaining
-     width, voice/library sit in a fixed 360px sidebar on the right.
-     Bumped max-width to 1280px so the text column can breathe up to
-     ~880px (~85-90 chars at 16px) — wider than the typographic
-     ideal for sustained reading, but writers SCANNING for revisions
-     benefit from seeing more of the chapter at once. */
+  /* Desktop — let the .app use almost the full viewport so the text
+     card dominates. v115 capped at 1080px which left huge empty
+     margins on wide monitors; bumped to a viewport-relative cap
+     that scales smoothly. The hard ceiling of 1700px keeps reading
+     lines from going past ~200 chars in edit mode on ultra-wide
+     displays. Reading view has its own narrower cap below so
+     listening mode stays comfortable. With the v115 right drawer
+     open, body gets padding-right: 400px which naturally narrows
+     the .app's available width. */
   .app {
-    max-width: 1280px;
-    display: grid;
-    grid-template-columns: 1fr 360px;
-    grid-template-areas:
-      "hero    hero"
-      "text    voice"
-      "actions voice"
-      "player  library"
-      "status  library";
-    column-gap: 32px;
-    align-items: start;
-  }
-  .app > .hero          { grid-area: hero; }
-  .app > .card-text     { grid-area: text; }
-  .app > .card-voice    { grid-area: voice; align-self: start; }
-  .app > .card-actions  { grid-area: actions; }
-  .app > #synth-progress { grid-column: 1; }
-  .app > #player-card   { grid-area: player; }
-  .app > #status        { grid-area: status; }
-  .app > #library-card  { grid-area: library; align-self: start; }
-}
-
-/* On wide desktops (1440px+), let the app stretch further so the text
-   column gets even more dominant real estate. Beyond ~1600px the
-   layout caps at 1520px so reading lines don't blow past 100 chars. */
-@media (min-width: 1440px) {
-  .app {
-    max-width: 1520px;
+    max-width: min(1700px, calc(100vw - 96px));
   }
 }
 
@@ -345,6 +463,228 @@ body {
   color: var(--accent);
   background: var(--accent-tint);
   border-color: var(--accent);
+}
+
+/* ---------- Hero icon rail ----------
+   v110 shift: voice + library moved into hero-triggered dialogs.
+   The settings ⚙ is now one of three icons in a tight cluster on the
+   right side of the hero. Each icon is a pill-shaped button that
+   carries an emoji + a short text label (collapses to icon-only on
+   narrow viewports). The voice button's label reflects the current
+   voice name so users always know what'll narrate. */
+.hero-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.hero-icon-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  height: 36px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  position: relative;
+}
+.hero-icon-btn:hover {
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-color: var(--accent);
+}
+.hero-icon-label {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Count badge on the library trigger. Small accent pill — visible
+   even on narrow viewports where the text label collapses. */
+.hero-icon-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+}
+.hero-icon-badge[hidden] { display: none; }
+/* On narrow viewports the text labels eat too much horizontal space.
+   Drop them, keep the emoji + badge only. Settings's ⚙ is already
+   icon-only by virtue of having no label inside. */
+@media (max-width: 480px) {
+  .hero-icon-label { display: none; }
+  .hero-icon-btn { padding: 0 10px; }
+}
+
+/* ---------- Voice + Library dialogs (v110 icon-rail UX) ---------- */
+.voice-dialog,
+.library-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.voice-dialog[open],
+.library-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.voice-dialog::backdrop,
+.library-dialog::backdrop {
+  background: var(--scrim);
+}
+
+/* ---------- Right-side drawer mode (v115) ----------
+   At ≥1024px (desktop + landscape tablet), voice + library become
+   right-side drawers instead of center modals. The text content stays
+   interactive on the left; the body gets right-padding via
+   .drawer-open so the .app shrinks and shifts left to make room. JS
+   uses dialog.show() (non-modal) at this width so clicks on the
+   text area aren't blocked, and the trigger icons act as true
+   toggles. Below 1024px the dialogs stay center modals (mobile
+   bottom-sheet feel preserved). */
+@media (min-width: 1024px) {
+  .voice-dialog,
+  .library-dialog {
+    /* Override the centered-modal defaults: pin to the viewport's
+       right edge with no rounded corners on the inside edge. By
+       default each drawer occupies the full viewport height; when
+       both are open the rules below stack them vertically.
+       `position: fixed` is essential here — without it, non-modal
+       dialogs default to `position: absolute` and use the nearest
+       positioned ancestor as the containing block. Since v122 made
+       .app `position: relative` (to anchor the floating status),
+       `right: 0` would otherwise pin to .app's right edge instead
+       of the viewport's, dropping the drawer into the middle of
+       the screen. */
+    position: fixed;
+    margin: 0 0 0 auto;
+    inset: 0 0 auto auto;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    max-height: none;
+    width: var(--drawer-width, 400px);
+    border-radius: 0;
+    /* Slide in from the right instead of the v113 lift-and-fade.
+       The height + top transitions handle the v117 stack/unstack
+       re-flow when the OTHER drawer opens or closes — the dialog
+       smoothly grows/shrinks instead of snapping. */
+    transform: translateX(100%);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+    transition:
+      opacity 180ms ease-out,
+      transform 180ms ease-out,
+      top 220ms ease-out,
+      bottom 220ms ease-out,
+      overlay 180ms ease-out allow-discrete,
+      display 180ms ease-out allow-discrete;
+  }
+  .voice-dialog[open],
+  .library-dialog[open] {
+    transform: translateX(0);
+  }
+  @starting-style {
+    .voice-dialog[open],
+    .library-dialog[open] {
+      transform: translateX(100%);
+    }
+  }
+  /* Non-modal dialog.show() has no backdrop, so this is just defensive
+     in case someone calls showModal() at this width. */
+  .voice-dialog::backdrop,
+  .library-dialog::backdrop {
+    background: transparent;
+  }
+
+  /* When BOTH drawers are open, stack them: voice on top half,
+     library on bottom half. Each gets a subtle inset border at the
+     dividing edge so the seam reads as a deliberate boundary.
+     `inset` shorthand is reset explicitly with top + bottom so the
+     height-grow animation runs smoothly. */
+  body.drawer-voice-open.drawer-library-open .voice-dialog {
+    bottom: 50vh;
+    bottom: 50dvh;
+    box-shadow:
+      -8px 0 24px rgba(0, 0, 0, 0.35),
+      0 1px 0 var(--border-soft) inset;
+  }
+  body.drawer-voice-open.drawer-library-open .library-dialog {
+    top: 50vh;
+    top: 50dvh;
+    box-shadow:
+      -8px 0 24px rgba(0, 0, 0, 0.35),
+      0 -1px 0 var(--border-soft) inset;
+  }
+
+  /* When either drawer is open, body gets right-padding so the .app
+     (max-width: 1700px, margin: 0 auto) re-centers within the
+     narrower body — the text window shrinks + shifts left as the
+     drawer occupies the right side. Two specific classes instead of
+     a single `.drawer-open` so CSS can tell which is open and apply
+     the stacking rules above. */
+  body {
+    transition: padding-right 200ms ease-out;
+  }
+  body:is(.drawer-voice-open, .drawer-library-open) {
+    padding-right: var(--drawer-width, 400px);
+  }
+  /* prefers-reduced-motion already strips dialog transitions earlier;
+     extend the override to the body push + drawer re-flow. */
+  @media (prefers-reduced-motion: reduce) {
+    body,
+    .voice-dialog,
+    .library-dialog {
+      transition: none;
+    }
+  }
+}
+.voice-dialog-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+.library-dialog .library-head-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* Library content slot inside the dialog. The `.card` baseline gives
+   it the same padding + background as the old standalone library
+   card, so renderLibrary's children render unchanged. */
+.library-dialog .card.library {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow-y: auto;
 }
 
 /* ---------- Settings dialog ---------- */
@@ -767,6 +1107,168 @@ body[data-ui-mode="simple"] .advanced-only {
   overflow: hidden;
 }
 
+/* ---- Document picker dialog (shared by GitHub / Scrivener / Obsidian) ---- */
+.doc-picker-dialog {
+  width: min(640px, calc(100vw - 24px));
+  max-height: 85vh;
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.doc-picker-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.doc-picker-dialog::backdrop {
+  background: var(--scrim);
+}
+.doc-picker-body {
+  padding: 14px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+.doc-picker-meta {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.doc-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 6px;
+}
+.doc-picker-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.doc-picker-file:hover {
+  background: var(--hover-soft);
+}
+.doc-picker-file input {
+  flex: 0 0 auto;
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.doc-picker-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+.doc-picker-file-size {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.doc-picker-file-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+.doc-picker-summary {
+  margin: 0;
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.doc-picker-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-soft);
+  justify-content: flex-end;
+}
+.doc-picker-actions button {
+  padding: 10px 16px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+}
+.doc-picker-actions .primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.doc-picker-actions .primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.doc-picker-actions .secondary {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid var(--border-soft);
+}
+
+/* ---- Import dropdown (Upload / URL / GitHub / Scrivener / Obsidian) ----
+   Replaces the standalone Upload + Paste URL link buttons. The button
+   itself uses the same .link-btn style as siblings; the popover hangs
+   off a relative-positioned wrapper so it doesn't get clipped. */
+.import-menu-wrap {
+  position: relative;
+  display: inline-block;
+}
+.import-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 30;
+}
+.import-menu[hidden] {
+  display: none;
+}
+.import-menu button {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.import-menu button:hover,
+.import-menu button:focus-visible {
+  background: var(--hover-soft);
+  outline: none;
+}
+
 .characters-dialog::backdrop {
   background: var(--scrim);
 }
@@ -946,7 +1448,9 @@ body[data-ui-mode="simple"] .advanced-only {
   background: var(--bg-card);
   border-radius: var(--radius);
   padding: 16px;
-  margin-bottom: 14px;
+  /* v130: tighter inter-card spacing so the player chip row stays on
+     screen without scrolling on typical desktop heights. Was 14px. */
+  margin-bottom: 10px;
   box-shadow: var(--shadow);
 }
 
@@ -1088,6 +1592,13 @@ input[type="search"]:focus {
 
 .reading-view {
   width: 100%;
+  /* v121: dropped the 720px cap that v118 added "for line-length
+     comfort" — authors following highlighted sentences while
+     listening aren't cold-reading prose, so the narrow column just
+     left a sea of empty space (especially with a drawer open on a
+     wide screen). The reading view now fills the text card; the
+     card itself caps at the .app width (1700px on ultra-wide), so
+     lines never go truly out of control. */
   background: var(--bg-card-2);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
@@ -1098,7 +1609,7 @@ input[type="search"]:focus {
      the player chips below stay on screen even on tall desktops. Min
      of 240px so it never feels cramped on phone landscape. */
   min-height: 240px;
-  max-height: min(60vh, 600px);
+  max-height: min(55vh, 540px);
   overflow-y: auto;
   scroll-behavior: smooth;
 }
@@ -1106,10 +1617,13 @@ input[type="search"]:focus {
 /* Match the editing textarea to the reading view so the layout doesn't
    shift when toggling between Edit / reading view. Without this, the
    textarea's rows="8" attribute pins it to ~200px regardless of screen
-   size, which feels cramped when revising a long chapter. */
-#text {
+   size, which feels cramped when revising a long chapter.
+   Selector is scoped to `textarea#text` so it doesn't accidentally
+   target the manual's H2 with id="text" (section anchor) when the
+   manual loads this shared stylesheet. */
+textarea#text {
   min-height: 240px;
-  max-height: min(60vh, 600px);
+  max-height: min(55vh, 540px);
   height: min(40vh, 360px);
 }
 
@@ -1191,6 +1705,17 @@ body[data-ui-mode="author"]
 .renarrate-banner {
   margin-top: 14px;
   margin-bottom: 4px;
+}
+
+/* GitHub-source-outdated banner. Reuses .chapter-banner layout/styles;
+   the tint here just nudges it visually distinct from the re-narrate
+   banner so a writer can tell at a glance "audio is wrong" vs
+   "content is wrong". */
+.git-outdated-banner {
+  margin-top: 14px;
+  margin-bottom: 4px;
+  background: var(--accent-tint);
+  border-left: 3px solid var(--accent);
 }
 
 .chapter-banner-msg {
@@ -1525,7 +2050,18 @@ input[type="range"]::-moz-range-thumb {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 10px;
-  margin-top: 6px;
+  /* v130: tighter so the chip row stays on-screen. Was 6px. */
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+/* v130: shorter Generate / Download buttons. The 14px vertical padding
+   was inherited from the base `button` rule (sized for big mobile
+   tap targets); ~22px shorter here keeps the player chip row visible
+   on typical desktop heights without making the buttons feel
+   undersized. */
+.actions button {
+  padding: 10px 16px;
+  font-size: 15px;
 }
 
 button {
@@ -1679,6 +2215,14 @@ button:disabled {
   height: 22px;
   display: block;
 }
+/* `display: block` on the SVGs above overrides the [hidden] HTML
+   attribute the play/pause toggle uses to swap icons — without this
+   restore, BOTH icons render at once and the play triangle never
+   becomes a pause bar. Same root cause as #220 (the `[hidden]
+   attribute respected by CSS` regression). */
+.cp-play-btn svg[hidden] {
+  display: none;
+}
 
 .cp-time {
   flex: 0 0 auto;
@@ -1687,6 +2231,22 @@ button:disabled {
   color: var(--fg-dim);
   min-width: 36px;
   text-align: center;
+}
+/* Wall-clock remaining at the chosen speed. Only shows up when
+   speed != 1× — at normal speed the duration above already answers
+   the question "when will this end?". Dimmer than .cp-time so the
+   eye treats the primary M:SS as canonical. */
+.cp-time-effective {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  opacity: 0.75;
+  margin-left: 2px;
+  white-space: nowrap;
+}
+.cp-time-effective[hidden] {
+  display: none;
 }
 
 .cp-scrubber {
@@ -1816,6 +2376,55 @@ button:disabled {
 /* Slim, themed scrollbar so it doesn't clash with the dark UI. */
 .player-actions::-webkit-scrollbar {
   height: 4px;
+}
+
+/* v131: at desktop / landscape tablet (≥1024px) the chip row floats
+   above the page near the hero — always visible, no scrolling
+   required to reach skip / bookmark / sleep / speed. The chips stay
+   inside the player card in the DOM so they're naturally hidden
+   when no audio is loaded (the player card has `hidden` by default,
+   and `display: none` on the ancestor cascades down). Hidden when
+   the mini-player is visible (e.g. user scrolled the main player
+   offscreen) so we don't double-up on top-anchored chrome. */
+@media (min-width: 1024px) {
+  .player-actions {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    margin: 0;
+    padding: 6px 8px;
+    background: rgba(20, 25, 40, 0.65);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
+    /* Cap so the row doesn't sprawl across the hero on ultra-wide
+       displays; the existing overflow-x: auto handles longer chip
+       sets gracefully. */
+    max-width: min(600px, calc(100vw - 700px));
+    /* Smooth re-center when a side drawer opens/closes so the bar
+       glides into the new content area instead of snapping. */
+    transition: transform 220ms ease-out, max-width 220ms ease-out;
+  }
+  /* When the sticky mini-player is showing (user scrolled past the
+     main player card), hide the floating chip row to avoid the two
+     top-anchored bars competing for attention. */
+  body:has(#mini-player:not([hidden])) .player-actions {
+    display: none;
+  }
+  /* v132: when the right-side Voice / Library drawer is open, shift
+     the centered chip bar LEFT by half the drawer width so it stays
+     centered in the visible content area (the viewport's right side
+     is now occupied by the drawer). Without this, the bar sits at
+     viewport center and overlaps the drawer header. Recalculates
+     the max-width too so the bar can't spill into the drawer. */
+  body:is(.drawer-voice-open, .drawer-library-open) .player-actions {
+    transform: translateX(calc(-50% - var(--drawer-width, 400px) / 2));
+    max-width: min(600px, calc(100vw - 700px - var(--drawer-width, 400px)));
+  }
 }
 
 .player-actions::-webkit-scrollbar-thumb {
@@ -2033,14 +2642,64 @@ button:disabled {
 }
 
 .status {
-  min-height: 1.2em;
   color: var(--fg-dim);
   font-size: 13px;
-  margin: 10px 4px 0;
+  margin: 0 4px 12px;
+  min-height: 1.2em;
+  line-height: 1.4;
 }
-
+/* When the status is empty, collapse it so there's no gap above the
+   text card. Status moved to ABOVE the text card in v118 so errors
+   are visible without scrolling past Generate; a reserved-space
+   placeholder would just push the textarea down for no reason. */
+.status:empty {
+  margin: 0;
+  min-height: 0;
+}
+/* Error state — a soft danger-tinted banner with a strong left
+   border so the message reads as urgent without being shouty.
+   Sits flush with the text card below it. */
 .status.error {
   color: var(--danger);
+  background: var(--danger-tint-soft, rgba(220, 70, 70, 0.10));
+  border-left: 3px solid var(--danger);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+/* v122: at tablet+ widths, lift info-level status messages out of the
+   flow and float them in the hero's empty top-right area. The text
+   card snaps up under the "Type. Listen. Download." tagline — no
+   more dead row between hero and content for routine "Resuming…"
+   chatter. Errors stay in flow as a full-width banner since those
+   need to stay maximally visible. */
+@media (min-width: 768px) {
+  /* .app's position: relative + z-index: 1 are set in the base rule
+     so the floating status below has a positioned anchor at every
+     viewport (previously only set in this media query). */
+  #status:not(.error) {
+    position: absolute;
+    top: 56px;
+    right: 24px;
+    margin: 0;
+    max-width: 50%;
+    text-align: right;
+    z-index: 1;
+    pointer-events: none;
+  }
+  /* v123: hide the floating status while ANY dialog is open. In
+     modal mode (768-1023px) the centered dialog sits right where
+     status floats — the two overlap and the status text bleeds
+     through the dialog header. In drawer mode (≥1024px) the
+     drawer sits flush against the shrunken .app's right edge, so
+     status WOULD still be visible, but hiding it here keeps the
+     drawer header clean. `:has(dialog[open])` covers Voice,
+     Library, Settings, Edit clip, etc. — every <dialog> in the
+     app — without per-dialog wiring. */
+  body:has(dialog[open]) #status:not(.error) {
+    display: none;
+  }
 }
 
 #library-search {
@@ -2140,7 +2799,18 @@ button:disabled {
   display: flex;
   align-items: stretch;
   gap: 8px;
-  background: var(--bg-card-2);
+  /* v125: Libby-style per-card tint. `--clip-accent-tint` is set
+     inline by makeClipCard from the uploaded cover's dominant color
+     (or a title-hash fallback). The gradient runs from the tint at
+     the left edge to transparent across the card so the cover swatch
+     visually "owns" the chrome around it. Defaults to no tint when
+     the var is missing. */
+  background-color: var(--bg-card-2);
+  background-image: linear-gradient(
+    100deg,
+    var(--clip-accent-tint, transparent) 0%,
+    transparent 55%
+  );
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   overflow: hidden;
@@ -2207,6 +2877,19 @@ button:disabled {
   color: var(--accent);
 }
 
+/* Outdated badge for GitHub-sourced clips whose upstream SHA has moved
+   since they were last synthesized. The left-border accent makes it
+   readable in the small library cards without taking layout space. */
+.clip.outdated {
+  border-left: 3px solid var(--accent);
+}
+.clip.outdated .clip-title::after {
+  content: " ↻";
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.9em;
+}
+
 .clip-play {
   flex: 1;
   background: none;
@@ -2216,14 +2899,86 @@ button:disabled {
   color: var(--fg);
   font-family: inherit;
   cursor: pointer;
+  /* Was flex-column. v109 added the cover swatch as a square tile to
+     the left of the title stack, so the card body is now row-based with
+     the swatch + title-stack flexing inside it. */
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 
 .clip-play:hover {
   background: var(--accent-tint);
+}
+
+/* Cover-art swatch. Hoopla-style ~40px tile sitting left of the title.
+   Background gradient is set inline (computed from the title hash);
+   the initial letter overlays in semi-transparent white. Played
+   clips render the swatch dimmer so the eye can pick out unheard
+   ones at a glance. */
+.clip-swatch {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  user-select: none;
+  /* Inline `style.background` is set by JS — either the title-hash
+     gradient or `url(blob:…)` for an uploaded cover image. */
+  background: var(--bg-card-2);
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+/* When the swatch carries an uploaded cover image, hide the initial
+   letter overlay — the image itself is the identity, no need for
+   a letter on top. */
+.clip-swatch.has-cover {
+  color: transparent;
+  text-shadow: none;
+}
+.clip.played .clip-swatch {
+  opacity: 0.55;
+}
+
+/* ---- Clip-edit cover picker (v125) ---- */
+.clip-edit-cover-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.clip-edit-cover-preview {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  background: var(--bg-card-2);
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--border-soft);
+}
+.clip-edit-cover-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.clip-title-stack {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .clip-title {
@@ -2324,6 +3079,205 @@ button:disabled {
   text-overflow: ellipsis;
   margin-top: 2px;
   display: block;
+}
+
+/* Tag chips on library cards. Free-form colored labels — the left
+   border is keyed to the tag hash so the same tag is the same color
+   everywhere. Wrap to a new line if many tags + a narrow card. */
+.clip-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.clip-tag {
+  display: inline-block;
+  font-size: 10.5px;
+  line-height: 1.2;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--bg-card-2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border-soft);
+  /* The hash-color is applied to the LEFT border via inline style so the
+     chip's own border-color rule wins for the other three sides. */
+  border-left-width: 3px;
+  white-space: nowrap;
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tag filter chip row above the library list. Mirrors the per-card chip
+   styling but as buttons (interactive), with a clearer "active" state
+   when a filter is applied. */
+.library-tag-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.library-tag-filters[hidden] {
+  display: none;
+}
+.library-tag-chip {
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.3;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-card-2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border-soft);
+  border-left-width: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.library-tag-chip:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
+}
+.library-tag-chip.active {
+  background: var(--accent-tint);
+  color: var(--fg);
+  font-weight: 600;
+}
+.library-tag-clear {
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ---- Global bookmark timeline dialog (#251) -------------------------- */
+.all-bookmarks-dialog {
+  width: min(720px, calc(100vw - 24px));
+  max-height: 85vh;
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.all-bookmarks-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.all-bookmarks-dialog::backdrop {
+  background: var(--scrim);
+}
+.all-bookmarks-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+.all-bookmarks-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.all-bookmarks-toolbar input[type="search"] {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.all-bookmarks-sort {
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.all-bookmarks-sort select {
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 4px 6px;
+}
+.all-bookmarks-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 6px;
+}
+.all-bookmarks-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+.all-bookmarks-clip-head {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 8px 8px 4px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-top: 6px;
+}
+.all-bookmarks-clip-head:first-child { margin-top: 0; }
+.all-bookmarks-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+.all-bookmarks-row + .all-bookmarks-row {
+  border-top: 1px dashed var(--border-soft);
+}
+.all-bookmarks-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 40px;
+}
+.all-bookmarks-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.all-bookmarks-note.muted {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.all-bookmarks-when {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.all-bookmarks-jump {
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-card);
+  color: var(--fg);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.all-bookmarks-jump:hover {
+  background: var(--accent-tint);
+}
+.all-bookmarks-summary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- Clip-edit dialog ---------- */

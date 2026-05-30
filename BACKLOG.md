@@ -171,7 +171,125 @@ configuration (provider, model, API key). Characters dialog gets a
 
 ---
 
-## 2. Other deferred ideas
+## 2. Book preview / magazine spread view
+
+**Triggered by:** Author showed two reference images while drafting —
+a New Yorker "Summer Preview" magazine spread (illustrated columns,
+serif body, drop caps, page numbers) and a vintage book introduction
+spread from a fables collection (single-column serif, justified, em-spaced
+margins, classic novel typesetting). Asked: "what do you think about a
+feature so we can see our book like this?" Explicitly deferred — not
+now, but worth keeping warm. Saved 2026-05-29.
+
+**Status:** Deferred. Conceptual; nothing built. Pairs naturally with the
+v125 cover upload (the book spread opens with the chapter's cover art).
+
+**Priority:** Medium. Delightful and on-thesis (Narrative as the place
+where a manuscript becomes a finished artifact in two modalities — audio
+and visual), but not a launch-blocker. Authors already have Vellum /
+Atticus / InDesign for real typesetting; we'd be making a *preview*,
+not a publishing tool.
+
+### The two flavors worth distinguishing
+
+The reference images split cleanly into two layout families. A single
+toggle in the proposed view gives both:
+
+1. **Book spread** (vintage-novel reference). Single column per page,
+   serif body, justified text, drop cap at chapter opening, running
+   headers (chapter title / page number), classic margins. Best for
+   fiction. ~250–400 words per page depending on font size.
+2. **Magazine spread** (New Yorker reference). Two columns per page,
+   tighter leading, sidebars/callouts allowed, illustration-friendly
+   gutters. Best for essays / non-fiction / shorter pieces.
+
+Both render as a two-page open spread on desktop/tablet, single page on
+mobile (the spread doesn't survive the narrow viewport).
+
+### The unique-to-Narrative angle
+
+The reason this isn't just a worse Vellum: pair it with the listening
+flow. As audio plays, the current sentence highlights in the rendered
+book spread the same way it already highlights in the reading view.
+Neither Audible nor Vellum does this. It turns the spread into a
+follow-along reading experience — useful for authors editing pacing,
+useful for users who want to read-and-listen simultaneously.
+
+### Implementation paths (rough)
+
+**Minimum viable (~1 evening):**
+
+- New `book-view.html` (or a mode flip on the reading view).
+- Single layout: book spread, one theme.
+- CSS columns + `column-fill: auto` over a fixed-height container to
+  approximate pagination — no real page-break math. Words land where
+  they land.
+- Cover image as the first "page" (left), text starts on the right.
+- Karaoke highlight piggybacks on existing `data-sentence-idx` markup.
+- Toggle button: 📖 / ▶ to switch between book view and the audio
+  player.
+
+**Polished (~2–3 evenings):**
+
+- Both layouts (Book / Magazine), toggle in the view header.
+- Real pagination with [paged.js](https://pagedjs.org/) or hand-rolled
+  measurement — break on sentence boundaries, never mid-sentence.
+- Drop caps at chapter openings (the clip title becomes the chapter
+  heading).
+- Running headers / footers with page numbers.
+- Theme variants: modern book / vintage book / magazine / manuscript
+  (typewriter face for early drafts).
+- Click a sentence → seek audio to that timestamp.
+- Inline images (from URL fetches that pull illustrations — already
+  shipped in v85+) flow into the layout.
+
+### Risks / what to be honest about
+
+- **Scope creep.** Real book typesetting is a career. Vellum's entire
+  business is "format your manuscript." Our value here is preview +
+  follow-along, not export-ready output. Stay disciplined about that
+  framing or this swallows weeks.
+- **Identity drift.** Narrative is audio-first. A visual book view is
+  legitimately new surface area. If we ship it, the pitch needs to
+  evolve from "type, listen, download" to something like "type, see,
+  listen, download" — which might dilute the audio thesis if framed
+  wrong. Frame it as a *companion view to the audio*, not a replacement.
+- **Pagination edge cases.** Images mid-paragraph, em-dashes at column
+  breaks, dialogue runs, footnotes. The MVP can punt on most of these
+  by using CSS columns and accepting some ugliness; the polished
+  version needs real layout work.
+- **Mobile.** A two-page spread does not survive at 375px wide. Fall
+  back to a single column / single page on mobile and call it done.
+- **Bundle.** paged.js is ~150 KB. Hand-rolled pagination is
+  cheaper but takes longer to write. CSS-columns-only MVP avoids both.
+
+### Recommended path when revisiting
+
+1. **Ship the minimum viable first** — single book layout, CSS
+   columns, cover-on-the-left, sentence highlight tied to audio. One
+   evening. Get the gut-check: does the author actually use it once
+   it exists, or is it a one-time wow?
+2. **If they use it**, add the magazine layout + real pagination next.
+3. **If they don't**, leave it as a curiosity. The cover-upload work
+   already pays off in the library tint and page backdrop; we don't
+   need this to justify that effort.
+4. **Never bill it as a publishing tool.** Export to real EPUB / PDF
+   is a different product (and probably a partnership / integration
+   with one of the existing typesetting tools, not a thing we build).
+
+### Adjacent things that fall out of this
+
+- **Read-along view** (text + audio sync) is a real first-class
+  feature regardless of whether the spread layout ships. Could be
+  extracted earlier as a simpler "follow along while listening"
+  mode without the book chrome.
+- **Chapter cover sequence as a flip-book.** Once chapters all have
+  cover art, the library could offer a "browse covers" view that
+  flips through the story-board.
+
+---
+
+## 3. Other deferred ideas
 
 Shorter notes on features that have surfaced in conversation but
 weren't built. Roughly grouped.

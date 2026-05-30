@@ -469,6 +469,42 @@ async def synthesize_stream(req: SynthesizeRequest):
     )
 
 
+class GithubTreeRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2048)
+    branch: str | None = Field(default=None, max_length=200)
+    github_token: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/github/tree")
+async def github_tree_endpoint(req: GithubTreeRequest):
+    """List the text-format files in a GitHub repo for the file browser."""
+    import asyncio
+    import functools
+
+    owner, repo = extract._parse_github_repo_url(req.url)
+    if not owner or not repo:
+        raise HTTPException(
+            status_code=400,
+            detail="not a GitHub repo URL — expected github.com/owner/repo",
+        )
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                extract.fetch_github_tree,
+                owner,
+                repo,
+                branch=req.branch,
+                github_token=req.github_token,
+            ),
+        )
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
+
+
 class ExtractUrlRequest(BaseModel):
     url: str = Field(..., min_length=8, max_length=2048)
     # Optional GitHub Personal Access Token for private-repo URLs.
@@ -477,6 +513,58 @@ class ExtractUrlRequest(BaseModel):
     # forwards it to github.com / raw.githubusercontent.com (verified
     # post-rewrite), so a token for repo X never leaks to host Y.
     github_token: str | None = Field(default=None, max_length=200)
+    # Pre-supplied SHA from the repo browser path (saves a contents API
+    # round-trip). Optional; if missing for a GitHub URL the backend
+    # looks it up.
+    git_sha: str | None = Field(default=None, max_length=80)
+
+
+class GithubSyncCheckRequest(BaseModel):
+    """Batch SHA check. Takes a list of {repoUrl, branch, paths[]} and
+    returns the current SHA for each path, so the frontend can flag
+    library clips whose stored SHA no longer matches."""
+    items: list[dict] = Field(default_factory=list)
+    github_token: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/github/sync-check")
+async def github_sync_check_endpoint(req: GithubSyncCheckRequest):
+    """For each {repoUrl, branch, paths[]} group, fetch the tree once
+    and return the current SHA per path. Single API call per repo
+    regardless of how many clips share it."""
+    import asyncio
+    import functools
+
+    loop = asyncio.get_running_loop()
+
+    async def _one(group: dict) -> dict:
+        owner, repo = extract._parse_github_repo_url(group.get("repoUrl") or "")
+        branch = group.get("branch") or None
+        paths = group.get("paths") or []
+        if not owner or not repo:
+            return {"repoUrl": group.get("repoUrl"), "branch": branch, "shas": {}, "error": "invalid repoUrl"}
+        try:
+            tree = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    extract.fetch_github_tree,
+                    owner,
+                    repo,
+                    branch=branch,
+                    github_token=req.github_token,
+                ),
+            )
+        except extract.ExtractionError as e:
+            return {"repoUrl": group["repoUrl"], "branch": branch, "shas": {}, "error": str(e)}
+        path_to_sha = {f["path"]: f["sha"] for f in tree.get("files", [])}
+        return {
+            "repoUrl": group["repoUrl"],
+            "branch": tree["branch"],
+            "shas": {p: path_to_sha.get(p, "") for p in paths},
+        }
+
+    results = await asyncio.gather(*[_one(g) for g in req.items])
+    return {"results": list(results)}
 
 
 @app.post("/api/extract/url")
@@ -493,6 +581,7 @@ async def extract_url_endpoint(req: ExtractUrlRequest):
                 extract.fetch_and_extract_url,
                 req.url,
                 github_token=req.github_token,
+                git_sha=req.git_sha,
             ),
         )
     except ValueError as e:
@@ -526,6 +615,60 @@ async def extract_endpoint(file: UploadFile = File(...)):
         "chars": len(text),
         "text": text,
     }
+
+
+@app.post("/api/extract/scrivener")
+async def extract_scrivener_endpoint(file: UploadFile = File(...)):
+    """Parse a Scrivener .scriv.zip bundle and return its chapter list.
+
+    Same upload pattern as /api/extract, different shape on return:
+        {project_name, chapters: [{id, title, path, text, chars}], skipped: [...]}
+    The frontend opens its Scrivener browser dialog on this shape so the
+    user can pick which chapters to import as a queue.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="no filename")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file too large ({len(data)} bytes, max {MAX_UPLOAD_BYTES})",
+        )
+    try:
+        result = extract.extract_scrivener_bundle(data)
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
+
+
+@app.post("/api/extract/obsidian")
+async def extract_obsidian_endpoint(file: UploadFile = File(...)):
+    """Parse an Obsidian vault zip and return its note list.
+
+    Authors zip their Obsidian vault folder (or its contents) and
+    upload it through the Import → Obsidian menu item. The parser
+    skips .obsidian/, templates/, attachments/, hidden dotdirs, and
+    non-markdown files, then strips wikilinks/embeds so notes are
+    TTS-ready. Returns:
+        {vault_name, chapters: [{id, title, path, text, chars}], skipped: [...]}
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="no filename")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file too large ({len(data)} bytes, max {MAX_UPLOAD_BYTES})",
+        )
+    try:
+        result = extract.extract_obsidian_vault(data)
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

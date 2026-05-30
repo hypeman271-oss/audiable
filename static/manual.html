@@ -336,12 +336,26 @@
                   <h1>Narrative</h1>
                   <p class="tagline">Type. Listen. Download.</p>
                 </div>
-                <button type="button" class="settings-btn" aria-label="Settings">⚙</button>
+                <div class="hero-icons">
+                  <button type="button" class="hero-icon-btn">
+                    <span aria-hidden="true">🎤</span>
+                    <span class="hero-icon-label">Amy</span>
+                  </button>
+                  <button type="button" class="hero-icon-btn">
+                    <span aria-hidden="true">📚</span>
+                    <span class="hero-icon-label">Library</span>
+                    <span class="hero-icon-badge">6</span>
+                  </button>
+                  <button type="button" class="settings-btn hero-icon-btn" aria-label="Settings">⚙</button>
+                </div>
               </div>
             </header>
             <div class="demo-callout">
-              <strong>Hero</strong> — title + ⚙ Settings (mode, theme,
-              listen stats, feedback).
+              <strong>Hero</strong> — title + three icons. <strong>🎤</strong>
+              opens the Voice dialog and shows the active voice; <strong>📚</strong>
+              opens the Library and shows your clip count; <strong>⚙</strong>
+              opens Settings (mode, theme, listen stats, skip interval,
+              feedback).
             </div>
           </div>
 
@@ -351,22 +365,22 @@
                 <span class="label">Your text</span>
                 <div class="label-row-actions">
                   <button type="button" class="link-btn">Clear</button>
-                  <button type="button" class="link-btn">Paste URL</button>
-                  <button type="button" class="link-btn">Upload file</button>
+                  <button type="button" class="link-btn">Import ▾</button>
                 </div>
               </div>
               <textarea
                 rows="3"
-                placeholder="Paste an article, a chapter, or just a sentence — or upload a file above."
+                placeholder="Paste an article, a chapter, or import a file or vault above."
                 readonly
               ></textarea>
               <div class="meta"><span>0 / 500,000</span></div>
             </section>
             <div class="demo-callout">
-              <strong>Text card</strong> — paste, fetch a URL, or upload
-              a .txt / .pdf / .epub / .docx.
+              <strong>Text card</strong> — paste, or use <strong>Import</strong>
+              to pull a file, URL, GitHub repo, Scrivener bundle, or
+              Obsidian vault.
               <br><br>
-              <strong>Try Paste URL with:</strong>
+              <strong>Try Import → Paste URL with:</strong>
               <ul class="demo-callout-urls">
                 <li><a href="/?prefillUrl=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FProcrastination&amp;autofetch=1"><code>en.wikipedia.org/wiki/Procrastination</code></a> — short article</li>
                 <li><a href="/?prefillUrl=https%3A%2F%2Fpaulgraham.com%2Fpersistence.html&amp;autofetch=1"><code>paulgraham.com/persistence.html</code></a> — essay</li>
@@ -377,42 +391,14 @@
           </div>
 
           <div class="demo-row">
-            <section class="card">
-              <div class="label-row">
-                <span class="label">Voice</span>
-                <div class="label-row-actions">
-                  <button type="button" class="link-btn">Save preset</button>
-                  <button type="button" class="link-btn">Browse voices</button>
-                </div>
-              </div>
-              <select disabled>
-                <option>Amy (en_US, medium)</option>
-              </select>
-              <div class="row">
-                <div class="slider">
-                  <label>Speed <span>180</span></label>
-                  <input type="range" min="80" max="300" value="180" disabled />
-                </div>
-                <div class="slider">
-                  <label>Volume <span>100%</span></label>
-                  <input type="range" min="0" max="100" value="100" disabled />
-                </div>
-              </div>
-            </section>
-            <div class="demo-callout">
-              <strong>Voice card</strong> — pick a voice, set speed &amp;
-              volume. Browse to install more.
-            </div>
-          </div>
-
-          <div class="demo-row">
             <div class="actions">
               <button type="button" class="primary"><span>Generate</span></button>
               <button type="button" class="secondary"><span>Download</span></button>
             </div>
             <div class="demo-callout">
-              <strong>Generate</strong> synthesizes audio · <strong>Download</strong>
-              saves the MP3 to your device.
+              <strong>Generate</strong> synthesizes audio with the
+              currently-picked voice (shown on the 🎤 chip up top)
+              · <strong>Download</strong> saves the MP3 to your device.
             </div>
           </div>
 
@@ -441,90 +427,32 @@
             </div>
           </div>
 
-          <div class="demo-row">
-            <section class="card">
-              <div class="label-row">
-                <span class="label">Library · 6</span>
-                <div class="label-row-actions">
-                  <button type="button" class="link-btn">Custom order</button>
-                  <button type="button" class="link-btn">Clear all</button>
-                </div>
-              </div>
-              <input
-                type="text"
-                placeholder="search by title, text, or voice…"
-                readonly
-              />
-              <div class="library-tools">
-                <button type="button" class="link-btn">Export</button>
-                <button type="button" class="link-btn">Import</button>
-                <button type="button" class="link-btn">Hide played</button>
-              </div>
-              <div class="library-section">Continue listening · 2</div>
-              <div class="library-list">
-                <div class="clip current">
-                  <div class="clip-drag">⋮⋮</div>
-                  <button type="button" class="clip-play">
-                    <span class="clip-title">Chapter 3</span>
-                    <span class="clip-meta">Amy · 2:14 / 11:22</span>
-                  </button>
-                  <button type="button" class="clip-reset">↺</button>
-                  <button type="button" class="clip-edit">✎</button>
-                  <button type="button" class="clip-delete">×</button>
-                </div>
-                <div class="clip">
-                  <div class="clip-drag">⋮⋮</div>
-                  <button type="button" class="clip-play">
-                    <span class="clip-title">Chapter 2</span>
-                    <span class="clip-meta">Amy · 4:17 / 16:02</span>
-                  </button>
-                  <button type="button" class="clip-reset">↺</button>
-                  <button type="button" class="clip-edit">✎</button>
-                  <button type="button" class="clip-delete">×</button>
-                </div>
-              </div>
-              <div class="library-section">Other clips · 4</div>
-              <div class="library-list">
-                <div class="clip">
-                  <div class="clip-drag">⋮⋮</div>
-                  <button type="button" class="clip-play">
-                    <span class="clip-title">Chapter 4</span>
-                    <span class="clip-meta">Amy · 12:01</span>
-                  </button>
-                  <button type="button" class="clip-edit">✎</button>
-                  <button type="button" class="clip-delete">×</button>
-                </div>
-                <div class="clip">
-                  <div class="clip-drag">⋮⋮</div>
-                  <button type="button" class="clip-play">
-                    <span class="clip-title">Chapter 1</span>
-                    <span class="clip-meta">Amy · 12:03</span>
-                  </button>
-                  <button type="button" class="clip-edit">✎</button>
-                  <button type="button" class="clip-delete">×</button>
-                </div>
-              </div>
-            </section>
-            <div class="demo-callout">
-              <strong>Library</strong> — every saved clip. ⋮⋮ drag to
-              reorder · ↺ reset to start · ✎ edit title / note · × delete.
-              Continue Listening floats clips you started but didn't
-              finish.
-            </div>
-          </div>
         </div>
-        <figcaption>The whole page top to bottom. Every control is detailed in the sections that follow.</figcaption>
+        <figcaption>The page top to bottom. Voice and Library are not in the page flow — they open as dialogs from the 🎤 and 📚 icons in the hero. Every control is detailed in the sections that follow.</figcaption>
       </figure>
       <p>
+        <strong>Voice</strong> and <strong>Library</strong> live in
+        dialogs opened from the hero icons rather than as in-page cards.
+        That keeps the text window dominant on every viewport — the
+        manuscript is the work, and Narrative gets out of its way.
+      </p>
+      <p>
         Each card is independent — you can keep listening to one clip
-        while you paste, generate, or rearrange another. The
-        <strong>⚙ Settings</strong> button in the hero is the only piece
-        of chrome outside the cards.
+        while you paste, generate, or rearrange another. The hero icons
+        (<strong>🎤</strong> Voice / <strong>📚</strong> Library /
+        <strong>⚙</strong> Settings) are the only chrome outside the
+        text-listen-status flow.
       </p>
 
       <!-- ============================================================= -->
       <h2 id="text">2. Getting text in</h2>
-      <p>The text card has five link-style actions in its header:</p>
+      <p>The text card has three link-style actions in its header:
+        <strong>Clear</strong>, <strong>Import ▾</strong>, and
+        (context-dependent) <strong>Save text</strong> /
+        <strong>Edit text</strong>. Everything you'd reach for —
+        a single file, a URL, a GitHub repo, a Scrivener bundle, an
+        Obsidian vault — lives inside the Import menu, so the header
+        stays uncluttered as more sources land.</p>
       <table>
         <tr>
           <th>Action</th>
@@ -537,21 +465,9 @@
             one without refreshing.</td>
         </tr>
         <tr>
-          <td><strong>Paste URL</strong></td>
-          <td>Opens an inline URL input. Paste any article URL
-            (blog post, Wikipedia, news), hit <span class="kbd">Enter</span>,
-            and the server fetches it, extracts the main article via
-            <code>trafilatura</code> (drops nav, ads, comments), and
-            drops the clean text in the textarea. SSRF-guarded: only
-            public HTTP(S) URLs allowed.</td>
-        </tr>
-        <tr>
-          <td><strong>Upload file</strong></td>
-          <td><code>.txt · .md · .pdf · .epub · .docx</code>. PDFs go
-            through a cleanup pipeline: page numbers stripped, repeated
-            headers/footers detected and removed across pages, mid-
-            sentence page breaks bridged so the splitter doesn't cut
-            "the cat sat on the | mat" into two sentences. 25 MB cap.</td>
+          <td><strong>Import ▾</strong></td>
+          <td>Opens a small menu with one entry per manuscript source.
+            See the next table for each option's behavior.</td>
         </tr>
         <tr>
           <td><strong>Save text</strong></td>
@@ -571,12 +487,80 @@
         </tr>
       </table>
 
+      <h3>Import sources</h3>
+      <p>Each entry in the Import menu routes to a different parser.
+        Single-document sources drop straight into the textarea;
+        multi-document sources (GitHub, Scrivener, Obsidian) open a
+        picker so you choose which chapters to import. Picking many
+        builds a <strong>chapter queue</strong> — pre-synthesized,
+        auto-advancing — that lets you walk through a whole project
+        without touching the app between chapters.</p>
+      <table>
+        <tr>
+          <th>Source</th>
+          <th>What it accepts</th>
+        </tr>
+        <tr>
+          <td><strong>Upload file</strong></td>
+          <td><code>.txt · .md · .pdf · .epub · .docx</code>. PDFs go
+            through a cleanup pipeline: page numbers stripped, repeated
+            headers/footers detected and removed across pages, mid-
+            sentence page breaks bridged so the splitter doesn't cut
+            "the cat sat on the | mat" into two sentences. 25 MB cap.</td>
+        </tr>
+        <tr>
+          <td><strong>Paste URL</strong></td>
+          <td>Opens an inline URL input. Paste any article URL
+            (blog post, Wikipedia, news), hit <span class="kbd">Enter</span>,
+            and the server fetches it, extracts the main article via
+            <code>trafilatura</code> (drops nav, ads, comments), and
+            drops the clean text in the textarea. SSRF-guarded: only
+            public HTTP(S) URLs allowed. Long URLs auto-detect chapters
+            and offer to queue them.</td>
+        </tr>
+        <tr>
+          <td><strong>GitHub repo</strong></td>
+          <td>Pre-fills the URL input with
+            <code>https://github.com/</code>; finish typing
+            <code>owner/repo</code> (or paste a
+            <code>tree/&lt;branch&gt;</code> URL for a non-default
+            branch) and hit Fetch. A repo browser lists all
+            <code>.md · .txt · .docx · .pdf · .epub</code> files in the
+            tree. Pick one to load like a URL fetch, pick several to
+            build a chapter queue. Private repos need a PAT in
+            Settings → GitHub. Each clip remembers its file SHA so
+            "<strong>Sync all</strong>" in the library can flag clips
+            whose source has been updated upstream.</td>
+        </tr>
+        <tr>
+          <td><strong>Scrivener bundle</strong></td>
+          <td>Drop in a <code>.scriv.zip</code> (zip the entire
+            <code>.scriv</code> folder from Finder / File Explorer).
+            The parser walks the binder XML in author-defined order,
+            reads each scene's RTF, and skips Research / Trash
+            folders. The picker shows chapters with their containing
+            folder in dim text so sister scenes are easy to spot.</td>
+        </tr>
+        <tr>
+          <td><strong>Obsidian vault</strong></td>
+          <td>Drop in a <code>.zip</code> of your vault folder. The
+            parser walks every <code>.md</code>, skipping
+            <code>.obsidian/</code>, <code>.trash/</code>,
+            <code>templates/</code>, <code>attachments/</code>, and
+            hidden dotdirs. YAML <code>title:</code> frontmatter
+            overrides the filename; <code>[[wikilinks]]</code> are
+            flattened to plain text and <code>![[embeds]]</code> are
+            dropped so nothing nonsense gets read aloud.</td>
+        </tr>
+      </table>
+
       <h3>Try it — example URLs</h3>
       <p>
         <strong>Click any URL below</strong> to jump back to the app
-        with that URL pre-filled and auto-fetched. (Or copy-paste it
-        into Paste URL manually if you prefer.) Each demonstrates the
-        extractor on a different shape of content:
+        with that URL pre-filled and auto-fetched. (Or open
+        <strong>Import → Paste URL</strong> and paste it manually if
+        you prefer.) Each demonstrates the extractor on a different
+        shape of content:
       </p>
       <table>
         <tr>
@@ -701,9 +685,19 @@
       <h3>Speed &amp; volume</h3>
       <p>
         Two sliders affect synthesis only — they get baked into the
-        generated audio. For changing playback speed on an existing
-        clip, use the <strong>1×</strong> chip on the player instead
-        (see Section 4).
+        generated audio. <strong>Speed</strong> (80-300, default 180 wpm)
+        controls the engine's word rate; 180 sits in the audiobook-
+        narration sweet spot. <strong>Volume</strong> (0-100%, default
+        100%) is the sample multiplier; most authors leave it alone
+        and adjust on the device side. For changing playback speed
+        on an existing clip, use the <strong>1×</strong> chip on the
+        player instead (see Section 4) — that doesn't re-encode anything.
+      </p>
+      <p>
+        The <strong>Defaults</strong> link in the voice card header
+        resets Speed to 180 and Volume to 100% in one click. Voice
+        and speaker stay as-is so you don't lose your pick when backing
+        out of slider experiments.
       </p>
 
       <h3>Saved presets</h3>
@@ -739,18 +733,26 @@
         </div>
         <figcaption>Player chips, left to right. Sleep + A-B shown active (accent fill).</figcaption>
       </figure>
+      <div class="tip">
+        <strong>On desktop and landscape tablet (≥1024px)</strong>, the
+        chip row floats at the top center of the page as a frosted
+        backdrop-blur bar — always reachable without scrolling. When a
+        right-side drawer (Voice or Library) is open, the bar slides
+        left so it stays centered in the visible content area.
+        Mini-player (sticky top bar when the main player scrolls off)
+        hides the floating chips while it's showing so the top doesn't
+        get two competing control bars.
+      </div>
 
-      <h3>↶ 5s — Skip-back</h3>
+      <h3>↶ — Skip-back / ↷ — Skip-forward</h3>
       <p>
-        Tap to rewind 5 seconds. "I zoned out for a moment" recovery.
-        Different from the lock-screen prev/next which jump a whole
-        sentence.
-      </p>
-
-      <h3>5s ↷ — Skip-forward</h3>
-      <p>
-        Pair to skip-back: jump 5 seconds ahead. Clamps to the end of
-        the clip so overshooting is a no-op.
+        Tap to rewind / jump ahead by the configured interval. "I zoned
+        out for a moment" recovery — different from the lock-screen
+        prev/next which jump a whole sentence. The skip distance is
+        configurable in <strong>Settings → Skip interval</strong>
+        (2 / 5 / 10 / 15 / 30 s); the chip labels update to match.
+        Smaller for re-listening tricky sentences; larger for skipping
+        past sections you already heard.
       </p>
 
       <h3>🔖 Bookmark</h3>
@@ -796,11 +798,20 @@
 
       <h3>💤 Sleep timer</h3>
       <p>
-        Cycles <code>Off → 15 → 30 → 45 → 60 min</code>. When the
-        timer expires, audio <strong>fades over 5 seconds</strong>
-        and pauses gracefully — your saved resume position lands at
-        the exact moment of fade-out, so the next morning the clip
-        starts where you fell asleep.
+        Cycles
+        <code>Off → 15 → 30 → 45 → 60 min → End of chapter / End of clip</code>.
+        For the minute presets, audio <strong>fades over 5 seconds</strong>
+        and pauses gracefully when the timer expires — the saved
+        resume position lands at the exact moment of fade-out, so the
+        next morning the clip starts where you fell asleep.
+      </p>
+      <p>
+        The <strong>End of chapter</strong> / <strong>End of clip</strong>
+        mode (Libby-style) stops at the next natural narrative boundary
+        instead of guessing minutes. With a chapter queue active the
+        label reads "Chapter end"; without one it reads "Clip end".
+        Pre-synth of the next chapter is suppressed while this mode is
+        armed (no point synthesizing audio you won't hear).
       </p>
 
       <h3>Playback speed (1×)</h3>
@@ -809,6 +820,14 @@
         Affects playback only, not stored audio. Choice is persisted
         per browser. Reapplied automatically when the audio source
         changes (per-sentence streaming, clip switch).
+      </p>
+      <p>
+        At any speed other than 1× the player time row appends
+        "<code>· 1h 50m left</code>" next to the duration — your actual
+        wall-clock remaining at the chosen speed. The speed chip's
+        tooltip carries the full breakdown ("Speed 1.5× · 3h 24m →
+        2h 16m at this speed"), useful when planning whether you'll
+        finish a chapter before your stop.
       </p>
 
       <!-- ============================================================= -->
@@ -860,11 +879,37 @@
       <table>
         <tr><th>Element</th><th>What it does</th></tr>
         <tr><td><strong>⋮⋮</strong></td><td>Drag handle. Press, drag up or down, release to reorder. Works for mouse and touch.</td></tr>
+        <tr><td><strong>Cover swatch</strong></td><td>By default a hash-derived gradient tile with the title's first letter — same title renders the same swatch on every device. <strong>Upload custom cover art</strong> via ✎ Edit → Cover image (PNG / JPG / WebP / GIF, auto-resized to 256×256 + JPEG-compressed). The card's dominant color also tints the background of the whole card (Libby-style) and, when the clip is loaded, fades in as a heavily blurred wash behind the entire page. Played clips render the swatch dimmer.</td></tr>
         <tr><td><strong>Card body</strong></td><td>Tap anywhere on the title/meta area to load and play this clip.</td></tr>
+        <tr><td><strong>Tag chips</strong></td><td>Free-form colored labels (set via ✎ Edit). Same tag always renders in the same hash-derived color. The filter chip row above the library composes AND-style across selected tags.</td></tr>
         <tr><td><strong>↺ Reset</strong></td><td>Only shown for in-progress clips. Wipes the saved resume position so next play starts from the top. If you reset the clip you're currently listening to, the player rewinds too.</td></tr>
-        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename and add a note (e.g. <em>"Chapter 3 — needs work on the kitchen scene"</em>).</td></tr>
+        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, add a note, set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. The cover comes through Export / Import zips along with audio + manifest.</td></tr>
         <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
       </table>
+
+      <h3>Cover art &amp; page backdrop</h3>
+      <p>
+        Every clip carries a visual identity. By default it's a
+        gradient tile derived from the title hash, but you can upload
+        your own story-board art through ✎ Edit → Cover image.
+        Uploaded images are resized to 256×256 (cover-fit, center
+        crop) and JPEG-compressed at ~85% quality — about 20-30 KB
+        each, so a 100-chapter library adds 2-3 MB total.
+      </p>
+      <p>
+        Once a cover is in place, two things happen across the UI:
+      </p>
+      <ul>
+        <li><strong>Library card tint.</strong> The dominant color of the cover is sampled (Canvas down-sampling + RGB→HSL average) and applied as a soft ~12% wash across the matching card — Libby/Hoopla-style. Clips without an uploaded cover still get a wash from the title hash, so every card has its own color identity at a glance.</li>
+        <li><strong>Page backdrop.</strong> When you load a clip with an uploaded cover, the image fades in as a heavily blurred + dimmed atmosphere behind the entire page (Libby's "you're inside this book" feel). Fades back out when you clear the textarea.</li>
+      </ul>
+      <p>
+        The cover ships in the library zip under <code>covers/{clip.id}.jpg</code>
+        with the dominant color carried in the manifest entry, so
+        Export → Import round-trips your full visual workspace.
+        Removing a cover (✎ Edit → Remove cover) drops back to the
+        gradient + hash-color fallback.
+      </p>
 
       <h3>Sections</h3>
       <p>
@@ -883,6 +928,7 @@
       <h3>Search + sort + filter</h3>
       <ul>
         <li><strong>Search box</strong> matches title, source text, voice name, OR note text. Press <span class="kbd">Esc</span> to clear.</li>
+        <li><strong>Tag filter row</strong> appears above the library once any clip has tags. Click a tag chip to require it; click again to drop it; multiple chips compose AND. The count beside each tag reflects the post-search visible set.</li>
         <li><strong>Sort chip</strong> cycles
           <code>Newest → Oldest → Longest → Shortest → Custom → Shuffle</code>.
           <em>Custom</em> uses your drag-defined order; auto-switches
@@ -890,6 +936,18 @@
         </li>
         <li><strong>Hide played</strong> (in the library tools row) hides clips you've finished and reset. Becomes <em>"Show all"</em> when active. State persisted.</li>
       </ul>
+
+      <h3>All bookmarks</h3>
+      <p>
+        Library tools also surface an <strong>All bookmarks</strong>
+        button (shown once any clip has a bookmark). It opens a
+        timeline of every bookmark across every clip — grouped by
+        clip, sortable by recency / time-in-clip / clip title,
+        filterable by note text or tag. Each row's <em>Jump</em>
+        button loads the source clip and seeks to the bookmark.
+        Built for authors revising a long manuscript: one place to
+        triage every "fix this" note.
+      </p>
 
       <h3>Drag to reorder</h3>
       <p>
@@ -1015,6 +1073,11 @@
           <strong>Theme</strong> — Auto / Dark / Light. Auto follows
           your device; Light uses a warm cream palette tuned for
           daytime / outdoor reading.
+        </li>
+        <li>
+          <strong>Skip interval</strong> — 2 / 5 / 10 / 15 / 30 seconds.
+          Controls the ↶ / ↷ chips in the player; their labels update
+          live to match.
         </li>
         <li>
           <strong>Listen stats</strong> (Standard / Author only) —
@@ -1176,16 +1239,28 @@
       <h3>Workflow ideas</h3>
       <ul>
         <li>
-          <strong>Audiobook a book chapter-by-chapter.</strong> Paste
-          chapter 1 → Generate → save. Repeat for each chapter.
-          Drag-reorder by chapter number. Hit play on chapter 1 —
-          auto-advance plays the whole book in order with 3-second
-          breaths between chapters.
+          <strong>Audiobook a book chapter-by-chapter.</strong> If
+          the book lives in one big file, paste it and the chapter
+          detector queues each chapter automatically. If it lives
+          across many files (Scrivener scenes, Obsidian notes, a
+          GitHub manuscript repo), use the matching Import option
+          and pick the chapters you want — same chapter queue,
+          same pre-synth + auto-advance with 3-second breaths
+          between chapters.
+        </li>
+        <li>
+          <strong>Listen to your own draft as it changes.</strong>
+          Keep your manuscript in Scrivener / Obsidian / GitHub.
+          Whenever you're stuck, re-import the relevant chapter
+          and listen — for GitHub clips, the library's
+          <strong>Sync all</strong> button flags any clip whose
+          source has been updated upstream so you can re-narrate
+          just what changed.
         </li>
         <li>
           <strong>Read articles you'll never read.</strong> Install
-          the PWA on your phone, hit Paste URL with a long-form
-          article, generate, listen on the move. The Continue
+          the PWA on your phone, hit Import → Paste URL with a
+          long-form article, generate, listen on the move. The Continue
           Listening shelf handles "I started this on my commute,
           finish on the train home."
         </li>

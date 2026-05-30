@@ -52,6 +52,12 @@
     </script>
   </head>
   <body>
+    <!-- v126: Libby-style cover-art backdrop. Empty by default; when
+         a clip with an uploaded cover is loaded, JS sets its
+         background-image inline. CSS blurs + dims so it reads as a
+         page atmosphere rather than competing with the content. -->
+    <div id="bg-art" aria-hidden="true"></div>
+
     <!-- Sticky mini player: only visible when the main player card has
          scrolled offscreen, driven by an IntersectionObserver in app.js. -->
     <div id="mini-player" class="mini-player" hidden>
@@ -81,13 +87,46 @@
             <h1>Narrative</h1>
             <p class="tagline">Type. Listen. Download.</p>
           </div>
-          <button
-            id="settings-btn"
-            type="button"
-            class="settings-btn"
-            aria-label="Open settings"
-            title="Settings"
-          >⚙</button>
+          <div class="hero-icons">
+            <!-- Voice trigger. Label shows the currently-selected voice
+                 so the user can see what'll narrate without opening the
+                 dialog. Updated by onVoiceChange in app.js. -->
+            <button
+              id="voice-trigger"
+              type="button"
+              class="hero-icon-btn"
+              aria-label="Choose voice"
+              title="Voice"
+            >
+              <span aria-hidden="true">🎤</span>
+              <span class="hero-icon-label" id="voice-trigger-label">Voice</span>
+            </button>
+            <!-- Library trigger. Badge shows total clip count, updated
+                 by renderLibrary. Hidden when the library is empty so
+                 first-time users see a clean hero. -->
+            <button
+              id="library-trigger"
+              type="button"
+              class="hero-icon-btn"
+              aria-label="Open library"
+              title="Library"
+            >
+              <span aria-hidden="true">📚</span>
+              <span class="hero-icon-label">Library</span>
+              <span
+                id="library-trigger-count"
+                class="hero-icon-badge"
+                hidden
+              >0</span>
+            </button>
+            <button
+              id="settings-btn"
+              type="button"
+              class="settings-btn hero-icon-btn"
+              aria-label="Open settings"
+              title="Settings"
+            >⚙</button>
+          </div>
         </div>
       </header>
 
@@ -148,6 +187,39 @@
               <label>
                 <input type="radio" name="theme" value="light" />
                 <span>Light</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Skip interval</strong>
+              <span class="settings-toggle-desc">
+                How far the ↶ and ↷ chips jump. Default is 5 seconds.
+                Smaller for re-listening tricky sentences; larger for
+                skipping past sections you already heard.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Skip interval">
+              <label>
+                <input type="radio" name="skip-interval" value="2" />
+                <span>2s</span>
+              </label>
+              <label>
+                <input type="radio" name="skip-interval" value="5" />
+                <span>5s</span>
+              </label>
+              <label>
+                <input type="radio" name="skip-interval" value="10" />
+                <span>10s</span>
+              </label>
+              <label>
+                <input type="radio" name="skip-interval" value="15" />
+                <span>15s</span>
+              </label>
+              <label>
+                <input type="radio" name="skip-interval" value="30" />
+                <span>30s</span>
               </label>
             </div>
           </div>
@@ -258,6 +330,13 @@
         </div>
       </dialog>
 
+      <!-- Status line. Lives ABOVE the text card so errors and load
+           messages ("Fetch failed: HTTP 404…", "Loaded foo.txt · 1.2k
+           chars") are visible without scrolling past the Generate /
+           Download row to find them. Hidden by CSS when empty so the
+           layout doesn't shift on every render. -->
+      <p class="status" id="status" aria-live="polite"></p>
+
       <section class="card card-text">
         <div class="label-row">
           <label for="text" class="label" id="text-label">Your text</label>
@@ -269,18 +348,24 @@
               aria-label="Clear the textarea and start a new clip"
               title="Clear the text and start fresh"
             >Clear</button>
-            <button
-              id="paste-url-btn"
-              type="button"
-              class="link-btn"
-              aria-label="Fetch text from a URL"
-            >Paste URL</button>
-            <button
-              id="upload-btn"
-              type="button"
-              class="link-btn"
-              aria-label="Upload a text, PDF, EPUB or Word file"
-            >Upload file</button>
+            <div class="import-menu-wrap">
+              <button
+                id="import-btn"
+                type="button"
+                class="link-btn"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="import-menu"
+                aria-label="Import manuscript from a file, URL, or external tool"
+              >Import ▾</button>
+              <div id="import-menu" class="import-menu" role="menu" hidden>
+                <button role="menuitem" type="button" data-import="file">Upload file</button>
+                <button role="menuitem" type="button" data-import="url">Paste URL</button>
+                <button role="menuitem" type="button" data-import="github">GitHub repo</button>
+                <button role="menuitem" type="button" data-import="scrivener">Scrivener bundle</button>
+                <button role="menuitem" type="button" data-import="obsidian">Obsidian vault</button>
+              </div>
+            </div>
             <button
               id="save-text-btn"
               type="button"
@@ -302,6 +387,18 @@
           type="file"
           hidden
           accept=".txt,.md,.markdown,.pdf,.epub,.docx,text/plain,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        />
+        <input
+          id="scrivener-input"
+          type="file"
+          hidden
+          accept=".zip,application/zip,application/x-zip-compressed"
+        />
+        <input
+          id="obsidian-input"
+          type="file"
+          hidden
+          accept=".zip,application/zip,application/x-zip-compressed"
         />
         <div id="url-row" class="url-row" hidden>
           <input
@@ -376,7 +473,30 @@
         ></div>
       </section>
 
-      <section class="card card-voice">
+      <!-- Sidebar wrapper. On desktop (≥1024px) this becomes a flex
+           column in column 2 of the .app grid so voice + library
+           stack flush — no gap between them like the old layout had
+           (voice's row span ran out before library's row span began).
+           On smaller widths the wrapper uses display: contents to
+           disappear from layout, and library uses CSS `order: 99` to
+           drop to the natural mobile position (after status). -->
+      <!-- Voice dialog. Opened from the 🎤 trigger in the hero. Holds
+           the voice picker, optional speaker picker, presets list, and
+           synthesis speed + volume sliders. Synthesis rate/volume are
+           baked into the audio at Generate time, so they only need to
+           be reachable BEFORE generating — fine to live in a dialog.
+           Playback speed (the chip in the player row) is separate. -->
+      <dialog id="voice-dialog" class="voice-dialog">
+        <div class="voice-browser-head">
+          <h2>Voice</h2>
+          <button
+            id="voice-dialog-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close voice picker"
+          >Close</button>
+        </div>
+        <div class="voice-dialog-body">
         <div class="label-row">
           <label for="voice" class="label">Voice</label>
           <div class="label-row-actions">
@@ -392,6 +512,13 @@
               class="link-btn advanced-only"
               aria-label="Save current voice + speed + volume as a preset"
             >Save preset</button>
+            <button
+              id="voice-defaults-btn"
+              type="button"
+              class="link-btn"
+              aria-label="Reset Speed to 180 and Volume to 100%"
+              title="Reset Speed to 180 wpm + Volume to 100%"
+            >Defaults</button>
             <button
               id="browse-voices-btn"
               type="button"
@@ -453,7 +580,122 @@
             <input id="volume" type="range" min="0" max="100" step="1" value="100" />
           </div>
         </div>
-      </section>
+        </div>
+      </dialog>
+
+      <!-- Library dialog. Opened from the 📚 trigger in the hero.
+           Replaces the old always-visible library card — text window
+           dominates on every viewport now, and library opens full-
+           screen on demand. The `id="library-card"` is preserved so
+           the existing renderLibrary + selection-mode code keeps
+           working without changes. -->
+      <dialog id="library-dialog" class="library-dialog">
+        <div class="voice-browser-head">
+          <h2 id="library-label">Library</h2>
+          <div class="library-head-actions">
+            <button
+              id="play-mode-btn"
+              type="button"
+              class="link-btn advanced-only"
+              aria-label="Cycle library sort + playlist order"
+              title="Tap to change sort + playlist order"
+            >Newest first</button>
+            <button id="library-clear" type="button" class="link-btn advanced-only">Clear all</button>
+            <button
+              id="library-dialog-close"
+              type="button"
+              class="link-btn"
+              aria-label="Close library"
+            >Close</button>
+          </div>
+        </div>
+        <div class="card library" id="library-card">
+        <input
+          id="library-search"
+          type="search"
+          placeholder="Search by title, text, or voice…"
+          autocomplete="off"
+        />
+        <!-- Idle tools (visible outside select mode) -->
+        <div class="library-tools advanced-only" id="library-tools-idle">
+          <button
+            id="library-export"
+            type="button"
+            class="link-btn"
+            aria-label="Export entire library as a zip"
+          >Export</button>
+          <button
+            id="library-import"
+            type="button"
+            class="link-btn"
+            aria-label="Import a previously-exported library zip"
+          >Import</button>
+          <button
+            id="library-hide-played"
+            type="button"
+            class="link-btn"
+            aria-pressed="false"
+            aria-label="Hide clips you've finished"
+          >Hide played</button>
+          <button
+            id="library-select"
+            type="button"
+            class="link-btn"
+            aria-label="Enter multi-select mode for bulk delete or export"
+          >Select</button>
+          <button
+            id="library-sync-github"
+            type="button"
+            class="link-btn"
+            aria-label="Check all GitHub-sourced clips for upstream commits"
+            hidden
+          >Sync GitHub</button>
+          <button
+            id="library-all-bookmarks"
+            type="button"
+            class="link-btn"
+            aria-label="Browse every bookmark across the library"
+            hidden
+          >All bookmarks</button>
+          <input
+            id="library-import-file"
+            type="file"
+            accept=".zip,application/zip,application/x-zip-compressed"
+            hidden
+          />
+        </div>
+        <!-- Select-mode tools (visible only while choosing clips) -->
+        <div class="library-tools library-tools-select" id="library-tools-select" hidden>
+          <button
+            id="library-select-cancel"
+            type="button"
+            class="link-btn"
+          >Cancel</button>
+          <button
+            id="library-select-all"
+            type="button"
+            class="link-btn"
+          >Select all</button>
+          <button
+            id="library-select-export"
+            type="button"
+            class="link-btn"
+            disabled
+          >Export 0</button>
+          <button
+            id="library-select-delete"
+            type="button"
+            class="link-btn library-select-delete"
+            disabled
+          >Delete 0</button>
+        </div>
+        <!-- Tag-filter chip row. Populated by renderLibrary from the
+             distinct tags across all clips. Hidden when no clip has
+             any tags so users who don't use tags never see the row. -->
+        <div id="library-tag-filters" class="library-tag-filters" hidden></div>
+        <div id="library-list" class="library-list"></div>
+        </div>
+      </dialog>
 
       <!-- Re-narrate banner. Shown when the user picks a different
            voice while a clip is loaded — voice is baked into the
@@ -461,6 +703,29 @@
            Re-narrate triggers the existing in-place regen path;
            dismiss leaves the picker change as the default for the
            next Generate. -->
+      <!-- Outdated-source banner. Shown when a clip's gitRef SHA no
+           longer matches the current GitHub SHA for the same path.
+           Refetch button runs the regen path so bookmarks survive. -->
+      <div id="git-outdated-banner" class="chapter-banner git-outdated-banner" hidden>
+        <span class="chapter-banner-msg">
+          <strong>This chapter has been updated on GitHub.</strong>
+          Re-narrate with the latest commit?
+        </span>
+        <span class="chapter-banner-actions">
+          <button
+            id="git-outdated-confirm"
+            type="button"
+            class="chapter-banner-btn primary"
+          >Refetch + re-narrate</button>
+          <button
+            id="git-outdated-dismiss"
+            type="button"
+            class="chapter-banner-btn"
+            aria-label="Dismiss"
+          >Dismiss</button>
+        </span>
+      </div>
+
       <div id="renarrate-banner" class="chapter-banner renarrate-banner advanced-only" hidden>
         <span class="chapter-banner-msg">
           Re-narrate <strong id="renarrate-clip-title">this clip</strong>
@@ -525,6 +790,11 @@
             <div id="cp-thumb" class="cp-thumb"></div>
           </div>
           <span id="cp-time-duration" class="cp-time">0:00</span>
+          <!-- Wall-clock remaining at the current speed. Hidden when
+               speed = 1× (the duration above already tells the story);
+               shown like "· 1h 50m left" otherwise so a Libby-style
+               author at 1.5× knows when this will actually end. -->
+          <span id="cp-time-effective" class="cp-time-effective" hidden></span>
           <button
             id="cp-mute-btn"
             type="button"
@@ -587,7 +857,45 @@
         <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
       </section>
 
-      <p class="status" id="status" aria-live="polite"></p>
+      <!-- Shared document picker. Used by every multi-file manuscript
+           source (GitHub, Scrivener, Obsidian). The caller opens it
+           via openDocumentPicker({title, meta, items, onUse}); the
+           dialog owns its own state, filter, summary, and Use button. -->
+      <dialog id="document-picker-dialog" class="doc-picker-dialog">
+        <div class="voice-browser-head">
+          <h2 id="doc-picker-title">Pick items</h2>
+          <button
+            id="doc-picker-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close picker"
+          >Close</button>
+        </div>
+        <div class="doc-picker-body">
+          <p id="doc-picker-meta" class="doc-picker-meta"></p>
+          <input
+            id="doc-picker-filter"
+            type="search"
+            placeholder="Filter…"
+            autocomplete="off"
+          />
+          <div id="doc-picker-list" class="doc-picker-list" role="listbox" aria-label="Items"></div>
+          <p id="doc-picker-summary" class="doc-picker-summary" aria-live="polite"></p>
+        </div>
+        <div class="doc-picker-actions">
+          <button
+            id="doc-picker-cancel"
+            type="button"
+            class="secondary"
+          >Cancel</button>
+          <button
+            id="doc-picker-use"
+            type="button"
+            class="primary"
+            disabled
+          >Use selected</button>
+        </div>
+      </dialog>
 
       <dialog id="characters-dialog" class="characters-dialog">
         <div class="voice-browser-head">
@@ -737,6 +1045,51 @@
         </div>
       </dialog>
 
+      <!-- Global bookmark timeline. Lists every bookmark across every
+           clip in the library, with sort + filter. Each row links back
+           to its clip + timestamp via the Jump button — loads the clip,
+           seeks to time, plays. Author-and-up only (per #251). -->
+      <dialog id="all-bookmarks-dialog" class="all-bookmarks-dialog">
+        <div class="voice-browser-head">
+          <h2>All bookmarks</h2>
+          <button
+            id="all-bookmarks-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close all-bookmarks dialog"
+          >Close</button>
+        </div>
+        <div class="all-bookmarks-body">
+          <div class="all-bookmarks-toolbar">
+            <input
+              id="all-bookmarks-filter"
+              type="search"
+              placeholder="Filter by note, clip title, or tag…"
+              autocomplete="off"
+            />
+            <label class="all-bookmarks-sort">
+              Sort by
+              <select id="all-bookmarks-sort">
+                <option value="recent">Recently added</option>
+                <option value="time-in-clip">Time in clip</option>
+                <option value="clip-title">Clip title</option>
+              </select>
+            </label>
+          </div>
+          <div
+            id="all-bookmarks-list"
+            class="all-bookmarks-list"
+            role="list"
+            aria-label="All bookmarks across the library"
+          ></div>
+          <p
+            id="all-bookmarks-summary"
+            class="all-bookmarks-summary"
+            aria-live="polite"
+          ></p>
+        </div>
+      </dialog>
+
       <dialog id="clip-edit" class="clip-edit-dialog">
         <div class="voice-browser-head">
           <h2>Edit clip</h2>
@@ -762,93 +1115,53 @@
             maxlength="500"
             placeholder="A short reminder about this clip — chapter number, author, status…"
           ></textarea>
+          <label for="clip-edit-tags" class="label">
+            Tags (optional, comma-separated)
+          </label>
+          <input
+            id="clip-edit-tags"
+            type="text"
+            maxlength="200"
+            autocomplete="off"
+            placeholder="e.g. draft, fiction, needs revision"
+          />
+          <!-- Cover image picker (v125). Upload a story-board image or
+               any chapter art; resized to 256x256 + dominant color
+               extracted on save. Falls back to the title-hash
+               gradient when no cover is set. -->
+          <label class="label">Cover image (optional)</label>
+          <div class="clip-edit-cover-row">
+            <div
+              id="clip-edit-cover-preview"
+              class="clip-edit-cover-preview"
+              aria-label="Cover preview"
+            ></div>
+            <div class="clip-edit-cover-buttons">
+              <button
+                id="clip-edit-cover-pick"
+                type="button"
+                class="link-btn"
+              >Upload cover…</button>
+              <button
+                id="clip-edit-cover-remove"
+                type="button"
+                class="link-btn"
+                hidden
+              >Remove cover</button>
+            </div>
+            <input
+              id="clip-edit-cover-input"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              hidden
+            />
+          </div>
           <div class="clip-edit-actions">
             <button id="clip-edit-save" type="button" class="primary">Save</button>
           </div>
         </div>
       </dialog>
 
-      <section class="card library" id="library-card" hidden>
-        <div class="label-row">
-          <span class="label" id="library-label">Library</span>
-          <div class="label-row-actions">
-            <button
-              id="play-mode-btn"
-              type="button"
-              class="link-btn advanced-only"
-              aria-label="Cycle library sort + playlist order"
-              title="Tap to change sort + playlist order"
-            >Newest first</button>
-            <button id="library-clear" type="button" class="link-btn advanced-only">Clear all</button>
-          </div>
-        </div>
-        <input
-          id="library-search"
-          type="search"
-          placeholder="Search by title, text, or voice…"
-          autocomplete="off"
-        />
-        <!-- Idle tools (visible outside select mode) -->
-        <div class="library-tools advanced-only" id="library-tools-idle">
-          <button
-            id="library-export"
-            type="button"
-            class="link-btn"
-            aria-label="Export entire library as a zip"
-          >Export</button>
-          <button
-            id="library-import"
-            type="button"
-            class="link-btn"
-            aria-label="Import a previously-exported library zip"
-          >Import</button>
-          <button
-            id="library-hide-played"
-            type="button"
-            class="link-btn"
-            aria-pressed="false"
-            aria-label="Hide clips you've finished"
-          >Hide played</button>
-          <button
-            id="library-select"
-            type="button"
-            class="link-btn"
-            aria-label="Enter multi-select mode for bulk delete or export"
-          >Select</button>
-          <input
-            id="library-import-file"
-            type="file"
-            accept=".zip,application/zip,application/x-zip-compressed"
-            hidden
-          />
-        </div>
-        <!-- Select-mode tools (visible only while choosing clips) -->
-        <div class="library-tools library-tools-select" id="library-tools-select" hidden>
-          <button
-            id="library-select-cancel"
-            type="button"
-            class="link-btn"
-          >Cancel</button>
-          <button
-            id="library-select-all"
-            type="button"
-            class="link-btn"
-          >Select all</button>
-          <button
-            id="library-select-export"
-            type="button"
-            class="link-btn"
-            disabled
-          >Export 0</button>
-          <button
-            id="library-select-delete"
-            type="button"
-            class="link-btn library-select-delete"
-            disabled
-          >Delete 0</button>
-        </div>
-        <div id="library-list" class="library-list"></div>
-      </section>
     </main>
 
     <script src="/app.js"></script>
