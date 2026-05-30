@@ -31,7 +31,12 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # App code + static assets.
-COPY server.py extract.py ./
+# v197: github_oauth.py was added in v180 but the Dockerfile was never
+# updated to copy it — local dev hid the bug because every .py at the
+# project root is importable, but in the container only the explicit
+# COPY list lands. Without it, `import github_oauth` at server.py:24
+# raised ModuleNotFoundError and the machine boot-looped.
+COPY server.py extract.py github_oauth.py ./
 COPY tts/ ./tts/
 COPY static/ ./static/
 COPY scripts/ ./scripts/

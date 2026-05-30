@@ -181,8 +181,12 @@ margins, classic novel typesetting). Asked: "what do you think about a
 feature so we can see our book like this?" Explicitly deferred — not
 now, but worth keeping warm. Saved 2026-05-29.
 
-**Status:** Deferred. Conceptual; nothing built. Pairs naturally with the
-v125 cover upload (the book spread opens with the chapter's cover art).
+**Status:** In progress — v185 (Milestone 1, foundation) shipping
+2026-05-30. Author committed to the polished 2-3-evening track over
+the MVP after revisiting. Milestone 1 ships the book-layout
+foundation; Milestone 2 layers drop caps + running headers + page
+numbers + font-size control + print stylesheet; Milestone 3 adds the
+magazine layout + theme variants + inline-image flow.
 
 **Priority:** Medium. Delightful and on-thesis (Narrative as the place
 where a manuscript becomes a finished artifact in two modalities — audio

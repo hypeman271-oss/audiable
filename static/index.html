@@ -81,11 +81,40 @@
     </div>
 
     <main class="app">
+      <!-- v195: dual chip strips. #hero-controls lives back inside
+           .hero-row (v188 position) as a flex middle item, visible
+           in the hero's empty horizontal slot when at the top of
+           the page. Once the player card scrolls out of view, the
+           v195 floating clone #hero-controls-float (declared as a
+           sibling of </header> below) fades in to take over. Both
+           strips are driven by an IntersectionObserver on the player
+           card — see app.js. -->
       <header class="hero">
         <div class="hero-row">
           <div>
             <h1>Narrative</h1>
             <p class="tagline">Type. Listen. Download.</p>
+          </div>
+          <!-- Inline strip: sits in the hero's empty middle slot
+               between the title block and the icon rail. Chips are
+               migrated here at app boot (v188 migration). -->
+          <div id="hero-controls" class="hero-controls" hidden>
+            <button
+              id="hero-play-btn"
+              type="button"
+              class="hero-play-btn"
+              aria-label="Play / pause"
+              title="Play / pause (Space)"
+            >
+              <svg id="hero-play-icon" class="hero-play-svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 5v14l11-7z" fill="currentColor"></path>
+              </svg>
+              <svg id="hero-pause-icon" class="hero-play-svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" hidden>
+                <path d="M6 4h4v16H6zM14 4h4v16h-4z" fill="currentColor"></path>
+              </svg>
+            </button>
+            <!-- Skip ±, 🔖 Bookmark, Sleep, A↔B, Speed, 📝 Notes
+                 chips moved here at app boot from .player-actions. -->
           </div>
           <!-- v173: first-clip onboarding tour banner. Lives INSIDE the
                hero row so it occupies the empty horizontal space
@@ -157,6 +186,18 @@
             >⚙</button>
           </div>
         </div>
+      </header>
+
+      <!-- v195: floating chip strip — fixed-positioned, fades in
+           when the user has scrolled past the player card. Cloned
+           from #hero-controls at app init; clones forward clicks to
+           the originals in the hero strip, and a MutationObserver
+           mirrors the originals' state (text, hidden SVG icons,
+           classes) so the float visually tracks the source of truth.
+           Sibling of </header> so position: fixed isn't constrained
+           by hero overflow rules. -->
+      <div id="hero-controls-float" class="hero-controls-float" hidden></div>
+
       <dialog id="settings-dialog" class="settings-dialog">
         <div class="voice-browser-head">
           <h2>Settings</h2>
@@ -252,6 +293,71 @@
               <label>
                 <input type="radio" name="skip-interval" value="30" />
                 <span>30s</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- v197 (M2): Book view text size. Re-paginates on the fly
+               if the user is currently in book view, so the change
+               is immediately visible. Persists to localStorage. -->
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Book view text size</strong>
+              <span class="settings-toggle-desc">
+                How large the body text reads when the book view is
+                open. Larger sizes mean more pages but less squinting.
+                Re-paginates instantly when you change it.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Book view text size">
+              <label>
+                <input type="radio" name="book-font-size" value="small" />
+                <span>Small</span>
+              </label>
+              <label>
+                <input type="radio" name="book-font-size" value="medium" />
+                <span>Medium</span>
+              </label>
+              <label>
+                <input type="radio" name="book-font-size" value="large" />
+                <span>Large</span>
+              </label>
+              <label>
+                <input type="radio" name="book-font-size" value="xlarge" />
+                <span>X-Large</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- v199 (M3.1): Book view theme. Picks the typographic
+               personality — paperback (default, serif single-column,
+               justified), magazine (sans-serif, 2-column body on
+               desktop), manuscript (monospace, looser line-height,
+               left-aligned for the typewritten-draft look). Re-
+               paginates on change so page breaks match the new font
+               metrics. Independent of the app-wide Dark/Light theme. -->
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Book view theme</strong>
+              <span class="settings-toggle-desc">
+                <strong>Paperback</strong>: classic serif, single column.
+                <strong>Magazine</strong>: sans-serif, two columns on
+                desktop. <strong>Manuscript</strong>: monospace, looser
+                lines, left-aligned — reads like a typewritten draft.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Book view theme">
+              <label>
+                <input type="radio" name="book-theme" value="paperback" />
+                <span>Paperback</span>
+              </label>
+              <label>
+                <input type="radio" name="book-theme" value="magazine" />
+                <span>Magazine</span>
+              </label>
+              <label>
+                <input type="radio" name="book-theme" value="manuscript" />
+                <span>Manuscript</span>
               </label>
             </div>
           </div>
@@ -458,6 +564,89 @@
                     field below.
                   </figcaption>
                 </figure>
+                <!-- v181: PAT scope audit. Spells out per-scope what
+                     Narrative actually uses the token for, what it
+                     does NOT touch, and which scopes can be safely
+                     dropped if you only need public-repo access. -->
+                <div class="settings-pat-scope-audit">
+                  <h4 class="settings-pat-scope-heading">
+                    Which scopes does Narrative actually use?
+                  </h4>
+                  <p class="settings-pat-scope-intro">
+                    The <em>Create one →</em> link pre-ticks
+                    <code>repo</code> because that's what most writers
+                    need (private drafts). Here's what each scope
+                    grants and what Narrative does with it.
+                  </p>
+                  <table class="settings-pat-scope-table" aria-label="PAT scope audit">
+                    <thead>
+                      <tr>
+                        <th scope="col">Scope</th>
+                        <th scope="col">Narrative uses it for</th>
+                        <th scope="col">Recommended?</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><code>repo</code></td>
+                        <td>
+                          Reading files from private repos via
+                          <em>Import → GitHub</em> + the per-clip
+                          GitHub URL fetch.
+                        </td>
+                        <td>
+                          <strong>Yes</strong> if you import private
+                          drafts. <em>Skip</em> if you only read
+                          public books — use <code>public_repo</code>.
+                        </td>
+                      </tr>
+                      <tr>
+                        <td><code>public_repo</code></td>
+                        <td>
+                          Reading files from public repos. Subset of
+                          <code>repo</code>.
+                        </td>
+                        <td>
+                          <strong>Yes</strong> if your manuscripts are
+                          public (or you only read other people's
+                          public repos). Strictly safer than
+                          <code>repo</code>.
+                        </td>
+                      </tr>
+                      <tr>
+                        <td><code>read:user</code></td>
+                        <td>
+                          Showing <em>"Signed in as @yourhandle"</em>
+                          in this Settings dialog (cosmetic only).
+                        </td>
+                        <td>
+                          Optional. Without it the section reads
+                          <em>"Token saved"</em> instead of your
+                          handle — still works.
+                        </td>
+                      </tr>
+                      <tr>
+                        <td><em>everything else</em></td>
+                        <td>
+                          <em>Not touched.</em> Narrative never
+                          calls write, admin, gist (mutate), pages,
+                          workflow, or organization scopes.
+                        </td>
+                        <td>
+                          <strong>Skip.</strong> If GitHub's PAT page
+                          has them ticked, untick them.
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p class="settings-pat-scope-note">
+                    Fine-grained PATs work too — pick the exact repos
+                    you want Narrative to see, then grant
+                    <em>Contents → Read-only</em>. Sync GitHub +
+                    re-narrate need <em>Metadata → Read-only</em>
+                    too.
+                  </p>
+                </div>
               </div>
             </details>
             <div class="settings-token-row">
@@ -523,6 +712,10 @@
                   <span class="import-menu-label">GitHub repo</span>
                   <span class="import-menu-sub">Browse a repo and pick chapters</span>
                 </button>
+                <button role="menuitem" type="button" data-import="gist">
+                  <span class="import-menu-label">GitHub Gist</span>
+                  <span class="import-menu-sub">Paste a gist.github.com URL — one snippet or many files</span>
+                </button>
                 <button role="menuitem" type="button" data-import="scrivener">
                   <span class="import-menu-label">Scrivener bundle</span>
                   <span class="import-menu-sub">.scriv project zipped up from Finder / Explorer</span>
@@ -547,6 +740,19 @@
               hidden
               aria-label="Edit the text"
             >Edit text</button>
+            <!-- v185 (M1): book view toggle. Visible only while a clip
+                 is loaded (the reading view is up). Flips the layout
+                 from the existing scrolling sentence flow to a
+                 paginated two-page book spread. The audio player +
+                 chip row stay above; only the prose layout changes. -->
+            <button
+              id="book-view-toggle"
+              type="button"
+              class="link-btn"
+              hidden
+              aria-label="Switch to book-spread view"
+              title="View as a two-page book spread"
+            >📖 Book view</button>
           </div>
         </div>
         <input
@@ -595,6 +801,61 @@
           maxlength="500000"
         ></textarea>
         <div id="reading-view" class="reading-view" hidden></div>
+        <!-- v189: "Return to current sentence" pill for the audio
+             (reading) view. Mirrors the book view's pinned-scrub
+             affordance from v187. Appears when the user has manually
+             scrolled the reading view away from the sentence the
+             audio is currently narrating, and disappears the moment
+             the active sentence is back in the viewport (or the
+             button gets clicked). Floats above the reading view
+             content as a sticky overlay so it stays reachable while
+             the user scans ahead. -->
+        <button
+          id="reading-view-return"
+          type="button"
+          class="reading-view-return-btn"
+          hidden
+          title="Jump back to the sentence being read now"
+        >↩ Return to current</button>
+        <!-- v185 (M1): two-page book spread. enterBookView paginates
+             the same sentence content shown in the reading view and
+             renders it as discrete pages inside #book-spread. The
+             outer wrapper carries the viewport — a fixed-height
+             container so the spread holds its shape independent of
+             the audio player + chip row above. Mobile flips this
+             into a single-page layout via media query. -->
+        <div id="book-view" class="book-view" hidden>
+          <div id="book-view-spread" class="book-view-spread" aria-live="polite"></div>
+          <div class="book-view-nav">
+            <button
+              id="book-view-prev"
+              type="button"
+              class="book-view-nav-btn"
+              aria-label="Previous spread"
+              disabled
+            >‹</button>
+            <span id="book-view-indicator" class="book-view-indicator">Spread 1 of 1</span>
+            <!-- v187: appears when the user has manually paged away
+                 from the spread containing the currently-narrated
+                 sentence. One click flips back to wherever the audio
+                 is now. Auto-hides when the user is already on the
+                 active spread (or when nothing is playing). -->
+            <button
+              id="book-view-return"
+              type="button"
+              class="book-view-return-btn"
+              hidden
+              title="Jump back to the sentence being read now"
+            >↩ Return to current</button>
+            <button
+              id="book-view-next"
+              type="button"
+              class="book-view-nav-btn"
+              aria-label="Next spread"
+              disabled
+            >›</button>
+          </div>
+        </div>
 
         <!-- Chapter auto-split banner. Shown after a paste detects 2+
              "Chapter N" / markdown-heading markers in the text. Split

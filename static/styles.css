@@ -1544,6 +1544,70 @@ body[data-ui-mode="simple"] .advanced-only {
   color: #c9d1d9;
 }
 
+/* v181: per-scope PAT audit table inside the GitHub help disclosure.
+   Sits below the mock-screenshot figure so users who follow the
+   "click Create one →" link see the rationale BEFORE they tick
+   anything. Reads as a quick reference rather than a wall of text. */
+.settings-pat-scope-audit {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.settings-pat-scope-heading {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.settings-pat-scope-intro {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+.settings-pat-scope-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-pat-scope-table thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.settings-pat-scope-table tbody td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+  color: var(--fg);
+}
+.settings-pat-scope-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.settings-pat-scope-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.settings-pat-scope-note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+
 /* "NEW" pill that hangs off the "What's new →" link until the user
    opens the changelog. Inline with the link text so it doesn't take a
    separate line; flips to display:none when the badge is hidden. */
@@ -1785,6 +1849,73 @@ body[data-ui-mode="simple"] .advanced-only {
   border-color: var(--accent);
   color: var(--bg);
 }
+/* v182: VSCode-style tree rendering inside the picker list. Folder
+   rows are clickable strips that toggle expansion; file rows ride
+   the existing .doc-picker-file styling but with extra left padding
+   to honor the indent level (applied inline by the renderer so the
+   depth math doesn't bloat the stylesheet). */
+.doc-picker-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+  user-select: none;
+}
+.doc-picker-folder:hover {
+  background: var(--hover-soft);
+}
+.doc-picker-folder-caret {
+  flex: 0 0 12px;
+  width: 12px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 1;
+}
+.doc-picker-folder-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1;
+}
+.doc-picker-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.doc-picker-folder-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.doc-picker-folder-cb {
+  flex: 0 0 auto;
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+/* Leaf rows in tree mode use a slightly tighter row height so the
+   tree feels dense — like VSCode's explorer pane rather than a
+   spaced-out list. Padding-left is set inline by the renderer. */
+.doc-picker-file-leaf {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.doc-picker-file-leaf .doc-picker-file-path {
+  font-weight: 400;
+}
+
 .doc-picker-file-empty {
   padding: 24px 12px;
   text-align: center;
@@ -3537,6 +3668,14 @@ button:disabled {
   }
 }
 
+/* v188: when all chips have been moved to #hero-controls (the normal
+   state after app boot), the original .player-actions container is
+   empty. Collapse it so the player card doesn't carry an invisible
+   margin-top gap where the strip used to live. */
+.player-actions:empty {
+  display: none;
+}
+
 .player-actions {
   display: flex;
   gap: 10px;
@@ -3563,82 +3702,14 @@ button:disabled {
   height: 4px;
 }
 
-/* v131: at desktop / landscape tablet (≥1024px) the chip row floats
-   above the page near the hero — always visible, no scrolling
-   required to reach skip / bookmark / sleep / speed. The chips stay
-   inside the player card in the DOM so they're naturally hidden
-   when no audio is loaded (the player card has `hidden` by default,
-   and `display: none` on the ancestor cascades down). Hidden when
-   the mini-player is visible (e.g. user scrolled the main player
-   offscreen) so we don't double-up on top-anchored chrome. */
-@media (min-width: 1024px) {
-  /* v147: scope the floating bar to `.app .player-actions` so it can
-     ONLY ever apply inside the real app (<main class="app">). The
-     manual lives at <main class="manual"> and re-uses `.player-actions`
-     inside `.manual-demo` mockups so the figures match the real
-     player's styling — the v131-v146 rules targeted EVERY
-     `.player-actions` on the page, which made the demo chip rows
-     float at top-of-viewport over the manual prose. Scoping at the
-     source (rather than overriding inside `.manual-demo`) means
-     there's no cascade to wrestle with, and any future page that
-     embeds a `.player-actions` mockup just works. */
-  .app .player-actions {
-    position: fixed;
-    /* v137: drop the bar below the hero icon strip. v136's revert to
-       top: 20px appeared correct on a smaller local browser window
-       only because the narrower viewport happened to compress the
-       chips' centered span enough to clear the right-anchored Voice /
-       Library / Settings icons; at the real remote viewport the bar
-       still extends into the Voice button (chips are max-content, so
-       a 6-chip set is ~500px regardless of viewport, while the hero
-       row's center-to-icons gap stays ~180px at any width ≥ 640px
-       since .app caps there). Moving below the hero is the only
-       layout that doesn't fight the icon strip for the same
-       horizontal band. 92px = .app 24px top padding + hero 8px top +
-       36px icon button + 18px hero bottom + 6px breathing. */
-    top: 92px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 5;
-    margin: 0;
-    padding: 6px 8px;
-    background: rgba(20, 25, 40, 0.65);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--border-soft);
-    border-radius: 14px;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
-    /* v134: size the floating pill to its chips so it NEVER shows an
-       internal horizontal scrollbar (the v131 cap of `calc(100vw -
-       700px)` was too tight on mid-width laptops — 5 chips at ~500px
-       triggered scroll under a 1200px viewport). max-content keeps the
-       pill exactly wide enough; the cap is a sanity guard for runaway
-       chip sets, deliberately well above any realistic count. */
-    width: max-content;
-    max-width: calc(100vw - 80px);
-    overflow: visible;
-    /* Smooth re-center when a side drawer opens/closes so the bar
-       glides into the new content area instead of snapping. */
-    transition: transform 220ms ease-out, max-width 220ms ease-out;
-  }
-  /* When the sticky mini-player is showing (user scrolled past the
-     main player card), hide the floating chip row to avoid the two
-     top-anchored bars competing for attention. */
-  body:has(#mini-player:not([hidden])) .app .player-actions {
-    display: none;
-  }
-  /* v132: when the right-side Voice / Library drawer is open, shift
-     the centered chip bar LEFT by half the drawer width so it stays
-     centered in the visible content area (the viewport's right side
-     is now occupied by the drawer). Without this, the bar sits at
-     viewport center and overlaps the drawer header. v134: max-width
-     also tightens so the (still max-content-sized) pill can't be
-     wider than the visible content column to the left of the drawer. */
-  body:is(.drawer-voice-open, .drawer-library-open) .app .player-actions {
-    transform: translateX(calc(-50% - var(--drawer-width, 400px) / 2));
-    max-width: calc(100vw - 80px - var(--drawer-width, 400px));
-  }
-}
+/* v192: the v131-v147 desktop "always-floating chip bar" rules are
+   superseded by the return-to-current model. Chips now live inside
+   the player card at rest (no floating) and slide into the
+   #hero-controls strip only when the player card scrolls offscreen.
+   The legacy `position: fixed` on `.app .player-actions` is
+   intentionally removed — keeping it would reactivate the old
+   always-on float the moment chips return to their .player-actions
+   home, defeating v192's conditional visibility. */
 
 .player-actions::-webkit-scrollbar-thumb {
   background: var(--border-strong);
@@ -5329,3 +5400,594 @@ button:disabled {
     max-height: calc(100vh - 130px);
   }
 }
+
+/* v185 (M1): Book view — paginated two-page spread.
+   Companion to the existing reading view (.reading-view). Same
+   sentence data, different layout: discrete pages computed by an
+   off-screen measurement pass (see _bookViewPaginate in app.js),
+   rendered into #book-view-spread as left/right page DOM. The
+   karaoke highlight + click-to-seek behavior inherits from the
+   reading-view sentence spans — we just have a different parent. */
+.book-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.book-view[hidden] { display: none; }
+
+/* The spread itself. Fixed aspect-ish container — width fills its
+   parent card, height is computed off the page-aspect ratio so the
+   spread looks like a real opened book even on a wide monitor. */
+.book-view-spread {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  overflow: hidden;
+  /* Heart of the visual: each page is in a 5:7 portrait ratio
+     (close to a paperback). The container's aspect-ratio collapses
+     to 10:7 for the two-page spread. Padding inside each .book-page
+     handles the margins. */
+  aspect-ratio: 10 / 7;
+  max-height: 78vh;
+  position: relative;
+  user-select: text;
+}
+
+/* The gutter — a soft inner shadow down the spine of the spread,
+   plus a 1px dark line to suggest the book's binding. Cheap trick
+   but reads convincingly as "real book opened flat". */
+.book-view-spread::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to right,
+    transparent calc(50% - 24px),
+    rgba(0, 0, 0, 0.10) 50%,
+    transparent calc(50% + 24px));
+}
+.book-view-spread::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+/* Individual page. Padded generously so the body text breathes. */
+.book-page {
+  padding: 32px 28px;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Body text. v199 (M3.1): every typographic property reads from a
+   CSS custom property with a sensible paperback default. Themes
+   (data-book-theme attribute on .book-view AND .book-view-measure)
+   override these vars to swap serif → sans-serif, columns → 2,
+   text-align → left, etc., without touching the body's structural
+   styles or the paginator. Color tokens stay shared with the
+   app-wide theme — book themes are typographic, not chromatic. */
+.book-page-body {
+  flex: 1 1 auto;
+  font-family: var(--book-font-family,
+    "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
+    Palatino, "Liberation Serif", Georgia, "Times New Roman", serif);
+  font-size: var(--book-font-size, 16px);
+  font-style: var(--book-font-style, normal);
+  line-height: var(--book-line-height, 1.65);
+  text-align: var(--book-text-align, justify);
+  hyphens: auto;
+  color: var(--fg);
+  letter-spacing: var(--book-letter-spacing, 0.005em);
+  margin-top: 0;
+  /* Multi-column support — paperback default is 1 (no column gap
+     applied). Magazine sets --book-columns: 2 and the gap below
+     activates. column-fill: auto is critical so columns fill in
+     reading order (left first, then right); the default 'balance'
+     splits the body across both columns equally, which makes the
+     last page of a chapter look strange. */
+  column-count: var(--book-columns, 1);
+  column-gap: 24px;
+  column-fill: auto;
+}
+
+/* v199 (M3.1): theme variants. Selectors target BOTH the real
+   .book-view and the off-screen .book-view-measure probe so the
+   paginator measures the actual rendered metrics — without this
+   pages would break in the wrong place when the user switches
+   themes (probe gets paperback metrics, render gets magazine).
+   The probe is now mounted inside .book-view (v199 — was a
+   document.body child before), so it inherits data-book-theme
+   automatically; the dual selector is belt-and-braces for the
+   re-paginate path which also stamps the probe directly. */
+.book-view[data-book-theme="magazine"],
+.book-view-measure[data-book-theme="magazine"] {
+  --book-font-family:
+    "Inter", "Helvetica Neue", "Segoe UI", "Liberation Sans",
+    system-ui, sans-serif;
+  --book-line-height: 1.55;
+  --book-letter-spacing: 0;
+  --book-columns: 2;
+}
+.book-view[data-book-theme="manuscript"],
+.book-view-measure[data-book-theme="manuscript"] {
+  --book-font-family:
+    "Courier Prime", "Courier New", "Lucida Console", monospace;
+  --book-line-height: 1.85;
+  --book-letter-spacing: 0;
+  --book-text-align: left;
+  /* Manuscripts on the page traditionally aren't italicized — that
+     setting is reserved for actual emphasis. But the typewritten
+     look reads as a "draft" only when the line is loose enough.
+     The wider line-height does most of that work. */
+}
+/* Paperback (default) needs no override — vars fall back to the
+   paperback defaults defined on .book-page-body. */
+
+/* v197 (M2): running header at the top of each text page. Shows the
+   clip title in small caps, dim grey, separated from the body by a
+   thin underline. The header is a fixed-height flex item so the
+   body's flex: 1 1 auto pushes the footer to the bottom of the page.
+   Hidden on the cover page (.book-page-cover overrides). */
+.book-page-header {
+  flex: 0 0 auto;
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+  /* Truncate long titles with ellipsis rather than wrap — running
+     headers in real books never wrap. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* v197 (M2): page number footer. Pushed to the bottom by the body's
+   flex grow. Left page → bottom-left, right page → bottom-right
+   (matches printed-book convention where outer corners carry the
+   number). The :nth-child rule keys off the spread's grid position;
+   on mobile (single-page spread) all pages get the right-aligned
+   variant via the media query below. */
+.book-page-footer {
+  flex: 0 0 auto;
+  font-family: "Iowan Old Style", Georgia, serif;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+  padding-top: 10px;
+  margin-top: 12px;
+  letter-spacing: 0.04em;
+}
+.book-view-spread > .book-page:nth-child(odd) .book-page-footer {
+  text-align: left;
+}
+.book-view-spread > .book-page:nth-child(even) .book-page-footer {
+  text-align: right;
+}
+
+/* v197 (M2): drop cap on the first letter of page 1's body. Render
+   ~3 lines tall, accent color, with a small right-margin so the
+   following text wraps cleanly around it. ::first-letter targets
+   the very first character of the body's flow regardless of which
+   span it lives in, so the existing per-sentence span structure
+   stays intact — drop-cap is purely visual styling, no DOM change. */
+/* v200 (M3.2): inline image in a book page body. Centered block,
+   constrained to half the page height so it never dominates,
+   width fluid up to the page's content area. column-span: all
+   keeps magazine 2-column layout from cramming images into a
+   single column — images visually break the column grid and
+   sit across the full body width, which reads well for
+   chapter-opening art or full-width figures. */
+.book-inline-image {
+  display: block;
+  max-width: 100%;
+  max-height: 50%;
+  margin: 12px auto;
+  border-radius: 4px;
+  object-fit: contain;
+  column-span: all;
+  /* Above the column flow so the magazine theme doesn't try to
+     squeeze the image into a half-width column slot. */
+  break-inside: avoid;
+}
+
+.book-page-body[data-drop-cap]::first-letter {
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-size: 3.2em;
+  font-weight: 700;
+  line-height: 0.85;
+  float: left;
+  margin: 4px 8px 0 0;
+  color: var(--accent);
+  /* Subtle baseline alignment — without this, the drop cap rides
+     slightly above the first line. The em-based padding keeps it
+     scaled with the user's chosen book font size. */
+  padding-top: 4px;
+}
+.book-page-body .sentence {
+  /* Reuse the existing .sentence span so karaoke + click-to-seek
+     wire through without per-view branches. The reading view's
+     .sentence styling is inline-level; the book view inherits the
+     same data attributes so active-sentence + long-sentence-author
+     tooling transparently follows. */
+  display: inline;
+  cursor: pointer;
+}
+.book-page-body .sentence.active {
+  background: var(--accent-tint, rgba(110, 168, 254, 0.18));
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--accent-tint, rgba(110, 168, 254, 0.18));
+}
+.book-page-body .sentence.played {
+  color: var(--fg-dim);
+}
+
+/* The cover page — left page of the very first spread. Cover art
+   fills the page with object-fit: cover. Falls back to the title-
+   hash gradient when no cover is set (same gradient the library
+   card swatch uses). */
+.book-page-cover {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  position: relative;
+}
+.book-page-cover-art {
+  flex: 1 1 auto;
+  width: 100%;
+  display: block;
+  object-fit: cover;
+}
+.book-page-cover-fallback {
+  flex: 1 1 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-size: 64px;
+  color: var(--fg);
+}
+.book-page-cover-title {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  right: 24px;
+  font-family: "Iowan Old Style", Georgia, serif;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+  text-shadow: 0 1px 3px var(--bg);
+}
+/* v197 (M2): the cover page never shows a running header or page
+   number — JS just skips rendering them, but belt-and-braces here
+   in case future code paths add them generically. */
+.book-page-cover .book-page-header,
+.book-page-cover .book-page-footer {
+  display: none;
+}
+
+/* Nav row below the spread. */
+.book-view-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.book-view-nav-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.book-view-nav-btn:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.book-view-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.book-view-indicator {
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* v187: "Return to current" button. Slots into the nav row between
+   the indicator and the › button. Accent-tinted so the eye notices
+   it the moment the user has scrubbed away — distinct from the
+   round ‹/› nav chevrons, which look like neutral page-turn
+   controls. */
+.book-view-return-btn {
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.book-view-return-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* Off-screen measurement container. The paginator mounts a single
+   page-shaped element here, fills it with sentences one at a time,
+   and reads .scrollHeight after each to decide when to break.
+   visibility: hidden keeps it laid out (heights still compute)
+   without painting. */
+.book-view-measure {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Mobile: single page, no spread. */
+@media (max-width: 720px) {
+  /* v199 (M3.1): force 1-column body on phones even for the
+     magazine theme — at single-page-spread width, two-column body
+     comes out at ~140px per column, too narrow to read. The
+     paperback + manuscript themes are already 1-column so this
+     only overrides magazine. */
+  .book-view[data-book-theme="magazine"],
+  .book-view-measure[data-book-theme="magazine"] {
+    --book-columns: 1;
+  }
+  .book-view-spread {
+    grid-template-columns: 1fr;
+    aspect-ratio: 1 / 1.4;
+    max-height: 80vh;
+  }
+  .book-view-spread::before,
+  .book-view-spread::after {
+    display: none;
+  }
+  .book-page {
+    padding: 24px 22px;
+  }
+  /* v197 (M2): on mobile single-page spreads the :nth-child
+     odd/even alternation doesn't make sense — every page is the
+     only child of the spread, so it would always be :nth-child(odd).
+     Force right-align (matches the outer corner of a single-page
+     reading layout). */
+  .book-view-spread > .book-page .book-page-footer {
+    text-align: right;
+  }
+}
+
+/* v189: "Return to current sentence" pill for the audio (reading)
+   view. Mirrors the book view's pinned-scrub pattern (v187). Floats
+   over the bottom-center of the viewport so it stays reachable
+   regardless of how far the user has scrolled the reading view's
+   internal scrollbar away from the audio's narration cursor. Hidden
+   via [hidden] until the JS detects the user has scrubbed away. */
+.reading-view-return-btn {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 9px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  /* Shadow + bg so the pill reads as a floating overlay above the
+     prose, not as part of the reading flow. */
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+}
+.reading-view-return-btn:hover {
+  filter: brightness(1.1);
+}
+.reading-view-return-btn[hidden] { display: none; }
+
+/* v188: hero player controls. Sits as a flex middle item in the
+   hero row, between the "Narrative" title block and the icon rail.
+   Populated at app init by moving the existing chip buttons from
+   .player-actions into this container, plus a new round
+   #hero-play-btn at the head. Hidden until a clip is loaded;
+   coexists with the first-clip-tour banner via hero-row's
+   flex-wrap (whichever has more horizontal demand wraps to its
+   own line). */
+/* v195: hero player controls — TWO strips now.
+   - .hero-controls is the INLINE strip that lives inside .hero-row
+     as a flex middle item (between the wordmark and the icon rail).
+     Visible when a clip is loaded and the user is at the top of
+     the page; scrolls away naturally with the hero.
+   - .hero-controls-float is the FLOATING clone strip, fixed at
+     top: 6px / left: 160px. Hidden by default; fades in when the
+     player card has scrolled off the top of the viewport. Cloned
+     chips inside it forward clicks to the originals in
+     .hero-controls and mirror their state via MutationObserver
+     (set up in app.js). */
+.hero-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: visible;
+  scrollbar-width: none;
+  padding: 5px 12px;
+  /* No fixed positioning — sits inline as a flex middle child of
+     .hero-row, occupying the empty horizontal space between the
+     title block (left) and the icon rail (right). */
+  width: max-content;
+  max-width: 100%;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(10px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  /* Subtle elevation so the chip pill stands out from the hero
+     background without competing with the wordmark. */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  /* Smooth opacity transition for any future fade work. */
+  transition: opacity 200ms ease-out;
+}
+.hero-controls::-webkit-scrollbar { display: none; }
+
+.hero-controls-float {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: visible;
+  scrollbar-width: none;
+  padding: 5px 12px;
+  position: fixed;
+  top: 6px;
+  left: 160px;
+  z-index: 50;
+  width: max-content;
+  max-width: calc(100vw - 420px);
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+  /* Start hidden; JS flips data-visible="true" once the player
+     card has scrolled off the top. */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms ease-out;
+}
+.hero-controls-float::-webkit-scrollbar { display: none; }
+.hero-controls-float[data-visible="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.hero-controls-float[hidden] { display: none; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .hero-controls {
+    background: var(--bg-card);
+  }
+}
+.hero-controls > * { flex-shrink: 0; }
+.hero-controls[hidden] { display: none; }
+
+/* The new round play/pause button. Accent-fill so it reads as the
+   primary action of the strip (distinct from the secondary chips
+   that follow). Mirrors the cp-play-btn icon swap (#hero-play-icon
+   / #hero-pause-icon — JS toggles their [hidden]). */
+.hero-play-btn {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.hero-play-btn:hover { filter: brightness(1.08); }
+.hero-play-svg { width: 20px; height: 20px; }
+
+/* The chips that move into the hero want a tighter footprint than
+   the original .player-actions rendering — they share the strip
+   with the play button + the first-clip tour. Override sizing on
+   the chip classes when they live inside #hero-controls. */
+.hero-controls .skip-back-btn,
+.hero-controls .skip-forward-btn,
+.hero-controls .bookmark-add-btn,
+.hero-controls .sleep-btn,
+.hero-controls .ab-loop-btn,
+.hero-controls .speed-btn,
+.hero-controls .notes-btn,
+.hero-controls-float .skip-back-btn,
+.hero-controls-float .skip-forward-btn,
+.hero-controls-float .bookmark-add-btn,
+.hero-controls-float .sleep-btn,
+.hero-controls-float .ab-loop-btn,
+.hero-controls-float .speed-btn,
+.hero-controls-float .notes-btn {
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  height: 28px;
+}
+
+/* v195: round play button size — shared by hero + float strips. */
+.hero-play-btn { width: 32px; height: 32px; }
+.hero-play-svg { width: 18px; height: 18px; }
+
+/* v198: phones bypass the hero-strip system entirely. Chips live
+   in .player-actions inside the player card on phones (the
+   pre-v188 layout). JS also gates the migration + clone setup
+   on viewport width; these CSS rules are belt-and-braces in
+   case some future code path forgets the JS gate.
+   Note: rules below the !important hides still apply to the
+   chip-sizing selectors, but with the containers gone there's
+   nothing for them to size. */
+@media (max-width: 720px) {
+  .hero-controls,
+  .hero-controls-float {
+    display: none !important;
+  }
+  .hero-controls .skip-back-btn,
+  .hero-controls .skip-forward-btn,
+  .hero-controls .bookmark-add-btn,
+  .hero-controls .sleep-btn,
+  .hero-controls .ab-loop-btn,
+  .hero-controls .speed-btn,
+  .hero-controls .notes-btn,
+  .hero-controls-float .skip-back-btn,
+  .hero-controls-float .skip-forward-btn,
+  .hero-controls-float .bookmark-add-btn,
+  .hero-controls-float .sleep-btn,
+  .hero-controls-float .ab-loop-btn,
+  .hero-controls-float .speed-btn,
+  .hero-controls-float .notes-btn {
+    padding: 3px 8px;
+    font-size: 11px;
+    height: 26px;
+  }
+  .hero-play-btn { width: 28px; height: 28px; }
+  .hero-play-svg { width: 16px; height: 16px; }
+}
+
+/* v198: the v195 mobile-recenter rule is no longer needed —
+   .hero-controls-float is display:none on phones. Left in place
+   as a no-op (the !important display:none takes precedence) so
+   future tablet-breakpoint work has a reference point. */

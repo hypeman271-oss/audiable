@@ -317,6 +317,7 @@
           <li><a href="#settings">Settings &amp; modes</a></li>
           <li><a href="#phone">Listening on your phone</a></li>
           <li><a href="#shortcuts">Shortcuts &amp; tips</a></li>
+          <li><a href="#walkthroughs">Tester walkthroughs</a></li>
         </ol>
       </nav>
 
@@ -549,12 +550,24 @@
       </p>
       <p>
         Below the pill, a <strong>queue panel</strong> shows the
-        currently-synthesizing job + the pending list. Each pending
-        row has a <code>⋮⋮</code> drag handle (drag to reorder —
-        bring an item to the top by dragging it above the others) and
-        a <code>×</code> remove button. The current job is locked at
+        currently-synthesizing job + the pending list. The in-flight
+        row carries a live <em>"elapsed 0:45 · ~0:12 left"</em>
+        clock — the ETA only appears once enough sentences have
+        completed for the per-sentence rate to settle, so the first
+        few seconds avoid wildly-wrong estimates. Each pending row
+        has a <code>⋮⋮</code> drag handle (drag to reorder — bring
+        an item to the top by dragging it above the others) and a
+        <code>×</code> remove button. The current job is locked at
         the top so you can't drag or drop it mid-synthesis (use
         Cancel × on the pill to kill the whole queue).
+      </p>
+      <p>
+        The queue panel's footer carries a <strong>"Recent repos:"</strong>
+        chip row covering up to your last five GitHub projects — one
+        click to round-trip back into a different repo's picker
+        without re-pasting a URL. Mid-queue mid-flow: <em>"I forgot
+        chapter 4 from the other book"</em> is one chip click +
+        three checkboxes away.
       </p>
       <div class="tip">
         <strong>Build-up workflow:</strong> Paste chapter 1 →
@@ -570,10 +583,24 @@
         start) and the retry recovers silently. Chapters that fail
         both attempts surface in a banner after the queue finishes,
         with the actual chapter titles + a one-click <em>Retry
-        failed</em> button that re-runs the queue with just those
-        chapters (no re-fetch needed; we kept the original chapter
-        data in memory). Beats <em>"see console"</em> when something
+        failed</em> button (re-runs the queue with just those
+        chapters — original chapter data stays in memory, no
+        re-fetch needed) and a <em>View log</em> button that jumps
+        straight into the in-app debug log so you can see
+        per-chapter HTTP / SSE errors + the sentence index where
+        synthesis broke. Beats <em>"see console"</em> when something
         actually went wrong.
+      </p>
+      <p>
+        <strong>Empty-text guard.</strong> When a multi-file import
+        produces empty text after extraction (e.g. a TOC.md that's
+        just nav links, or an image-only chapter), the chapter is
+        skipped <em>before</em> it ever enters the queue. The status
+        bar tells you how many were skipped
+        (<em>"32 fetched, 3 skipped — see Settings → View debug
+        log"</em>); the debug log has per-file detail. Beats a
+        confusing <em>"no audio in result"</em> failure deep into
+        the synthesis pass.
       </p>
       <table>
         <tr>
@@ -601,25 +628,65 @@
         <tr>
           <td><strong>GitHub repo</strong></td>
           <td>Pre-fills the URL input with
-            <code>https://github.com/</code> and shows an accent hint
-            above it: <em>"Paste the repo root — like</em>
-            <code>github.com/owner/repo</code> <em>— not a link to a
-            specific file."</em> Finish typing <code>owner/repo</code>
-            (or paste a <code>tree/&lt;branch&gt;</code> URL for a
-            non-default branch) and hit Fetch. A repo browser lists
-            all <code>.md · .txt · .docx · .pdf · .epub</code> files
-            in the tree. Pick one to load like a URL fetch, pick
-            several to build a chapter queue.
-            <strong>If you do paste a file URL</strong>
+            <code>https://github.com/</code> and (when you've opened
+            more than one repo before) surfaces a <em>"Switch to:"</em>
+            chip row above the field with up to <strong>five recent
+            repos</strong> — one click flips you between book projects
+            without re-typing URLs. Finish typing
+            <code>owner/repo</code> (or paste a
+            <code>tree/&lt;branch&gt;</code> URL for a non-default
+            branch) and hit Fetch.
+            <br><br>
+            The picker that opens is a <strong>VSCode-style
+            collapsible folder tree</strong> — folders show
+            <code>▸/▾</code> carets + a <code>📁</code> icon + their
+            descendant count, files indent under their parent. Tick
+            a folder's checkbox to bulk-select every file under it
+            (tri-state: full / mixed / empty); tick individual files
+            for a custom subset. The search box at the top auto-
+            expands every folder containing a match, so typing
+            <em>"arc2_timeline"</em> reveals every matching file
+            across the tree without clicking through carets. A
+            <strong>Branch:</strong> dropdown above the file list
+            (powered by the GHE-aware <code>/api/github/branches</code>
+            endpoint) lets you flip to feature branches
+            (<em>drafts/</em>, <em>wip/</em>) without editing the
+            URL into <code>/tree/&lt;branch&gt;/</code> form by hand.
+            <br><br>
+            <strong>Already imported?</strong> Files that already
+            live in your library — OR are sitting in the background
+            queue waiting to synthesize — render dimmed with a
+            <code>✓ imported</code> pill next to the filename. A
+            <strong>Hide already imported</strong> chip toggles them
+            out entirely so you only see the chapters you still need
+            to add. The meta line also tallies them
+            (<em>"branch: main · 35 text files · 12 already
+            imported"</em>). When the picker spots a common manuscript
+            folder (<code>chapters/</code>, <code>manuscript/</code>,
+            <code>src/</code>, <code>content/</code>, etc.) it
+            offers one-click <strong>"Filter to chapters/"</strong>
+            chips above the search box. Each clip remembers its file
+            SHA so <strong>Sync GitHub</strong> in the library can
+            flag clips whose upstream commit has moved (see § 6).
+            <br><br>
+            <strong>If you paste a file URL</strong>
             (<code>github.com/owner/repo/blob/&lt;branch&gt;/&lt;path&gt;</code>)
             or any other <code>/owner/repo/...</code> URL, we strip
             it back to the repo root and open the picker, with a
             status line explaining what happened — same outcome,
-            one extra hop. Private repos need a PAT in
-            Settings → GitHub (see § 7 for the visual guide). Each
-            clip remembers its file SHA so "<strong>Sync all</strong>"
-            in the library can flag clips whose source has been
-            updated upstream.</td>
+            one extra hop. Private repos need a token; see § 7 for
+            the OAuth <strong>"Sign in with GitHub"</strong> button
+            and the PAT paste fallback.</td>
+        </tr>
+        <tr>
+          <td><strong>GitHub Gist</strong></td>
+          <td>For one-off snippets that don't justify a repo. Paste
+            a <code>gist.github.com/[user/]&lt;id&gt;</code> URL.
+            Single-file Gists land directly in the textarea (same as
+            a URL fetch). Multi-file Gists open the picker so you
+            can choose which files become chapters. Public Gists
+            work without a token; private Gists use the same
+            PAT/OAuth token as the rest of the GitHub flow.</td>
         </tr>
         <tr>
           <td><strong>Scrivener bundle</strong></td>
@@ -712,6 +779,268 @@
         blocks anything non-public anyway). For those, copy the text
         manually and paste it into the textarea.
       </div>
+
+      <h3 id="test-resources">Test resources for every other flow</h3>
+      <p>
+        The URLs above cover Paste URL + chapter auto-split + the
+        reading-view image path. For the rest of the import flows,
+        here's what to use.
+      </p>
+
+      <h4>GitHub repo</h4>
+      <p>
+        <a href="/?prefillUrl=https%3A%2F%2Fgithub.com%2Fprogit%2Fprogit2&amp;autofetch=1">
+          <code>github.com/progit/progit2</code>
+        </a>
+        — the <em>Pro Git</em> book (Scott Chacon). Public, well-
+        organized, ~135 markdown files across chapter folders
+        (<code>book/01-introduction/</code>,
+        <code>book/02-git-basics/</code>, etc.), multiple branches
+        (<code>main</code>, <code>v2.1.x</code>, etc.). Hits every
+        v176-v182 picker affordance in one repo:
+      </p>
+      <ul>
+        <li><strong>Tree view</strong> + folder carets + indentation.</li>
+        <li><strong>Folder tri-state checkbox</strong> — tick
+          <code>book/02-git-basics/</code> to bulk-select its files.</li>
+        <li><strong>Branch picker</strong> — flip to <code>v2.1.x</code>
+          to see the tree swap without re-typing the URL.</li>
+        <li><strong>Auto-suggest folder chips</strong> — should
+          surface <code>book/</code> as a one-click filter.</li>
+        <li><strong>Search auto-expand</strong> — type
+          <em>"branching"</em>; every folder containing a match
+          opens.</li>
+        <li><strong>Recent repos</strong> — open it, open a different
+          repo, re-open the Import → GitHub flow; you'll see the
+          "Switch to:" chip row above the URL field.</li>
+        <li><strong>Re-narrate outdated</strong> — import a few
+          files, then click <em>Sync GitHub</em> in the library.
+          (Pro Git's upstream rarely moves, so to actually flag
+          something outdated, use ✎ Edit on a clip and manually
+          drop a character from the SHA before clicking Sync.)</li>
+      </ul>
+
+      <h4>GitHub Gist</h4>
+      <p>
+        Open <strong>Import → GitHub Gist</strong> and paste any of:
+      </p>
+      <ul>
+        <li>
+          <strong>Single-file Gist</strong>: search
+          <a href="https://gist.github.com/discover" target="_blank" rel="noopener">
+            gist.github.com/discover
+          </a>
+          for any public Gist with one <code>.md</code> file —
+          should land straight in the textarea.
+        </li>
+        <li>
+          <strong>Multi-file Gist</strong>: look for one with several
+          files (Gist's discover page lists "files: N"). The picker
+          should open with each file as a chapter candidate.
+        </li>
+      </ul>
+      <div class="note">
+        Gist URLs look like <code>gist.github.com/&lt;user&gt;/&lt;id&gt;</code>
+        — paste the page URL exactly, fragment and all if it has one.
+        The parser pulls the id out of every URL shape including
+        <code>#file-foo-md</code> anchors.
+      </div>
+
+      <h4>Bundled sample files</h4>
+      <p>
+        These ship in <code>/samples/</code> on the server. Right-
+        click → <em>Save link as…</em>, then upload via
+        <em>Import → Upload file</em> (or <em>Import → Obsidian
+        vault</em> for the zip).
+      </p>
+      <table>
+        <tr><th>File</th><th>Tests</th></tr>
+        <tr>
+          <td><a href="/samples/sample-article.md">sample-article.md</a></td>
+          <td>Markdown upload path — headings, paragraph breaks,
+            bullet list, inline emphasis. Should render headings in
+            the reading view.</td>
+        </tr>
+        <tr>
+          <td><a href="/samples/sample-document.docx">sample-document.docx</a></td>
+          <td>DOCX upload path — exercises python-docx extraction +
+            heading style preservation.</td>
+        </tr>
+        <tr>
+          <td><a href="/samples/sample-vault.zip">sample-vault.zip</a></td>
+          <td>Synthetic Obsidian vault. Should import exactly
+            <strong>three</strong> notes (<em>Welcome — start here</em>
+            from YAML title, <em>Project Brief</em>, <em>Drafts/Chapter
+            1</em>). The picker should NOT list anything from
+            <code>.obsidian/</code>, <code>templates/</code>,
+            <code>attachments/</code>, or <code>.trash/</code>. The
+            Welcome note's <code>[[wikilinks]]</code> flatten to
+            plain text and the <code>![[cover.png]]</code> embed is
+            dropped from the synthesized audio.</td>
+        </tr>
+        <tr>
+          <td><a href="/samples/sample-chapters.txt">sample-chapters.txt</a></td>
+          <td>Plain text with three chapter markers in mixed shapes
+            (<em>Chapter 1.</em>, <em>CHAPTER II</em>,
+            <em>## Chapter 3</em>). Upload OR copy-paste; the
+            chapter auto-split banner should fire offering to queue
+            three clips.</td>
+        </tr>
+        <tr>
+          <td><a href="/samples/sample-dialogue.txt">sample-dialogue.txt</a></td>
+          <td>Dialogue paragraph with two characters (Cassia,
+            Marsh). Switch to <strong>Author</strong> mode → open
+            <em>Characters</em> → add Cassia + Marsh with different
+            voices (or different LibriTTS speakers) → paste this →
+            Generate. Quoted lines should route to the matching
+            character voice; narration stays on the main voice.
+            The last "How are you?" line uses a pronoun and should
+            fall through to the narrator (pronoun-only attribution
+            doesn't resolve).</td>
+        </tr>
+      </table>
+
+      <h4>PDF / EPUB samples</h4>
+      <p>
+        Rather than bundling large books, point your browser at
+        Project Gutenberg:
+      </p>
+      <ul>
+        <li>
+          <strong>PDF</strong>:
+          <a href="https://www.gutenberg.org/files/74/74-pdf.pdf" target="_blank" rel="noopener">
+            <code>gutenberg.org/files/74/74-pdf.pdf</code></a>
+          (Tom Sawyer). Has running headers, footer page numbers,
+          and mid-sentence page breaks — exercises the v44 cleanup
+          pipeline (header/footer detection, page-number strip,
+          line-bridge across page boundaries).
+        </li>
+        <li>
+          <strong>EPUB</strong>:
+          <a href="https://www.gutenberg.org/ebooks/74.epub.images" target="_blank" rel="noopener">
+            <code>gutenberg.org/ebooks/74.epub.images</code></a>
+          (Tom Sawyer). EPUB extraction path — chapter headings,
+          inline images.
+        </li>
+        <li>
+          For a longer / illustrated stress test, swap
+          <code>74</code> for <code>76</code> (Huckleberry Finn —
+          43 chapters, 113 images).
+        </li>
+      </ul>
+
+      <h4>Background queue, debug log, OAuth, GHE</h4>
+      <p>
+        Things to wire yourself once and then reuse:
+      </p>
+      <ul>
+        <li>
+          <strong>Background queue</strong> — Import the progit
+          repo above with ≥5 files selected AND the
+          <em>"Background — don't auto-play"</em> checkbox ticked.
+          You'll see the queue panel + live <em>"elapsed 0:45 ·
+          ~0:12 left"</em> clock. To trigger the <strong>failures
+          banner</strong> intentionally, stop the server mid-queue
+          (kills the in-flight chapter without saving), restart,
+          and let the auto-retry run through to give you a real
+          failure to inspect.
+        </li>
+        <li>
+          <strong>Debug log</strong> — auto-populates with every
+          GitHub fetch and synth step. Open Settings → <em>View
+          debug log →</em>. The failures banner has a one-click
+          shortcut into the same view.
+        </li>
+        <li>
+          <strong>OAuth sign-in</strong> — requires a one-time
+          GitHub OAuth App registration (operator step). Walkthrough
+          + env vars in <a href="/OAUTH_SETUP.md" target="_blank" rel="noopener"><code>OAUTH_SETUP.md</code></a>.
+          Once configured, the <em>Sign in with GitHub</em> button
+          in Settings lights up; click it, authorize on github.com,
+          you're back on Narrative with the token saved + the
+          section reads <em>"Signed in as @yourhandle"</em>.
+        </li>
+        <li>
+          <strong>GitHub Enterprise</strong> — operator sets
+          <code>GITHUB_ENTERPRISE_HOSTS</code> env var to a
+          comma-separated list of GHE hostnames. After restart,
+          paste any <code>https://&lt;host&gt;/owner/repo</code>
+          URL into Import → GitHub. Setup details in OAUTH_SETUP.md
+          §7.
+        </li>
+      </ul>
+
+      <h4>Per-feature checklist</h4>
+      <p>What "working" looks like, by feature, in one place:</p>
+      <table class="tester-checklist">
+        <tr><th>Feature</th><th>Confirm you see</th></tr>
+        <tr>
+          <td>First clip save</td>
+          <td>🎉 confetti burst across the page + a
+            <em>"This is your first clip"</em> banner pinned at the
+            top of the page, between the title and the icon rail.
+            <strong>Already used the app?</strong> Open Settings →
+            <em>Replay onboarding tips →</em>, then save any clip
+            to re-trigger.</td>
+        </tr>
+        <tr>
+          <td>Picker tree view</td>
+          <td>Folders show <code>▸/▾</code> carets, descendant
+            counts, folder icons. Search auto-expands matches.
+            Tri-state folder checkboxes work.</td>
+        </tr>
+        <tr>
+          <td>Already-imported flag</td>
+          <td>Re-open a repo whose files you already imported. Those
+            rows render dimmed with a <code>✓ imported</code> pill.
+            The meta line shows "<em>… · N already imported</em>".</td>
+        </tr>
+        <tr>
+          <td>Sync GitHub</td>
+          <td>Library tools surfaces a <em>Sync GitHub</em> button
+            when ≥1 clip has a <code>gitRef</code>. Status reads
+            "<em>Syncing N clips across M repos…</em>". Outdated
+            clips get an accent border.</td>
+        </tr>
+        <tr>
+          <td>Re-narrate outdated</td>
+          <td>After Sync flags ≥1 clip, a <em>Re-narrate outdated
+            (N)</em> button appears next to Sync GitHub. Click it →
+            background queue panel starts processing. Title, tags,
+            cover, bookmarks, and notes all survive the re-narrate.</td>
+        </tr>
+        <tr>
+          <td>gitRef SHA on Edit</td>
+          <td>For any clip imported from GitHub, the Edit dialog
+            includes a <em>"From GitHub: chapters/ch03.md @
+            <code>a1b2c3d</code>"</em> meta line. Hover the SHA pill
+            → full hash in the tooltip.</td>
+        </tr>
+        <tr>
+          <td>Voice favorites + audition</td>
+          <td>Open the Voice dialog; star a couple of voices.
+            They appear as a <em>★ Favorites</em> optgroup at the
+            top of the main voice picker. For LibriTTS (904
+            speakers), the Audition link surfaces with an inline
+            tip until you click it once.</td>
+        </tr>
+        <tr>
+          <td>Author-mode Characters</td>
+          <td>Switch to Author in Settings → Mode. The
+            <em>Characters</em> link appears under the voice card.
+            Paste sample-dialogue.txt with Cassia + Marsh
+            configured → Generate → quoted lines route through the
+            character voices; the narration stays on the main voice.</td>
+        </tr>
+        <tr>
+          <td>Library Export → Import</td>
+          <td>Click Export in the library tools → save the zip.
+            Open DevTools → Application → Storage → Clear site data.
+            Reload. Click Import → pick the zip. All clips return
+            with covers, notes, bookmarks, tags, presets, and
+            custom order intact.</td>
+        </tr>
+      </table>
 
       <!-- ============================================================= -->
       <h2 id="voice">3. Choosing a voice</h2>
@@ -968,6 +1297,20 @@
         library (IndexedDB). Newest clips appear at the top by
         default.
       </p>
+      <div class="tip">
+        <strong>🎉 First save.</strong> The first time a clip lands
+        in your library, paper confetti rains down and a one-time
+        tour banner appears at the top of the page: <em>"This is
+        your first clip. Tap ✎ Edit to add a cover, drag ⋮⋮ to
+        reorder, tap 📝 to write notes."</em> Both fire exactly once
+        per device, exactly on the 0 → 1 transition (not on reloads
+        with clips already on file). To see them again — or to
+        replay any first-tap hint you dismissed by accident — open
+        Settings → <strong>Replay onboarding tips →</strong>
+        (§ 7). Confetti respects your OS-level
+        <code>prefers-reduced-motion</code> setting and skips the
+        animation if you've turned it on.
+      </div>
 
       <h3>Card anatomy</h3>
       <figure>
@@ -996,7 +1339,7 @@
         <tr><td><strong>📝 Notes indicator</strong></td><td>Small badge under the meta line, shown whenever the clip has free-form notes attached. Tap the ✎ Edit dialog or the 📝 chip in the player to read or extend them. Empty notes hide the badge so clean cards stay clean.</td></tr>
         <tr><td><strong>↺ Reset</strong></td><td>Only shown for in-progress clips. Wipes the saved resume position so next play starts from the top. If you reset the clip you're currently listening to, the player rewinds too.</td></tr>
         <tr><td><strong>+ Cover</strong></td><td>(Only shown for clips without a custom cover.) Quiet dashed-border chip that opens the Edit dialog scrolled straight to the cover picker. Tap → file picker → cover applied + cards re-render with the new tint. Disappears once the clip has a cover. On narrow viewports it collapses to just <code>+</code>.</td></tr>
-        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest.</td></tr>
+        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest. For <strong>GitHub-sourced clips</strong> the dialog also surfaces a <em>"From GitHub: chapters/ch03.md @ <code>a1b2c3d</code>"</em> meta line — short SHA in an accent pill (hover for the full hash) so you can confirm the clip matches the commit you just pushed without alt-tabbing to GitHub.</td></tr>
         <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
       </table>
 
@@ -1094,6 +1437,41 @@
         If you tap a different clip or hit Clear during the gap, the
         queued load is cancelled.
       </p>
+
+      <h3>Sync GitHub + Re-narrate outdated</h3>
+      <p>
+        Two library-tools-row buttons collaborate to keep
+        GitHub-sourced clips fresh against upstream commits.
+      </p>
+      <ul>
+        <li>
+          <strong>Sync GitHub</strong> walks every clip that
+          carries a <code>gitRef</code> (set automatically when you
+          imported it from a GitHub raw URL or the repo picker),
+          groups them by repo + branch so one tree call covers many
+          clips, and compares each clip's stored SHA against the
+          current upstream SHA. Clips whose SHA has moved get
+          flagged with an accent border + an "outdated" badge.
+          Surfaces a status like <em>"7 of 35 clips have newer
+          commits on GitHub."</em>
+        </li>
+        <li>
+          <strong>Re-narrate outdated (N)</strong> appears next to
+          Sync GitHub the moment Sync flags anything. One click and
+          every outdated clip gets re-fetched and re-queued in the
+          background queue — title, tags, cover, bookmarks, and
+          notes all survive untouched; only the source text +
+          audio + SHA get replaced. The bookmarks ride through
+          because the text is the same shape (you just want the
+          new commit, not a redesign).
+        </li>
+      </ul>
+      <div class="note">
+        Sync needs a token (PAT or OAuth) with at least public-repo
+        scope; private clips need <code>repo</code>. Without a token
+        you'll see <em>"Set a GitHub PAT in Settings before syncing"</em>
+        — see § 7.
+      </div>
 
       <h3>Export / Import</h3>
       <p>
@@ -1208,21 +1586,73 @@
           live to match.
         </li>
         <li>
-          <strong>GitHub</strong> — paste a Personal Access Token to
-          unlock private repos in <em>Import → GitHub</em>. The token
-          stays on this device (localStorage); the server only sees it
-          when it's actively forwarding a request to a github.com
-          host. The section leads with a prominent
-          <strong>✓ Token saved (ending in …xxxx)</strong> banner
-          when one's on file, and the field below stays blank by
-          design so the value can't be read back from the DOM.
+          <strong>GitHub</strong> — two ways to authenticate. Both
+          unlock private repos in <em>Import → GitHub</em>; both
+          forward the resulting token to <code>api.github.com</code>
+          /
+          <code>raw.githubusercontent.com</code> only (the server
+          checks the host before attaching the Bearer header).
+          <ul>
+            <li>
+              <strong>Sign in with GitHub</strong> (preferred) —
+              click the accent button, authorize on github.com,
+              you're back on Narrative with the token already
+              saved. Settings shows <em>"Signed in as
+              @yourhandle"</em>. Token comes back via URL fragment
+              so it never appears in server logs. <strong>Requires
+              a one-time server-side OAuth App registration</strong>
+              by the operator; until that's done the button stays
+              disabled with a tooltip pointing at
+              <code>OAUTH_SETUP.md</code>. PAT paste keeps working
+              as the fallback.
+            </li>
+            <li>
+              <strong>Paste a Personal Access Token</strong> — use
+              when OAuth isn't configured, when you want a
+              fine-grained PAT scoped to specific repos, or when
+              you're authenticating against GitHub Enterprise. The
+              section leads with a <strong>✓ Token saved
+              (ending in …xxxx)</strong> banner when one's on file,
+              and the field stays blank by design so the value
+              can't be read back from the DOM.
+            </li>
+          </ul>
           A collapsible <em>"Show me what to copy from GitHub →"</em>
           guide opens a faithful mock of GitHub's token-generated
-          screen — useful for first-time PATs, since GitHub only
-          shows the token once and it's easy to scroll past the row
-          you're supposed to copy. The disclosure auto-scrolls
-          itself into view when you tap it, so the mock lands in
-          the visible area instead of off the bottom of the dialog.
+          screen (it shows the token only once; easy to scroll past)
+          AND a <strong>PAT scope audit table</strong>: per-scope
+          breakdown of what each permission grants, what Narrative
+          actually uses it for, and what it does NOT touch. Use
+          <code>repo</code> for private drafts, <code>public_repo</code>
+          for read-only on public manuscripts, and skip everything
+          else — Narrative never calls write, admin, gist-mutate,
+          pages, workflow, or org scopes. Fine-grained PATs need
+          <em>Contents → Read-only</em> + <em>Metadata → Read-only</em>
+          for the import + Sync flows.
+        </li>
+        <li>
+          <strong>Replay onboarding tips →</strong> — clears every
+          once-per-device hint flag (first-clip tour, confetti, voice
+          favorites tip, drag handle hint, audition banner, every
+          first-tap chip hint) so you can see them all again. Resets
+          the internal counter that gates the confetti burst, so a
+          click here followed by a save of any clip re-fires the
+          celebration. Useful when you dismissed something by accident
+          or want to walk a new tester through the onboarding flow
+          on your machine.
+        </li>
+        <li>
+          <strong>View debug log →</strong> — opens an in-app modal
+          rendering the ring-buffer of every interesting step in the
+          GitHub fetch → background queue → synthesis pipeline.
+          Timestamps, per-chapter HTTP / SSE errors, char counts,
+          sentence-where-it-broke, skip reasons. Copy / Download as
+          .txt / Clear. The failures banner on the queue panel also
+          has a one-click <em>View log</em> button that opens this
+          same modal so you can go from <em>"2 chapters failed"</em>
+          to <em>"here's exactly why"</em> in one tap. Mirrored to
+          the browser console at <code>info</code> level too for
+          DevTools users.
         </li>
         <li>
           <strong>Listen stats</strong> (Standard / Author only) —
@@ -1446,6 +1876,283 @@
         Use <strong>Export</strong> regularly to back up everything
         as a single zip. The whole library state restores cleanly
         on any device.
+      </div>
+
+      <!-- ============================================================= -->
+      <h2 id="walkthroughs">10. Tester walkthroughs</h2>
+      <p>
+        Five numbered end-to-end runs. Each starts from a clean
+        page load (or the closest a state-bearing app can get to
+        one). Each step lists the expected screen / status / next
+        click so a fresh tester knows what success looks like at
+        every step.
+      </p>
+
+      <h3>Walkthrough 1 — URL fetch → chapter auto-split → background queue</h3>
+      <p><em>Tests</em>: URL extractor, chapter detector, picker,
+        background queue, elapsed clock, library cards.</p>
+      <ol>
+        <li>
+          On the empty library, the <em>"Get started"</em> empty-
+          state card is visible with three starter buttons. Click
+          <strong>Paste a URL</strong>.
+        </li>
+        <li>
+          The inline URL row appears with the placeholder
+          <em>"https://… (article URL)"</em>. Paste
+          <a href="/?prefillUrl=https%3A%2F%2Fwww.gutenberg.org%2Ffiles%2F74%2F74-h%2F74-h.htm&amp;autofetch=1"><code>gutenberg.org/files/74/74-h/74-h.htm</code></a>
+          (or click the link — it auto-fetches). Status reads
+          <em>"Fetching www.gutenberg.org…"</em>.
+        </li>
+        <li>
+          A few seconds later: textarea fills with Tom Sawyer; status
+          reads <em>"Loaded — 75,000+ chars · 33 chapters detected"</em>.
+          A blue <strong>chapter banner</strong> appears below the
+          textarea: <em>"33 chapters detected. Split into separate
+          clips?"</em> with a <em>Split</em> button.
+        </li>
+        <li>
+          Click <strong>Split</strong>. The picker dialog opens
+          listing all 33 chapters with checkboxes. Tick the
+          <strong>Background — don't auto-play</strong> checkbox at
+          the bottom-left. Click <strong>Open as 33-chapter queue</strong>.
+        </li>
+        <li>
+          The chapter pill at the top of the page reads
+          <em>"Background · Synthesizing Chapter 1 · 0/N sentences ·
+          32 more queued"</em> with a pulsing accent dot. Below it,
+          the queue panel shows the currently-synthesizing job + a
+          drag-orderable list of the remaining 32. The in-flight
+          row carries a live <em>"elapsed 0:12"</em> clock; the
+          ETA appears once a few sentences have completed.
+        </li>
+        <li>
+          Walk away. Come back later: library has 33 clips, the
+          pill is gone, status shows
+          <em>"Background queue done — 33 saved."</em> Confetti
+          should have fired exactly once (after Chapter 1 saved).
+          Each clip card carries its hash-derived swatch + a
+          title + chars + duration.
+        </li>
+      </ol>
+
+      <h3>Walkthrough 2 — GitHub OAuth → tree picker → Sync</h3>
+      <p><em>Tests</em>: OAuth, recent repos, branch picker, tree
+        view, tri-state folder, ✓ imported, Sync GitHub, Re-narrate
+        outdated.</p>
+      <p>
+        Prereq: GitHub OAuth App registered (operator step —
+        <a href="/OAUTH_SETUP.md" target="_blank" rel="noopener"><code>OAUTH_SETUP.md</code></a>).
+        Without that, skip step 1 and use a PAT in step 2's first
+        Settings detour.
+      </p>
+      <ol>
+        <li>
+          Settings → <em>GitHub</em> section. The
+          <strong>Sign in with GitHub</strong> button is enabled
+          (or disabled with a tooltip if OAuth isn't configured —
+          go set it up).
+        </li>
+        <li>
+          Click Sign in. Browser navigates to github.com,
+          authorize. You're back on Narrative — status reads
+          <em>"✓ Signed in with GitHub — token saved."</em>
+          Reopen Settings; the GitHub section now reads
+          <em>"Signed in as @yourhandle"</em>.
+        </li>
+        <li>
+          Close Settings. Import → <em>GitHub repo</em>. URL row
+          pre-fills with <code>https://github.com/</code>. Paste
+          <code>github.com/progit/progit2</code> and hit Fetch.
+        </li>
+        <li>
+          The picker opens with the title <em>"progit/progit2"</em>,
+          a <em>"branch: main · ~140 text files"</em> meta line, a
+          <strong>Branch:</strong> dropdown (try
+          <code>v2.1.x</code> — the file list should swap), and
+          the tree view with folders collapsed. Type
+          <em>"branching"</em> into the search → every folder
+          containing a match auto-expands.
+        </li>
+        <li>
+          Clear the search. Click the
+          <code>book/02-git-basics/</code> folder caret to expand
+          it. Tick the folder's checkbox → every file under it
+          checks (tri-state). The summary at the bottom reads
+          <em>"N selected · ~Xk chars"</em>. Untick a single file
+          → folder checkbox flips to indeterminate (mixed state).
+        </li>
+        <li>
+          Re-tick the folder. Tick the
+          <strong>Background</strong> checkbox. Click
+          <em>Open as N-chapter queue</em>. Queue starts running.
+        </li>
+        <li>
+          Once done, open Import → GitHub again. The
+          <strong>"Switch to:"</strong> chip row above the URL
+          field now shows <code>progit/progit2</code> as a recent.
+          Open the picker again on progit; the files you just
+          imported render dimmed with <code>✓ imported</code> pills.
+          Try <em>Hide already imported</em>.
+        </li>
+        <li>
+          Close the picker. In the library, click
+          <strong>Sync GitHub</strong>. Status reads
+          <em>"Syncing N clips across 1 repo…"</em> then
+          <em>"All N clips up to date."</em>
+        </li>
+        <li>
+          (Optional — force a re-narrate) Pick any imported clip →
+          ✎ Edit. The dialog shows a <em>"From GitHub: book/…/foo.asc
+          @ <code>a1b2c3d</code>"</em> meta line. Close. Open
+          DevTools → Application → IndexedDB → narrative → clips.
+          Edit that clip's <code>gitRef.sha</code> to anything
+          (drop the last char). Reload Narrative. Click Sync
+          GitHub. Status now reads <em>"1 of N clips have newer
+          commits."</em> A <strong>Re-narrate outdated (1)</strong>
+          button appears next to Sync. Click it → the background
+          queue panel opens with that clip mid-fetch. Title, tags,
+          cover, notes, bookmarks all survive.
+        </li>
+      </ol>
+
+      <h3>Walkthrough 3 — Author mode → Characters voice routing</h3>
+      <p><em>Tests</em>: Mode picker, Characters, dialogue detection,
+        multi-speaker synthesis.</p>
+      <ol>
+        <li>
+          Settings → Mode → <strong>Author</strong>. The dialog
+          closes. The textarea meta line below the box now shows
+          word count + read-aloud time; the
+          <strong>Characters</strong> link appears under the voice
+          card.
+        </li>
+        <li>
+          Open Voice → install <strong>libritts-r</strong> (or any
+          multi-speaker voice you already have). It should advertise
+          900+ speakers.
+        </li>
+        <li>
+          Click <strong>Characters</strong>. Add two rows:
+          <em>Cassia</em> with libritts + speaker, say, 314;
+          <em>Marsh</em> with libritts + speaker 226. Pick visually
+          distinct speakers via <em>Audition</em> if you want to
+          confirm.
+        </li>
+        <li>
+          Download <a href="/samples/sample-dialogue.txt">sample-dialogue.txt</a>
+          and paste its contents into the textarea (or upload via
+          Import → Upload file).
+        </li>
+        <li>
+          Set the main voice picker to a clearly different voice —
+          this is your <strong>narrator</strong>. Pick something
+          like an English en_GB voice so the contrast is obvious.
+        </li>
+        <li>
+          Click Generate. Watch the chapter pill report sentence
+          progress. When the clip lands, scroll to the
+          <strong>reading view</strong>: sentences light up as
+          the audio plays, with the speaker baked in.
+        </li>
+        <li>
+          Listen. <em>"You're awake, then," said Cassia.</em> uses
+          Cassia's voice. <em>Marsh said, "I'll be pleased when…"</em>
+          uses Marsh's voice. The narration (<em>"She brought the
+          kettle over…"</em>) uses the main voice picker. The
+          <em>"How are you?" she asked.</em> line falls through to
+          the narrator because pronoun-only attribution doesn't
+          resolve.
+        </li>
+      </ol>
+
+      <h3>Walkthrough 4 — Library Export → wipe → Import round-trip</h3>
+      <p><em>Tests</em>: Export, manifest, covers, notes, bookmarks,
+        tags, presets, library order — round-tripping the entire
+        per-device state.</p>
+      <ol>
+        <li>
+          Start with at least 3-4 clips in the library. For each:
+          ✎ Edit → add a tag, a one-line note, multi-line Notes,
+          and a cover image. Open one and add a bookmark via the
+          🔖 chip. Save a preset on at least one voice.
+        </li>
+        <li>
+          Library tools → <strong>Export</strong>. Status reads
+          <em>"Exporting N clips…"</em>. After a few seconds, your
+          browser downloads
+          <code>narrative-library-YYYY-MM-DD.zip</code>.
+        </li>
+        <li>
+          DevTools → Application → Storage → <strong>Clear site
+          data</strong>. Reload the page. The empty-state card is
+          back. No clips, no voice favorites, no presets.
+        </li>
+        <li>
+          Library tools → <strong>Import</strong> → pick the zip
+          you just downloaded. Status reads <em>"Importing N
+          clips…"</em> then <em>"Imported N clips."</em>
+        </li>
+        <li>
+          Confirm everything came back:
+          <ul>
+            <li>Every clip's audio plays.</li>
+            <li>Covers render on cards + tint backgrounds.</li>
+            <li>Tags + tag filter row.</li>
+            <li>One-line notes show under titles.</li>
+            <li>Multi-line Notes open via ✎ Edit + the 📝
+              player chip.</li>
+            <li>The bookmark you added is back; tapping it seeks
+              to the saved position.</li>
+            <li>Custom drag order is preserved (sort mode →
+              <em>Custom</em>).</li>
+            <li>The voice preset you saved is in the preset
+              dropdown.</li>
+          </ul>
+        </li>
+      </ol>
+
+      <h3>Walkthrough 5 — Install as a phone PWA</h3>
+      <p><em>Tests</em>: Manifest, service worker, offline shell,
+        media-session integration on the lock screen.</p>
+      <ol>
+        <li>
+          Open Narrative on your phone (over LAN, Cloudflare tunnel,
+          or Fly URL — anything HTTPS or localhost).
+          <strong>iOS</strong>: Safari → Share → <em>Add to Home
+          Screen</em>. <strong>Android</strong>: Chrome → menu →
+          <em>Install app</em>.
+        </li>
+        <li>
+          Launch from the home screen. The app boots without a
+          browser chrome (manifest's <code>display: standalone</code>).
+          Theme color matches your dark/light setting.
+        </li>
+        <li>
+          Generate or load any clip. Hit play. Lock the phone.
+          Lock screen shows the clip title + cover art + ⏯ controls
+          (MediaSession API). Skip-back / skip-forward should both
+          work from the lock screen.
+        </li>
+        <li>
+          Turn off Wi-Fi + cellular. Pull down to reload the app.
+          The shell loads from the service worker cache — empty
+          library is fine, but the UI itself shouldn't be a network
+          error. Anything that needs the server (new synthesis,
+          voice install) will fail; cached audio still plays.
+        </li>
+        <li>
+          Turn the network back on. New synthesis works again. The
+          SW updates itself on next page load when a newer build
+          deploys.
+        </li>
+      </ol>
+
+      <div class="tip">
+        After each walkthrough, the in-app <strong>debug log</strong>
+        (Settings → View debug log) holds the per-step timestamps +
+        any errors you hit. Copy the relevant tail of the log into
+        a feedback message if anything surprises you.
       </div>
 
       <p style="margin-top: 48px;">

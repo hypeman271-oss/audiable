@@ -497,6 +497,7 @@ async def github_tree_endpoint(req: GithubTreeRequest):
             detail="not a GitHub repo URL — expected github.com/owner/repo",
         )
 
+    host = extract._parse_github_repo_url_host(req.url)
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
@@ -507,6 +508,7 @@ async def github_tree_endpoint(req: GithubTreeRequest):
                 repo,
                 branch=req.branch,
                 github_token=req.github_token,
+                host=host,
             ),
         )
     except extract.ExtractionError as e:
@@ -517,6 +519,45 @@ async def github_tree_endpoint(req: GithubTreeRequest):
 class GithubBranchesRequest(BaseModel):
     url: str = Field(..., min_length=8, max_length=2048)
     github_token: str | None = Field(default=None, max_length=200)
+
+
+class GistMetaRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2048)
+    github_token: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/gist/meta")
+async def gist_meta_endpoint(req: GistMetaRequest):
+    """Pull a Gist's file list + metadata so the frontend can route
+    multi-file gists to the picker and single-file ones straight to
+    the textarea.
+
+    Public gists don't need a token; private ones do. Same error
+    surface as the other GitHub endpoints (422 on extraction failure).
+    """
+    import asyncio
+    import functools
+
+    gist_id = extract._parse_gist_id(req.url)
+    if not gist_id:
+        raise HTTPException(
+            status_code=400,
+            detail="not a Gist URL — expected gist.github.com/[user/]<id>",
+        )
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                extract.fetch_gist_meta,
+                gist_id,
+                github_token=req.github_token,
+            ),
+        )
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
 
 
 @app.post("/api/github/branches")
@@ -537,6 +578,7 @@ async def github_branches_endpoint(req: GithubBranchesRequest):
             detail="not a GitHub repo URL — expected github.com/owner/repo",
         )
 
+    host = extract._parse_github_repo_url_host(req.url)
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
@@ -546,6 +588,7 @@ async def github_branches_endpoint(req: GithubBranchesRequest):
                 owner,
                 repo,
                 github_token=req.github_token,
+                host=host,
             ),
         )
     except extract.ExtractionError as e:
@@ -781,6 +824,9 @@ async def github_sync_check_endpoint(req: GithubSyncCheckRequest):
         paths = group.get("paths") or []
         if not owner or not repo:
             return {"repoUrl": group.get("repoUrl"), "branch": branch, "shas": {}, "error": "invalid repoUrl"}
+        # v181: route the API call to the correct host (github.com or GHE)
+        # based on the clip's stored repoUrl. host is None for github.com.
+        host = extract._parse_github_repo_url_host(group.get("repoUrl") or "")
         try:
             tree = await loop.run_in_executor(
                 None,
@@ -790,6 +836,7 @@ async def github_sync_check_endpoint(req: GithubSyncCheckRequest):
                     repo,
                     branch=branch,
                     github_token=req.github_token,
+                    host=host,
                 ),
             )
         except extract.ExtractionError as e:

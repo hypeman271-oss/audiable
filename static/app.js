@@ -662,6 +662,35 @@ document
     });
   });
 
+// v197 (M2): book-font-size radios. Persist, apply the CSS var, and
+// re-paginate if the user is currently in book view so the change is
+// visible immediately. _bookViewRepaginate is a no-op when book view
+// is closed, so this is safe to call unconditionally.
+document
+  .querySelectorAll('input[name="book-font-size"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      localStorage.setItem(BOOK_FONT_SIZE_KEY, radio.value);
+      _applyBookFontSize(radio.value);
+      _bookViewRepaginate();
+    });
+  });
+
+// v199 (M3.1): book-theme radios. Same pattern as font-size — persist,
+// apply the data attribute, re-paginate. The repaginate path includes
+// the theme attribute on the probe so measurement matches render.
+document
+  .querySelectorAll('input[name="book-theme"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      localStorage.setItem(BOOK_THEME_KEY, radio.value);
+      _applyBookTheme(radio.value);
+      _bookViewRepaginate();
+    });
+  });
+
 // Boot-time apply. The inline <head> script handles the pre-paint case;
 // this is a belt-and-suspenders for browsers that ran past the inline
 // script with a stale value (rare).
@@ -889,6 +918,16 @@ settingsBtn.addEventListener("click", () => {
   document
     .querySelectorAll('input[name="skip-interval"]')
     .forEach((r) => { r.checked = parseInt(r.value, 10) === _skipInterval; });
+  // v197 (M2): book-font-size radios.
+  const bfs = _loadBookFontSize();
+  document
+    .querySelectorAll('input[name="book-font-size"]')
+    .forEach((r) => { r.checked = r.value === bfs; });
+  // v199 (M3.1): book-theme radios.
+  const bt = _loadBookTheme();
+  document
+    .querySelectorAll('input[name="book-theme"]')
+    .forEach((r) => { r.checked = r.value === bt; });
   // Refresh stats so they reflect listening that happened since the
   // dialog was last opened. _renderStatsPanel resolves a few lookups
   // (voice display name, clip title) so it's async.
@@ -3038,8 +3077,27 @@ function _isGithubUrl(url) {
     return (
       u.hostname === "github.com" ||
       u.hostname === "www.github.com" ||
-      u.hostname === "raw.githubusercontent.com"
+      u.hostname === "raw.githubusercontent.com" ||
+      // v181: Gist raw file URLs go through this host. The PAT
+      // forwarding gate above (only attach token for GitHub URLs)
+      // also needs to apply to gists, so include both Gist hosts
+      // in the check.
+      u.hostname === "gist.github.com" ||
+      u.hostname === "gist.githubusercontent.com"
     );
+  } catch {
+    return false;
+  }
+}
+
+// v181: Gist-specific detector. Only the gist.github.com host counts
+// — gist.githubusercontent.com is a raw-file CDN, not a URL the user
+// would paste expecting to see a file picker. fetchFromUrl routes
+// matching URLs to openGistBrowser.
+function _isGistUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname === "gist.github.com";
   } catch {
     return false;
   }
@@ -4663,6 +4721,17 @@ function _cpRefreshPlayIcon() {
   _setSvgHidden(cpPlayIcon, playing);
   _setSvgHidden(cpPauseIcon, !playing);
   cpPlayBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+  // v188: mirror the same state on the hero play button. Same icon
+  // swap, same aria. The two buttons feed the same playback so they
+  // always agree.
+  const heroPlay = document.getElementById("hero-play-icon");
+  const heroPause = document.getElementById("hero-pause-icon");
+  const heroBtn = document.getElementById("hero-play-btn");
+  if (heroPlay && heroPause) {
+    _setSvgHidden(heroPlay, playing);
+    _setSvgHidden(heroPause, !playing);
+  }
+  if (heroBtn) heroBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
 }
 
 function _cpRefreshTime() {
@@ -4716,6 +4785,193 @@ cpPlayBtn.addEventListener("click", () => {
     _pauseAsUser();
   }
 });
+
+// v188: hero Play/Pause button — same toggle as cp-play-btn so a
+// user can drive playback from the top of the page without
+// scrolling to the player card. _cpRefreshPlayIcon keeps the
+// icons in sync. Wire here (vs in the migration block below) so
+// the click handler is bound to the actual DOM node, not a clone.
+const heroPlayBtn = document.getElementById("hero-play-btn");
+if (heroPlayBtn) {
+  heroPlayBtn.addEventListener("click", () => {
+    if (playerEl.paused) {
+      playerEl.play().catch(() => {});
+    } else {
+      _pauseAsUser();
+    }
+  });
+}
+
+// v198: phones bypass the v188/v195 dual-strip system entirely.
+// The user wanted the hero-inline + floating-clone behavior for
+// tablet and desktop only; on phones the chips stay where they
+// always were — in .player-actions inside the player card, as a
+// horizontal-scrolling row. This shared gate runs ONCE so both
+// the migration and the clone-build IIFEs see the same answer
+// (a viewport resize across the breakpoint isn't handled
+// post-init; assumed stable for the session).
+const _heroStripsActive = !window.matchMedia("(max-width: 720px)").matches;
+
+// v195: dual chip strips with cross-fade. The hero strip
+// (#hero-controls) lives inside .hero-row's flex middle slot and
+// is visible when the user is at the top of the page — sitting in
+// the otherwise-empty space between the "Narrative" wordmark and
+// the icon rail. When the user scrolls past the player card, the
+// hero strip naturally scrolls out of view; at that point the
+// floating clone (#hero-controls-float) fades in at top: 6px so
+// the controls remain reachable. The two strips share state via:
+//   - one set of ORIGINAL chip DOM nodes inside #hero-controls
+//     (event handlers bound here as usual)
+//   - CLONED chip nodes inside #hero-controls-float that forward
+//     clicks to the originals and mirror the originals' textContent
+//     / class / [hidden] state via MutationObserver
+// This avoids touching the existing per-chip event handlers — they
+// stay bound to the originals and Just Work.
+(() => {
+  if (!_heroStripsActive) return;  // v198: phones keep chips in player card
+  const heroControls = document.getElementById("hero-controls");
+  const playerActions = document.querySelector("section.player .player-actions");
+  if (!heroControls || !playerActions) return;
+  const toMove = [
+    "skip-back-btn",
+    "skip-forward-btn",
+    "bookmark-add-btn",
+    "sleep-btn",
+    "ab-loop-btn",
+    "speed-btn",
+    "notes-btn",
+  ];
+  for (const id of toMove) {
+    const el = document.getElementById(id);
+    if (el) heroControls.appendChild(el);
+  }
+})();
+
+// v195: build the floating clone strip.
+(() => {
+  if (!_heroStripsActive) return;  // v198: phones bypass
+  const heroControls = document.getElementById("hero-controls");
+  const floatStrip = document.getElementById("hero-controls-float");
+  const playerCard = document.getElementById("player-card");
+  if (!heroControls || !floatStrip || !playerCard) return;
+
+  // Mirror originals → clones inside the float container. For each
+  // child of #hero-controls we make a deep clone, strip duplicate
+  // IDs (browsers tolerate dupes but they break getElementById and
+  // any future a11y label lookup), forward clicks, and observe the
+  // original for state changes.
+  const pairs = [];
+  Array.from(heroControls.children).forEach((original) => {
+    const clone = original.cloneNode(true);
+    // Strip ID on the clone root + any descendants (the SVG icons
+    // inside the round play button each carry an ID).
+    if (clone.id) clone.id = clone.id + "-fl";
+    clone.querySelectorAll("[id]").forEach((el) => {
+      el.id = el.id + "-fl";
+    });
+    floatStrip.appendChild(clone);
+    pairs.push({ original, clone });
+
+    // Forward clicks. preventDefault/stopPropagation so the
+    // clone's own bubbling doesn't double-fire if any ancestor
+    // delegate listens for chip events.
+    clone.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      original.click();
+    });
+
+    // Mirror state. Watching the original for any textContent /
+    // attribute / subtree mutation, we resync the clone's innerHTML
+    // + className. The click listener stays on the clone root
+    // (innerHTML only replaces descendants), so forwarding survives.
+    const sync = () => {
+      // Bail if nothing actually changed visually — avoids needless
+      // reflows when the cycle handler touches a sibling.
+      if (clone.innerHTML !== original.innerHTML) {
+        clone.innerHTML = original.innerHTML;
+        // Re-mangle IDs that just came back via innerHTML so we
+        // never reintroduce duplicates.
+        clone.querySelectorAll("[id]").forEach((el) => {
+          if (!el.id.endsWith("-fl")) el.id = el.id + "-fl";
+        });
+      }
+      if (clone.className !== original.className) {
+        clone.className = original.className;
+      }
+      if (clone.hidden !== original.hidden) {
+        clone.hidden = original.hidden;
+      }
+      if (clone.disabled !== original.disabled) {
+        clone.disabled = original.disabled;
+      }
+    };
+    new MutationObserver(sync).observe(original, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+      attributes: true,
+    });
+  });
+
+  // Hero strip visibility (clip loaded vs not) tracks the player
+  // card's [hidden] state — same v188 model. Float visibility
+  // additionally requires the player card to have scrolled off
+  // the top of the viewport.
+  const syncHidden = () => {
+    heroControls.hidden = playerCard.hidden;
+    // If the clip just got cleared, hide the float immediately
+    // regardless of scroll state.
+    if (playerCard.hidden) {
+      floatStrip.hidden = true;
+      floatStrip.dataset.visible = "false";
+    }
+  };
+  syncHidden();
+  new MutationObserver(syncHidden).observe(playerCard, {
+    attributes: true,
+    attributeFilter: ["hidden"],
+  });
+
+  // IntersectionObserver: fade float in when the HERO STRIP has
+  // entirely scrolled above the viewport. Watching the hero (not
+  // the player card) closes the v195a gap — there's a stretch
+  // where the hero has scrolled out but the player card is still
+  // visible below, and watching the player card meant the float
+  // sat hidden during that stretch. Watching the hero strip
+  // itself triggers the float the moment the inline strip leaves
+  // the viewport top.
+  const observerTarget = heroControls;
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const scrolledPast = entry.boundingClientRect.bottom < 0;
+        const shouldShow = scrolledPast && !playerCard.hidden;
+        if (shouldShow) {
+          floatStrip.hidden = false;
+          // Force a layout pass so the initial opacity transition
+          // actually animates on first show.
+          void floatStrip.offsetHeight;
+          floatStrip.dataset.visible = "true";
+        } else {
+          floatStrip.dataset.visible = "false";
+          // Wait for the fade-out before hiding so the transition
+          // can run; matches the CSS duration.
+          setTimeout(() => {
+            if (floatStrip.dataset.visible !== "true") {
+              floatStrip.hidden = true;
+            }
+          }, 240);
+        }
+      }
+    },
+    { threshold: 0 }
+  );
+  observer.observe(observerTarget);
+
+  // Initial state.
+  floatStrip.dataset.visible = "false";
+})();
 
 cpMuteBtn.addEventListener("click", () => {
   playerEl.muted = !playerEl.muted;
@@ -5998,6 +6254,13 @@ function splitSentencesClient(text) {
 const LONG_SENTENCE_WORD_THRESHOLD = 35;
 
 function enterReadingView(text, images) {
+  // v185 (M1) fix: if the user is currently in book view and just
+  // clicked a different clip in the library, they expect to stay in
+  // book view — just with the new chapter's content. Capture the
+  // state now; we'll honor it at the end by re-entering book view
+  // against the freshly stashed _bookViewSource.
+  const wasInBookView =
+    typeof bookView !== "undefined" && bookView && !bookView.hidden;
   const sentences = splitSentencesClient(text);
   readingView.innerHTML = "";
 
@@ -6051,6 +6314,10 @@ function enterReadingView(text, images) {
     }
     span.textContent = s;
     span.addEventListener("click", () => {
+      // v189: clicking a sentence reads as "engage here" — drop
+      // any pinned scroll state so the auto-scroll resumes from
+      // this point. Mirrors the book view's sentence-click behavior.
+      _readingViewUserScrolled = false;
       // seekToSentence handles both streaming (jump into the per-sentence
       // queue) and post-swap (move the playhead in the combined WAV).
       seekToSentence(i);
@@ -6063,10 +6330,27 @@ function enterReadingView(text, images) {
   // bucket for malformed indexes) — render them at the bottom.
   flushImagesAt(sentences.length);
   activeSentenceIdx = -1;
+  // v189: new clip → fresh start. Clear any pinned scroll state
+  // from a previous reading-view session so the auto-scroll
+  // resumes correctly for the new content.
+  _readingViewUserScrolled = false;
+  if (readingViewReturnBtn) readingViewReturnBtn.hidden = true;
   textEl.hidden = true;
   readingView.hidden = false;
   editTextBtn.hidden = false;
   saveTextBtn.hidden = true;
+  // v185 (M1): book view toggle is bound to "we have a loaded clip
+  // with rendered sentences" — same lifecycle as the Edit button.
+  if (bookViewToggle) bookViewToggle.hidden = false;
+  // Stash the current text + images so the book view can paginate
+  // without re-running the splitter. Title comes from the loaded
+  // clip when available; falls back to "Untitled chapter".
+  _bookViewSource = {
+    sentences: sentences.slice(),
+    images: imgList.slice(),
+    title: "",
+    cover: null,
+  };
   textLabel.textContent = "Now reading";
   // Chip strip is editing-only; clear it while we're in playback so the
   // reading view sits cleanly below the .meta line.
@@ -6074,12 +6358,34 @@ function enterReadingView(text, images) {
     fillerCountsEl.hidden = true;
     fillerCountsEl.innerHTML = "";
   }
+  // v185 (M1) fix: if the user was in book view before this clip
+  // load, repaginate the book view against the new content and put
+  // them back there. Without this, loading a different clip from the
+  // library while in book view leaves both views rendered at the
+  // same time (the reading view fires up; the book view never
+  // notices the content changed).
+  if (wasInBookView && typeof enterBookView === "function") {
+    enterBookView();
+  }
 }
 
 function exitReadingView() {
   textEl.hidden = false;
   readingView.hidden = true;
   editTextBtn.hidden = true;
+  // v189: hide the return-current pill alongside the reading view.
+  // (The pinned flag is reset on the next enter, so no need to
+  // touch it here.)
+  if (readingViewReturnBtn) readingViewReturnBtn.hidden = true;
+  // v185 (M1): close book view alongside reading view — same loaded-
+  // clip lifecycle. If the user pressed Edit text mid-book, the
+  // book view also needs to fold away so they're back in the
+  // textarea editing context.
+  if (typeof exitBookView === "function" && bookView && !bookView.hidden) {
+    exitBookView({ skipReadingView: true });
+  }
+  if (bookViewToggle) bookViewToggle.hidden = true;
+  _bookViewSource = null;
   // Save text only makes sense when there's a loaded clip to save into —
   // freshly-typed text with no clip yet still needs Generate first.
   saveTextBtn.hidden = !_currentClipId;
@@ -6229,6 +6535,79 @@ function clearForNewClip() {
 
 clearBtn.addEventListener("click", clearForNewClip);
 
+// v189: same pinned-scrub pattern as the book view (v187) — when the
+// user manually scrolls the reading view to scan ahead, suppress
+// the auto-scroll-to-active so the page stays where they put it.
+// Flag flips on via wheel/touch/keyboard input on readingView;
+// clears on Return-button click, sentence click, or auto-catch-up
+// (audio reads forward until the active sentence is back in the
+// visible portion of the reading view).
+let _readingViewUserScrolled = false;
+const readingViewReturnBtn = document.getElementById("reading-view-return");
+
+// Sentence-in-viewport check. Both rects use viewport coordinates so
+// a partial overlap counts as visible — same threshold the old
+// auto-scroll used, just inverted.
+function _readingViewActiveSpanVisible(span) {
+  if (!span || !readingView) return false;
+  const cRect = readingView.getBoundingClientRect();
+  const sRect = span.getBoundingClientRect();
+  return sRect.bottom > cRect.top && sRect.top < cRect.bottom;
+}
+
+function _readingViewUpdateReturnBtn() {
+  if (!readingViewReturnBtn) return;
+  // Hidden when: reading view not visible, no active sentence yet,
+  // not pinned, or active sentence is already on screen.
+  if (
+    !readingView ||
+    readingView.hidden ||
+    activeSentenceIdx < 0 ||
+    !_readingViewUserScrolled
+  ) {
+    readingViewReturnBtn.hidden = true;
+    return;
+  }
+  const activeSpan = sentenceSpans[activeSentenceIdx];
+  readingViewReturnBtn.hidden = _readingViewActiveSpanVisible(activeSpan);
+}
+
+// User-input listeners. Each pins the scroll position. Programmatic
+// scrolls (the existing scrollBy in highlightCurrentSentence) DON'T
+// trigger any of these, so the pin only catches real user intent.
+if (readingView) {
+  readingView.addEventListener("wheel", () => {
+    _readingViewUserScrolled = true;
+    _readingViewUpdateReturnBtn();
+  }, { passive: true });
+  readingView.addEventListener("touchstart", () => {
+    _readingViewUserScrolled = true;
+    _readingViewUpdateReturnBtn();
+  }, { passive: true });
+  readingView.addEventListener("keydown", (e) => {
+    if (["PageUp", "PageDown", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
+      _readingViewUserScrolled = true;
+      _readingViewUpdateReturnBtn();
+    }
+  });
+}
+if (readingViewReturnBtn) {
+  readingViewReturnBtn.addEventListener("click", () => {
+    const activeSpan = sentenceSpans[activeSentenceIdx];
+    if (!activeSpan) return;
+    _readingViewUserScrolled = false;
+    // Smooth scroll the active sentence to roughly center-vertical
+    // of the reading view's visible region — feels less abrupt than
+    // the original "snap to top/bottom edge" behavior.
+    const cRect = readingView.getBoundingClientRect();
+    const sRect = activeSpan.getBoundingClientRect();
+    const target =
+      sRect.top - cRect.top - cRect.height / 2 + sRect.height / 2;
+    readingView.scrollBy({ top: target, behavior: "smooth" });
+    _readingViewUpdateReturnBtn();
+  });
+}
+
 function highlightCurrentSentence() {
   if (!sentenceSpans.length) return;
   // Use virtualTime() so the highlight tracks the right sentence even while
@@ -6241,24 +6620,837 @@ function highlightCurrentSentence() {
     span.classList.toggle("active", i === idx);
     span.classList.toggle("played", i < idx);
   });
+  // v185 (M1): mirror the karaoke into the book view.
+  // v187: respect the "pinned" state. When the user has manually
+  // paged ahead to scan, the highlight still advances per the audio,
+  // but the spread stays where they put it. Only when the active
+  // sentence happens to land on the visible spread do we re-apply
+  // the .active class. The nav row's "Return to current" button
+  // (driven by _bookViewUpdateNav) gives the user a one-click way
+  // back to the audio's location.
+  if (bookView && !bookView.hidden && _bookSentenceToPage.length > 0) {
+    const ppr = _bookViewPagesPerSpread();
+    const desired = _bookViewSpreadOfSentence(idx, ppr);
+    if (desired === _bookViewCurrentSpread) {
+      // Audio caught up to where the user scrubbed to — drop the
+      // pinned flag silently so the next manual-nav re-arms it.
+      _bookViewUserPaged = false;
+      _bookViewApplyActive(idx);
+      _bookViewUpdateNav();
+    } else if (_bookViewUserPaged) {
+      // Pinned: leave the spread alone but refresh the nav so the
+      // "Return to current" button reflects the new distance.
+      _bookViewUpdateNav();
+    } else {
+      _bookViewRenderSpread(desired);
+    }
+  }
   const activeSpan = sentenceSpans[idx];
   if (activeSpan) {
-    // Scroll only the reading-view's own scrollbar, never the document.
-    // scrollIntoView({block:"nearest"}) walks ALL scroll ancestors, so
-    // when the user has scrolled the page down to reorder library cards,
-    // it yanks the document back up to show the active sentence. Doing
-    // the math manually with scrollBy keeps the action contained.
-    const cRect = readingView.getBoundingClientRect();
-    const sRect = activeSpan.getBoundingClientRect();
-    if (sRect.top < cRect.top) {
-      readingView.scrollBy({ top: sRect.top - cRect.top, behavior: "smooth" });
-    } else if (sRect.bottom > cRect.bottom) {
-      readingView.scrollBy({ top: sRect.bottom - cRect.bottom, behavior: "smooth" });
+    // v189: respect the pinned state. When the user has manually
+    // scrolled to scan ahead, the highlight still tracks the audio
+    // (above) but the scroll position stays where they put it. The
+    // floating "Return to current" pill (driven by
+    // _readingViewUpdateReturnBtn) gives them a one-click way back.
+    if (_readingViewUserScrolled) {
+      // Auto-catch-up: if the audio has read forward (or the user
+      // scrolled back to where the audio is) until the active
+      // sentence is now visible, silently clear the pin so the
+      // auto-scroll resumes following from here.
+      if (_readingViewActiveSpanVisible(activeSpan)) {
+        _readingViewUserScrolled = false;
+      }
+      _readingViewUpdateReturnBtn();
+    } else {
+      // Scroll only the reading-view's own scrollbar, never the document.
+      // scrollIntoView({block:"nearest"}) walks ALL scroll ancestors, so
+      // when the user has scrolled the page down to reorder library cards,
+      // it yanks the document back up to show the active sentence. Doing
+      // the math manually with scrollBy keeps the action contained.
+      const cRect = readingView.getBoundingClientRect();
+      const sRect = activeSpan.getBoundingClientRect();
+      if (sRect.top < cRect.top) {
+        readingView.scrollBy({ top: sRect.top - cRect.top, behavior: "smooth" });
+      } else if (sRect.bottom > cRect.bottom) {
+        readingView.scrollBy({ top: sRect.bottom - cRect.bottom, behavior: "smooth" });
+      }
     }
   }
 }
 
 editTextBtn.addEventListener("click", exitReadingView);
+
+// ---- Book view (M1) ----------------------------------------------------
+// v185 (M1): a paginated two-page spread companion to the reading
+// view. Same sentence content (we re-render the same text into book-
+// shaped pages), same karaoke highlight, same click-to-seek
+// semantics — different layout. Pages are computed by an off-screen
+// measurement pass so prose breaks on sentence boundaries, never
+// mid-sentence.
+//
+// State:
+//   _bookViewSource — {sentences, images, title, cover} stash set by
+//     enterReadingView so the book view can paginate the same data
+//     without redoing the splitter.
+//   _bookViewPages — array of arrays; _bookViewPages[p] is the
+//     sentence indices that belong on page p.
+//   _bookSentenceToPage — sentence-index -> page-index lookup so
+//     highlightCurrentSentence can auto-flip to the active page.
+//   _bookSentenceSpans — the actual span elements rendered inside
+//     book pages, mirroring sentenceSpans (the reading-view array).
+//     Karaoke logic updates both arrays in lockstep.
+//   _bookViewCurrentSpread — index of the currently-visible spread
+//     (0 = cover + first text page on desktop).
+const bookView = $("book-view");
+const bookViewSpread = $("book-view-spread");
+const bookViewPrev = $("book-view-prev");
+const bookViewNext = $("book-view-next");
+const bookViewIndicator = $("book-view-indicator");
+const bookViewReturn = $("book-view-return");
+const bookViewToggle = $("book-view-toggle");
+// v187: "pinned" state — when the user manually pages (prev/next,
+// arrow keys, swipe), suppress the auto-flip-on-active-sentence
+// behavior so the spread stays where the reader put it while scanning
+// ahead. The "Return to current" button shows whenever the audio's
+// active sentence lives on a different spread. Reset to false when
+// the user clicks that button or clicks a sentence on the visible
+// spread (they're indicating they want to engage here).
+let _bookViewUserPaged = false;
+let _bookViewSource = null;
+let _bookViewPages = [];           // [[sentenceIdx, ...], ...]
+let _bookSentenceToPage = [];      // sentenceIdx -> pageIdx
+let _bookSentenceSpans = [];       // sentenceIdx -> <span> in book DOM
+let _bookViewCurrentSpread = 0;
+let _bookViewSpreadsCount = 1;
+// Desktop = two-page spread; mobile = single page. We compute this
+// per-render from a media query so a window resize across the
+// breakpoint just triggers a re-pagination on the next open.
+function _bookViewPagesPerSpread() {
+  return window.matchMedia("(max-width: 720px)").matches ? 1 : 2;
+}
+
+// v200 (M3.2): bucket clip.images by sentence_index. Mirrors the
+// reading-view's reading-time logic so the book view places images
+// against the same sentence the reading view does. Indexes beyond
+// sentences.length collapse to a trailing bucket keyed at
+// sentences.length, rendered after the final sentence on the last
+// text page.
+function _bookViewBucketImages(images, sentenceCount) {
+  const m = new Map();
+  if (!Array.isArray(images)) return m;
+  for (const img of images) {
+    if (!img || !img.src) continue;
+    const raw = Number(img.sentence_index);
+    const idx = Number.isFinite(raw)
+      ? Math.max(0, Math.min(sentenceCount, Math.floor(raw)))
+      : sentenceCount;
+    if (!m.has(idx)) m.set(idx, []);
+    m.get(idx).push(img);
+  }
+  return m;
+}
+
+// v200 (M3.2): preload natural dimensions for every image so the
+// paginator's probe can reserve correct vertical space — without
+// known dimensions, an <img> in the probe contributes 0 to
+// scrollHeight until it loads asynchronously, and pagination races
+// the network. Resolved-from-cache loads are near-instant on the
+// second open since the reading view already fetched these.
+// Failed loads stash null so the renderer can drop them.
+function _bookViewPreloadImages(images) {
+  return new Promise((resolve) => {
+    const dims = new Map();
+    if (!Array.isArray(images) || !images.length) return resolve(dims);
+    let pending = 0;
+    for (const img of images) {
+      if (!img || !img.src || dims.has(img.src)) continue;
+      pending++;
+      const probe = new Image();
+      probe.onload = () => {
+        dims.set(img.src, { width: probe.naturalWidth, height: probe.naturalHeight });
+        if (--pending === 0) resolve(dims);
+      };
+      probe.onerror = () => {
+        dims.set(img.src, null);
+        if (--pending === 0) resolve(dims);
+      };
+      probe.src = img.src;
+    }
+    if (pending === 0) resolve(dims);
+  });
+}
+
+// v200 (M3.2): make an <img> element for a book-view page, sized
+// to fit the page's content area. Explicit width/height attrs make
+// the browser allocate the right vertical space immediately — the
+// probe doesn't need to wait for the network. Clamp display height
+// to half the page so an image never dominates. numColumns isn't
+// reflected here yet; magazine 2-column will let images span the
+// gutter (CSS column-span: all) instead of squeezing into one col.
+function _bookViewMakeImageEl(imgRecord, dims, pageWidth, pageHeight) {
+  const el = document.createElement("img");
+  el.className = "book-inline-image";
+  el.src = imgRecord.src;
+  el.alt = imgRecord.alt || "";
+  el.decoding = "async";
+  el.loading = "eager";
+  const d = dims.get(imgRecord.src);
+  const contentWidth = pageWidth - 64;  // .book-page padding 32×2
+  const maxHeight = Math.round(pageHeight * 0.5);
+  if (d && d.width && d.height) {
+    const scale = Math.min(1, contentWidth / d.width);
+    const displayWidth = Math.round(d.width * scale);
+    let displayHeight = Math.round(d.height * scale);
+    if (displayHeight > maxHeight) {
+      // Letterbox: cap height, scale width to match natural aspect.
+      const verticalScale = maxHeight / displayHeight;
+      displayHeight = maxHeight;
+    }
+    el.width = displayWidth;
+    el.height = displayHeight;
+  } else if (d === null) {
+    // Known-failed load. Don't reserve space — renderer will drop.
+    el.style.display = "none";
+  } else {
+    // Unknown dims (image not in preload map). Reserve a placeholder.
+    el.height = 240;
+  }
+  // Failed loads: drop from DOM so they don't leave a void.
+  el.addEventListener("error", () => el.remove(), { once: true });
+  return el;
+}
+
+// Pure helper: split a list of sentences into per-page buckets by
+// measuring how many fit in a given page height. Uses a hidden
+// measurement container styled identically to a real .book-page so
+// font metrics + hyphenation match exactly. Returns an array of
+// [sentenceIndex, ...] for each page.
+//
+// v197 (M2): the probe page now includes the same header + footer
+// elements that the renderer produces, so the body's available
+// height reflects the actual rendered page. Without these stand-ins,
+// the paginator would over-fill pages by ~50px each (header height +
+// footer height + their borders/margins) and rendered pages would
+// silently overflow.
+//
+// v200 (M3.2): optional imgByIdx (sentence_index → [imgRecord, ...])
+// and imgDims (src → {width, height} | null) interleave images with
+// sentences. An image attached to sentence N renders BEFORE that
+// sentence; if image + sentence don't fit on the current page,
+// both move to the next page together (the image is "anchored" to
+// its sentence and never separates from it).
+function _bookViewPaginate(sentences, pageWidth, pageHeight, imgByIdx, imgDims) {
+  if (!sentences.length) return [[]];
+
+  // Build the off-screen measurement page.
+  const probe = document.createElement("div");
+  probe.className = "book-view-measure";
+  // v199 (M3.1): copy the book-view's current theme onto the probe
+  // so measurement uses the same font family / line-height /
+  // column-count as the live render. Without this, switching themes
+  // would paginate against paperback metrics but render with
+  // magazine metrics, and pages would visibly overflow.
+  if (bookView && bookView.dataset.bookTheme) {
+    probe.dataset.bookTheme = bookView.dataset.bookTheme;
+  }
+  // v199 (M3.1): also copy the font-size custom property — it's set
+  // on bookView's style attribute (not a CSS rule), so it doesn't
+  // cascade to the probe unless the probe is mounted inside bookView
+  // or the var is restated here.
+  if (bookView) {
+    const fs = bookView.style.getPropertyValue("--book-font-size");
+    if (fs) probe.style.setProperty("--book-font-size", fs);
+  }
+  const page = document.createElement("div");
+  page.className = "book-page";
+  page.style.width = `${pageWidth}px`;
+  page.style.height = `${pageHeight}px`;
+  // Header probe — same class as the real header, populated with a
+  // 1-char placeholder so the line-height + padding compute (an
+  // empty element collapses to 0 height in some font stacks).
+  const probeHeader = document.createElement("div");
+  probeHeader.className = "book-page-header";
+  probeHeader.textContent = "·";
+  page.appendChild(probeHeader);
+  const body = document.createElement("div");
+  body.className = "book-page-body";
+  page.appendChild(body);
+  // Footer probe.
+  const probeFooter = document.createElement("div");
+  probeFooter.className = "book-page-footer";
+  probeFooter.textContent = "·";
+  page.appendChild(probeFooter);
+  probe.appendChild(page);
+  document.body.appendChild(probe);
+
+  const pages = [[]];
+  let current = pages[0];
+  // v200 (M3.2): each iteration places an image-anchored unit
+  // (= zero or more images attached to sentence i, then the sentence
+  // itself). The unit is atomic — if any part overflows, the whole
+  // unit moves to the next page so the image stays with its sentence.
+  for (let i = 0; i < sentences.length; i++) {
+    const imgs = imgByIdx ? (imgByIdx.get(i) || []) : [];
+    const placedImgEls = [];
+    for (const img of imgs) {
+      const el = _bookViewMakeImageEl(img, imgDims, pageWidth, pageHeight);
+      body.appendChild(el);
+      placedImgEls.push(el);
+    }
+    const span = document.createElement("span");
+    span.className = "sentence";
+    span.textContent = sentences[i] + " ";
+    body.appendChild(span);
+    if (body.scrollHeight > pageHeight - 1) {
+      // Roll the entire unit off the current page.
+      for (const el of placedImgEls) body.removeChild(el);
+      body.removeChild(span);
+      // Edge case: current page is empty AND the unit still won't
+      // fit. Accept it on its own page (overflow visually trimmed
+      // by CSS overflow: hidden on .book-page). Without this the
+      // loop would infinite-loop on an oversize-image scenario.
+      if (current.length === 0) {
+        for (const img of imgs) {
+          body.appendChild(_bookViewMakeImageEl(img, imgDims, pageWidth, pageHeight));
+        }
+        body.appendChild(span);
+        current.push(i);
+        pages.push([]);
+        current = pages[pages.length - 1];
+        body.innerHTML = "";
+        continue;
+      }
+      // Start a new page with this unit.
+      pages.push([i]);
+      current = pages[pages.length - 1];
+      body.innerHTML = "";
+      for (const img of imgs) {
+        body.appendChild(_bookViewMakeImageEl(img, imgDims, pageWidth, pageHeight));
+      }
+      const span2 = document.createElement("span");
+      span2.className = "sentence";
+      span2.textContent = sentences[i] + " ";
+      body.appendChild(span2);
+    } else {
+      current.push(i);
+    }
+  }
+  if (current.length === 0 && pages.length > 1) pages.pop();
+  probe.remove();
+  return pages;
+}
+
+// Build the actual book DOM from the paginated buckets. Renders one
+// or two pages at a time (driven by _bookViewPagesPerSpread) into
+// the spread container. The cover takes slot 0 on the first spread;
+// text pages flow into the remaining slots. Returns the total spread
+// count so the indicator + nav state can update.
+function _bookViewRenderSpread(spreadIdx) {
+  if (!bookViewSpread) return 0;
+  bookViewSpread.innerHTML = "";
+  _bookSentenceSpans = [];
+  const ppr = _bookViewPagesPerSpread();
+  // Spread 0 reserves the left slot for the cover; subsequent spreads
+  // pack page content into all slots. So total spreads is
+  // ceil((textPages + 1coverSlot) / ppr) on desktop, or
+  // 1coverSpread + ceil(textPages/1) on mobile.
+  const textPageCount = _bookViewPages.length;
+  let totalSpreads;
+  if (ppr === 2) {
+    totalSpreads = Math.ceil((textPageCount + 1) / 2);
+  } else {
+    // Mobile: cover gets its own spread, then one text page per spread.
+    totalSpreads = textPageCount + 1;
+  }
+  if (totalSpreads < 1) totalSpreads = 1;
+  _bookViewSpreadsCount = totalSpreads;
+  if (spreadIdx < 0) spreadIdx = 0;
+  if (spreadIdx >= totalSpreads) spreadIdx = totalSpreads - 1;
+  _bookViewCurrentSpread = spreadIdx;
+
+  // Compute which "slot" of the global flow we're rendering. Slot 0
+  // is always the cover; slots 1..N are text page indexes 0..N-1.
+  const startSlot = spreadIdx * ppr;
+  for (let s = 0; s < ppr; s++) {
+    const slot = startSlot + s;
+    const pageEl = document.createElement("div");
+    pageEl.className = "book-page";
+    if (slot === 0) {
+      // Cover page.
+      pageEl.classList.add("book-page-cover");
+      const src = _bookViewSource;
+      if (src && src.cover && src.cover.blob) {
+        const img = document.createElement("img");
+        img.className = "book-page-cover-art";
+        img.alt = src.title || "Cover";
+        try {
+          img.src = URL.createObjectURL(src.cover.blob);
+          img.addEventListener("load", () => URL.revokeObjectURL(img.src), { once: true });
+        } catch {}
+        pageEl.appendChild(img);
+      } else {
+        // Hash-gradient fallback. Uses the same title-hash color the
+        // library card swatch derives so the cover matches the card.
+        const fb = document.createElement("div");
+        fb.className = "book-page-cover-fallback";
+        const seed = (src && src.title) || "Untitled";
+        fb.style.background = _coverFallbackGradient(seed);
+        fb.textContent = seed.trim().slice(0, 1).toUpperCase() || "•";
+        pageEl.appendChild(fb);
+      }
+      if (src && src.title) {
+        const t = document.createElement("div");
+        t.className = "book-page-cover-title";
+        t.textContent = src.title;
+        pageEl.appendChild(t);
+      }
+    } else {
+      // Text page. slot 1 → text page 0; slot 2 → text page 1; ...
+      const textPageIdx = slot - 1;
+      const sentenceIdxs = _bookViewPages[textPageIdx] || [];
+
+      // v197 (M2): running header. Shows the clip title at the top
+      // of every text page. No chapter awareness yet — the clip's
+      // own title is the most reliable "section name" we have.
+      // Suppressed when there's no title (cover-page fallback case).
+      const headerTitle =
+        (_bookViewSource && _bookViewSource.title) || "";
+      if (headerTitle) {
+        const header = document.createElement("div");
+        header.className = "book-page-header";
+        header.textContent = headerTitle;
+        pageEl.appendChild(header);
+      }
+
+      const body = document.createElement("div");
+      body.className = "book-page-body";
+      // v197 (M2): drop cap on the FIRST text page only. CSS
+      // ::first-letter targets the first character of body's flow
+      // regardless of which span holds it — no DOM restructuring
+      // needed. (Future: chapter-aware drop caps would tag every
+      // page that starts a new chapter; for now once per clip.)
+      if (textPageIdx === 0) {
+        body.dataset.dropCap = "true";
+      }
+      // v200 (M3.2): images for any sentence on this page render
+      // inline before their anchor sentence. Source of truth is
+      // _bookViewSource.imgByIdx (computed in enterBookView and
+      // reused on repagination so the renderer never re-buckets).
+      const imgByIdx = (_bookViewSource && _bookViewSource.imgByIdx) || null;
+      for (const sIdx of sentenceIdxs) {
+        if (imgByIdx && imgByIdx.has(sIdx)) {
+          for (const img of imgByIdx.get(sIdx)) {
+            const el = document.createElement("img");
+            el.className = "book-inline-image";
+            el.src = img.src;
+            el.alt = img.alt || "";
+            el.loading = "lazy";
+            el.decoding = "async";
+            el.addEventListener("error", () => el.remove(), { once: true });
+            body.appendChild(el);
+          }
+        }
+        const span = document.createElement("span");
+        span.className = "sentence";
+        span.dataset.index = String(sIdx);
+        const wc = _countWords(_bookViewSource.sentences[sIdx]);
+        if (wc >= LONG_SENTENCE_WORD_THRESHOLD) {
+          span.dataset.longSentence = "true";
+          span.dataset.wordCount = String(wc);
+          span.title = `${wc} words`;
+        }
+        span.textContent = _bookViewSource.sentences[sIdx] + " ";
+        // Click → seek audio. Reuses the existing seekToSentence path.
+        // v187: clicking a sentence on the visible spread means
+        // "engage here" — drop the pinned state so the highlight
+        // resumes auto-following.
+        span.addEventListener("click", () => {
+          _bookViewUserPaged = false;
+          seekToSentence(sIdx);
+          if (playerEl.paused) playerEl.play().catch(() => {});
+        });
+        body.appendChild(span);
+        _bookSentenceSpans[sIdx] = span;
+      }
+      // v200 (M3.2): trailing images (sentence_index >= sentences.length)
+      // bucket under key sentences.length. Render them after the
+      // very last sentence on the very last text page.
+      const totalTextPages = _bookViewPages.length;
+      const isLastTextPage = (textPageIdx === totalTextPages - 1);
+      if (isLastTextPage && imgByIdx) {
+        const trailing = imgByIdx.get(_bookViewSource.sentences.length) || [];
+        for (const img of trailing) {
+          const el = document.createElement("img");
+          el.className = "book-inline-image";
+          el.src = img.src;
+          el.alt = img.alt || "";
+          el.loading = "lazy";
+          el.decoding = "async";
+          el.addEventListener("error", () => el.remove(), { once: true });
+          body.appendChild(el);
+        }
+      }
+      pageEl.appendChild(body);
+
+      // v197 (M2): page-number footer. textPageIdx is 0-indexed;
+      // human page numbers are 1-indexed. Skipping the "of N"
+      // suffix avoids re-rendering every page when a single page's
+      // count drifts (e.g., re-pagination at a new font size); a
+      // single number is what real books show anyway.
+      const footer = document.createElement("div");
+      footer.className = "book-page-footer";
+      footer.textContent = String(textPageIdx + 1);
+      pageEl.appendChild(footer);
+    }
+    bookViewSpread.appendChild(pageEl);
+  }
+  _bookViewUpdateNav();
+  // After re-render, re-apply the karaoke state for the currently-
+  // active sentence (if any). The reading view's spans already carry
+  // .active; the book view's freshly-minted spans need to catch up.
+  if (activeSentenceIdx >= 0) {
+    _bookViewApplyActive(activeSentenceIdx);
+  }
+  return totalSpreads;
+}
+
+function _bookViewUpdateNav() {
+  if (bookViewPrev) bookViewPrev.disabled = _bookViewCurrentSpread <= 0;
+  if (bookViewNext) bookViewNext.disabled = _bookViewCurrentSpread >= _bookViewSpreadsCount - 1;
+  if (bookViewIndicator) {
+    bookViewIndicator.textContent =
+      `Spread ${_bookViewCurrentSpread + 1} of ${_bookViewSpreadsCount}`;
+  }
+  // v187: show "Return to current" only when the user has scrubbed
+  // away from where the audio is. Also requires actual audio
+  // progress — no point offering a return when nothing's playing yet.
+  if (bookViewReturn) {
+    if (
+      _bookViewUserPaged &&
+      activeSentenceIdx >= 0 &&
+      _bookSentenceToPage.length > 0
+    ) {
+      const ppr = _bookViewPagesPerSpread();
+      const activeSpread = _bookViewSpreadOfSentence(activeSentenceIdx, ppr);
+      bookViewReturn.hidden = activeSpread === _bookViewCurrentSpread;
+    } else {
+      bookViewReturn.hidden = true;
+    }
+  }
+}
+
+// v187: helper called from every manual-nav path (prev/next buttons,
+// arrow keys, swipe). Renders the requested spread + flips the
+// pinned flag on so subsequent active-sentence updates don't yank
+// the spread back. Centralized so a future fourth manual-nav path
+// (keyboard shortcuts overlay, gestures, etc.) just calls this.
+function _bookViewNavigateManual(targetSpread) {
+  if (targetSpread < 0 || targetSpread >= _bookViewSpreadsCount) return;
+  _bookViewUserPaged = true;
+  _bookViewRenderSpread(targetSpread);
+}
+
+// Title-hash → CSS gradient. Same hash → same colors → same swatch
+// as the library card, so a chapter's cover page tone matches its
+// row in the library list. Kept inline (rather than reused from the
+// library helper) so this module stays self-contained.
+function _coverFallbackGradient(seed) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  const h1 = hash % 360;
+  const h2 = (h1 + 35) % 360;
+  return `linear-gradient(135deg, hsl(${h1}, 60%, 28%) 0%, hsl(${h2}, 55%, 18%) 100%)`;
+}
+
+// Apply the karaoke state to whichever book span matches the given
+// sentence index. Cheaper than the reading-view's full forEach since
+// only the active sentence changes per frame.
+function _bookViewApplyActive(idx) {
+  // Clear stale state on the book spans we touched last frame.
+  for (const span of _bookSentenceSpans) {
+    if (!span) continue;
+    span.classList.remove("active");
+  }
+  // Mark "played" up to the current cursor + "active" on the cursor.
+  for (let i = 0; i < _bookSentenceSpans.length; i++) {
+    const span = _bookSentenceSpans[i];
+    if (!span) continue;
+    if (i < idx) span.classList.add("played");
+    else span.classList.remove("played");
+  }
+  const activeSpan = _bookSentenceSpans[idx];
+  if (activeSpan) activeSpan.classList.add("active");
+}
+
+// Public: enter book view. Reads the stashed _bookViewSource (set by
+// enterReadingView). Mid-clip pivots — user can flip back to reading
+// view at any time and pick up exactly where they were.
+async function enterBookView() {
+  if (!_bookViewSource || !_bookViewSource.sentences.length) {
+    setStatus("Generate or load a clip first.", true);
+    return;
+  }
+  // Populate title + cover from the currently-loaded clip if we have
+  // its id (otherwise leave the fallback gradient + a generic title).
+  if (_currentClipId) {
+    getClip(_currentClipId).then((clip) => {
+      if (!clip) return;
+      _bookViewSource.title = clip.title || "Untitled chapter";
+      _bookViewSource.cover = clip.cover || null;
+      // Re-render so the cover page updates if the user opens the book
+      // view before getClip resolves.
+      _bookViewRenderSpread(_bookViewCurrentSpread);
+    }).catch(() => {});
+  } else {
+    _bookViewSource.title = "Untitled chapter";
+  }
+  // v187: opening the book view should always start unpinned —
+  // user just toggled in; they want auto-flip until they decide to
+  // scrub. Without this, a pinned state from a previous session
+  // (after exit→re-enter) would persist and confuse.
+  _bookViewUserPaged = false;
+
+  // v200 (M3.2): preload image dimensions + bucket by sentence_index
+  // before paginating. Without natural dimensions, an <img> in the
+  // measurement probe contributes 0 to scrollHeight until it loads
+  // asynchronously, racing the paginator. Cache the bucket + dims on
+  // _bookViewSource so _bookViewRepaginate can reuse them when the
+  // user changes theme / text-size without re-downloading.
+  if (!_bookViewSource.imgByIdx) {
+    _bookViewSource.imgByIdx = _bookViewBucketImages(
+      _bookViewSource.images,
+      _bookViewSource.sentences.length
+    );
+  }
+  if (!_bookViewSource.imgDims) {
+    // Show the spread skeleton during preload so the user sees that
+    // something's happening (most clips have 0 images and this is
+    // instant; URL-fetched chapters can have a dozen).
+    bookView.style.visibility = "hidden";
+    bookView.hidden = false;
+    _bookViewSource.imgDims = await _bookViewPreloadImages(
+      _bookViewSource.images || []
+    );
+  }
+
+  // Pre-measure: temporarily reveal the spread so the page-shaped
+  // probe inherits the real CSS metrics. Hidden visibility keeps the
+  // user from seeing a flash of un-paginated content.
+  bookView.style.visibility = "hidden";
+  bookView.hidden = false;
+  readingView.hidden = true;
+  const spreadRect = bookViewSpread.getBoundingClientRect();
+  const ppr = _bookViewPagesPerSpread();
+  const pageWidth = ppr === 2 ? spreadRect.width / 2 : spreadRect.width;
+  const pageHeight = spreadRect.height;
+  _bookViewPages = _bookViewPaginate(
+    _bookViewSource.sentences,
+    pageWidth,
+    pageHeight,
+    _bookViewSource.imgByIdx,
+    _bookViewSource.imgDims
+  );
+  _bookSentenceToPage = [];
+  for (let p = 0; p < _bookViewPages.length; p++) {
+    for (const sIdx of _bookViewPages[p]) {
+      _bookSentenceToPage[sIdx] = p;
+    }
+  }
+  // Default to the spread containing the current active sentence so
+  // a user mid-listen who toggles into book view lands on the right
+  // page. Falls back to spread 0 (cover + first page) otherwise.
+  const startSpread = activeSentenceIdx >= 0
+    ? _bookViewSpreadOfSentence(activeSentenceIdx, ppr)
+    : 0;
+  _bookViewRenderSpread(startSpread);
+  bookView.style.visibility = "visible";
+  if (bookViewToggle) bookViewToggle.textContent = "▶ Audio view";
+}
+
+function _bookViewSpreadOfSentence(sIdx, ppr) {
+  const pageIdx = _bookSentenceToPage[sIdx];
+  if (pageIdx === undefined) return 0;
+  // Slot 0 is cover; slot N>=1 is text page N-1. Spread = floor(slot/ppr).
+  const slot = pageIdx + 1;
+  return Math.floor(slot / ppr);
+}
+
+// v197 (M2): re-paginate the current source and re-render. Called
+// when the user changes Book View text size in Settings, so the
+// page break points and the current spread both shift to match
+// the new font. Anchors the post-repagination spread on whichever
+// sentence was at the top of the visible spread before the change —
+// otherwise jumping from S → L size could land the user dozens of
+// pages off because the same spread index now points at different
+// content.
+function _bookViewRepaginate() {
+  if (!bookView || bookView.hidden) return;
+  if (!_bookViewSource || !_bookViewSource.sentences.length) return;
+  // Remember a sentence from the visible spread so we can return to
+  // it. Use the active (audio-playing) sentence if it's on this
+  // spread; otherwise the first sentence of the current spread.
+  const ppr = _bookViewPagesPerSpread();
+  let anchor = -1;
+  if (
+    activeSentenceIdx >= 0 &&
+    _bookViewSpreadOfSentence(activeSentenceIdx, ppr) === _bookViewCurrentSpread
+  ) {
+    anchor = activeSentenceIdx;
+  } else {
+    const firstSlot = _bookViewCurrentSpread * ppr;
+    const firstTextPage = firstSlot === 0 ? 0 : firstSlot - 1;
+    const firstPageSentences = _bookViewPages[firstTextPage] || [];
+    if (firstPageSentences.length) anchor = firstPageSentences[0];
+  }
+  // Re-measure and re-paginate.
+  const spreadRect = bookViewSpread.getBoundingClientRect();
+  const pageWidth = ppr === 2 ? spreadRect.width / 2 : spreadRect.width;
+  const pageHeight = spreadRect.height;
+  _bookViewPages = _bookViewPaginate(
+    _bookViewSource.sentences,
+    pageWidth,
+    pageHeight,
+    // v200 (M3.2): reuse the cached image bucket + dims so theme /
+    // font-size changes don't re-trigger image downloads.
+    _bookViewSource && _bookViewSource.imgByIdx,
+    _bookViewSource && _bookViewSource.imgDims
+  );
+  _bookSentenceToPage = [];
+  for (let p = 0; p < _bookViewPages.length; p++) {
+    for (const sIdx of _bookViewPages[p]) {
+      _bookSentenceToPage[sIdx] = p;
+    }
+  }
+  const targetSpread = anchor >= 0
+    ? _bookViewSpreadOfSentence(anchor, ppr)
+    : _bookViewCurrentSpread;
+  _bookViewRenderSpread(targetSpread);
+}
+
+// v197 (M2): user-selectable book font size. Persists to localStorage
+// and applies to .book-view via a CSS custom property. Re-paginates
+// the current book view on the fly when the user changes the size.
+const BOOK_FONT_SIZE_KEY = "bookFontSize";
+const BOOK_FONT_SIZES = {
+  small: "14px",
+  medium: "16px",
+  large: "18px",
+  xlarge: "20px",
+};
+function _loadBookFontSize() {
+  const v = localStorage.getItem(BOOK_FONT_SIZE_KEY);
+  return BOOK_FONT_SIZES[v] ? v : "medium";
+}
+function _applyBookFontSize(size) {
+  const px = BOOK_FONT_SIZES[size] || BOOK_FONT_SIZES.medium;
+  if (bookView) bookView.style.setProperty("--book-font-size", px);
+}
+// Apply on initial load so the CSS var is set before the user
+// opens book view (pagination uses the var, so it must be set first).
+_applyBookFontSize(_loadBookFontSize());
+
+// v199 (M3.1): book-view theme variant. Independent of the app-wide
+// Dark/Light/Auto theme — this picks the typographic personality of
+// the book pages (paperback / magazine / manuscript). CSS lives on
+// data-book-theme attribute on .book-view, which the paginator probe
+// also receives (set explicitly in _bookViewPaginate). On change we
+// re-paginate because font-family + line-height shifts move the
+// per-page break points.
+const BOOK_THEME_KEY = "bookTheme";
+const BOOK_THEMES = new Set(["paperback", "magazine", "manuscript"]);
+function _loadBookTheme() {
+  const v = localStorage.getItem(BOOK_THEME_KEY);
+  return BOOK_THEMES.has(v) ? v : "paperback";
+}
+function _applyBookTheme(theme) {
+  const t = BOOK_THEMES.has(theme) ? theme : "paperback";
+  if (bookView) bookView.dataset.bookTheme = t;
+}
+_applyBookTheme(_loadBookTheme());
+
+// Public: leave book view. Either back to reading view (default) or
+// onward to the textarea (when called from exitReadingView itself).
+function exitBookView(opts = {}) {
+  bookView.hidden = true;
+  bookView.style.visibility = "";
+  _bookSentenceSpans = [];
+  if (bookViewSpread) bookViewSpread.innerHTML = "";
+  if (bookViewToggle) bookViewToggle.textContent = "📖 Book view";
+  if (!opts.skipReadingView) {
+    readingView.hidden = false;
+  }
+}
+
+if (bookViewToggle) {
+  bookViewToggle.addEventListener("click", () => {
+    if (bookView.hidden) enterBookView();
+    else exitBookView();
+  });
+}
+if (bookViewPrev) {
+  bookViewPrev.addEventListener("click", () => {
+    // v187: route through _bookViewNavigateManual so the pinned
+    // state flips on and the auto-flip stops yanking the spread
+    // back to the active sentence the next animation frame.
+    _bookViewNavigateManual(_bookViewCurrentSpread - 1);
+  });
+}
+if (bookViewNext) {
+  bookViewNext.addEventListener("click", () => {
+    _bookViewNavigateManual(_bookViewCurrentSpread + 1);
+  });
+}
+// v187: "Return to current" — un-pins + flips to the spread holding
+// the audio's currently-narrated sentence. Hidden by default; the
+// nav-update path reveals it when the user has scrubbed away.
+if (bookViewReturn) {
+  bookViewReturn.addEventListener("click", () => {
+    if (activeSentenceIdx < 0) return;
+    const ppr = _bookViewPagesPerSpread();
+    const target = _bookViewSpreadOfSentence(activeSentenceIdx, ppr);
+    _bookViewUserPaged = false;
+    _bookViewRenderSpread(target);
+  });
+}
+// Keyboard nav — ← / → only when book view is the active surface.
+// Guard against clobbering arrow-key seeking in the main audio
+// player by checking the focused element.
+document.addEventListener("keydown", (e) => {
+  if (!bookView || bookView.hidden) return;
+  const focused = document.activeElement;
+  if (focused && (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA")) return;
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    _bookViewNavigateManual(_bookViewCurrentSpread - 1);
+  } else if (e.key === "ArrowRight") {
+    e.preventDefault();
+    _bookViewNavigateManual(_bookViewCurrentSpread + 1);
+  }
+});
+// Touch swipe — horizontal-only, with a generous threshold so the
+// user can scroll the page vertically without accidentally paging.
+let _bookSwipeStart = null;
+if (bookViewSpread) {
+  bookViewSpread.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    _bookSwipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: true });
+  bookViewSpread.addEventListener("touchend", (e) => {
+    if (!_bookSwipeStart) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - _bookSwipeStart.x;
+    const dy = t.clientY - _bookSwipeStart.y;
+    _bookSwipeStart = null;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return;
+    if (dx < 0) {
+      _bookViewNavigateManual(_bookViewCurrentSpread + 1);
+    } else if (dx > 0) {
+      _bookViewNavigateManual(_bookViewCurrentSpread - 1);
+    }
+  }, { passive: true });
+}
 
 // ---- Library (IndexedDB) -------------------------------------------------
 // Every generated clip is persisted so it can be replayed without paying the
@@ -8612,6 +9804,18 @@ importMenu.addEventListener("click", (e) => {
           'which chapters to import.',
       recentRepos: recents,
     });
+  } else if (source === "gist") {
+    // v181: pre-prime the URL row for a Gist paste. fetchFromUrl
+    // dispatches to openGistBrowser when the host matches.
+    showUrlRow({
+      placeholder: "gist.github.com/user/<id>",
+      prefill: "https://gist.github.com/",
+      hint:
+        'Paste a Gist URL — like ' +
+        '<code>gist.github.com/user/abc123</code>. Single-file Gists ' +
+        'load straight into the textarea; multi-file Gists open the ' +
+        'picker.',
+    });
   } else if (source === "scrivener") {
     scrivenerInput.click();
   } else if (source === "obsidian") {
@@ -8951,6 +10155,71 @@ function _docPickerItemSize(item) {
   return "";
 }
 
+// v182: build a folder tree from a flat list of items keyed by path.
+// VSCode-style: folders carry .folders (Map<name, node>) and .files
+// (array of items). Each node also tracks its full path so the
+// renderer can look up "is this folder open" state without re-walking.
+function _docPickerBuildTree(items) {
+  const root = { name: "", path: "", folders: new Map(), files: [] };
+  for (const it of items) {
+    const segments = (it.title || it.id || "").split("/");
+    let node = root;
+    let accum = "";
+    for (let i = 0; i < segments.length - 1; i++) {
+      const seg = segments[i];
+      if (!seg) continue;
+      accum = accum ? `${accum}/${seg}` : seg;
+      if (!node.folders.has(seg)) {
+        node.folders.set(seg, {
+          name: seg, path: accum, folders: new Map(), files: [],
+        });
+      }
+      node = node.folders.get(seg);
+    }
+    // Last segment is the filename (or, if the path had no slashes,
+    // the whole thing is a root-level file).
+    node.files.push(it);
+  }
+  return root;
+}
+
+// v182: walk the tree and collect every file item under a node (used
+// for the folder-checkbox bulk-select tri-state). Returns an array
+// of the underlying item objects, NOT just ids, so the caller can
+// also tally chars/bytes if it wants.
+function _docPickerCollectFiles(node) {
+  const out = [];
+  function walk(n) {
+    for (const f of n.files) out.push(f);
+    for (const child of n.folders.values()) walk(child);
+  }
+  walk(node);
+  return out;
+}
+
+// v182: when the user types into the filter input, every folder
+// whose subtree contains at least one matching file should auto-
+// expand. Returns the Set of folder paths to mark open this render.
+function _docPickerAutoExpanded(node, matches) {
+  const out = new Set();
+  function walk(n) {
+    let any = false;
+    for (const f of n.files) {
+      if (matches.has(f.id)) any = true;
+    }
+    for (const child of n.folders.values()) {
+      const childHas = walk(child);
+      if (childHas) {
+        out.add(child.path);
+        any = true;
+      }
+    }
+    return any;
+  }
+  walk(node);
+  return out;
+}
+
 function _docPickerRender() {
   if (!_docPickerState) return;
   const s = _docPickerState;
@@ -8991,44 +10260,181 @@ function _docPickerRender() {
     docPickerList.appendChild(empty);
     return;
   }
-  for (const it of filtered) {
-    const label = document.createElement("label");
-    label.className = "doc-picker-file";
-    const imported = importedIds.has(it.id);
-    if (imported) label.classList.add("doc-picker-file-imported");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = s.selected.has(it.id);
-    cb.addEventListener("change", () => {
-      if (cb.checked) s.selected.add(it.id);
-      else s.selected.delete(it.id);
-      _docPickerUpdateSummary();
-    });
-    const pathSpan = document.createElement("span");
-    pathSpan.className = "doc-picker-file-path";
-    pathSpan.textContent = it.subtitle
-      ? `${it.title}  (${it.subtitle})`
-      : it.title;
-    // v176: ✓ badge for already-imported files. Sits between the path
-    // and the size so it's near the start (right after the path) and
-    // can be skimmed at a glance — the dim class on the whole row
-    // reinforces it. Tooltip explains the badge.
-    if (imported) {
-      const badge = document.createElement("span");
-      badge.className = "doc-picker-file-imported-badge";
-      badge.textContent = "✓ imported";
-      badge.title = "Already in your library or sitting in the queue";
-      pathSpan.appendChild(document.createTextNode(" "));
-      pathSpan.appendChild(badge);
-    }
-    const sizeSpan = document.createElement("span");
-    sizeSpan.className = "doc-picker-file-size";
-    sizeSpan.textContent = _docPickerItemSize(it);
-    label.appendChild(cb);
-    label.appendChild(pathSpan);
-    label.appendChild(sizeSpan);
-    docPickerList.appendChild(label);
+
+  // v182: tree-mode renderer. Builds a folder hierarchy from the
+  // filtered items, then walks it recursively. Folders render as
+  // disclosure rows (▸/▾ + folder icon + name + descendant count +
+  // tri-state checkbox); files render as indented leaf rows with the
+  // existing checkbox + ✓ imported badge + size.
+  if (s.treeView) {
+    _docPickerRenderTree(filtered, importedIds, q);
+    return;
   }
+
+  // Legacy flat list — Scrivener / Obsidian still use this path.
+  for (const it of filtered) {
+    docPickerList.appendChild(_docPickerMakeFileRow(it, importedIds, 0));
+  }
+}
+
+// v182: render one file row. Extracted so both the flat list and the
+// tree leaves can share it. `depth` is the indentation level (0 for
+// flat / root, increments per folder); 0 leaves padding at the
+// default so the legacy Scrivener / Obsidian layouts stay unchanged.
+function _docPickerMakeFileRow(it, importedIds, depth) {
+  const s = _docPickerState;
+  const label = document.createElement("label");
+  label.className = "doc-picker-file";
+  const imported = importedIds.has(it.id);
+  if (imported) label.classList.add("doc-picker-file-imported");
+  if (depth > 0) {
+    label.classList.add("doc-picker-file-leaf");
+    label.style.paddingLeft = `${depth * 16 + 6}px`;
+  }
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = s.selected.has(it.id);
+  cb.addEventListener("change", (e) => {
+    e.stopPropagation();
+    if (cb.checked) s.selected.add(it.id);
+    else s.selected.delete(it.id);
+    _docPickerUpdateSummary();
+    // v182: a leaf flip changes the tri-state ancestors above it. In
+    // tree mode we re-render to refresh those rows; flat mode skips
+    // the re-render to avoid scroll thrash.
+    if (s.treeView) _docPickerRender();
+  });
+  const pathSpan = document.createElement("span");
+  pathSpan.className = "doc-picker-file-path";
+  // In tree mode, show only the basename (the folder path is conveyed
+  // by indentation + parent rows). In flat mode keep the full path.
+  let labelText = it.title;
+  if (s.treeView) {
+    const slash = (it.title || "").lastIndexOf("/");
+    if (slash >= 0) labelText = it.title.slice(slash + 1);
+  }
+  pathSpan.textContent = it.subtitle ? `${labelText}  (${it.subtitle})` : labelText;
+  if (imported) {
+    const badge = document.createElement("span");
+    badge.className = "doc-picker-file-imported-badge";
+    badge.textContent = "✓ imported";
+    badge.title = "Already in your library or sitting in the queue";
+    pathSpan.appendChild(document.createTextNode(" "));
+    pathSpan.appendChild(badge);
+  }
+  const sizeSpan = document.createElement("span");
+  sizeSpan.className = "doc-picker-file-size";
+  sizeSpan.textContent = _docPickerItemSize(it);
+  label.appendChild(cb);
+  label.appendChild(pathSpan);
+  label.appendChild(sizeSpan);
+  return label;
+}
+
+// v182: tree-mode renderer — builds the folder hierarchy and walks
+// it recursively. Folders that contain matching files auto-expand
+// when a filter is active so the user can scan results without
+// clicking through dozens of carets.
+function _docPickerRenderTree(filteredItems, importedIds, q) {
+  const s = _docPickerState;
+  const tree = _docPickerBuildTree(filteredItems);
+  // When filtering, all matching paths' ancestors auto-expand. When
+  // not filtering, use the user's persisted expand state (so a manual
+  // open survives across re-renders, e.g. after a checkbox flip).
+  const matches = new Set(filteredItems.map((it) => it.id));
+  const autoOpen = q ? _docPickerAutoExpanded(tree, matches) : null;
+  function isOpen(path) {
+    if (autoOpen && autoOpen.has(path)) return true;
+    return s.expandedFolders.has(path);
+  }
+
+  function renderNode(node, depth) {
+    const folderNames = Array.from(node.folders.keys()).sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase())
+    );
+    for (const fname of folderNames) {
+      const child = node.folders.get(fname);
+      const row = _docPickerMakeFolderRow(child, depth, isOpen(child.path));
+      docPickerList.appendChild(row);
+      if (isOpen(child.path)) renderNode(child, depth + 1);
+    }
+    const sortedFiles = node.files
+      .slice()
+      .sort((a, b) => (a.title || "").toLowerCase().localeCompare(
+        (b.title || "").toLowerCase()
+      ));
+    for (const f of sortedFiles) {
+      docPickerList.appendChild(_docPickerMakeFileRow(f, importedIds, depth));
+    }
+  }
+  renderNode(tree, 0);
+}
+
+// v182: render one folder row. Layout: [▸/▾] [📁/📂] name (n) [tri-state cb].
+// Click the row (anywhere outside the checkbox) → toggle expand.
+// Click the checkbox → toggle all descendant files (mirrors VSCode's
+// search "select all in folder" feel).
+function _docPickerMakeFolderRow(node, depth, open) {
+  const s = _docPickerState;
+  const row = document.createElement("div");
+  row.className = "doc-picker-folder";
+  row.style.paddingLeft = `${depth * 16 + 6}px`;
+  // Caret + folder icon.
+  const caret = document.createElement("span");
+  caret.className = "doc-picker-folder-caret";
+  caret.textContent = open ? "▾" : "▸";
+  caret.setAttribute("aria-hidden", "true");
+  const icon = document.createElement("span");
+  icon.className = "doc-picker-folder-icon";
+  icon.textContent = open ? "📂" : "📁";
+  icon.setAttribute("aria-hidden", "true");
+  const name = document.createElement("span");
+  name.className = "doc-picker-folder-name";
+  name.textContent = node.name;
+  // Descendant count for quick scan ("chapters/ (35)").
+  const descendants = _docPickerCollectFiles(node);
+  const count = document.createElement("span");
+  count.className = "doc-picker-folder-count";
+  count.textContent = `(${descendants.length})`;
+  // Tri-state checkbox — checked if all descendants selected, mixed
+  // if some, unchecked if none. Click toggles all of them.
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "doc-picker-folder-cb";
+  const selectedDescendants = descendants.filter((f) => s.selected.has(f.id));
+  if (selectedDescendants.length === 0) {
+    cb.checked = false;
+    cb.indeterminate = false;
+  } else if (selectedDescendants.length === descendants.length) {
+    cb.checked = true;
+    cb.indeterminate = false;
+  } else {
+    cb.checked = false;
+    cb.indeterminate = true;
+  }
+  cb.addEventListener("click", (e) => e.stopPropagation());
+  cb.addEventListener("change", () => {
+    const turnOn = cb.checked;
+    for (const f of descendants) {
+      if (turnOn) s.selected.add(f.id);
+      else s.selected.delete(f.id);
+    }
+    _docPickerUpdateSummary();
+    _docPickerRender();
+  });
+  row.appendChild(caret);
+  row.appendChild(icon);
+  row.appendChild(name);
+  row.appendChild(count);
+  row.appendChild(cb);
+  // Whole-row click toggles expand (except when the click started in
+  // the checkbox — handled by stopPropagation above).
+  row.addEventListener("click", () => {
+    if (open) s.expandedFolders.delete(node.path);
+    else s.expandedFolders.add(node.path);
+    _docPickerRender();
+  });
+  return row;
 }
 
 function _docPickerUpdateSummary() {
@@ -9079,6 +10485,16 @@ function openDocumentPicker(config) {
     // styling on each matching row.
     isImported: typeof config.isImported === "function" ? config.isImported : null,
     hideImported: false,
+    // v182: VSCode-style tree rendering. Opt-in per caller. GitHub
+    // turns it on because flat /path/to/chapter_03.md rows get unreadable
+    // past ~30 files; Scrivener and Obsidian keep the flat list because
+    // their items are already pre-grouped (chapter → scene) and a
+    // second hierarchy would just nest.
+    treeView: !!config.treeView,
+    // Persistent expand state — survives re-renders triggered by
+    // checkbox flips. Filter auto-expansion is computed per render
+    // separately and doesn't mutate this Set.
+    expandedFolders: new Set(),
   };
   docPickerTitle.textContent = config.title || "Pick items";
   docPickerMeta.textContent = config.meta || "";
@@ -9287,6 +10703,10 @@ async function openGithubBrowser(repoUrl) {
       const p = item && item.extra && item.extra.path;
       return p ? importedPaths.has(p) : false;
     },
+    // v182: VSCode-style folder hierarchy. Big repos (185+ files in
+    // the screenshot) get unreadable as a flat list — group by folder,
+    // collapse by default, filter auto-expands matches.
+    treeView: true,
     onUse: async (picked, opts = {}) => {
       // Items carry the raw GitHub file objects in `extra`. Build the
       // raw.githubusercontent URLs and a path→sha lookup for the
@@ -9669,6 +11089,195 @@ function _withGithubBranch(url, branch) {
   }
 }
 
+// v181: open the shared picker on a Gist's file list.
+//
+// Single-file gists short-circuit: we fetch the file content directly
+// via /api/extract/url with the raw_url + skip the picker.
+//
+// Multi-file gists open the picker. Selecting one file loads it into
+// the textarea (same as the GitHub single-pick path); selecting
+// multiple files queues them as a multi-chapter import.
+async function openGistBrowser(gistUrl) {
+  hideUrlRow();
+  setStatus(`Fetching Gist…`);
+  const token = getGithubToken();
+  let meta;
+  try {
+    const res = await fetch("/api/gist/meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: gistUrl,
+        github_token: token || undefined,
+      }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+      throw new Error(detail);
+    }
+    meta = await res.json();
+  } catch (err) {
+    _dlog && _dlog("gist", `meta fetch failed: ${err.message}`, {});
+    setStatus(`Gist fetch failed: ${err.message}`, true);
+    return;
+  }
+  const files = Array.isArray(meta.files) ? meta.files : [];
+  if (files.length === 0) {
+    setStatus("This Gist has no files.", true);
+    return;
+  }
+
+  // Single-file gist: route straight to the textarea via the existing
+  // URL extractor on the file's raw URL. The picker would just be one
+  // extra click for no win.
+  if (files.length === 1) {
+    const f = files[0];
+    setStatus(`Loading ${f.filename}…`);
+    try {
+      const res = await fetch("/api/extract/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: f.raw_url,
+          github_token: token || undefined,
+        }),
+      });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+        throw new Error(detail);
+      }
+      const data = await res.json();
+      exitReadingView();
+      textEl.value = data.text || "";
+      _pendingImages = Array.isArray(data.images) ? data.images : [];
+      _pendingGitRef = null; // Gist files don't have a gitRef we can sync against
+      _pendingChapterTitle = f.filename.replace(/\.[^.]+$/, "");
+      updateCounts();
+      _checkForChapters();
+      setStatus(
+        `Loaded ${f.filename} · ${(data.chars || 0).toLocaleString()} chars · ready to Generate`
+      );
+      textEl.focus();
+    } catch (err) {
+      _dlog && _dlog("gist", `single-file fetch failed: ${err.message}`, {
+        filename: f.filename,
+      });
+      setStatus(`Gist fetch failed: ${err.message}`, true);
+    }
+    return;
+  }
+
+  // Multi-file: open the picker. Each file becomes a candidate
+  // chapter in the picker; on Use, we fetch each file's raw_url via
+  // /api/extract/url and feed the resulting chapters to the queue.
+  const title = meta.owner
+    ? `Gist by @${meta.owner}`
+    : "GitHub Gist";
+  const picker = openDocumentPicker({
+    title,
+    meta: meta.description || `${files.length} files`,
+    items: files.map((f) => ({
+      id: f.filename,
+      title: f.filename,
+      subtitle: f.language || f.type || "",
+      size: f.size,
+      extra: f,
+    })),
+    filterPlaceholder: "Filter by filename…",
+    emptyText: "No files in this gist.",
+    noMatchText: "No matching files.",
+    onUse: async (picked, opts = {}) => {
+      if (picked.length === 1) {
+        const f = picked[0].extra;
+        setStatus(`Loading ${f.filename}…`);
+        try {
+          const res = await fetch("/api/extract/url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: f.raw_url,
+              github_token: token || undefined,
+            }),
+          });
+          if (!res.ok) {
+            let detail = `HTTP ${res.status}`;
+            try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+            throw new Error(detail);
+          }
+          const data = await res.json();
+          exitReadingView();
+          textEl.value = data.text || "";
+          _pendingImages = Array.isArray(data.images) ? data.images : [];
+          _pendingGitRef = null;
+          _pendingChapterTitle = f.filename.replace(/\.[^.]+$/, "");
+          updateCounts();
+          _checkForChapters();
+          setStatus(`Loaded ${f.filename} · ready to Generate`);
+        } catch (err) {
+          setStatus(`Gist fetch failed: ${err.message}`, true);
+        }
+        return;
+      }
+      setStatus(`Fetching ${picked.length} files…`);
+      const chapters = [];
+      const skipped = [];
+      for (let i = 0; i < picked.length; i++) {
+        const f = picked[i].extra;
+        setStatus(`Fetching ${i + 1} of ${picked.length}: ${f.filename}…`);
+        try {
+          const res = await fetch("/api/extract/url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: f.raw_url,
+              github_token: token || undefined,
+            }),
+          });
+          if (!res.ok) {
+            skipped.push({ filename: f.filename, reason: `HTTP ${res.status}` });
+            continue;
+          }
+          const data = await res.json();
+          const clean = (data.text || "").trim();
+          // Same empty-text guard as the GitHub multi-fetch path.
+          if (!clean) {
+            skipped.push({ filename: f.filename, reason: "empty after extract" });
+            continue;
+          }
+          chapters.push({
+            title: f.filename.replace(/\.[^.]+$/, ""),
+            text: clean,
+          });
+        } catch (err) {
+          skipped.push({ filename: f.filename, reason: err.message });
+        }
+      }
+      if (chapters.length === 0) {
+        const tail = skipped.length
+          ? ` (${skipped.length} skipped — see Settings → View debug log)`
+          : "";
+        setStatus(`No files could be loaded.${tail}`, true);
+        return;
+      }
+      if (skipped.length) {
+        setStatus(
+          `${chapters.length} fetched, ${skipped.length} skipped — see Settings → View debug log`
+        );
+        _dlog && _dlog("gist", "multi-fetch done with skips", {
+          ok: chapters.length, skipped,
+        });
+      }
+      if (opts.background) {
+        _startBackgroundChapterQueue(chapters);
+      } else {
+        _startChapterQueue(chapters);
+      }
+    },
+  });
+}
+
 // ---- Scrivener browser (uses shared document picker) ------------------
 // Opened by the upload handler when the user picks a .zip file and
 // the backend detects it's a Scrivener bundle. Chapters are already
@@ -9878,6 +11487,14 @@ function _githubBranchFromUrl(url) {
 async function fetchFromUrl() {
   const url = (urlInput.value || "").trim();
   if (!url) return;
+  // v181: Gist URLs go through a separate flow. /api/gist/meta returns
+  // the file list; single-file gists land in the textarea directly,
+  // multi-file gists open the picker so the user can choose which
+  // files become chapters.
+  if (_isGistUrl(url)) {
+    openGistBrowser(url);
+    return;
+  }
   // GitHub repo root URLs → open the file browser instead of fetching
   // the landing page (which trafilatura would extract as marketing
   // chrome, not as a manuscript).

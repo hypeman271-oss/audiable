@@ -44,14 +44,123 @@ GITHUB_BROWSE_EXTENSIONS = {
 }
 
 
-def _parse_github_repo_url(url: str) -> tuple[str | None, str | None]:
-    """Pull (owner, repo) out of a github.com URL. Accepts repo roots
-    (`github.com/owner/repo`), nested paths (any subpath under it), and
-    `.git` suffix. Returns (None, None) for anything else."""
+def _parse_gist_id(url: str) -> str | None:
+    """Pull the Gist id out of a gist.github.com URL.
+
+    Accepts these shapes (per GitHub's URL scheme):
+        https://gist.github.com/<id>
+        https://gist.github.com/<user>/<id>
+        https://gist.github.com/<user>/<id>#file-foo-md
+        https://gist.github.com/<user>/<id>/raw/<sha>/<file>
+
+    The id is the alphanumeric path segment (typically 32 hex chars,
+    but can be shorter for older Gists). Returns None if the URL is
+    not a Gist or the id doesn't look like one.
+    """
+    import re
     import urllib.parse
 
     parsed = urllib.parse.urlparse((url or "").strip())
-    if parsed.hostname not in ("github.com", "www.github.com"):
+    if parsed.hostname not in ("gist.github.com",):
+        return None
+    parts = [p for p in parsed.path.split("/") if p]
+    if not parts:
+        return None
+    # Last "/<32 hex>" segment in /<user>/<id> form, or the only
+    # segment in /<id> form. Older Gists used decimal-ish ids; new
+    # ones are 32 hex. Accept anything alphanumeric of length >= 7.
+    candidate = None
+    for p in parts:
+        if re.fullmatch(r"[A-Za-z0-9]{7,40}", p):
+            candidate = p
+    return candidate
+
+
+def fetch_gist_meta(
+    gist_id: str,
+    github_token: str | None = None,
+) -> dict:
+    """Look up a Gist's metadata + file list via the GitHub API.
+
+    Returns:
+        {"id": str, "owner": str | None, "description": str,
+         "files": [{"filename": str, "size": int, "language": str,
+                    "raw_url": str, "type": str}, ...]}
+
+    Raises ExtractionError on any failure. Gist API has a generous
+    public rate limit + works without a token for public gists, so
+    github_token is optional. Private gists require a token.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    if not gist_id:
+        raise ExtractionError("missing gist id")
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Narrative/0.1",
+    }
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    url = f"https://api.github.com/gists/{gist_id}"
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        hint = (
+            " — gist may be private; set a Personal Access Token"
+            if e.code == 404
+            else ""
+        )
+        raise ExtractionError(
+            f"GitHub Gist fetch failed: HTTP {e.code}{hint}"
+        ) from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ExtractionError(f"could not reach GitHub: {e}") from e
+
+    files_obj = data.get("files") or {}
+    files: list[dict] = []
+    for fname, info in files_obj.items():
+        if not isinstance(info, dict):
+            continue
+        files.append({
+            "filename": info.get("filename") or fname,
+            "size": int(info.get("size") or 0),
+            "language": info.get("language") or "",
+            "raw_url": info.get("raw_url") or "",
+            "type": info.get("type") or "",
+        })
+    files.sort(key=lambda f: f["filename"].lower())
+
+    owner_obj = data.get("owner") or {}
+    return {
+        "id": data.get("id") or gist_id,
+        "owner": owner_obj.get("login") if isinstance(owner_obj, dict) else None,
+        "description": data.get("description") or "",
+        "files": files,
+    }
+
+
+def _parse_github_repo_url(url: str) -> tuple[str | None, str | None]:
+    """Pull (owner, repo) out of a github.com or GHE URL. Accepts repo
+    roots (`<host>/owner/repo`), nested paths (any subpath under it),
+    and `.git` suffix. Returns (None, None) for anything else.
+
+    v181: also accepts any host listed in the GITHUB_ENTERPRISE_HOSTS
+    env var — same path shape, GHE just lives at a different hostname.
+    The host itself is exposed via _parse_github_repo_url_host so
+    callers that need to build API URLs can route to the right base.
+    """
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse((url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if host not in ("github.com", "www.github.com") and host not in _get_enterprise_hosts():
         return None, None
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 2:
@@ -63,11 +172,25 @@ def _parse_github_repo_url(url: str) -> tuple[str | None, str | None]:
     return owner, repo
 
 
+def _parse_github_repo_url_host(url: str) -> str | None:
+    """Return the host portion of a repo URL (lowercased) so callers
+    can build host-aware API URLs. Returns None for non-GitHub URLs."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse((url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if host in ("github.com", "www.github.com"):
+        return "github.com"
+    if host in _get_enterprise_hosts():
+        return host
+    return None
+
+
 def fetch_github_tree(
     owner: str,
     repo: str,
     branch: str | None = None,
     github_token: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """List the text-format files in a GitHub repo.
 
@@ -96,10 +219,11 @@ def fetch_github_tree(
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
 
+    api_base = _github_api_base(host)
     # Look up the default branch when one wasn't supplied. Saves the
     # user from having to guess between main/master/develop/&c.
     if not branch:
-        meta_url = f"https://api.github.com/repos/{owner}/{repo}"
+        meta_url = f"{api_base}/repos/{owner}/{repo}"
         try:
             req = urllib.request.Request(meta_url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -118,7 +242,7 @@ def fetch_github_tree(
             raise ExtractionError(f"could not reach GitHub: {e}") from e
 
     tree_url = (
-        f"https://api.github.com/repos/{owner}/{repo}"
+        f"{api_base}/repos/{owner}/{repo}"
         f"/git/trees/{branch}?recursive=1"
     )
     try:
@@ -163,6 +287,7 @@ def fetch_github_branches(
     owner: str,
     repo: str,
     github_token: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """List the branches in a GitHub repo + the default branch name.
 
@@ -198,10 +323,11 @@ def fetch_github_branches(
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
 
+    api_base = _github_api_base(host)
     # Default branch name first (so we can sort it to the top of the
     # branch list). Reusing the same /repos endpoint fetch_github_tree
     # uses when no branch is supplied.
-    meta_url = f"https://api.github.com/repos/{owner}/{repo}"
+    meta_url = f"{api_base}/repos/{owner}/{repo}"
     try:
         req = urllib.request.Request(meta_url, headers=headers)
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -225,7 +351,7 @@ def fetch_github_branches(
     branches: list[str] = []
     for page in range(1, 6):
         page_url = (
-            f"https://api.github.com/repos/{owner}/{repo}"
+            f"{api_base}/repos/{owner}/{repo}"
             f"/branches?per_page=100&page={page}"
         )
         try:
@@ -266,18 +392,25 @@ def fetch_github_branches(
 
 def _parse_github_raw_url(url: str) -> tuple[str | None, str | None, str | None, str | None]:
     """Pull (owner, repo, branch, path) out of either a raw URL or a
-    github.com blob URL. Returns all-None for anything else."""
+    github.com (or GHE) blob URL. Returns all-None for anything else.
+
+    v181: GHE hosts are recognized at any of the same paths github.com
+    uses. They don't have a separate raw-URL host (the raw bytes live
+    on the same hostname under /<owner>/<repo>/raw/<branch>/<path>).
+    """
     import urllib.parse
 
     parsed = urllib.parse.urlparse((url or "").strip())
     parts = [p for p in parsed.path.split("/") if p]
-    if parsed.hostname == "raw.githubusercontent.com":
+    host = (parsed.hostname or "").lower()
+    if host == "raw.githubusercontent.com":
         # /owner/repo/branch/path/to/file.md
         if len(parts) < 4:
             return None, None, None, None
         return parts[0], parts[1], parts[2], "/".join(parts[3:])
-    if parsed.hostname in ("github.com", "www.github.com"):
+    if host in ("github.com", "www.github.com") or host in _get_enterprise_hosts():
         # /owner/repo/blob/branch/path/to/file.md
+        # /owner/repo/raw/branch/path/to/file.md
         if len(parts) < 5 or parts[2] not in ("blob", "raw"):
             return None, None, None, None
         return parts[0], parts[1], parts[3], "/".join(parts[4:])
@@ -290,6 +423,7 @@ def fetch_github_file_sha(
     branch: str,
     path: str,
     github_token: str | None = None,
+    host: str | None = None,
 ) -> str:
     """Look up the current SHA for a single file via the GitHub contents
     API. Used by the sync-check path when the caller didn't pre-supply a
@@ -312,7 +446,7 @@ def fetch_github_file_sha(
         headers["Authorization"] = f"Bearer {github_token}"
 
     api_url = (
-        f"https://api.github.com/repos/{owner}/{repo}/contents/"
+        f"{_github_api_base(host)}/repos/{owner}/{repo}/contents/"
         f"{urllib.parse.quote(path)}?ref={urllib.parse.quote(branch)}"
     )
     try:
@@ -328,22 +462,98 @@ _GITHUB_HOSTS = {
     "github.com",
     "raw.githubusercontent.com",
     "www.github.com",
+    # v181: Gist raw file URLs come from a distinct subdomain (it's the
+    # CDN that fronts the gist file contents). Without this, the
+    # authenticated fetch path drops the Bearer token for private gist
+    # raw URLs and the fetch 404s.
+    "gist.github.com",
+    "gist.githubusercontent.com",
 }
 
 
-def _rewrite_github_url(url: str) -> str:
-    """Convert github.com/.../blob/branch/path URLs to raw.githubusercontent.com.
+# v181: GitHub Enterprise support. The operator opts in via env var
+# GITHUB_ENTERPRISE_HOSTS = "git.mycompany.com,git.other.com" — comma
+# separated list of GHE hostnames. When set, those hosts:
+#   - get treated like github.com for URL parsing (owner/repo
+#     extraction, raw-URL rewriting, SSRF allowlist)
+#   - route API calls to /api/v3 instead of api.github.com
+# Reading at call time so a restart isn't required after `export`.
+def _get_enterprise_hosts() -> set[str]:
+    import os
+    raw = os.environ.get("GITHUB_ENTERPRISE_HOSTS", "")
+    out: set[str] = set()
+    for part in raw.split(","):
+        part = part.strip().lower()
+        if part:
+            out.add(part)
+    return out
 
-    Blob URLs return the HTML file-browser page; the raw URLs return the
-    file's actual bytes. The fetcher always wants bytes, so silently
-    rewrite. URLs that don't match the blob pattern (raw URLs, repo
-    roots, gists, etc.) pass through unchanged.
+
+def _is_github_host(host: str | None) -> bool:
+    """github.com / www.github.com / known raw hosts / any GHE host."""
+    if not host:
+        return False
+    h = host.lower()
+    if h in _GITHUB_HOSTS:
+        return True
+    return h in _get_enterprise_hosts()
+
+
+def _github_api_base(host: str | None) -> str:
+    """API base URL for the given host.
+
+    github.com → https://api.github.com (the public REST API).
+    Any GHE host → https://<host>/api/v3 (GitHub Enterprise convention).
+    Returns the public api.github.com as a safe default for unknown hosts.
+    """
+    if not host:
+        return "https://api.github.com"
+    h = host.lower()
+    if h in ("github.com", "www.github.com"):
+        return "https://api.github.com"
+    if h in _get_enterprise_hosts():
+        return f"https://{h}/api/v3"
+    return "https://api.github.com"
+
+
+def _github_raw_base(host: str | None, owner: str, repo: str, branch: str, path: str) -> str:
+    """Build the raw-file URL for a host/owner/repo/branch/path.
+
+    github.com → raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>
+    GHE host → <host>/<owner>/<repo>/raw/<branch>/<path>
+    """
+    if host and host.lower() in _get_enterprise_hosts():
+        return f"https://{host}/{owner}/{repo}/raw/{branch}/{path}"
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
+
+
+def _github_host_for_token(host: str | None) -> bool:
+    """Should we forward the user's PAT/OAuth token to requests for
+    this host? Public github.com + raw + gist + every configured GHE
+    host all qualify."""
+    return _is_github_host(host)
+
+
+def _rewrite_github_url(url: str) -> str:
+    """Convert github.com / GHE blob URLs to their raw equivalents.
+
+    Blob URLs return the HTML file-browser page; the raw URLs return
+    the file's actual bytes. The fetcher always wants bytes, so
+    silently rewrite. URLs that don't match the blob pattern (raw
+    URLs already, repo roots, gists, etc.) pass through unchanged.
+
+    v181: GHE uses the same path layout — only the raw host differs.
+    For github.com → raw.githubusercontent.com. For GHE we use the
+    host's own /raw path (`<host>/<owner>/<repo>/raw/<branch>/<path>`).
     """
     import re
     import urllib.parse
 
     parsed = urllib.parse.urlparse(url)
-    if parsed.hostname not in ("github.com", "www.github.com"):
+    host = (parsed.hostname or "").lower()
+    is_dot_com = host in ("github.com", "www.github.com")
+    is_ghe = host in _get_enterprise_hosts()
+    if not (is_dot_com or is_ghe):
         return url
     # /user/repo/blob/branch/path/to/file.md
     # /user/repo/raw/branch/path/to/file.md
@@ -354,7 +564,7 @@ def _rewrite_github_url(url: str) -> str:
     if not m:
         return url
     user, repo, branch, path = m.groups()
-    return f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{path}"
+    return _github_raw_base(host, user, repo, branch, path)
 
 
 def fetch_and_extract_url(
@@ -407,6 +617,12 @@ def fetch_and_extract_url(
     except socket.gaierror:
         raise ValueError(f"could not resolve {parsed.hostname}")
 
+    # v181: if the host is an operator-configured GHE endpoint (set via
+    # GITHUB_ENTERPRISE_HOSTS), allow private IPs. Most enterprise
+    # deployments live on a corporate intranet, and the operator
+    # opted in by listing the host. github.com / public hosts still
+    # go through the full guard.
+    ghe_bypass = (parsed.hostname or "").lower() in _get_enterprise_hosts()
     for ai in addrs:
         ip_str = ai[4][0]
         # IPv4-mapped IPv6 like ::ffff:127.0.0.1 — unmap and recheck below.
@@ -422,6 +638,8 @@ def fetch_and_extract_url(
             or ip.is_reserved
             or ip.is_multicast
         ):
+            if ghe_bypass:
+                continue
             raise ValueError(
                 f"refusing to fetch non-public address: {ip_str}"
             )
@@ -506,14 +724,33 @@ def fetch_and_extract_url(
         # which repo+branch+path to compare against later.
         owner_, repo_, branch_, path_ = _parse_github_raw_url(url)
         if owner_ and repo_:
+            # v181: derive the canonical "human" host from the URL so
+            # GHE clips get a repoUrl pointing at their GHE host, not
+            # github.com. raw.githubusercontent.com always maps back
+            # to github.com (that's where the user would browse the
+            # repo); GHE raw paths live on the same host.
+            import urllib.parse as _up
+            raw_host = (_up.urlparse(url).hostname or "").lower()
+            if raw_host == "raw.githubusercontent.com":
+                canonical_host = "github.com"
+            elif raw_host in _get_enterprise_hosts():
+                canonical_host = raw_host
+            else:
+                canonical_host = "github.com"
             sha = git_sha or fetch_github_file_sha(
-                owner_, repo_, branch_, path_, github_token=github_token
+                owner_, repo_, branch_, path_,
+                github_token=github_token,
+                host=canonical_host,
             )
             result["gitRef"] = {
-                "repoUrl": f"https://github.com/{owner_}/{repo_}",
+                "repoUrl": f"https://{canonical_host}/{owner_}/{repo_}",
                 "branch": branch_,
                 "path": path_,
                 "sha": sha,
+                # v181: host is opaque to old clients (they ignored
+                # unknown gitRef fields) but lets the future
+                # sync-check path route to GHE's API. Optional.
+                "host": canonical_host,
             }
         return result
 

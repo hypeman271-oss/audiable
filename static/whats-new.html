@@ -141,6 +141,700 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v200</span>
+          <span class="release-tagline">Book view M3.2: inline images, paginated alongside the prose</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Images from URL-imported chapters now appear in
+            the book view too.</strong> The reading view has rendered
+            them inline since v85; the book view caught up in v200.
+            Each image is anchored to its <code>sentence_index</code>
+            (the position the trafilatura extractor recorded) and
+            renders just before that sentence — same semantics as
+            the reading view.
+          </li>
+          <li>
+            <strong>Image-aware paginator.</strong> Before pagination,
+            every image's natural dimensions get preloaded via
+            <code>new Image()</code> so the off-screen measurement
+            probe can reserve the right amount of vertical space
+            <em>before</em> the network finishes the actual download.
+            Each image + its anchor sentence are treated as an
+            <em>atomic unit</em> — if the pair doesn't fit on the
+            current page, both move to the next. An image never
+            separates from the sentence it introduces.
+          </li>
+          <li>
+            <strong>Centered, capped at half-page-height.</strong>
+            Inline images sit centered with
+            <code>max-height: 50%</code> so a single photo can't
+            dominate a page. Magazine 2-column body lets images span
+            the gutter via <code>column-span: all</code> — they break
+            the column grid and read like full-width figures.
+          </li>
+          <li>
+            <strong>Caches across repagination.</strong> The bucketed
+            image map + dimension cache stash on
+            <code>_bookViewSource</code>, so switching theme or text
+            size doesn't re-download anything — paginator just
+            re-runs against the same memoized data.
+          </li>
+        </ul>
+        <p>
+          Still pending in M3: <strong>print stylesheet</strong> for
+          a "Print spread" affordance that breaks at page boundaries.
+        </p>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v199</span>
+          <span class="release-tagline">Book view M3: three theme variants — Paperback, Magazine, Manuscript</span>
+        </div>
+        <ul>
+          <li>
+            <strong>New Settings row: Book view theme.</strong>
+            Pick the typographic personality of book pages
+            independently from the app-wide Dark/Light theme.
+          </li>
+          <li>
+            <strong>Paperback (default).</strong> The existing serif
+            single-column layout — Iowan Old Style with justified
+            text and tight letter-spacing.
+          </li>
+          <li>
+            <strong>Magazine.</strong> Sans-serif (Inter / Helvetica
+            Neue stack), tighter line-height, two columns on desktop.
+            On phones it collapses to a single column since two
+            ~140px columns are unreadable.
+          </li>
+          <li>
+            <strong>Manuscript.</strong> Monospace (Courier Prime),
+            looser line-height, left-aligned (no justification) — the
+            typewritten-draft look. No italic by default; the wider
+            line does the work.
+          </li>
+          <li>
+            <strong>CSS custom properties throughout.</strong> Every
+            typographic dimension on <code>.book-page-body</code>
+            (font-family, line-height, letter-spacing, text-align,
+            column-count) now reads from a <code>--book-*</code> var.
+            Themes override the vars via a <code>data-book-theme</code>
+            attribute. The off-screen paginator probe carries the
+            same attribute so measurement metrics match the live
+            render — otherwise switching themes mid-clip would
+            paginate against paperback metrics and visibly overflow
+            in magazine.
+          </li>
+        </ul>
+        <p>
+          <em>Caveat:</em> Magazine's CSS multi-column inside a
+          flex child relies on browser-specific scrollHeight
+          semantics for overflow detection. If pages crowd or come
+          out short, that's the paginator under multi-column —
+          file feedback and I'll switch to a horizontal-overflow
+          check.
+        </p>
+        <p>
+          Still coming in M3: inline images in book view (M3.2) +
+          print stylesheet (M3.3).
+        </p>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v198</span>
+          <span class="release-tagline">Phones bypass the hero chip strip — chips stay in the player card</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Phones reverted to pre-v188 layout.</strong>
+            The v188 → v196 work that moved the chip strip into the
+            hero (and later added a floating clone for scroll) was
+            always meant for tablet and desktop where the empty
+            horizontal space in the hero made it a clean fit. On
+            phones it crowded the wordmark + icon rail and stole
+            real estate from a viewport that didn't have any to
+            spare. v198 gates the migration + clone setup on
+            viewport width: at ≤720px the chips skip the move
+            entirely and stay where they were originally — inside
+            the player card's <code>.player-actions</code>
+            horizontal-scroll row.
+          </li>
+          <li>
+            <strong>Belt-and-braces CSS.</strong> Even with the JS
+            gate in place, <code>display: none !important</code> on
+            both <code>.hero-controls</code> and
+            <code>.hero-controls-float</code> at the phone
+            breakpoint catches anything a future migration step
+            forgets.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v197</span>
+          <span class="release-tagline">Book view M2: drop caps, running headers, page numbers, font-size control</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Drop cap on page 1.</strong> The first character
+            of the first text page now renders ~3 lines tall in the
+            accent color, with the body wrapping cleanly around it
+            via <code>::first-letter</code> + <code>float: left</code>.
+            No DOM restructuring — the existing sentence-span flow
+            stays intact, so click-to-seek + karaoke still work on
+            the dropped letter's sentence. (Chapter-aware drop caps
+            wait on chapter metadata; for now once per clip.)
+          </li>
+          <li>
+            <strong>Running headers.</strong> Each text page shows
+            the clip title at the top in small caps, with a thin
+            underline separating it from the body. The header
+            truncates with ellipsis rather than wrapping — real
+            running headers never wrap.
+          </li>
+          <li>
+            <strong>Page numbers.</strong> Bottom corner of every
+            text page, 1-indexed. Left page → bottom-left, right
+            page → bottom-right, matching printed-book convention
+            (number lives at the outer corner). Cover page stays
+            numberless. Mobile single-page spreads always right-align.
+          </li>
+          <li>
+            <strong>Book view text size.</strong> New Settings row
+            with four options (Small / Medium / Large / X-Large →
+            14 / 16 / 18 / 20px). Persists to localStorage and
+            applies via a CSS custom property
+            (<code>--book-font-size</code>). Changing the size while
+            in book view re-paginates instantly and anchors the new
+            spread on the same sentence you were reading — no
+            jumping forty pages because the page breaks moved.
+          </li>
+          <li>
+            <strong>Paginator now header/footer-aware.</strong> The
+            off-screen measurement probe carries the same header and
+            footer the renderer produces, so the body's available
+            height accounts for them. Without that, pages would
+            silently overflow by ~50px each.
+          </li>
+        </ul>
+        <p>
+          Deferred from M2: print stylesheet (will arrive as M2.5
+          once the rest beds in).
+        </p>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v196</span>
+          <span class="release-tagline">Floating strip fades in as soon as the hero scrolls away</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Closed the v195 visibility gap.</strong> v195
+            triggered the float on
+            <code>#player-card.boundingClientRect.bottom &lt; 0</code> —
+            meaning the player card had to be entirely above the
+            viewport before the float showed. But the player card
+            sits below the text card; you could easily be scrolled
+            mid-text-card with the hero already off-screen, the
+            player card still on-screen, and the float silently
+            hidden. v196 watches the hero strip itself: the
+            instant <em>its</em> bottom edge crosses the top of the
+            viewport, the float fades in. No gap.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v195</span>
+          <span class="release-tagline">Two chip strips: hero inline + floating clone, cross-fade on scroll</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Hero strip lives in the hero again.</strong>
+            At the top of the page the chips sit inside the hero's
+            empty middle slot — between the "Narrative" wordmark
+            and the Voice / Library / ⚙ icon rail. Zero overlap
+            with the text card buttons below, because the strip
+            isn't even at that vertical position.
+          </li>
+          <li>
+            <strong>Floating clone takes over on scroll.</strong>
+            Once you scroll past the player card, a second strip
+            fades in at <code>top: 6px / left: 160px</code>. It's
+            a DOM clone of the hero strip — same chip text, same
+            play/pause icon state. Clicking a clone chip forwards
+            to the original (single source of truth for click
+            handlers); a MutationObserver on each original chip
+            mirrors any text / class / hidden-attribute changes
+            to its clone so countdown timers, Speed cycles, and
+            A↔B state stay in sync.
+          </li>
+          <li>
+            <strong>Smooth handoff.</strong> The hero strip scrolls
+            away naturally with the hero; the float opacity-fades
+            in via a 220ms transition. The two never overlap because
+            they're at different vertical positions — by the time
+            the float appears, the hero strip is already off-screen.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v194</span>
+          <span class="release-tagline">No scrollbar on the floating strip + further leftward anchor</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Scrollbar gone.</strong> v193's 480px cap was
+            just under the chips' natural width, so a hairline
+            horizontal scrollbar showed up under the pill. v194
+            sizes the pill to <code>width: max-content</code> — it
+            now expands exactly to fit its chips, no overflow, no
+            scrollbar. Belt-and-braces <code>scrollbar-width: none</code>
+            and a <code>::-webkit-scrollbar</code> reset make sure
+            Chromium and Firefox both stay quiet.
+          </li>
+          <li>
+            <strong>Anchored further left.</strong> Switched from
+            <code>left: calc(50% - 220px)</code> + translate (still
+            kind of centered) to a hard <code>left: 160px</code>
+            anchor with no translate. The strip now starts 160px
+            from the viewport's left edge — just past the
+            "Narrative" wordmark — and extends rightward, sitting
+            firmly in the upper-left quadrant.
+          </li>
+          <li>
+            <strong>Phones unchanged.</strong> ≤720px viewports
+            still recenter and use near-edge-to-edge width.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v193</span>
+          <span class="release-tagline">Floating chip strip slid left so it stops covering the text card buttons</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Back to always-visible.</strong> v192's
+            "appears only when scrolled past" model meant the
+            chips disappeared the moment you scrolled back up.
+            v193 restores v191's always-floating strip — chips
+            stay reachable whether you're at the top of the page
+            or six chapters down.
+          </li>
+          <li>
+            <strong>Left-anchored instead of centered.</strong>
+            v191 centered the pill at <code>left: 50%</code>,
+            which dropped it directly on top of the text card's
+            Clear / Import / Edit text / Audio view buttons one
+            row below. v193 shifts the anchor to
+            <code>calc(50% - 220px)</code>, parking the strip in
+            the empty band between the "Narrative" wordmark on
+            the left and those action buttons on the right. The
+            buttons are fully reachable now.
+          </li>
+          <li>
+            <strong>Phones unchanged.</strong> At ≤720px viewports,
+            the strip recenters and uses near-edge-to-edge width
+            (the text card buttons wrap to their own row at phone
+            sizes, so there's no collision to dodge).
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v192</span>
+          <span class="release-tagline">Chip strip floats only when you've scrolled away</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Same visibility model as "Return to current".</strong>
+            At rest, the chips live inside the player card where
+            they always have — no floating bar overhead. When the
+            player card scrolls off the top of the viewport, the
+            chips slide up into a fixed-position pill at top: 6px
+            so you can still hit skip ±, Bookmark, Sleep, A↔B,
+            Speed, Notes, and Play/Pause without scrolling back.
+            Scroll the player card back into view and the strip
+            slides out — the chips return to their home.
+          </li>
+          <li>
+            <strong>One source of truth.</strong> The chips
+            physically move between containers as you scroll, so
+            there's a single DOM node + click handler per chip.
+            No duplicated buttons, no state sync drift.
+          </li>
+          <li>
+            <strong>Retired the v131 always-floating bar.</strong>
+            The desktop ≥1024px rule that pinned <code>.player-actions</code>
+            to top: 92px on every page load is gone — v192's
+            return-to-current model replaces it. Desktop now
+            matches phone behavior: chips inline at rest, floating
+            only after scroll.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v191</span>
+          <span class="release-tagline">Floating chip strip moved into the hero's empty slot</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Zero vertical real estate.</strong> v190 docked
+            the chip strip below the hero — that worked but added
+            ~50px of vertical bulk to every page. v191 switches the
+            strip to <code>position: fixed</code> and parks it in
+            the empty middle space of the hero, between the
+            "Narrative" wordmark on the left and the Voice/Library/
+            Settings icon rail on the right. At rest, no content is
+            pushed down. Scroll, and the strip stays pinned at
+            <code>top: 6px</code> of the viewport.
+          </li>
+          <li>
+            <strong>Tighter chrome.</strong> Padding, chip height,
+            and play-button diameter all dropped a notch — the strip
+            now reads as a compact pill that sits naturally in the
+            hero row without crowding the brand. Phone breakpoint
+            shrinks everything further so the strip stays a single
+            row at common chip counts.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v190</span>
+          <span class="release-tagline">Player controls float at the top — always visible</span>
+        </div>
+        <ul>
+          <li>
+            <strong>The hero chip strip is now a sticky floating
+            pill.</strong> At the top of the page it sits as a
+            horizontal bar below the hero. Scroll down and it pins
+            to the top of the viewport, riding along while the
+            title + tagline + icon rail scroll away. Skip ±, 🔖
+            Bookmark, Sleep, A↔B, 1× speed, 📝 Notes, and the v188
+            round Play/Pause are all reachable from anywhere on the
+            page, no scrolling back up.
+          </li>
+          <li>
+            <strong>Glass effect.</strong> Backdrop blur + a soft
+            shadow underneath sells the floating look without
+            stealing focus from the content scrolling behind it.
+            Browsers without backdrop-filter get a solid card-color
+            fallback so the chips never sit on top of unreadable
+            text.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v189</span>
+          <span class="release-tagline">Audio view: scan ahead without snap-back</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Audio (reading) view now respects manual scroll.</strong>
+            Wheel, swipe, or use arrow keys / PageUp / PageDown to
+            scan ahead and the page stays where you put it. The
+            karaoke highlight keeps tracking the audio in the
+            background — you just don't get yanked back every time
+            the reader starts a new line. Same pattern as the book
+            view from v187.
+          </li>
+          <li>
+            <strong>Floating "↩ Return to current" pill.</strong>
+            Appears at the bottom-center of the screen the moment
+            the audio is on a sentence that's no longer in your
+            visible scroll range. One click smooth-scrolls back to
+            the sentence being read now, centered in the view.
+          </li>
+          <li>
+            <strong>Auto-resume.</strong> If the audio reads forward
+            until the active sentence is back in your visible range
+            (or you scroll back to where the audio is), the pinned
+            state clears silently and auto-scroll resumes.
+            Clicking a sentence also un-pins, since you're
+            indicating "engage here."
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v188</span>
+          <span class="release-tagline">Player controls move to the hero + new Play/Pause</span>
+        </div>
+        <ul>
+          <li>
+            <strong>The chip strip lives in the hero now.</strong>
+            Skip ±, 🔖 Bookmark, Sleep, A↔B, 1× speed, and 📝
+            Notes — all moved from the player card up into the
+            hero's empty middle slot (between the Narrative title
+            and the icon rail). One glance, one tap, no scrolling.
+          </li>
+          <li>
+            <strong>New round Play/Pause button at the head of the
+            strip.</strong> Accent-fill so it reads as the primary
+            action. Mirrors the player's own play state — toggling
+            either one keeps the icons in sync. Tooltip mentions
+            the Space-bar shortcut.
+          </li>
+          <li>
+            Visibility tracks the player card automatically — the
+            strip appears the moment a clip is loaded, hides when
+            you Clear.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v187</span>
+          <span class="release-tagline">Scan ahead in book view without the spread snapping back</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Manual page nav now pins the spread.</strong> When
+            you ‹/›, swipe, or use ← / → to scan ahead, the spread
+            stays where you put it — the karaoke highlight keeps
+            tracking the audio in the background, but the page
+            doesn't yank itself back to where the reader is.
+          </li>
+          <li>
+            <strong>"↩ Return to current" button.</strong> Slots into
+            the nav row between the indicator and the › button.
+            Appears the moment the audio is on a different spread
+            than the one you're looking at; click it and the spread
+            jumps to wherever the reader is now and the auto-flip
+            resumes.
+          </li>
+          <li>
+            <strong>Auto-resume on natural catch-up.</strong> If you
+            page ahead a few spreads and the audio reads forward
+            until it lands on the spread you're already viewing, the
+            pinned state clears silently and the next manual page
+            re-pins.
+          </li>
+          <li>
+            <strong>Clicking a sentence un-pins too.</strong>
+            Clicking a sentence (which seeks the audio) reads as
+            "engage here," so the auto-flip resumes from that point.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v186</span>
+          <span class="release-tagline">Book view stays open across chapter switches</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Switching chapters from the library while in book
+            view repaginates the book — instead of showing both views
+            at once.</strong> v185 didn't notice the content had changed
+            and left the old book spread mounted while the reading view
+            fired up underneath. Loading a new clip now detects you
+            were in book view and re-renders <em>that</em> view with
+            the new content, leaving you where you wanted to be.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v185</span>
+          <span class="release-tagline">📖 Book view — Milestone 1</span>
+        </div>
+        <ul>
+          <li>
+            <strong>See your chapter as a two-page book spread.</strong>
+            Once a clip is loaded, the reading-view header gets a
+            new <em>📖 Book view</em> toggle. Click it: the text
+            re-flows into a paginated spread with the chapter's
+            cover art on the left page and the prose starting on
+            the right. Pages break on sentence boundaries (never
+            mid-sentence) — measured live against the spread's
+            real CSS dimensions.
+          </li>
+          <li>
+            <strong>Karaoke follows the audio across pages.</strong>
+            As playback advances, the active sentence highlights
+            inside the book spread and the page auto-flips when the
+            cursor crosses a page boundary. Click any sentence to
+            seek the audio there.
+          </li>
+          <li>
+            <strong>Nav</strong>: ← / → keyboard arrows, swipe on
+            touch, or the buttons under the spread. A <em>"Spread 3
+            of 12"</em> indicator hangs below.
+          </li>
+          <li>
+            <strong>What's coming.</strong> Milestone 2 layers drop
+            caps + running headers + page numbers + font-size
+            controls + a print stylesheet. Milestone 3 adds the
+            magazine layout (two columns + sidebars) and theme
+            variants (modern · vintage · magazine · manuscript-
+            typewriter), plus inline-image flow.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v184</span>
+          <span class="release-tagline">Tester fixtures + walkthroughs</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Sample files at <code>/samples/</code>.</strong>
+            Synthetic Obsidian vault (hits every parser skip rule),
+            DOCX (authored with python-docx), plain-text chapter-
+            marked sample for auto-split, plain-text dialogue
+            sample for Characters voice routing, and a markdown
+            article. Build script
+            (<code>samples/build.py</code>) is deterministic so the
+            outputs stay reproducible.
+          </li>
+          <li>
+            <strong>Manual §2 gets a "Test resources" section.</strong>
+            Links to the bundled samples + a clickable
+            <em>progit/progit2</em> GitHub URL for the tree-view +
+            branch picker + bulk-select demos. Gutenberg PDF/EPUB
+            pointers. A per-feature "what to look for" checklist.
+          </li>
+          <li>
+            <strong>New §10 — Tester walkthroughs.</strong> Five
+            numbered end-to-end runs (URL → queue, GitHub OAuth →
+            Sync, Author mode → Characters, Library Export → wipe
+            → Import, PWA install). Every step lists the expected
+            screen + status so a fresh tester knows what success
+            looks like at every step.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v183</span>
+          <span class="release-tagline">Manual catches up to the GitHub flow</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Manual updated.</strong> Every GitHub-flow
+            change since v76 is now documented: OAuth sign-in, PAT
+            scope audit, Gist URLs, GitHub Enterprise, recent-repos
+            chips, branch picker, VSCode-style folder tree with
+            tri-state folder checkboxes, ✓-imported badges, auto-
+            suggested chapters/ folder filter chips, the
+            <em>Re-narrate outdated</em> companion to Sync GitHub,
+            short-SHA on the Edit dialog. The library section also
+            picks up the v175 confetti + v171 first-clip tour, and
+            Settings now documents the v174 <em>Replay onboarding
+            tips</em> link plus the v177 in-app debug log viewer.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v182</span>
+          <span class="release-tagline">VSCode-style folder tree in the GitHub picker</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Folders, finally.</strong> The GitHub repo
+            picker now renders a collapsible tree instead of a flat
+            <code>chapter-manager/SKILL.md</code> wall of paths.
+            Carets toggle expansion, folders show their descendant
+            count, and the search field auto-expands every folder
+            that contains a match. The Scrivener and Obsidian
+            pickers stay flat — their items are already pre-grouped.
+          </li>
+          <li>
+            <strong>Tri-state folder checkbox.</strong> Ticking a
+            folder's checkbox selects every file under it (and every
+            file under every subfolder). Mixed-state styling shows
+            up when only some descendants are selected. Picking the
+            entire <em>chapters/</em> folder is now one click, not 35.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v181</span>
+          <span class="release-tagline">Gist URLs, GitHub Enterprise, scope audit</span>
+        </div>
+        <ul>
+          <li>
+            <strong>GitHub Gist support.</strong> Paste a
+            <code>gist.github.com</code> URL via <em>Import →
+            GitHub Gist</em> (or just <em>Paste URL</em>). Single-file
+            Gists load straight into the textarea; multi-file Gists
+            open the picker so you can choose which files become
+            chapters. Public Gists work without a token; private
+            ones use your saved PAT/OAuth token.
+          </li>
+          <li>
+            <strong>GitHub Enterprise (self-hosted) support.</strong>
+            Set <code>GITHUB_ENTERPRISE_HOSTS</code> on the server
+            to a comma-separated list of your GHE hostnames and
+            every GitHub flow — repo browser, branch picker, sync,
+            re-narrate, gitRef — routes API calls to
+            <code>&lt;host&gt;/api/v3</code> and raw fetches to
+            <code>&lt;host&gt;/&lt;owner&gt;/&lt;repo&gt;/raw/&lt;branch&gt;/…</code>.
+            Private-IP SSRF guard is relaxed for those hosts only,
+            since enterprise gateways usually live on a corporate
+            subnet. See <code>OAUTH_SETUP.md</code> §7.
+          </li>
+          <li>
+            <strong>PAT scope audit in Settings.</strong> The GitHub
+            help disclosure now includes a per-scope breakdown:
+            what each scope actually grants, what Narrative uses it
+            for, and what it does NOT touch. Fine-grained PATs get
+            their own row (<em>Contents → Read</em> + <em>Metadata
+            → Read</em> is enough).
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v180</span>
           <span class="release-tagline">Sign in with GitHub (OAuth)</span>
         </div>
