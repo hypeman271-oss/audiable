@@ -2481,13 +2481,38 @@ dialog.manual-dialog:not([open]) {
 
 .character-row {
   display: grid;
-  /* name | gender | voice | speaker | × */
-  grid-template-columns: 1fr auto 1.4fr auto auto;
+  /* v220-AB: name | gender | voice | speaker | color | × */
+  grid-template-columns: 1fr auto 1.4fr auto auto auto;
   gap: 6px;
   background: var(--bg-card-2);
   padding: 8px;
   border-radius: 10px;
   align-items: center;
+}
+
+/* v220-AB: per-character color swatch. Native input[type=color]
+ * is a perfectly fine mobile-friendly picker; we just have to remove
+ * the chrome browsers give it by default so it sits cleanly next to
+ * the voice/speaker selects. */
+.character-row input.character-color {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.character-row input.character-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.character-row input.character-color::-webkit-color-swatch {
+  border: none;
+  border-radius: 6px;
+}
+.character-row input.character-color::-moz-color-swatch {
+  border: none;
+  border-radius: 6px;
 }
 
 /* Gender select — narrow, just enough for "She" / "They". The compact
@@ -4511,7 +4536,10 @@ button:disabled {
   box-shadow: 0 0 0 2px var(--accent-tint-3);
 }
 
-.clip.current .clip-title::before {
+/* v220z: ▶ now hangs off the title-row text, since v220o moved the
+ * title out of the old .clip-title span. .clip-title-top-text is the
+ * span that holds the title string inside the new title row. */
+.clip.current .clip-title-top-text::before {
   content: "▶ ";
   color: var(--accent);
 }
@@ -4522,7 +4550,7 @@ button:disabled {
 .clip.outdated {
   border-left: 3px solid var(--accent);
 }
-.clip.outdated .clip-title::after {
+.clip.outdated .clip-title-top-text::after {
   content: " ↻";
   color: var(--accent);
   font-weight: 700;
@@ -6952,3 +6980,222 @@ button:disabled {
    .hero-controls-float is display:none on phones. Left in place
    as a no-op (the !important display:none takes precedence) so
    future tablet-breakpoint work has a reference point. */
+
+/* v220-AA: per-sentence voice assignment.
+ * Long-press a sentence in the reading view → assignment dialog opens.
+ * Pick a character (or Narrator) → sentence is tagged + dotted underlined
+ * + the assignment is stored on the clip so a re-narrate respects it. */
+.sentence-assigned {
+  /* Soft dotted underline that doesn't fight the long-sentence tooling. */
+  text-decoration: underline dotted var(--accent);
+  text-underline-offset: 3px;
+}
+.sentence-assign-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px 2px 5px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  /* Don't get word-wrapped into a sentence break — the tag stays as a
+   * single inline chunk leading the sentence. */
+  white-space: nowrap;
+}
+
+.sentence-assign-dialog {
+  border: none;
+  border-radius: 14px;
+  background: var(--bg-card);
+  color: var(--fg);
+  padding: 0;
+  width: min(420px, 92vw);
+  max-height: min(80vh, 80dvh);
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+.sentence-assign-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+.sentence-assign-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sentence-assign-header strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.sentence-assign-close {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.sentence-assign-close:hover {
+  color: var(--fg);
+}
+.sentence-assign-preview {
+  margin: 0;
+  padding: 8px 14px 12px;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  font-style: italic;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sentence-assign-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0;
+}
+.sentence-assign-list li {
+  padding: 0;
+}
+.sentence-assign-row {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: 10px 14px;
+  cursor: pointer;
+  display: block;
+}
+.sentence-assign-row:hover {
+  background: var(--accent-tint);
+}
+.sentence-assign-row.active {
+  background: var(--accent-tint-3);
+  font-weight: 600;
+}
+.sentence-assign-row.active::before {
+  content: "✓ ";
+  color: var(--accent);
+}
+
+/* v220-AG: persistent banner shown above the reading view whenever
+ * the current clip has voice assignments that haven't been baked
+ * into the audio yet. Tap → fires the silent re-narrate flow. */
+.pending-assignments-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.pending-assignments-banner[hidden] {
+  display: none !important;
+}
+.pending-assignments-banner:hover {
+  background: var(--accent-tint-3);
+}
+.pending-assignments-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pending-assignments-cta {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* v220-AC: multi-sentence select mode.
+ * .sentence-select-pending: sentences currently in the batch — soft
+ * accent-tinted background with a left border. Doesn't fight the
+ * sentence-assigned dotted-underline if the sentence also has an
+ * existing override; both render. */
+.sentence.sentence-select-pending {
+  background: var(--accent-tint-3);
+  box-shadow: inset 3px 0 0 var(--accent);
+  padding-left: 6px;
+  border-radius: 3px;
+}
+
+/* Floating action bar pinned to the bottom of the viewport. Sits above
+ * the audio player + mini-player so it never gets occluded. Visible
+ * only when body.assign-select-mode is set. */
+.assign-select-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+}
+.assign-select-bar[hidden] {
+  display: none !important;
+}
+.assign-select-count {
+  font-weight: 600;
+  color: var(--fg);
+}
+.assign-select-actions {
+  display: flex;
+  gap: 8px;
+}
+.assign-select-bar button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.assign-select-bar .assign-select-assign {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.assign-select-bar .assign-select-cancel:hover {
+  background: var(--bg-card-2);
+}
+.assign-select-bar .assign-select-assign:hover {
+  filter: brightness(1.1);
+}
+/* Mobile: dodge the mini-player which sits at the bottom on phones. */
+@media (max-width: 700px) {
+  .assign-select-bar {
+    bottom: 80px;
+    width: calc(100vw - 24px);
+    border-radius: 14px;
+    justify-content: space-between;
+  }
+}

@@ -1,0 +1,8 @@
+# Tauri build output — these are huge (~GB) and machine-specific.
+# Generated on every `cargo tauri dev|build` run; never want in git.
+/target
+/gen
+
+# Cargo lockfile stays committed for binary crates so reproducible
+# builds work — that's the Cargo convention.
+# Cargo.lock is committed.

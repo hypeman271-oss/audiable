@@ -4085,6 +4085,576 @@ function _saveCharacters(list) {
   }
 }
 
+// v220-AA: per-sentence manual voice assignment runtime.
+// _currentClipAssignments mirrors the loaded clip's sentenceAssignments
+// field — { "5": "Llea", "12": "narrator" } where the key is the
+// stringified sentence index (matches sentenceSpans[i] in the reading
+// view) and the value is either a character name from the roster or
+// the literal "narrator". loadClip hydrates this; the long-press
+// handler reads + writes it; the regen path persists it.
+let _currentClipAssignments = {};
+
+// v220-AG: dirty-flag for "this clip has voice assignments that
+// haven't been re-rendered into the audio yet." Set true whenever
+// _persistSentenceAssignments saves; cleared when a regen completes
+// and the new MP3 lands. Drives the pending-assignments banner.
+let _currentClipAssignmentsDirty = false;
+
+// Apply the visual marker to a reading-view sentence span based on
+// whatever's in _currentClipAssignments. Called for every span as the
+// reading view is built, and again after each assignment change.
+// Idempotent: removes any prior tag/class before adding fresh ones.
+function _applySentenceAssignmentMark(span, idx) {
+  if (!span) return;
+  span.classList.remove("sentence-assigned");
+  // v220-AF: tag chip removed. The inline "🎙 Narrator" / "🎭 Llea"
+  // chips broke reading flow on every overridden sentence — tester
+  // asked to drop them. Visual feedback now relies on:
+  //   - the dotted-underline (.sentence-assigned class) for "this
+  //     sentence has a manual override"
+  //   - the character-color text tint (from _repaintReadingViewAttribution)
+  //     for "this is the voice it'll synth as"
+  // Both are enough to scan a chapter without the chip noise.
+  const oldTag = span.querySelector(".sentence-assign-tag");
+  if (oldTag) oldTag.remove();
+  const override = _currentClipAssignments[String(idx)];
+  if (override == null) return;
+  span.classList.add("sentence-assigned");
+}
+
+// Persist the current assignments map back to the clip on disk so a
+// reload picks it up + a regen sees the same overrides. Saves
+// asynchronously; errors are logged but don't block the UI.
+async function _persistSentenceAssignments() {
+  if (!_currentClipId) return;
+  try {
+    const clip = await getClip(_currentClipId);
+    if (!clip) return;
+    clip.sentenceAssignments = { ..._currentClipAssignments };
+    // v220-AG: mark the audio as out of date with respect to the
+    // current assignments. The banner watches this flag + the
+    // regen-save path clears it back to false.
+    clip.assignmentsDirty = true;
+    await saveClip(clip);
+    _currentClipAssignmentsDirty = true;
+    _updatePendingAssignmentsBanner();
+  } catch (e) {
+    console.warn("sentence assignment save failed:", e);
+  }
+}
+
+// v220-AG: persistent banner above the player that surfaces "this
+// clip has un-rendered voice assignments." Tap → kicks off
+// _libraryRenarrate so the user doesn't have to scroll up to the
+// library to find the 🔄 chip. Disappears when the regen completes.
+let _pendingAssignmentsBanner = null;
+function _updatePendingAssignmentsBanner() {
+  if (!_pendingAssignmentsBanner) {
+    _pendingAssignmentsBanner = document.createElement("button");
+    _pendingAssignmentsBanner.type = "button";
+    _pendingAssignmentsBanner.className = "pending-assignments-banner";
+    _pendingAssignmentsBanner.hidden = true;
+    _pendingAssignmentsBanner.addEventListener("click", () => {
+      if (!_currentClipId) return;
+      // Hand off to the silent library re-narrate flow. The chip
+      // pulse + "Synthesising… N/M" status line take over; this
+      // banner hides as soon as the dirty flag clears on save.
+      _libraryRenarrate(_currentClipId);
+    });
+    // Sit it above the player card. readingView lives below the
+    // hero; we slot the banner just before it so it always renders
+    // between the controls and the text.
+    const anchor = (typeof readingView !== "undefined" && readingView)
+      ? readingView
+      : document.body;
+    anchor.parentNode.insertBefore(_pendingAssignmentsBanner, anchor);
+  }
+  const show =
+    _currentClipId &&
+    _currentClipAssignmentsDirty &&
+    Object.keys(_currentClipAssignments).length > 0;
+  if (!show) {
+    _pendingAssignmentsBanner.hidden = true;
+    return;
+  }
+  const n = Object.keys(_currentClipAssignments).length;
+  _pendingAssignmentsBanner.innerHTML = `
+    <span class="pending-assignments-text">
+      <strong>${n}</strong> voice assignment${n === 1 ? "" : "s"} pending — audio still uses the old voices.
+    </span>
+    <span class="pending-assignments-cta">Re-render now →</span>
+  `;
+  _pendingAssignmentsBanner.hidden = false;
+}
+
+// Open the assignment chooser for sentence `idx`. Builds the dialog
+// once and reuses it across taps. Lists every roster character + a
+// Narrator (auto-detect) entry that CLEARS the override (lets Tier 3
+// take the sentence) + a Narrator (force) entry that pins it to the
+// narrator regardless of detection.
+let _assignmentDialog = null;
+// v220-AC: opens the assignment chooser for either a single sentence
+// (number) or a range of sentences (array of indices). When called
+// with an array we apply the chosen voice to every index in the array
+// in one pass — built for the multi-select bar that pops up after a
+// long-press enters select-mode.
+function _openSentenceAssignmentDialog(target) {
+  const indices = Array.isArray(target)
+    ? Array.from(new Set(target.map((n) => Number(n)))).sort((a, b) => a - b)
+    : [Number(target)];
+  if (indices.length === 0) return;
+  if (!_assignmentDialog) {
+    _assignmentDialog = document.createElement("dialog");
+    _assignmentDialog.className = "sentence-assign-dialog";
+    document.body.appendChild(_assignmentDialog);
+    // Tap outside content closes (matches the other dialogs in the app).
+    _assignmentDialog.addEventListener("click", (e) => {
+      if (e.target === _assignmentDialog) _assignmentDialog.close();
+    });
+  }
+  const characters = _loadCharacters().filter(
+    (c) => c.name && c.name.trim() && c.voiceId
+  );
+  // For the "currently selected option" highlight in the menu: if every
+  // sentence in the batch has the SAME current override, we can mark
+  // that one as active. Mixed selections show no active row.
+  const firstIdx = indices[0];
+  const firstCurrent = _currentClipAssignments[String(firstIdx)];
+  const allSame = indices.every(
+    (i) => _currentClipAssignments[String(i)] === firstCurrent
+  );
+  const current = allSame ? firstCurrent : undefined;
+  const headerLabel =
+    indices.length === 1
+      ? `Assign sentence ${firstIdx + 1} to…`
+      : `Assign ${indices.length} sentences to…`;
+  const previewSpan = sentenceSpans[firstIdx];
+  let previewText = previewSpan ? previewSpan.textContent.trim().slice(0, 120) : "";
+  // Strip any leading "🎭 …" tag content from the preview if it leaked
+  // in through textContent (the tag chip lives inside the span).
+  previewText = previewText.replace(/^🎭\s\S+\s+/, "").replace(/^🎙\s\S+\s+/, "");
+  if (indices.length > 1) previewText = `${previewText}${previewText ? "  · " : ""}…+${indices.length - 1} more`;
+  _assignmentDialog.innerHTML = `
+    <div class="sentence-assign-header">
+      <strong>${headerLabel}</strong>
+      <button type="button" class="sentence-assign-close" aria-label="Close">×</button>
+    </div>
+    <p class="sentence-assign-preview">${previewText.replace(/</g, "&lt;")}${previewText.length === 120 ? "…" : ""}</p>
+    <ul class="sentence-assign-list"></ul>
+  `;
+  const list = _assignmentDialog.querySelector(".sentence-assign-list");
+  const makeRow = (label, value, color) => {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sentence-assign-row";
+    if (
+      current !== undefined &&
+      ((value === null && current == null) ||
+        (value !== null && String(current) === String(value)))
+    ) {
+      btn.classList.add("active");
+    }
+    btn.textContent = label;
+    if (color) btn.style.borderLeftColor = color;
+    btn.addEventListener("click", () => {
+      let humanTarget;
+      for (const i of indices) {
+        const key = String(i);
+        if (value === null) {
+          delete _currentClipAssignments[key];
+        } else {
+          _currentClipAssignments[key] = value;
+        }
+      }
+      if (value === null) {
+        humanTarget =
+          indices.length === 1
+            ? `Sentence ${firstIdx + 1}: auto-detect restored.`
+            : `${indices.length} sentences restored to auto-detect.`;
+      } else {
+        const human = value === "narrator" ? "Narrator (forced)" : value;
+        humanTarget =
+          indices.length === 1
+            ? `Sentence ${firstIdx + 1} assigned to ${human}.`
+            : `${indices.length} sentences assigned to ${human}.`;
+      }
+      setStatus(`${humanTarget} Tap 🔄 in library to re-render.`);
+      _persistSentenceAssignments();
+      for (const i of indices) {
+        _applySentenceAssignmentMark(sentenceSpans[i], i);
+      }
+      _repaintReadingViewAttribution();
+      // Clear the pending selection after the batch lands — the
+      // user's done with this round; subsequent drags start fresh.
+      _clearAssignSelection();
+      _assignmentDialog.close();
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  };
+  makeRow("↩ Auto-detect (let Narrative decide)", null, null);
+  makeRow("🎙 Narrator (force)", "narrator", null);
+  for (const c of characters) {
+    makeRow(`🎭 ${c.name}`, c.name, _tagColor(c.name));
+  }
+  _assignmentDialog.querySelector(".sentence-assign-close").addEventListener(
+    "click",
+    () => _assignmentDialog.close(),
+    { once: true }
+  );
+  _assignmentDialog.showModal();
+}
+
+// v220-AD: drag-to-select for multi-sentence voice assignment.
+//
+// Design (user-chosen 2026-05-31):
+//   - Single tap always seeks the player to that sentence. NEVER selects.
+//   - To select, press and drag across multiple sentences. Each sentence
+//     the pointer crosses gets added to the batch. Releasing finalizes
+//     the selection; the floating bar appears with N selected · Cancel
+//     · Assign →.
+//   - Subsequent drags are additive — they extend the existing
+//     selection without clearing it. Cancel resets.
+//   - Tap Assign → the chooser opens; the chosen voice is applied to
+//     every selected sentence in one pass.
+//   - Mouse drag arms immediately. Touch drag arms after a 200ms hold
+//     so casual scroll gestures don't trigger selection — pause briefly,
+//     then drag.
+let _assignSelectedIndices = new Set();
+let _assignSelectBar = null;
+let _dragState = null;
+const _DRAG_ARM_MS = 200;
+const _DRAG_MOVE_THRESHOLD = 10;
+
+function _clearAssignSelection() {
+  _assignSelectedIndices.clear();
+  _updateAssignSelectVisuals();
+  if (_assignSelectBar) _assignSelectBar.hidden = true;
+}
+
+function _updateAssignSelectVisuals() {
+  for (let i = 0; i < sentenceSpans.length; i++) {
+    const span = sentenceSpans[i];
+    if (!span) continue;
+    if (_assignSelectedIndices.has(i)) {
+      span.classList.add("sentence-select-pending");
+    } else {
+      span.classList.remove("sentence-select-pending");
+    }
+  }
+}
+
+function _renderAssignSelectBar() {
+  if (!_assignSelectBar) {
+    _assignSelectBar = document.createElement("div");
+    _assignSelectBar.className = "assign-select-bar";
+    document.body.appendChild(_assignSelectBar);
+  }
+  const n = _assignSelectedIndices.size;
+  _assignSelectBar.innerHTML = `
+    <span class="assign-select-count">${n} sentence${n === 1 ? "" : "s"} selected</span>
+    <div class="assign-select-actions">
+      <button type="button" class="assign-select-cancel">Cancel</button>
+      <button type="button" class="assign-select-assign">Assign →</button>
+    </div>
+  `;
+  _assignSelectBar.querySelector(".assign-select-cancel").addEventListener(
+    "click",
+    () => _clearAssignSelection()
+  );
+  _assignSelectBar.querySelector(".assign-select-assign").addEventListener(
+    "click",
+    () => _openSentenceAssignmentDialog(Array.from(_assignSelectedIndices))
+  );
+  _assignSelectBar.hidden = false;
+}
+
+// Global pointer handlers — bound once at module load. Track _dragState
+// to know if we're mid-drag. The per-sentence pointerdown handler seeds
+// _dragState; the document-level move/up handlers update + finalize.
+function _addToDragSelection(idx) {
+  if (!Number.isFinite(idx)) return;
+  if (_assignSelectedIndices.has(idx)) return;
+  _assignSelectedIndices.add(idx);
+  const span = sentenceSpans[idx];
+  if (span) span.classList.add("sentence-select-pending");
+  _renderAssignSelectBar();
+}
+
+document.addEventListener("pointermove", (e) => {
+  if (!_dragState) return;
+  if (e.pointerId !== _dragState.pointerId) return;
+  const dx = e.clientX - _dragState.startX;
+  const dy = e.clientY - _dragState.startY;
+  const dist = Math.abs(dx) + Math.abs(dy);
+  // Touch case: if the finger moves significantly BEFORE the 200ms
+  // arm timer fires, the user is scrolling — not selecting. Cancel
+  // the arm timer and let the browser handle the scroll.
+  if (!_dragState.armed) {
+    if (dist > _DRAG_MOVE_THRESHOLD) {
+      clearTimeout(_dragState.armTimer);
+      _dragState = null;
+    }
+    return;
+  }
+  // Armed but not yet moved past the threshold: hold off on
+  // suppressing scroll or adding sentences. This is what lets a
+  // hold-without-drag (or a mouse press-without-drag) still fall
+  // through to seek — _dragState.moved stays false and pointerup
+  // sees nothing to suppress.
+  if (!_dragState.moved) {
+    if (dist <= _DRAG_MOVE_THRESHOLD) return;
+    _dragState.moved = true;
+    // First crossing of the threshold: commit the starting sentence
+    // to the selection so the drag has a sensible anchor even if
+    // the finger has already left it.
+    _addToDragSelection(_dragState.initialIdx);
+  }
+  e.preventDefault();
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const span = el && el.closest && el.closest(".sentence");
+  if (!span) return;
+  const idx = Number(span.dataset.index);
+  _addToDragSelection(idx);
+}, { passive: false });
+
+document.addEventListener("pointerup", (e) => {
+  if (!_dragState) return;
+  if (e.pointerId !== _dragState.pointerId) return;
+  const wasDrag = _dragState.moved && _assignSelectedIndices.size > 0;
+  clearTimeout(_dragState.armTimer);
+  _dragState = null;
+  if (wasDrag) {
+    // Suppress the synthetic click that would otherwise fire on the
+    // last sentence the finger was over and re-seek the player right
+    // after the user finished a select-drag. Cleared after the click
+    // fires (or 100ms, whichever comes first).
+    _suppressNextSentenceClick = true;
+    setTimeout(() => { _suppressNextSentenceClick = false; }, 100);
+  }
+});
+
+document.addEventListener("pointercancel", () => {
+  if (_dragState) {
+    clearTimeout(_dragState.armTimer);
+    _dragState = null;
+  }
+});
+
+let _suppressNextSentenceClick = false;
+
+// Wire drag-select onto a single sentence span. Single tap still
+// seeks (handled by enterReadingView's click listener); we only set
+// up the pointerdown that seeds the drag state.
+function _attachSentenceAssignHandlers(span, idx) {
+  span.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    _dragState = {
+      initialIdx: idx,
+      startX: e.clientX,
+      startY: e.clientY,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      armed: false,
+      moved: false, // gates "is this a real drag" — sentences only
+                    // get added once moved is true (movement threshold
+                    // crossed). A press-without-movement falls through
+                    // to the seek click handler.
+      armTimer: null,
+    };
+    if (e.pointerType === "mouse") {
+      // Mouse: arm immediately. Movement-threshold check in pointermove
+      // gates actual selection so a single click without dragging still
+      // seeks normally.
+      _dragState.armed = true;
+    } else {
+      // Touch / pen: 200ms arm timer. If finger stays still that long
+      // we set armed = true so that subsequent movement is treated as
+      // a select-drag. If the finger moves before the timer fires,
+      // the pointermove handler cancels (the user is scrolling).
+      // Crucially, the timer does NOT add the starting sentence —
+      // that happens in pointermove the first time movement crosses
+      // the threshold, so a hold-without-drag still falls through
+      // to seek.
+      _dragState.armTimer = setTimeout(() => {
+        if (_dragState) _dragState.armed = true;
+      }, _DRAG_ARM_MS);
+    }
+  });
+  // Suppress the synthetic seek-click that follows a release at the
+  // end of a drag-select. The flag is set true by the pointerup
+  // handler above and cleared 100ms later.
+  span.addEventListener("click", (e) => {
+    if (_suppressNextSentenceClick) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, true);
+  // Right-click (desktop) → start a one-sentence selection. Useful for
+  // grabbing single isolated sentences without dragging.
+  span.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    _addToDragSelection(idx);
+  });
+}
+
+// v220-AB: per-sentence attribution for the reading view. Same logic
+// path as segmentTextByCharacter (Tier 1 + Tier 2 + Tier 3 + manual
+// override) but returns one entry per sentence instead of merging
+// consecutive same-voice sentences into segments. We need the
+// granularity to color individual sentence spans.
+//
+// Returns an array of length === splitSentencesClient(text).length.
+// Each entry is { char }: the resolved character (or null for the
+// narrator). Designed to be cheap to call on every reading-view paint.
+function attributeSentencesForDisplay(text, characters, overrides) {
+  const out = [];
+  const named = (characters || []).filter(
+    (c) => c.name && c.name.trim() && c.voiceId
+  );
+  if (named.length === 0 && (!overrides || Object.keys(overrides).length === 0)) {
+    // No characters + no overrides → everything is narrator.
+    for (const _ of splitSentencesClient(text)) out.push({ char: null });
+    return out;
+  }
+  const charRegexes = named.map((c) => ({
+    char: c,
+    re: new RegExp(`\\b${_escapeRegex(c.name)}\\b`, "i"),
+  }));
+  function findNamed(s) {
+    for (const c of charRegexes) {
+      if (c.re.test(s)) return c.char;
+    }
+    return null;
+  }
+  let lastNamedChar = null;
+  const lastByGender = { male: null, female: null, they: null };
+  let activeSpeaker = null;
+  let idx = -1;
+  const paragraphs = text
+    .split(/\r?\n\s*\r?\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  for (const paragraph of paragraphs) {
+    for (const sentence of splitSentencesClient(paragraph)) {
+      idx++;
+      let resolved = null;
+      const hasQuote = _DIALOGUE_QUOTE.test(sentence);
+      const explicitName = findNamed(sentence);
+      if (explicitName) {
+        lastNamedChar = explicitName;
+        if (
+          explicitName.gender &&
+          Object.prototype.hasOwnProperty.call(lastByGender, explicitName.gender)
+        ) {
+          lastByGender[explicitName.gender] = explicitName;
+        }
+      }
+      if (hasQuote) {
+        if (explicitName) {
+          resolved = explicitName;
+        } else {
+          const g = _detectAttributionGender(sentence);
+          resolved =
+            (g && lastByGender[g]) || activeSpeaker || lastNamedChar || null;
+        }
+        if (resolved) activeSpeaker = resolved;
+      }
+      // Manual override wins.
+      const override = overrides && overrides[String(idx)];
+      if (override !== undefined && override !== null) {
+        if (override === "narrator") {
+          resolved = null;
+        } else {
+          const char = named.find(
+            (c) => c.name.toLowerCase() === String(override).toLowerCase()
+          );
+          if (char) {
+            resolved = char;
+            activeSpeaker = char;
+          }
+        }
+      }
+      out.push({ char: resolved });
+    }
+  }
+  return out;
+}
+
+// Repaint reading-view sentence colors using the current characters
+// roster + the loaded clip's overrides. Cheap; safe to call from the
+// color picker's "input" event to give the user live feedback as they
+// scrub the color picker. No-op if there's no reading view rendered.
+function _repaintReadingViewAttribution() {
+  if (!sentenceSpans || sentenceSpans.length === 0) return;
+  const text = textEl.value || "";
+  if (!text) return;
+  const characters = _loadCharacters().filter((c) => c.name && c.voiceId);
+  const overrides = _currentClipAssignments || {};
+  const attrs = attributeSentencesForDisplay(text, characters, overrides);
+  for (let i = 0; i < sentenceSpans.length; i++) {
+    const span = sentenceSpans[i];
+    if (!span) continue;
+    const a = attrs[i];
+    const rawText = span.dataset.sentenceText || span.textContent || "";
+    const isManualOverride =
+      overrides[String(i)] !== undefined && overrides[String(i)] !== null;
+    const hasQuote = _DIALOGUE_QUOTE.test(rawText);
+    // v220-AI: split the sentence visually when the audio split path
+    // applies — auto-attribution to a character + has a quote + the
+    // user did NOT manually override the whole sentence. Quote runs
+    // get the character color; non-quote runs stay default (narrator).
+    // Manual overrides keep the whole sentence in one color (the
+    // user's explicit pick should look monolithic).
+    const shouldSplit = a && a.char && !isManualOverride && hasQuote;
+    let didSplit = false;
+    if (shouldSplit) {
+      const parts = _splitSentenceByQuote(rawText);
+      const hasNonQuote = parts.some((p) => !p.isQuote && p.text.trim());
+      if (parts.length > 1 && hasNonQuote) {
+        didSplit = true;
+        span.classList.add("sentence-split");
+        span.style.color = "";
+        // Rebuild as sub-spans. This loses any M7.1 highlight markers
+        // inside this sentence — acceptable trade-off; highlights are
+        // less common than dialogue split.
+        span.innerHTML = "";
+        for (const part of parts) {
+          const sub = document.createElement("span");
+          sub.textContent = part.text;
+          sub.className = part.isQuote
+            ? "sentence-quote-run"
+            : "sentence-narration-run";
+          if (part.isQuote) {
+            sub.style.color = _characterColor(a.char);
+          }
+          span.appendChild(sub);
+        }
+      }
+    }
+    if (!didSplit) {
+      // Restore the original built HTML if the span was previously
+      // split — the M7.1 highlights / drop caps live in that snapshot.
+      if (span.classList.contains("sentence-split")) {
+        span.classList.remove("sentence-split");
+        if (span.dataset.originalContent) {
+          span.innerHTML = span.dataset.originalContent;
+        }
+      }
+      // Whole-sentence color (existing behaviour).
+      if (a && a.char) {
+        span.style.color = _characterColor(a.char);
+      } else {
+        span.style.color = "";
+      }
+    }
+    // Reapply the assignment marker (dotted underline) — applies to
+    // the outer span regardless of split.
+    _applySentenceAssignmentMark(span, i);
+  }
+}
+
 function _populateVoiceOptions(selectEl, currentVoiceId) {
   // Mirror the main voice dropdown so the character's voice picker shows
   // the same installed Piper / SAPI voice list.
@@ -4190,6 +4760,23 @@ function renderCharacters() {
       _updateCharacter(ch.id, { speakerId: Number(speakerSelect.value) || 0 });
     });
 
+    // v220-AB: per-character text color for the reading view.
+    // Defaults to the hash-derived color (same as the assignment tag
+    // chip) so a brand-new character already shows a visual identity
+    // before the user picks. The browser's native color picker is
+    // mobile-friendly out of the box.
+    const colorInput = document.createElement("input");
+    colorInput.type = "color";
+    colorInput.className = "character-color";
+    colorInput.title = "Color used to tint this character's dialogue in the reading view";
+    colorInput.value = ch.color || _hashToHex(ch.name || "");
+    colorInput.addEventListener("input", () => {
+      _updateCharacter(ch.id, { color: colorInput.value });
+      // Live re-paint so the user can scrub the color picker and see
+      // the reading view track their choice without re-loading.
+      _repaintReadingViewAttribution();
+    });
+
     const delBtn = document.createElement("button");
     delBtn.type = "button";
     delBtn.className = "character-delete";
@@ -4198,9 +4785,39 @@ function renderCharacters() {
     delBtn.setAttribute("aria-label", `Delete ${ch.name || "character"}`);
     delBtn.addEventListener("click", () => _deleteCharacter(ch.id));
 
-    row.append(nameInput, genderSelect, voiceSelect, speakerSelect, delBtn);
+    row.append(nameInput, genderSelect, voiceSelect, speakerSelect, colorInput, delBtn);
     charactersList.appendChild(row);
   }
+}
+
+// v220-AB: hash-derived hex for the "no color picked yet" fallback.
+// Same hue family as _tagColor (HSL output) but converted to hex so it
+// drops straight into <input type="color"> without conversion gymnastics.
+function _hashToHex(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+  const hue = Math.abs(h) % 360;
+  // Saturation 65, lightness 60 — readable on both dark + light themes.
+  return _hslToHex(hue, 65, 60);
+}
+function _hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const c = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return Math.round(c * 255).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+// Return the effective hex color for a character: their picked color
+// if set, else the hash fallback. Used for both the reading-view text
+// tint and the assignment tag chip's border.
+function _characterColor(ch) {
+  if (!ch) return null;
+  if (ch.color && typeof ch.color === "string") return ch.color;
+  return _hashToHex(ch.name || "");
 }
 
 function _addCharacter() {
@@ -4313,16 +4930,78 @@ const _PRONOUN_RE = new RegExp(
   "i"
 );
 
+// v220-AJ: list of saying verbs that signal "this clause attributes a
+// quote." Without one, a pronoun in the outside-quote text is more
+// likely narration than attribution — `"Wait." He raised a hand.`
+// shouldn't route the quote to "the most recent male character"
+// just because "He" appears outside the quotes.
+//
+// Verbs cover common dialogue tags + their tense variants (said/says,
+// asked/asks, etc.). Adverbs like "softly" are noise that already get
+// ignored by the regex — we just need the verb to be present.
+const _SAYING_VERBS = /\b(said|says|saying|asked|asks|asking|replied|replies|replying|whispered|whispers|whispering|called|calls|calling|shouted|shouts|shouting|murmured|murmurs|murmuring|declared|declares|declaring|mused|muses|musing|answered|answers|answering|responded|responds|responding|exclaimed|exclaims|exclaiming|cried|cries|crying|muttered|mutters|muttering|sighed|sighs|sighing|added|adds|adding|continued|continues|continuing|began|begins|beginning|started|starts|starting|interrupted|interrupts|interrupting|noted|notes|noting|remarked|remarks|remarking|observed|observes|observing|stated|states|stating|told|tells|telling|spoke|speaks|speaking|repeated|repeats|repeating|insisted|insists|insisting|hissed|hisses|hissing|growled|growls|growling|laughed|laughs|laughing|snapped|snaps|snapping|warned|warns|warning|agreed|agrees|agreeing|admitted|admits|admitting|protested|protests|protesting|gasped|gasps|gasping|breathed|breathes|breathing|offered|offers|offering|countered|counters|countering|drawled|drawls|drawling|conceded|concedes|conceding)\b/i;
+
 function _detectAttributionGender(sentence) {
   const outside = _stripQuotes(sentence);
+  // v220-AJ: gate pronoun resolution on the presence of a saying
+  // verb. This is what distinguishes "she said" (attribution) from
+  // "she stood" (narration that happens to share a sentence with
+  // a quote). Without this gate, mixed sentences like
+  //   "I would like to discuss terms." He stood and walked to the man.
+  // incorrectly attribute to whoever is in the male bucket via "He",
+  // instead of falling through to the active-speaker carry-forward.
+  if (!_SAYING_VERBS.test(outside)) return null;
   const m = outside.match(_PRONOUN_RE);
   if (!m) return null;
   return _PRONOUN_TO_GENDER[m[1].toLowerCase()] || null;
 }
 
-function segmentTextByCharacter(text, characters, fallbackVoiceId, fallbackSpeakerId) {
+// v220-AH: split a sentence into ordered runs of quoted vs non-quoted
+// text. Standard audiobook convention is that the QUOTE goes to the
+// character's voice and the surrounding attribution clause (
+// "she said.", "Llea replied.", "He looked away.") stays with the
+// narrator. Returns [{text, isQuote}, ...] preserving source order.
+// Handles straight + curly double and single quotes; single-quote
+// runs only count if they contain at least one space (a bare 'it's'
+// shouldn't open a fake dialogue span).
+function _splitSentenceByQuote(sentence) {
+  const parts = [];
+  // Note: ordering matters — try curly + straight double quotes first
+  // because those are the unambiguous dialogue markers. Singles are
+  // last and gated on "has space inside" so contractions don't fire.
+  const re = /(?:"[^"]*"|“[^”]*”|‘[^’]* [^’]*’|'[^']* [^']*')/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(sentence)) !== null) {
+    if (m.index > last) {
+      const before = sentence.slice(last, m.index);
+      if (before.trim()) parts.push({ text: before, isQuote: false });
+    }
+    parts.push({ text: m[0], isQuote: true });
+    last = re.lastIndex;
+  }
+  if (last < sentence.length) {
+    const after = sentence.slice(last);
+    if (after.trim()) parts.push({ text: after, isQuote: false });
+  }
+  return parts;
+}
+
+function segmentTextByCharacter(text, characters, fallbackVoiceId, fallbackSpeakerId, opts) {
+  // v220-AA: manual per-sentence overrides. The reading view lets the
+  // user long-press a sentence and re-assign it to a specific character
+  // (or force "narrator"). Those overrides live on the clip as
+  // sentenceAssignments and are passed in here. Indexing matches the
+  // flat sentence stream the reading view renders (same splitter).
+  // Keys are stringified indices so the map JSON-round-trips cleanly.
+  //   { "5": "Llea", "12": "narrator" }
+  // "narrator" forces the fallback voice; a character name forces that
+  // character; absent index = no override, auto-detection wins.
+  const overrides = (opts && opts.overrides) || {};
+  const hasOverrides = Object.keys(overrides).length > 0;
+
   const named = characters.filter((c) => c.name && c.name.trim() && c.voiceId);
-  if (named.length === 0) {
+  if (named.length === 0 && !hasOverrides) {
     // Fast path: no characters defined → single narrator segment.
     const sentences = splitSentencesClient(text);
     return [{
@@ -4373,10 +5052,15 @@ function segmentTextByCharacter(text, characters, fallbackVoiceId, fallbackSpeak
   let lastNamedChar = null;
   const lastByGender = { male: null, female: null, they: null };
   let activeSpeaker = null;
+  // v220-AA: global sentence index, matches the reading view's
+  // sentenceSpans[i]. Increments once per sentence across all
+  // paragraphs so override keys line up.
+  let globalSentenceIdx = -1;
 
   for (const paragraph of paragraphs) {
     const sentences = splitSentencesClient(paragraph);
     for (const sentence of sentences) {
+      globalSentenceIdx++;
       let attributedVoice = fallbackVoiceId;
       let attributedSpeaker = fallbackSpeakerId;
       let attributedChar = null; // tracks the char object so we can
@@ -4429,19 +5113,94 @@ function segmentTextByCharacter(text, characters, fallbackVoiceId, fallbackSpeak
       // narration — a "She set both hands flat on the table." sentence
       // between two quotes shouldn't break the dialogue chain.
 
-      if (
-        current &&
-        current.voiceId === attributedVoice &&
-        current.speakerId === attributedSpeaker
-      ) {
-        current.text += " " + sentence;
-      } else {
-        current = {
-          voiceId: attributedVoice,
-          speakerId: attributedSpeaker,
-          text: sentence,
-        };
-        segments.push(current);
+      // v220-AA: manual override has the final say. The user already
+      // listened to the auto-attribution, decided it was wrong, and
+      // explicitly assigned this sentence to someone (or to narrator).
+      // We trust them over every Tier of heuristic.
+      const override = overrides[String(globalSentenceIdx)];
+      const overrideUsed = override !== undefined && override !== null;
+      if (overrideUsed) {
+        if (override === "narrator") {
+          attributedVoice = fallbackVoiceId;
+          attributedSpeaker = fallbackSpeakerId;
+          // Force-narrator does NOT update activeSpeaker — the next
+          // continuation sentence should still inherit whoever was
+          // actively speaking before this narrator interruption.
+          attributedChar = null;
+        } else {
+          // Character-name override. Look up in the roster.
+          const char = named.find(
+            (c) => c.name.toLowerCase() === String(override).toLowerCase()
+          );
+          if (char) {
+            attributedVoice = char.voiceId;
+            attributedSpeaker = char.speakerId;
+            activeSpeaker = char; // overrides seed continuation too
+            attributedChar = char;
+          }
+          // If the named character was deleted from the roster after
+          // the override was set, silently fall through to whatever
+          // auto-detection chose. The Edit dialog can surface stale
+          // assignments later.
+        }
+      }
+
+      // v220-AH: split-attribution. When a sentence is auto-attributed
+      // to a character AND contains a quote, the audiobook convention
+      // is to give the QUOTE to the character and the attribution
+      // clause ("she said.", "Llea replied.") back to the narrator.
+      // We do NOT split when:
+      //   - the user manually overrode the sentence (their explicit
+      //     choice trumps the convention)
+      //   - the sentence is entirely a single quote (no narration to
+      //     hand back to the narrator)
+      //   - the sentence has no attributed character (already narrator)
+      const shouldSplit =
+        attributedChar && hasQuote && !overrideUsed;
+      let didSplit = false;
+      if (shouldSplit) {
+        const parts = _splitSentenceByQuote(sentence);
+        const hasNonQuotePart = parts.some(
+          (p) => !p.isQuote && p.text.trim()
+        );
+        if (parts.length > 1 && hasNonQuotePart) {
+          didSplit = true;
+          for (const part of parts) {
+            const text = part.text.trim();
+            if (!text) continue;
+            const voice = part.isQuote ? attributedChar.voiceId : fallbackVoiceId;
+            const speaker = part.isQuote
+              ? attributedChar.speakerId
+              : fallbackSpeakerId;
+            if (
+              current &&
+              current.voiceId === voice &&
+              current.speakerId === speaker
+            ) {
+              current.text += " " + text;
+            } else {
+              current = { voiceId: voice, speakerId: speaker, text };
+              segments.push(current);
+            }
+          }
+        }
+      }
+
+      if (!didSplit) {
+        if (
+          current &&
+          current.voiceId === attributedVoice &&
+          current.speakerId === attributedSpeaker
+        ) {
+          current.text += " " + sentence;
+        } else {
+          current = {
+            voiceId: attributedVoice,
+            speakerId: attributedSpeaker,
+            text: sentence,
+          };
+          segments.push(current);
+        }
       }
     }
   }
@@ -4554,6 +5313,15 @@ async function generate() {
           // the gitRef via _pendingGitRef (the refetch path stashes
           // the new gitRef before invoking generate()).
           gitRef: existing.gitRef || null,
+          // v220-AA: carry the user's per-sentence voice overrides
+          // through the regen. The text didn't change, so the
+          // index→character map stays valid. They feed the segmenter
+          // below as opts.overrides so the regen respects them.
+          sentenceAssignments:
+            existing.sentenceAssignments &&
+            typeof existing.sentenceAssignments === "object"
+              ? existing.sentenceAssignments
+              : {},
         };
       }
     } catch {}
@@ -4586,9 +5354,13 @@ async function generate() {
   let charactersUsed = 0;
   if (isAuthorMode()) {
     const characters = _loadCharacters().filter((c) => c.name && c.voiceId);
-    if (characters.length > 0) {
+    // v220-AA: even with zero characters defined, manual overrides
+    // exist if the user previously tagged sentences. Pass them in so
+    // a regen still respects the user's force-narrator assignments.
+    const overrides = (regenExistingMeta && regenExistingMeta.sentenceAssignments) || {};
+    if (characters.length > 0 || Object.keys(overrides).length > 0) {
       const segs = segmentTextByCharacter(
-        text, characters, fallbackVoice, fallbackSpeaker
+        text, characters, fallbackVoice, fallbackSpeaker, { overrides }
       );
       // Only flip to the segments endpoint if detection actually
       // produced more than one segment — otherwise the regular endpoint
@@ -4857,6 +5629,18 @@ async function generate() {
                 : (regenExistingMeta && regenExistingMeta.gitRef
                     ? regenExistingMeta.gitRef
                     : null),
+              // v220-AA: preserve manual per-sentence voice overrides
+              // across regen. New clips start with no overrides ({}),
+              // which is the same as no field at all.
+              sentenceAssignments:
+                regenExistingMeta && regenExistingMeta.sentenceAssignments
+                  ? regenExistingMeta.sentenceAssignments
+                  : {},
+              // v220-AG: this synthesis applied the current assignments
+              // by definition, so the audio is now in sync. Clear the
+              // dirty flag so the pending-assignments banner hides
+              // when the user reloads this clip.
+              assignmentsDirty: false,
               createdAt: regenExistingMeta
                 ? regenExistingMeta.createdAt
                 : new Date().toISOString(),
@@ -6757,6 +7541,14 @@ function enterReadingView(text, images, highlights) {
     // is populated by loadClip / generate when the clip's
     // highlights are read in.
     span.innerHTML = _buildSentenceContentHTML(s, i, _readingViewHighlights || []);
+    // v220-AI: stash raw text + the built HTML on the span so the
+    // attribution repaint can switch between "single-color whole span"
+    // (preserves highlights / drop caps) and "split into colored
+    // quote vs narration sub-spans" without permanently destroying
+    // the highlight structure. dataset stores strings, so a string
+    // snapshot is the most reliable cross-paint anchor.
+    span.dataset.sentenceText = s;
+    span.dataset.originalContent = span.innerHTML;
     span.addEventListener("click", () => {
       // v189: clicking a sentence reads as "engage here" — drop
       // any pinned scroll state so the auto-scroll resumes from
@@ -6767,9 +7559,24 @@ function enterReadingView(text, images, highlights) {
       seekToSentence(i);
       if (playerEl.paused) playerEl.play().catch(() => {});
     });
+    // v220-AA: long-press / right-click opens the per-sentence voice
+    // assignment dialog. Wired here so every sentence in the reading
+    // view is assignable. The visual mark for existing overrides is
+    // applied below in a second pass once the array is built.
+    _attachSentenceAssignHandlers(span, i);
     readingView.appendChild(span);
     return span;
   });
+  // v220-AA: paint the current assignment markers (tag chip + dotted
+  // underline) on any sentence with an existing override.
+  for (let i = 0; i < sentenceSpans.length; i++) {
+    _applySentenceAssignmentMark(sentenceSpans[i], i);
+  }
+  // v220-AB: also paint each sentence's text in its attributed
+  // character's color. Runs once per reading-view build; the color
+  // picker calls _repaintReadingViewAttribution directly for live
+  // feedback as the user scrubs the picker.
+  _repaintReadingViewAttribution();
   // Trailing images (anchored past the final sentence, or the catch-all
   // bucket for malformed indexes) — render them at the bottom.
   flushImagesAt(sentences.length);
@@ -11357,6 +12164,18 @@ async function loadClip(id) {
   _cancelAutoAdvance();
   // A-B loop bounds belonged to whatever audio was loaded before.
   clearAbLoop();
+
+  // v220-AA: hydrate the per-sentence override map for this clip so
+  // the reading view's long-press handler can read/write it. Empty
+  // object = no overrides (every sentence uses auto-detection).
+  _currentClipAssignments =
+    clip.sentenceAssignments && typeof clip.sentenceAssignments === "object"
+      ? { ...clip.sentenceAssignments }
+      : {};
+  // v220-AG: hydrate the dirty flag too so a banner persists across
+  // page reloads if the user made changes but didn't re-render.
+  _currentClipAssignmentsDirty = !!clip.assignmentsDirty;
+  _updatePendingAssignmentsBanner();
 
   // Drop any in-progress streaming state so the chained-playback / virtualTime
   // logic doesn't try to walk a queue from a previous generate().

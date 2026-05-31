@@ -1079,4 +1079,8 @@ if __name__ == "__main__":
     # running on 8000.
     PORT = int(os.environ.get("PORT", "8000"))
     _print_banner(PORT)
-    uvicorn.run("server:app", host="0.0.0.0", port=PORT, reload=False)
+    # Pass `app` as an object instead of the "server:app" string so the
+    # PyInstaller-bundled Tauri sidecar works — frozen bundles don't
+    # have a "server" module on the import path, but `app` is already
+    # in scope right here. Cloud + dev runs still work the same way.
+    uvicorn.run(app, host="0.0.0.0", port=PORT, reload=False)

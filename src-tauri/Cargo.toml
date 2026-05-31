@@ -1,0 +1,50 @@
+# Narrative desktop — Tauri v2 shell.
+#
+# Phase 1 (this scaffold): a thin window that loads the existing
+# narrative-alpha.fly.dev frontend so we can validate the desktop
+# shell end-to-end before we tackle the harder packaging problems
+# (Phase 2: PyInstaller-pack server.py + bundled voices; Phase 3:
+# code signing + .msi/.dmg installers).
+#
+# Workspace layout reminder:
+#   src-tauri/        ← this crate (the desktop shell)
+#   static/           ← the existing PWA (loaded via window URL in
+#                       Phase 1 from Fly; bundled into the binary in
+#                       Phase 2 once the sidecar is in place)
+#   server.py + tts/  ← the existing FastAPI backend (Fly-hosted for
+#                       Phase 1; sidecar-bundled for Phase 2)
+
+[package]
+name = "narrative"
+version = "0.1.0"
+description = "Narrative — the writer's audiobook tool"
+authors = ["Narrative"]
+edition = "2021"
+rust-version = "1.77"
+
+# Build settings.
+[lib]
+name = "narrative_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "narrative"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Release profile — strip symbols + optimize for size. The desktop
+# installer ships this binary directly; smaller is better for the
+# download size.
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

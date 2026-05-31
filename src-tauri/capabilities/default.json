@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default permissions for the Narrative window. Phase 1 is intentionally minimal — the window just loads the cloud frontend, no Tauri-bridged APIs yet. Phase 2 will add fs/dialog/sidecar permissions for local file open + the bundled Python server.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}
