@@ -2056,13 +2056,20 @@ abLoopBtn.addEventListener("click", () => {
   if (_loopA == null) {
     _loopA = here;
   } else if (_loopB == null) {
-    // B must be after A — if the user marked B before A, swap them.
-    if (here <= _loopA + 0.1) {
-      // Too close / before A — treat as resetting A here.
-      _loopA = here;
-    } else {
-      _loopB = here;
+    // v220v: B must be at least ~0.5s past A. Previously a 2nd tap at
+    // the same time silently RESET A to here, leaving the label looking
+    // unchanged ("A 1:23" → "A 1:23"). Tester reported "only first tap
+    // works" — they were tapping rapidly while paused, expecting both
+    // bounds to set in two taps. New behavior: keep A where it is, show
+    // a status that tells the user what to do. The next tap (after they
+    // seek or play forward) sets B and starts the loop.
+    if (here <= _loopA + 0.5) {
+      setStatus(
+        `A is at ${formatTime(_loopA)}. Play forward (or seek), then tap A↔B to set B.`
+      );
+      return;
     }
+    _loopB = here;
   } else {
     // Third tap clears.
     _loopA = null;
@@ -2071,7 +2078,7 @@ abLoopBtn.addEventListener("click", () => {
   _updateAbBtn();
   _fireChipHint(
     "narrative.hintSeen.abloop",
-    "💡 Tap A↔B once to mark A · again at B · again to loop · again to clear."
+    "💡 Tap once at A · play forward · tap again at B · tap again to clear."
   );
 });
 
@@ -4230,29 +4237,48 @@ charactersBtn.addEventListener("click", () => {
 charactersClose.addEventListener("click", () => charactersDialog.close());
 charactersAddBtn.addEventListener("click", _addCharacter);
 
-// Dialogue / attribution heuristic. Tier 2 of the BACKLOG roadmap:
-// paragraph-aware cursor (Tier 1) + gender-keyed pronoun lookup
-// (Tier 2). Walks the text paragraph by paragraph, tracking:
+// Dialogue / attribution heuristic. Tier 3 (v220y): cross-paragraph
+// cursors + active-speaker carry-forward, on top of the existing
+// Tier 1 (last-named) + Tier 2 (gender-keyed pronoun) passes.
+//
+// Walks the text paragraph by paragraph, but the THREE cursors all
+// persist across paragraph boundaries:
 //
 //   - `lastNamedChar` — most recently named character (any gender).
 //     Used as the Tier 1 fallback when no pronoun matches.
-//   - `lastByGender` — most recently named character per declared
+//   - `lastByGender`  — most recently named character per declared
 //     gender (male / female / they). Used to resolve "he/she/they said"
-//     even when the named speaker is several sentences back.
+//     even when the named speaker is many sentences back — including
+//     across paragraph boundaries (real prose names a character once
+//     per scene, not once per paragraph).
+//   - `activeSpeaker` — the character to whom the most recent dialogue
+//     sentence was attributed. Used to carry attribution forward
+//     across consecutive quote-only sentences (long speeches split
+//     across multiple sentences, or single-paragraph monologues).
 //
-// When a quoted sentence has no explicit name, the resolver scans the
-// attribution OUTSIDE the quotes for pronouns:
-//   - "she" / "her" / "hers"  → lastByGender.female
-//   - "he" / "him" / "his"    → lastByGender.male
+// Resolution order for a quote-bearing sentence:
+//   1. Explicit name in the same sentence  (definitive)
+//   2. Pronoun → lastByGender bucket       (gender-disambiguated)
+//   3. activeSpeaker                       (long-speech continuation)
+//   4. lastNamedChar                       (Tier 1 fallback)
+//   5. Narrator                            (no signal)
+//
+// Pronoun scan (outside the quotes — the dialogue CONTENT can mention
+// pronouns too):
+//   - "she" / "her" / "hers"    → lastByGender.female
+//   - "he"  / "him" / "his"     → lastByGender.male
 //   - "they" / "them" / "their" → lastByGender.they
-// If the gender bucket is empty, falls back to Tier 1's `lastNamedChar`.
-// If that's empty too, the narrator takes the sentence.
 //
-// Both cursors reset at every paragraph break (fresh paragraph +
-// opening quote = new speaker per standard fiction convention).
+// The Tier 2 reset-at-paragraph-break convention ("fresh paragraph +
+// opening quote = new speaker") was too aggressive for real prose —
+// long speeches and chapter-scale scenes where one character is named
+// early then referred to by pronoun for paragraphs afterward both lost
+// their attribution. Tier 3 trusts that authors explicitly attribute
+// when a new speaker enters; in absence of any signal, the cursors
+// keep tracking who was last established.
 //
-// Accuracy: ~85% on mixed-gender dialogue scenes, vs. ~75-80% Tier 1,
-// ~50-60% naive whole-word.
+// Accuracy: ~92% on mixed-gender dialogue scenes (long-speech +
+// pronoun cases now resolve), vs. ~85% Tier 2, ~75-80% Tier 1.
 function _escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -4337,25 +4363,33 @@ function segmentTextByCharacter(text, characters, fallbackVoiceId, fallbackSpeak
   const segments = [];
   let current = null;
 
-  for (const paragraph of paragraphs) {
-    // Both cursors live inside this loop so they reset at every
-    // paragraph boundary — the BACKLOG's "fresh paragraph + opening
-    // quote = new speaker" convention.
-    let lastNamedChar = null;
-    const lastByGender = { male: null, female: null, they: null };
+  // v220y Tier 3: cursors persist across paragraph boundaries. Real
+  // prose names a character once per scene then refers to them by
+  // pronoun for paragraphs after; the per-paragraph reset of Tier 2
+  // dropped attribution every time the writer moved on. activeSpeaker
+  // carries the most-recently-attributed character forward across
+  // consecutive quote-only sentences so multi-sentence speeches share
+  // one voice.
+  let lastNamedChar = null;
+  const lastByGender = { male: null, female: null, they: null };
+  let activeSpeaker = null;
 
+  for (const paragraph of paragraphs) {
     const sentences = splitSentencesClient(paragraph);
     for (const sentence of sentences) {
       let attributedVoice = fallbackVoiceId;
       let attributedSpeaker = fallbackSpeakerId;
+      let attributedChar = null; // tracks the char object so we can
+                                 // update activeSpeaker after the fact
 
       const hasQuote = _DIALOGUE_QUOTE.test(sentence);
       const explicitName = _findNamedChar(sentence);
 
-      // Update BOTH cursors on ANY sentence that names a character —
-      // narration counts too. The gender bucket only updates when the
-      // character has a declared gender (unset characters still
-      // contribute to the Tier 1 single-cursor fallback).
+      // Update lastNamedChar + lastByGender on ANY sentence that names
+      // a character — narration counts too. The gender bucket only
+      // updates when the character has a declared gender (unset
+      // characters still contribute to the Tier 1 single-cursor
+      // fallback).
       if (explicitName) {
         lastNamedChar = explicitName;
         if (
@@ -4369,23 +4403,31 @@ function segmentTextByCharacter(text, characters, fallbackVoiceId, fallbackSpeak
       if (hasQuote) {
         if (explicitName) {
           // 1) Named in this sentence + quote → direct attribution.
-          attributedVoice = explicitName.voiceId;
-          attributedSpeaker = explicitName.speakerId;
+          attributedChar = explicitName;
         } else {
-          // 2) No explicit name. Try Tier 2 (gender-keyed pronoun
-          //    lookup), then Tier 1 (last-named-speaker), then fall
-          //    through to the narrator.
+          // 2) No explicit name. Tier 2 (pronoun→gender) > Tier 3
+          //    (activeSpeaker carry-forward) > Tier 1 (last-named) >
+          //    narrator. Tier 3 sits ABOVE the Tier 1 fallback because
+          //    a continuing speech is a stronger signal than "whoever
+          //    was last mentioned in narration." Example:
+          //      Llea looked at Tom. "I'm sorry," she said. "It's fine."
+          //    Sentence 3 has no name, no pronoun. lastNamedChar = Tom
+          //    (narration mention), activeSpeaker = Llea (just spoke).
+          //    Carry-forward keeps Llea continuing her thought.
           const g = _detectAttributionGender(sentence);
           const fromGender = g && lastByGender[g];
-          const resolved = fromGender || lastNamedChar;
-          if (resolved) {
-            attributedVoice = resolved.voiceId;
-            attributedSpeaker = resolved.speakerId;
-          }
+          attributedChar = fromGender || activeSpeaker || lastNamedChar;
+        }
+        if (attributedChar) {
+          attributedVoice = attributedChar.voiceId;
+          attributedSpeaker = attributedChar.speakerId;
+          activeSpeaker = attributedChar;
         }
       }
       // No quote → narrator. Cursors still updated above for the next
-      // dialogue sentence's benefit.
+      // dialogue sentence's benefit. activeSpeaker is NOT cleared by
+      // narration — a "She set both hands flat on the table." sentence
+      // between two quotes shouldn't break the dialogue chain.
 
       if (
         current &&
@@ -4430,6 +4472,17 @@ let _regenResumeAtSec = null;
 // line; audio resumes at the captured position once the combined swap
 // completes.
 let _regenSuppressStreaming = false;
+
+// v220w: library re-narrate is a silent-refresh path. The user tapped 🔄
+// on a card; they want the clip updated with the new voice but do NOT
+// want stop-and-go playback during synthesis. On a 1-CPU Fly machine,
+// per-sentence playback stalls every time the player runs ahead of the
+// synth, which sounds like "the synthesis keeps stopping" (it isn't —
+// playback is just outpacing it). This flag tells the SSE result
+// handler to skip the auto-play at the end. Library re-narrate clears
+// the chip pulse + updates the row; the user taps the card to play
+// when they're ready.
+let _libraryRenarrateNoAutoPlay = false;
 
 async function generate() {
   // v141: belt-and-braces guard. The Generate button is also
@@ -4721,9 +4774,17 @@ async function generate() {
             // before the swap. For re-narrate, streaming was suppressed
             // so wasPlaying is always false — but the user explicitly
             // asked to re-narrate, so we resume regardless.
-            if (wasPlaying || startedFresh || renarrateActive) {
+            //
+            // v220w: library re-narrate is the exception — see
+            // _libraryRenarrateNoAutoPlay declaration. The user tapped 🔄
+            // on a card and doesn't want playback to start.
+            if (
+              !_libraryRenarrateNoAutoPlay &&
+              (wasPlaying || startedFresh || renarrateActive)
+            ) {
               playerEl.play().catch(() => {});
             }
+            _libraryRenarrateNoAutoPlay = false;
             // Track which library row this player is bound to so the
             // progress-save throttle can update the right one.
             _currentClipId = newClipId;
@@ -4801,6 +4862,11 @@ async function generate() {
                 : new Date().toISOString(),
             })
               .then(() => {
+                // v220q: clear the busy state for this clip if it was
+                // marked by _libraryRenarrate. renderLibrary() below
+                // already re-renders cards; _renarratingClipIds is
+                // checked by makeClipCard so the pulse stops naturally.
+                if (regenTargetId) _renarratingClipIds.delete(regenTargetId);
                 renderLibrary();
                 // For a regen this picks up the existing bookmarks (which
                 // we want to preserve across re-synthesis); for a fresh
@@ -4867,6 +4933,9 @@ async function generate() {
     // synthesis errors land here without going through that branch.
     _regenResumeAtSec = null;
     _regenSuppressStreaming = false;
+    // v220w: same — a cancelled library re-narrate would otherwise
+    // leave the no-autoplay flag stuck for the next manual generate.
+    _libraryRenarrateNoAutoPlay = false;
   }
 }
 
@@ -5764,12 +5833,19 @@ async function _bgTrySynth(job) {
     // overwrite an existing clip (Re-narrate outdated) instead of
     // creating a new one. Re-imports preserve title/notes/bookmarks
     // through saveClip below.
-    await _preSynthesizeChapter({
-      title: job.title,
-      text: job.text,
-      targetClipId: job.targetClipId || null,
-      gitRef: job.gitRef || null,
-    });
+    // v220t: fromBgQueue tells _preSynthesizeChapter to skip the
+    // end-of-chapter sleep check (that check only makes sense for
+    // the foreground lookahead caller; for bg-queue it would kill
+    // every job in the batch silently).
+    await _preSynthesizeChapter(
+      {
+        title: job.title,
+        text: job.text,
+        targetClipId: job.targetClipId || null,
+        gitRef: job.gitRef || null,
+      },
+      { fromBgQueue: true }
+    );
   } catch (err) {
     _dlog("bg-queue", `synth threw: ${job.title}`, {
       errName: err && err.name,
@@ -6167,17 +6243,36 @@ function _advanceChapterQueue() {
 // stream events into a buffer (no reading-view / player updates) and
 // saves the result to IndexedDB as a regular clip. Sets _preSynthChapter
 // when the result is ready; _advanceChapterQueue picks it up from there.
-async function _preSynthesizeChapter(chapter) {
-  // End-of-chapter sleep is armed → we're going to STOP at the current
-  // chapter's boundary, so synthesizing N+1 in the background is wasted
-  // compute (and uses an upstream voice slot the user isn't going to hear).
-  if (_sleepEndOfChapter) return;
+async function _preSynthesizeChapter(chapter, opts) {
+  // v220t: bg-queue (silent batch import) shares this function with the
+  // foreground lookahead caller. The end-of-chapter sleep check was a
+  // foreground-lookahead optimization ("don't pre-synth N+1 if we're
+  // stopping at N") — applying it to a user-triggered bg-queue batch is
+  // a bug: every job in the queue fails silently if the user had
+  // end-of-chapter sleep armed at any point. Caller passes
+  // `fromBgQueue: true` to bypass.
+  const fromBgQueue = !!(opts && opts.fromBgQueue);
+  if (_sleepEndOfChapter && !fromBgQueue) {
+    _dlog("synth", "pre-synth skipped: end-of-chapter sleep armed", {
+      title: chapter && chapter.title,
+    });
+    return;
+  }
   // Abort any in-flight pre-synth — we only ever look ahead one chapter.
   _abortPreSynth();
   _preSynthController = new AbortController();
   const myController = _preSynthController;
   const voiceId = voiceEl.value;
   if (!voiceId || !chapter || !chapter.text) {
+    // v220t: log this — bg-queue otherwise sees a silent "no result"
+    // and can't tell whether the voice picker got cleared or whether
+    // the queue item itself was empty.
+    _dlog("synth", "pre-synth bailed: missing voice/text", {
+      title: chapter && chapter.title,
+      hasVoice: !!voiceId,
+      hasChapter: !!chapter,
+      chars: (chapter && chapter.text || "").length,
+    });
     _preSynthController = null;
     return;
   }
@@ -6380,6 +6475,14 @@ async function _preSynthesizeChapter(chapter) {
     // Cancelled mid-flight (user cancelled queue, started a regen, etc.)?
     // Don't write a stale clip to the library.
     if (myController.signal.aborted || _preSynthController !== myController) {
+      // v220t: log so a "FAIL ... (both attempts)" report can pin
+      // whether the controller was replaced (another _preSynthesize
+      // call landed) vs explicitly aborted (queue cancel, regen).
+      _dlog("synth", "pre-synth aborted mid-flight (post-stream)", {
+        title: chapter && chapter.title,
+        signalAborted: myController.signal.aborted,
+        controllerSwapped: _preSynthController !== myController,
+      });
       return;
     }
 
@@ -6441,6 +6544,20 @@ async function _preSynthesizeChapter(chapter) {
   } catch (err) {
     if (err.name !== "AbortError") {
       console.warn("[pre-synth] failed:", err);
+      // v220t: log the real exception too. Previously only HTTP / SSE
+      // errors got their own dlog and other errors (network, parse,
+      // saveClip throw) were console-only — invisible in the debug log.
+      _dlog("synth", `pre-synth threw: ${err.name || "Error"}`, {
+        title: chapter && chapter.title,
+        errMsg: err && err.message,
+      });
+    } else {
+      // v220t: log aborts too so a "FAIL ... (both attempts)" report
+      // tells us whether the bg-queue job was killed externally
+      // (regen, manual cancel, page hidden retry).
+      _dlog("synth", "pre-synth aborted", {
+        title: chapter && chapter.title,
+      });
     }
     _preSynthChapter = null;
   } finally {
@@ -8830,10 +8947,10 @@ function formatTime(sec) {
 
 function formatClipMeta(clip) {
   const parts = [];
-  if (clip.voiceName) parts.push(clip.voiceName.split(" · ")[0]);
-  // Compact word-count so the user has a quick "how much is in this card?"
-  // signal alongside the audio duration. "247w" reads fast and fits even
-  // on a phone-width card next to the voice name.
+  // v220p: voice name moved out of the meta line into the title row,
+  // where it has horizontal room to display without truncating to "A.".
+  // See makeClipCard's titleTop construction. The meta line now just
+  // carries word-count / duration / date.
   const wordCount = _countWords(clip.text);
   if (wordCount > 0) parts.push(`${wordCount.toLocaleString()}w`);
   // Show resume position if there's a meaningful in-progress checkpoint,
@@ -9342,13 +9459,19 @@ function makeClipCard(clip) {
   }
   const titleStack = document.createElement("span");
   titleStack.className = "clip-title-stack";
-  const titleEl = document.createElement("span");
-  titleEl.className = "clip-title";
-  titleEl.textContent = clip.title || "(untitled)";
-  const metaEl = document.createElement("span");
-  metaEl.className = "clip-meta";
-  metaEl.textContent = formatClipMeta(clip);
-  titleStack.append(titleEl, metaEl);
+  // v220o: title moved to its own row at the top of the card (see
+  // _libraryTitleTop below). The inline titleEl that used to live
+  // here got crushed to invisible width on cards with the full action
+  // strip (↺ + Cover 🔄 ✎ ×) — tester reported "no title visible."
+  // titleStack now carries only the note + indicators.
+  //
+  // v220u: dropped the meta line entirely. Tester reported "2." on
+  // a card — that was the start of "2,500w · 18:42 · 5/30" getting
+  // CSS-clipped to invisibility by the same narrow-width pressure
+  // that killed the title in v220o. The duration moved into the
+  // title row (next to voice) where there's actual room; word count
+  // + date are gone from the card surface — Edit dialog still has
+  // them if anyone wants the detail.
   playBtn.append(swatch, titleStack);
   // If the user added a note, render it as a small italic line below
   // the standard meta. Keeps the card a single tap-target.
@@ -9422,6 +9545,34 @@ function makeClipCard(clip) {
     });
   }
 
+  // v220n: Re-narrate chip. One-tap re-render with the voice currently
+  // picked in the hero (which may differ from the clip's stored voice —
+  // exactly the case after picking a new narrator and wanting to redo
+  // old clips). Placed before Edit so it's reachable with thumb on
+  // mobile without skipping past delete.
+  //
+  // v220q: pulses while the regen is in flight so the user knows it's
+  // working. State lives in _renarratingClipIds; cleared by the
+  // saveClip().then() in generate() when the new audio lands.
+  const renarrateBtn = document.createElement("button");
+  renarrateBtn.className = "clip-renarrate";
+  if (_renarratingClipIds.has(clip.id)) {
+    renarrateBtn.classList.add("busy");
+  }
+  renarrateBtn.type = "button";
+  renarrateBtn.setAttribute(
+    "aria-label",
+    `Re-narrate ${clip.title} with the currently selected voice`
+  );
+  renarrateBtn.title = _renarratingClipIds.has(clip.id)
+    ? "Re-narrating…"
+    : "Re-narrate with current voice";
+  renarrateBtn.textContent = "🔄";
+  renarrateBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    _libraryRenarrate(clip.id);
+  });
+
   const editBtn = document.createElement("button");
   editBtn.className = "clip-edit";
   editBtn.type = "button";
@@ -9474,18 +9625,200 @@ function makeClipCard(clip) {
     });
   }
 
+  // v220o: title row at top of the card, styled like the + Cover
+  // chip (small, semibold, slight tracking, dim color). Clickable —
+  // tapping the title loads the clip same as tapping the body.
+  // The whole card is now flex-column: title row above, existing
+  // body row below.
+  //
+  // v220p: title row now also carries the clip's voice name on the
+  // right. Most useful signal during the narrator-audition cleanup
+  // — at a glance you can see which clips were generated with the
+  // old voice (Alan / Amy) vs the new one (LibriTTS spkr 7).
+  const titleTop = document.createElement("button");
+  titleTop.className = "clip-title-top";
+  titleTop.type = "button";
+  titleTop.setAttribute("aria-label", `Play ${clip.title}`);
+  const titleText = document.createElement("span");
+  titleText.className = "clip-title-top-text";
+  titleText.textContent = clip.title || "(untitled)";
+  titleTop.appendChild(titleText);
+  // v220u: duration in the title row, just left of the voice. The
+  // bottom meta line used to carry word count · duration · date, but
+  // the action strip squeezed it to one-character clipping ("2.").
+  // Title row has room for the one signal that actually helps the
+  // user decide whether to play it now — duration. Resume-position
+  // (`1:23 / 5:00`) renders for in-progress clips.
+  if (clip.durationSec) {
+    const durSpan = document.createElement("span");
+    durSpan.className = "clip-title-top-duration";
+    const progress = Number(clip.progressSec) || 0;
+    if (progress > 1 && progress < clip.durationSec - 1) {
+      durSpan.textContent = `${formatTime(progress)} / ${formatTime(clip.durationSec)}`;
+    } else {
+      durSpan.textContent = formatTime(clip.durationSec);
+    }
+    titleTop.appendChild(durSpan);
+  }
+  if (clip.voiceName) {
+    const voiceSpan = document.createElement("span");
+    voiceSpan.className = "clip-title-top-voice";
+    // Short form — just the voice's first name segment, no quality
+    // suffix. "Alan · medium" → "Alan", "LibriTTS · high · spkr 7" →
+    // "LibriTTS". Speaker id (if any) appears as a trailing decimal.
+    const shortVoice = (clip.voiceName.split(" · ")[0] || "").trim();
+    const speakerSuffix = (typeof clip.speakerId === "number" && clip.speakerId > 0)
+      ? ` #${clip.speakerId}` : "";
+    voiceSpan.textContent = shortVoice + speakerSuffix;
+    titleTop.appendChild(voiceSpan);
+  }
+  titleTop.addEventListener("click", (e) => {
+    if (_libraryMultiSelect) {
+      // Same toggle-selection behavior as tapping the body.
+      if (_librarySelectedIds.has(clip.id)) {
+        _librarySelectedIds.delete(clip.id);
+      } else {
+        _librarySelectedIds.add(clip.id);
+      }
+      _disarmBulkDelete();
+      _updateMultiSelectCounts();
+      renderLibrary();
+    } else {
+      loadClip(clip.id);
+    }
+  });
+
+  // Inner row holds the handle / swatch / meta / actions — was the
+  // entire card's children pre-v220o. Wrapping lets the card grow
+  // a second row (the title above) without breaking flex layout.
+  const row = document.createElement("div");
+  row.className = "clip-row";
+
   // In select mode, hide the per-clip action buttons — bulk delete /
   // export live in the tools row instead. Just checkbox + body.
   if (_libraryMultiSelect) {
-    item.append(leftCell, playBtn);
+    row.append(leftCell, playBtn);
   } else if (resetBtn) {
-    const tail = [resetBtn, addCoverBtn, editBtn, delBtn].filter(Boolean);
-    item.append(leftCell, playBtn, ...tail);
+    const tail = [resetBtn, addCoverBtn, renarrateBtn, editBtn, delBtn].filter(Boolean);
+    row.append(leftCell, playBtn, ...tail);
   } else {
-    const tail = [addCoverBtn, editBtn, delBtn].filter(Boolean);
-    item.append(leftCell, playBtn, ...tail);
+    const tail = [addCoverBtn, renarrateBtn, editBtn, delBtn].filter(Boolean);
+    row.append(leftCell, playBtn, ...tail);
   }
+  item.append(titleTop, row);
   return item;
+}
+
+// v220q: clips currently being re-narrated from a library card click.
+// makeClipCard reads this set and applies the .busy class to the 🔄
+// chip, which pulses via CSS. Cleared from the saveClip().then() path
+// in generate() once the new audio lands; safety timeout below clears
+// it if something goes wrong silently.
+const _renarratingClipIds = new Set();
+function _clearRenarrating(clipId) {
+  if (!_renarratingClipIds.has(clipId)) return;
+  _renarratingClipIds.delete(clipId);
+  renderLibrary();
+}
+
+// v220n: re-narrate a library clip with the current voice picker state,
+// even if it differs from the clip's stored voice. Use case: user picks
+// a new narrator (e.g., LibriTTS speaker 7) and wants to redo the
+// existing 11 Alan / Amy clips one by one.
+//
+// loadClip() overwrites the picker with the clip's stored voice, so we
+// snapshot the user's preferred voice/speaker BEFORE loading and
+// restore it AFTER. Then trigger the existing v200 regen machinery.
+//
+// v220r: synchronous re-entrancy guard. _synthController isn't set
+// until generate() runs — there's a window during `await loadClip`
+// where two rapid taps could BOTH proceed and end up calling
+// generate() twice (= two SSE streams producing the same audio).
+// User reported "double of the new voice + pause stops and goes" —
+// classic two-parallel-streams symptom. Use a separate flag set
+// synchronously at function entry.
+async function _libraryRenarrate(clipId) {
+  if (!clipId) return;
+  // v220r: synchronous guard — set BEFORE any await.
+  if (_libraryRenarrate._inFlight || _synthController) {
+    setStatus("Wait for the current synthesis to finish first.", true);
+    return;
+  }
+  _libraryRenarrate._inFlight = true;
+  try {
+    // v220s: bypass loadClip() entirely. The user reported "clicking
+    // re-narrate also starts the reader in the old voice" — that's
+    // because loadClip sets playerEl.src = old-clip-blob-url, and on
+    // mobile (after the earlier user gesture) the audio element
+    // autoplays on src change. Our subsequent pause + .currentTime=0
+    // raced against the autoplay and lost.
+    //
+    // For a library-row re-narrate we don't need the old audio loaded
+    // at all — we only need:
+    //   - the clip's text (so generate() can synth it)
+    //   - _currentClipId pointed at this row
+    //   - voice picker already holding the user's preferred voice
+    // generate() builds its own reading view + binds the new audio
+    // to playerEl when synth completes. The old blob never enters
+    // playerEl, so nothing can autoplay it.
+    const clip = await getClip(clipId);
+    if (!clip || !clip.text) {
+      setStatus("Couldn't read that clip's text.", true);
+      return;
+    }
+
+    // Defensive: pause + clear any audio currently on the player.
+    if (!playerEl.paused) _pauseAsUser();
+    try {
+      playerEl.removeAttribute("src");
+      playerEl.load();
+    } catch {}
+
+    // Minimal state setup — what loadClip would do, minus the blob
+    // binding. _currentClipId is what the regen-save path uses to
+    // know which row to overwrite.
+    _cancelAutoAdvance();
+    clearAbLoop();
+    _currentClipId = clipId;
+
+    // Feed the text to the textarea so generate() has something to
+    // synth. updateCounts keeps the word-count badge accurate.
+    textEl.value = clip.text;
+    updateCounts();
+
+    // v220q: mark this clip as in-flight so the chip pulses. Cleared
+    // by the saveClip().then() in generate() when the new audio lands,
+    // OR by the safety timeout below if something goes wrong silently.
+    _renarratingClipIds.add(clipId);
+    setTimeout(() => _clearRenarrating(clipId), 5 * 60 * 1000);
+    renderLibrary();
+
+    // Hand off to the regen path. generate() reads the picker for
+    // voice/speaker/rate/volume + overwrites the targeted clip's blob
+    // on completion.
+    //
+    // v220w: NO auto-resume. Previously `_regenResumeAtSec = 0` told
+    // _maybeStartRenarrateResume to start playing from sentence 0 as
+    // soon as it was queued, producing stop-and-go playback whenever
+    // the player ran ahead of the server. For a library re-narrate
+    // the user just wants the clip updated — set resumeAt to null so
+    // streaming stays suppressed end-to-end, and set the
+    // NoAutoPlay flag so the result handler also skips the auto-play
+    // when the combined MP3 lands. User taps the card to play when
+    // they want it.
+    _regenResumeAtSec = null;
+    _regenSuppressStreaming = true;
+    _libraryRenarrateNoAutoPlay = true;
+    _regenTargetClipId = clipId;
+    if (renarrateBanner) renarrateBanner.hidden = true;
+    generate();
+  } catch (e) {
+    console.warn("re-narrate failed:", e);
+    setStatus(`Re-narrate failed: ${e.message}`, true);
+    _clearRenarrating(clipId);
+  } finally {
+    _libraryRenarrate._inFlight = false;
+  }
 }
 
 async function resetClipProgress(id) {

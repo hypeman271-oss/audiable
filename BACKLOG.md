@@ -813,6 +813,110 @@ the best one."
 
 ---
 
+## 7. Timestamped inline notes — clickable `[m:ss]` in free-form notes
+
+**Triggered by:** Conversation during a v220l test session. Author
+confirmed they use both bookmarks *and* free-form notes — each for a
+distinct moment. But there's a third moment neither covers: writing a
+paragraph of reflection that *references specific audio timestamps*.
+Like:
+
+> The pacing drops noticeably around `[3:42]` — Cassian's internal
+> monologue at `[4:08]` feels overwritten, and by `[5:15]` the
+> chapter has lost momentum it doesn't recover.
+
+Bookmarks can't hold prose. Free-form notes can't seek audio. This
+adds the third form: notes that link.
+
+**Status:** Future work. Task #373.
+
+**Priority:** Medium. Doesn't block anything; the existing two forms
+cover most needs. But this specifically helps the *editing-pass*
+workflow where you're synthesizing observations across multiple
+moments — exactly where indie authors using Narrative for craft
+review live.
+
+### What's shipped today
+
+- Per-clip free-form notes (v138 / tasks #260-263): a multi-line
+  textarea inside the Edit dialog and a 📝 quick-access dialog from
+  the player. Plain text, no audio integration.
+- Bookmarks with optional one-line notes (v98 / tasks #98-102): tap
+  Bookmark while listening, optional short note, persists with
+  timestamp. Tap any bookmark to seek there.
+- `seekToTime(timeSec)` helper already exists from the bookmarks
+  work — reuse it.
+
+### What this adds
+
+A small enhancement to the existing notes — no new schema, no new
+storage field, just a render-time parse:
+
+1. **Detection.** Regex matches `[m:ss]`, `[mm:ss]`, `[h:mm:ss]`,
+   `[m:ss.ms]` inside note text. Conservative — only matches inside
+   square brackets so accidental "0:30" in prose doesn't trigger.
+2. **Render.** When the Notes dialog renders the saved notes for
+   reading (NOT when the user is actively typing), it replaces
+   matched patterns with small clickable chips like
+   `<button class="note-timestamp">3:42</button>`.
+3. **Seek.** Click handler parses the timestamp, calls
+   `seekToTime(parsed)`. If the clicked clip isn't currently loaded,
+   load it first then seek.
+4. **Insert.** An "Insert ⏱" chip next to the notes textarea (in
+   both Edit and quick-access Notes dialogs) drops the current
+   player time as `[currentTimeFormatted]` at the cursor. Works even
+   while paused; uses the last known position.
+5. **Storage unchanged.** Notes stay plain text in IndexedDB. The
+   `[m:ss]` is just text; only the render layer transforms it.
+   Backward-compatible: old notes show as plain text, no migration
+   needed.
+
+### UX details to refine when picked up
+
+- **Editing mode vs viewing mode.** When the user is actively typing,
+  show plain text — don't transform `[3:42]` into a button mid-type.
+  Only render-as-chip when the textarea isn't focused, or in a
+  read-only preview pane below the textarea.
+- **Clip context for cross-clip seek.** A timestamp in clip A's notes
+  refers to clip A's audio. Click → load clip A (if not loaded) and
+  seek. Don't accidentally seek the wrong clip.
+- **Insert button affordance.** When no clip is loaded, the button
+  should be disabled or hidden (no time to insert). When a clip is
+  loaded, button shows `⏱ Insert 3:42` (current time) so the user
+  knows what they're inserting before clicking.
+- **Notes filter / search** could later understand `[m:ss]` patterns
+  and offer "Jump to all notes that reference 3:00-4:00" — but that's
+  v223+ territory; ship the basic version first.
+
+### Implementation sketch (small build, ~half a day)
+
+1. **JS helper** `_parseAndRenderNoteTimestamps(text, clipId)` that
+   returns a `DocumentFragment` with text nodes + button elements.
+2. **Render path**: when populating the Notes dialog's read-only
+   preview, call this helper. When populating the editable textarea,
+   use plain `.value = text`.
+3. **Click handler** on `.note-timestamp` (delegated on the dialog)
+   → parse `data-time-sec` attribute → call `seekToTime(secs)`,
+   loading the clip first if needed.
+4. **Insert button**: new chip near the Save action in the Notes
+   dialog. Reads `playerEl.currentTime`, formats as `m:ss` (or
+   `h:mm:ss` if past an hour), inserts at textarea cursor.
+5. **Storage**: unchanged.
+6. **Export/import**: unchanged (plain text travels through the
+   library zip as it always did).
+
+### Why this matters for the product narrative
+
+Narrative's positioning is "the TTS app for authors editing drafts."
+This feature directly serves that editing pass. It's the most
+"author-shaped" feature in the app — not infrastructure, not
+licensing, just an editing workflow that the existing tools almost
+support but don't quite close the loop on. Worth shipping when the
+infrastructure-heavy v221+ items (Qwen3-TTS, Tauri, Stripe) hit
+their next breathing room.
+
+---
+
 ## How to use this file
 
 When an idea worth keeping surfaces during use:

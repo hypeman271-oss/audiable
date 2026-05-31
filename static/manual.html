@@ -1254,8 +1254,12 @@
         <li>Tap once more to clear.</li>
       </ol>
       <div class="tip">
-        Loading a different clip clears the loop bounds (they
-        belonged to a different audio track).
+        <strong>Play forward between taps.</strong> The 2nd tap takes the
+        current playback position as B. If the playhead hasn't moved
+        since you marked A (e.g. you were paused), the chip stays at
+        <code>A 1:23</code> and the status line nudges you to play or
+        seek before tapping again. Loading a different clip clears the
+        loop bounds (they belonged to a different audio track).
       </div>
 
       <h3>💤 Sleep timer</h3>
@@ -1296,6 +1300,53 @@
         scratchpad with no card display, so you can write at length
         without cluttering the library.
       </div>
+
+      <h3>📝 + 🔖 in practice — the author editing workflow</h3>
+      <p>
+        Bookmarks and Notes coexist because they serve different
+        moments in a revision pass. Here's how authors actually use
+        both during a listen-through:
+      </p>
+      <table>
+        <tr><th>Moment</th><th>Tool</th><th>Why</th></tr>
+        <tr>
+          <td>You're listening, hear a typo / wrong comma / weird emphasis</td>
+          <td><strong>🔖 Bookmark</strong></td>
+          <td>One tap, marks the exact second, no flow break. Optional one-line note: "fix comma."</td>
+        </tr>
+        <tr>
+          <td>A sentence rhythm feels off and you want to revisit</td>
+          <td><strong>🔖 Bookmark + 1-line note</strong></td>
+          <td>"rewrite — too breathless" attached to the timestamp lets you find it later by searching the bookmark list, not by re-scrubbing.</td>
+        </tr>
+        <tr>
+          <td>Step back after a chapter, think about pacing or theme</td>
+          <td><strong>📝 Notes</strong></td>
+          <td>Not tied to one moment. Multi-paragraph reflection on the whole chapter. "Middle drags. Cassian's interiority disappears around the felling scene."</td>
+        </tr>
+        <tr>
+          <td>Continuity check across multiple chapters</td>
+          <td><strong>📝 Notes</strong></td>
+          <td>"She's blue-eyed in ch 2, brown in ch 7 — fix one or both." Lives on the relevant clip; no need for a single moment.</td>
+        </tr>
+        <tr>
+          <td>Pasting external feedback (editor letter, beta-reader email)</td>
+          <td><strong>📝 Notes</strong></td>
+          <td>Long-form reference material parks here so you can listen + read in the same view.</td>
+        </tr>
+        <tr>
+          <td>Reviewer comments tied to specific moments ("the dialogue at 4:15 feels expository")</td>
+          <td><strong>📝 Notes (today)</strong> →
+              <strong>📝 Notes + ⏱ inline timestamps (future)</strong></td>
+          <td>Today: paste the comment as prose. Coming: type <code>[4:15]</code> inside Notes and it'll render as a clickable seek-link.</td>
+        </tr>
+      </table>
+      <p>
+        <strong>The rule of thumb:</strong> bookmarks during the
+        listen (in-flow spot fixes), notes during the review (stepping
+        back). Neither is the right tool for both — that's why both
+        exist.
+      </p>
 
       <h3>Playback speed (1×)</h3>
       <p>
@@ -1468,32 +1519,48 @@
       </div>
 
       <h3>Card anatomy</h3>
+      <p>
+        Cards have two rows. The <strong>title row</strong> at the top
+        runs <code>title  ·  duration  ·  voice</code>. The
+        <strong>body row</strong> below holds the drag handle, the
+        cover swatch, and the action strip (cover-add / re-narrate /
+        edit / delete). Tap either row to load and play the clip.
+      </p>
       <figure>
         <div class="manual-demo">
           <div class="library-list">
             <div class="clip current">
-              <div class="clip-drag" aria-label="Drag to reorder">⋮⋮</div>
-              <button type="button" class="clip-play">
-                <span class="clip-title">Chapter 3</span>
-                <span class="clip-meta">Amy · 247w · 4:08 / 11:22 · 7:15 PM</span>
+              <button type="button" class="clip-title-top">
+                <span class="clip-title-top-text">Chapter 3</span>
+                <span class="clip-title-top-duration">4:08 / 11:22</span>
+                <span class="clip-title-top-voice">LibriTTS #7</span>
               </button>
-              <button type="button" class="clip-reset" aria-label="Reset">↺</button>
-              <button type="button" class="clip-edit" aria-label="Edit">✎</button>
-              <button type="button" class="clip-delete" aria-label="Delete">×</button>
+              <div class="clip-row">
+                <div class="clip-drag" aria-label="Drag to reorder">⋮⋮</div>
+                <button type="button" class="clip-play">
+                  <span class="clip-swatch" aria-hidden="true">C</span>
+                </button>
+                <button type="button" class="clip-reset" aria-label="Reset">↺</button>
+                <button type="button" class="clip-add-cover">+ Cover</button>
+                <button type="button" class="clip-renarrate" aria-label="Re-narrate">🔄</button>
+                <button type="button" class="clip-edit" aria-label="Edit">✎</button>
+                <button type="button" class="clip-delete" aria-label="Delete">×</button>
+              </div>
             </div>
           </div>
         </div>
-        <figcaption>Currently-playing in-progress clip — accent border, ▶ prefix on title (added by the <code>.clip.current</code> rule), full meta line</figcaption>
+        <figcaption>Currently-playing in-progress clip — accent border, title row up top showing voice + resume position, body row below with full action strip.</figcaption>
       </figure>
       <table>
         <tr><th>Element</th><th>What it does</th></tr>
-        <tr><td><strong>⋮⋮</strong></td><td>Drag handle. Press, drag up or down, release to reorder. Works for mouse and touch.</td></tr>
+        <tr><td><strong>Title row</strong></td><td>Title (large, semibold) on the left; on the right a small dim duration string (<code>4:08 / 11:22</code> for in-progress clips, just <code>11:22</code> otherwise) and the voice name (e.g. <code>LibriTTS #7</code> — voice + speaker id). Tap anywhere on the row to load and play.</td></tr>
+        <tr><td><strong>⋮⋮</strong></td><td>Drag handle. Press, drag up or down, release to reorder. Works for mouse and touch. Hidden in Simple mode (Settings → Mode picker).</td></tr>
         <tr><td><strong>Cover swatch</strong></td><td>By default a hash-derived gradient tile with the title's first letter — same title renders the same swatch on every device. <strong>Upload custom cover art</strong> via ✎ Edit → Cover image (PNG / JPG / WebP / GIF, auto-resized to 256×256 + JPEG-compressed). The card's dominant color also tints the background of the whole card (Libby-style) and, when the clip is loaded, fades in as a heavily blurred wash behind the entire page. Played clips render the swatch dimmer.</td></tr>
-        <tr><td><strong>Card body</strong></td><td>Tap anywhere on the title/meta area to load and play this clip.</td></tr>
-        <tr><td><strong>Tag chips</strong></td><td>Free-form colored labels (set via ✎ Edit). Same tag always renders in the same hash-derived color. The filter chip row above the library composes AND-style across selected tags.</td></tr>
-        <tr><td><strong>📝 Notes indicator</strong></td><td>Small badge under the meta line, shown whenever the clip has free-form notes attached. Tap the ✎ Edit dialog or the 📝 chip in the player to read or extend them. Empty notes hide the badge so clean cards stay clean.</td></tr>
+        <tr><td><strong>Tag chips</strong></td><td>Free-form colored labels (set via ✎ Edit), rendered under the swatch. Same tag always renders in the same hash-derived color. The filter chip row above the library composes AND-style across selected tags.</td></tr>
+        <tr><td><strong>📝 Notes indicator</strong></td><td>Small badge under the swatch, shown whenever the clip has free-form notes attached. Tap the ✎ Edit dialog or the 📝 chip in the player to read or extend them. Empty notes hide the badge so clean cards stay clean.</td></tr>
         <tr><td><strong>↺ Reset</strong></td><td>Only shown for in-progress clips. Wipes the saved resume position so next play starts from the top. If you reset the clip you're currently listening to, the player rewinds too.</td></tr>
         <tr><td><strong>+ Cover</strong></td><td>(Only shown for clips without a custom cover.) Quiet dashed-border chip that opens the Edit dialog scrolled straight to the cover picker. Tap → file picker → cover applied + cards re-render with the new tint. Disappears once the clip has a cover. On narrow viewports it collapses to just <code>+</code>.</td></tr>
+        <tr><td><strong>🔄 Re-narrate</strong></td><td>One-tap re-render with whatever voice is currently picked in the hero. Use it during a narrator audition — after picking a new voice (e.g. LibriTTS speaker 7), tap 🔄 on every card you want re-rendered with the new voice. The chip <strong>pulses</strong> while synthesis is in flight; the card's title-row voice updates and the audio replaces in place when done. Synthesis runs <strong>silently</strong> — no playback during synth, no stop-and-go between sentences. Tap the card to listen when the chip stops pulsing. The clip's title, notes, tags, cover, and bookmarks are preserved; only text + audio + voice provenance change.</td></tr>
         <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest. For <strong>GitHub-sourced clips</strong> the dialog also surfaces a <em>"From GitHub: chapters/ch03.md @ <code>a1b2c3d</code>"</em> meta line — short SHA in an accent pill (hover for the full hash) so you can confirm the clip matches the commit you just pushed without alt-tabbing to GitHub. For clips generated v219 and later, the dialog also shows a <strong>Voice provenance</strong> block with the license + attribution string the clip was generated under (see below).</td></tr>
         <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
       </table>
@@ -1887,18 +1954,41 @@
       </figure>
       <p>
         When you hit Generate, Narrative scans your text sentence by
-        sentence. A sentence containing a quote
-        (<code>"…"</code>, <code>"…"</code>, etc.) AND a character's name as a
-        whole word is routed through that character's voice. Other
-        sentences use the main voice picker (your narrator).
+        sentence. Each sentence is routed to a character (or the main
+        narrator voice) using this priority order:
       </p>
-      <p>Detected patterns:</p>
+      <ol>
+        <li><strong>Explicit name in the sentence</strong> — <em>"Welcome," said Sarah.</em> → Sarah's voice. Definitive.</li>
+        <li><strong>Pronoun → declared gender</strong> — <em>"How are you?" she asked.</em> → the most-recently-named female character. Works as long as the character's <em>Gender</em> field (She / He / They) is set in the Characters dialog.</li>
+        <li><strong>Active speaker carry-forward</strong> — a sentence with a quote but no name and no pronoun continues the previous speaker. Long speeches split across multiple sentences inherit one voice.</li>
+        <li><strong>Last-named character fallback</strong> — if none of the above resolved, the most recently mentioned character takes attribution.</li>
+        <li><strong>Narrator</strong> — sentences with no quote use the main voice picker. Cursors above still update for the next dialogue sentence's benefit.</li>
+      </ol>
+      <p>
+        The three cursors (last-named, last-by-gender, active-speaker)
+        all <strong>persist across paragraphs and sentences</strong>.
+        Real prose names a character once early in a scene and refers
+        to them by pronoun for paragraphs after — the segmenter
+        remembers. Narration between dialogue sentences doesn't break
+        the chain either:
+      </p>
+      <pre>Llea drew a breath. "House Ashworth of Viciny," she said.
+"I have a list of the noble families. I know where the gaps are."
+She set both hands flat on the table.</pre>
       <ul>
-        <li><em>"Welcome," said Sarah.</em> → Sarah's voice</li>
-        <li><em>Sarah said, "I'll be quick."</em> → Sarah's voice</li>
-        <li><em>"Hello." Sarah walked into the room.</em> → Sarah (name appears with quote)</li>
-        <li>Pronoun-only attribution (<em>"How are you?" she asked.</em>) doesn't resolve — falls through to the narrator.</li>
+        <li><em>Llea drew a breath.</em> → narrator. Cursors updated: lastNamedChar = Llea, lastByGender.female = Llea.</li>
+        <li><em>"House Ashworth of Viciny," she said.</em> → quote + female pronoun → Llea. activeSpeaker = Llea.</li>
+        <li><em>"I have a list of the noble families. I know where the gaps are."</em> → two quote-bearing sentences with no name and no pronoun → active-speaker carry-forward → both Llea.</li>
+        <li><em>She set both hands flat on the table.</em> → no quote → narrator.</li>
       </ul>
+      <div class="tip">
+        <strong>If a line you expected to route through a character
+        came out in the narrator's voice</strong>, the cause is usually
+        that the character's name has never appeared in the text above
+        that point — there's nothing for "she" to resolve to. Name the
+        character once near the top of the scene and the rest of the
+        scene picks up correctly.
+      </div>
       <div class="warn">
         If you assign two characters voices from different Piper
         models with different sample rates (e.g. one
