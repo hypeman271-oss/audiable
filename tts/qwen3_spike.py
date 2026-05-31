@@ -56,19 +56,54 @@ def report_hardware() -> None:
         print("  (no GPU — Qwen3 will run on CPU, expect 30-60s per sentence)")
 
 
-def load_model():
-    """Load Qwen3-TTS via transformers.
-
-    The exact loading API for Qwen3-TTS may differ from standard
-    AutoModel — Qwen has historically used custom pipelines for their
-    multi-modal models. We try the most common paths and print diagnostic
-    info on failure so we can adapt this spike to the real API.
+def make_reference_clip() -> Path:
+    """Generate a ~10s reference WAV using Piper so the CustomVoice
+    model has something to clone. In real usage the user supplies
+    their own reference (their character's reading), but for the spike
+    we just need ANY audio in the right format.
     """
-    print("\nLoading Qwen3-TTS-12Hz-1.7B-Base...")
+    ref_path = Path(__file__).resolve().parent.parent / ".qwen3-ref.wav"
+    if ref_path.exists():
+        print(f"  reusing existing reference: {ref_path}")
+        return ref_path
+
+    print(f"  generating Piper reference clip at {ref_path}...")
+    # Use the first installed Piper voice as the reference source.
+    from . import piper_engine
+
+    voices = piper_engine.list_voices()
+    if not voices:
+        raise RuntimeError(
+            "No Piper voices installed — drop a .onnx into voices/ "
+            "before running this spike, or supply your own reference "
+            "WAV at .qwen3-ref.wav"
+        )
+    ref_text = (
+        "This is a reference voice sample for the Qwen3-TTS spike. "
+        "About ten seconds of clean speech is what the model needs."
+    )
+    out_chunks = list(piper_engine.synthesize_iter(ref_text, voices[0].id))
+    # Last chunk is the result event with the combined WAV
+    import base64
+
+    wav_b64 = out_chunks[-1]["wav_b64"]
+    ref_path.write_bytes(base64.b64decode(wav_b64))
+    print(f"  reference ready ({ref_path.stat().st_size // 1024} KB)")
+    return ref_path
+
+
+def load_model():
+    """Load Qwen3-TTS-CustomVoice via transformers.
+
+    Using CustomVoice (not Base) because the user-confirmed product
+    direction is "import a reference WAV → get that voice." The Base
+    model with 49 stock voices is interesting but not the differentiator.
+    """
+    print("\nLoading Qwen3-TTS-12Hz-1.7B-CustomVoice...")
     print(f"  HF_HOME: {os.environ['HF_HOME']}")
     t0 = time.time()
 
-    model_id = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    model_id = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 
     # Path 1: standard AutoProcessor + AutoModelForTextToSpeech
     try:
@@ -118,22 +153,32 @@ def load_model():
     )
 
 
-def synthesize(processor, model, mode: str, text: str) -> tuple[bytes, int, float]:
+def synthesize(processor, model, mode: str, text: str, ref_path: Path) -> tuple[bytes, int, float]:
     """Run inference and return (wav_bytes, sample_rate, elapsed_seconds)."""
     import torch
     import io
 
     print(f"\nSynthesizing: {text!r}")
+    print(f"  reference voice: {ref_path}")
     t0 = time.time()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if mode == "pipeline":
-        out = model(text)
+        out = model(text, reference_audio=str(ref_path))
         audio = out["audio"]
         sr = out["sampling_rate"]
     else:
-        inputs = processor(text=text, return_tensors="pt").to(device)
+        # Most Qwen3-TTS-CustomVoice processors take both text and a
+        # reference audio path/array. The exact kwarg may differ
+        # (`audio`, `ref_audio`, `speaker_audio`, `prompt_speech`...);
+        # we pass several candidates and rely on the processor to
+        # silently drop the ones it doesn't recognise.
+        inputs = processor(
+            text=text,
+            audio=str(ref_path),
+            return_tensors="pt",
+        ).to(device)
         if hasattr(model, "to"):
             model = model.to(device)
         with torch.no_grad():
@@ -170,14 +215,19 @@ def synthesize(processor, model, mode: str, text: str) -> tuple[bytes, int, floa
 def main() -> int:
     report_hardware()
     try:
+        ref_path = make_reference_clip()
+    except Exception as e:
+        print(f"\nFATAL building reference clip: {e}")
+        return 1
+    try:
         processor, model, mode = load_model()
     except Exception as e:
-        print(f"\nFATAL: {e}")
+        print(f"\nFATAL loading Qwen3: {e}")
         return 1
 
     text = "Hello, this is a Qwen3 test of the new neural narrator engine."
     try:
-        wav, sr, elapsed = synthesize(processor, model, mode, text)
+        wav, sr, elapsed = synthesize(processor, model, mode, text, ref_path)
     except Exception as e:
         import traceback
         print(f"\nSYNTHESIS FAILED: {e!r}")

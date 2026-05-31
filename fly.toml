@@ -45,12 +45,17 @@ primary_region = "iad"
 
 [[vm]]
   # Piper synthesis is CPU-bound + needs ~500-800 MB during inference.
-  # 1 GB RAM + a shared CPU is plenty for alpha (1-10 concurrent users).
-  # If synthesis feels slow, bump cpus to 2 first; bumping memory rarely
-  # helps for TTS.
+  # 1 GB RAM was enough until testers started loading multiple voices
+  # at once (each cached .onnx is 150-200 MB). 2026-05-31: OOM-killed
+  # mid-GitHub-fetch when a tester had two voices cached + an active
+  # synth + a fetch arriving concurrently — total RSS hit 877 MB which
+  # is past the safe ceiling at 1 GB. Bumped to 2 GB.
+  #
+  # If synthesis feels slow, bump cpus to 2 first; bumping memory only
+  # helps when the symptom is OOM (not throughput).
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 1024
+  memory_mb = 2048
 
 [env]
   # NARRATIVE_KEY is NOT set here. Set it via:
