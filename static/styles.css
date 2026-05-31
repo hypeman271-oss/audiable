@@ -471,6 +471,51 @@ dialog[open]::backdrop {
   border-color: var(--accent);
 }
 
+/* v220g: first-load attention animation for the help (?) and settings
+ * (⚙) icons. JS adds the .attention-pulse class after a settle delay
+ * for first-time visitors only; clicks on either icon remove it
+ * immediately. 3 iterations over ~3s — gentle scale + accent halo
+ * that draws the eye without being distracting. */
+@keyframes heroIconAttention {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(101, 116, 255, 0.6); }
+  50%  { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(101, 116, 255, 0); }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(101, 116, 255, 0); }
+}
+.hero-icon-btn.attention-pulse {
+  animation: heroIconAttention 1s cubic-bezier(0.4, 0, 0.2, 1) 3;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-icon-btn.attention-pulse {
+    animation: none;
+  }
+}
+
+/* v220e: Help (?) button — mirrors the settings ⚙ sizing/look so the
+ * three-icon cluster (Voice, Library, Help, Settings becomes 4-icon)
+ * reads as a unit. <a> instead of <button> so right-click → open in
+ * new tab still works for desktop users who prefer that. */
+.help-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  justify-content: center;
+  text-decoration: none;
+  color: var(--fg-dim);
+  margin-top: 4px;
+  line-height: 1;
+}
+.help-btn:hover {
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
 /* ---------- Hero icon rail ----------
    v110 shift: voice + library moved into hero-triggered dialogs.
    The settings ⚙ is now one of three icons in a tight cluster on the
@@ -1025,6 +1070,79 @@ body[data-ui-mode="simple"] .advanced-only {
   box-shadow: var(--shadow);
   overflow: hidden;
 }
+
+/* v220h: in-app manual dialog. Wide on desktop, near-fullscreen on
+ * mobile. The iframe takes the rest of the space below the header.
+ *
+ * v220l: back to showModal() — matches the Settings dialog, which
+ * works on Android Chrome PWA. The earlier theory (modal contract
+ * locks body scroll) turned out to be wrong: Settings uses
+ * showModal and scroll is fine. The actual cause of the post-close
+ * scroll lock was the iframe — see app.js closeManualDialog for the
+ * iframe.contentWindow.blur() fix. */
+.manual-dialog {
+  width: min(960px, calc(100vw - 16px));
+  height: calc(100vh - 24px);
+  height: calc(100dvh - 24px);
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.manual-dialog::backdrop { background: var(--scrim); }
+/* v220k defensive guard — keep this even after the v220l revert.
+ * Costs nothing when the dialog is well-behaved; saves us from any
+ * mid-SW-swap UA-quirk where a closed dialog still catches taps. */
+dialog.manual-dialog:not([open]) {
+  display: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+.manual-dialog-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.manual-dialog-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+.manual-dialog-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.manual-dialog-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  border: none;
+  background: var(--bg-card);
+  /* v220i: contain iframe scroll within itself so a swipe inside the
+   * manual doesn't propagate to the parent body. Helps on iOS Safari
+   * where uncontained scroll can leave the body locked after close. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 720px) {
+  .manual-dialog {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+}
 .shortcuts-dialog::backdrop { background: var(--scrim); }
 .shortcuts-body {
   padding: 16px;
@@ -1268,6 +1386,42 @@ body[data-ui-mode="simple"] .advanced-only {
   font-size: 13px;
   font-weight: 600;
   text-align: center;
+}
+
+/* v220f: quiet section dividers inside the Settings dialog. Used to
+ * group rows that share a category (App, Player, Book view, Help &
+ * docs, Stats, Tester tools, GitHub). Visually subordinate to the
+ * row content — small caps, dim color, thin top hairline — so they
+ * structure the list without competing with the actual controls. */
+.settings-subheader {
+  margin: 14px 0 -2px;
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+/* First subheader in the dialog doesn't need a top hairline — the
+ * dialog's own padding already separates it from the close button. */
+.settings-body > .settings-subheader:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+/* v220f: version stamp at the very bottom of the Settings dialog.
+ * Lets testers reporting bugs say "I'm on v220f" so we can correlate
+ * reports with deploys. Tiny + dim — present but not distracting. */
+.settings-version {
+  margin: 18px 0 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Settings section — visual grouping for things like the GitHub PAT
@@ -2127,6 +2281,56 @@ body[data-ui-mode="simple"] .advanced-only {
   font-size: 12px;
   color: var(--fg-dim);
   line-height: 1.4;
+}
+
+/* v220c: arrow + hint below the cards, pointing at the textarea so
+ * testers who looked at the cards still get told "or just paste/type
+ * directly". Slightly indented + accent-tinted so the eye registers
+ * it as a connector, not a card. */
+.empty-state-or {
+  margin: 14px 0 0;
+  padding: 8px 4px 0;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  text-align: center;
+  font-style: italic;
+}
+/* v220e: subtle "Read the manual" link at the bottom of the empty
+ * state — for testers who want to read context before clicking
+ * anything. Pairs with the ? button in the header so users have
+ * two natural discovery paths. Visually quieter than the action
+ * tiles so it doesn't compete with them. */
+.empty-state-manual-link {
+  margin: 6px 0 0;
+  padding: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-align: center;
+}
+.empty-state-manual-link a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  margin-left: 4px;
+}
+.empty-state-manual-link a:hover {
+  text-decoration: underline;
+}
+/* v220c: highlight the sample-text card so brand-new users have an
+ * obvious zero-friction entry point. Accent-tinted background + the
+ * ✨ emoji draws the eye first. Hover/focus stays on the standard
+ * variant so the rest of the empty-state grid still reads as a row. */
+.empty-state-card[data-empty-action="sample"] {
+  background: var(--accent-tint);
+  border-color: rgba(101, 116, 255, 0.4);
+}
+.empty-state-card[data-empty-action="sample"]:hover,
+.empty-state-card[data-empty-action="sample"]:focus-visible {
+  background: var(--hover-soft);
+  border-color: var(--accent);
+}
+.empty-state-card[data-empty-action="sample"] .empty-state-title {
+  color: var(--accent);
 }
 
 /* v149: one-time drag-to-reorder hint above the library list. Closed
@@ -5543,12 +5747,30 @@ button:disabled {
   flex-direction: column;
   gap: 12px;
   margin-top: 8px;
+  /* v220: IA-style "shelf" framing — the area around the open book
+     reads as a darker tabletop or library shelf surface, making the
+     spread itself feel like an object resting on a surface rather
+     than a slab pasted into the UI. Padding gives the spread air. */
+  padding: 24px 18px 28px;
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0.35), transparent 60%),
+    linear-gradient(180deg, rgba(20, 16, 12, 0.55), rgba(8, 6, 4, 0.85));
+}
+[data-theme="light"] .book-view {
+  background:
+    radial-gradient(ellipse at 50% 120%, rgba(120, 90, 60, 0.18), transparent 60%),
+    linear-gradient(180deg, rgba(180, 150, 110, 0.18), rgba(120, 90, 60, 0.30));
 }
 .book-view[hidden] { display: none; }
 
 /* The spread itself. Fixed aspect-ish container — width fills its
    parent card, height is computed off the page-aspect ratio so the
-   spread looks like a real opened book even on a wide monitor. */
+   spread looks like a real opened book even on a wide monitor.
+   v220: perspective enables the 3D page-flip on navigation; the
+   drop shadow makes the spread sit physically on the shelf
+   background; transform-style preserve-3d so the flipping page's
+   backface culling works as expected. */
 .book-view-spread {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5565,20 +5787,32 @@ button:disabled {
   max-height: 78vh;
   position: relative;
   user-select: text;
+  perspective: 2200px;
+  transform-style: preserve-3d;
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.55),
+    0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
 /* The gutter — a soft inner shadow down the spine of the spread,
-   plus a 1px dark line to suggest the book's binding. Cheap trick
-   but reads convincingly as "real book opened flat". */
+   plus a 1px dark line to suggest the book's binding. v220:
+   strengthened gradient so it reads as a real "open book at the
+   binding" depression even at a glance — closer to the IA viewer's
+   heavy spine shadow. */
 .book-view-spread::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
+  z-index: 2;
   background: linear-gradient(to right,
-    transparent calc(50% - 24px),
-    rgba(0, 0, 0, 0.10) 50%,
-    transparent calc(50% + 24px));
+    transparent calc(50% - 48px),
+    rgba(0, 0, 0, 0.04) calc(50% - 32px),
+    rgba(0, 0, 0, 0.18) calc(50% - 8px),
+    rgba(0, 0, 0, 0.32) 50%,
+    rgba(0, 0, 0, 0.18) calc(50% + 8px),
+    rgba(0, 0, 0, 0.04) calc(50% + 32px),
+    transparent calc(50% + 48px));
 }
 .book-view-spread::after {
   content: "";
@@ -5586,11 +5820,96 @@ button:disabled {
   top: 0; bottom: 0;
   left: 50%;
   width: 1px;
-  background: var(--border);
+  background: rgba(0, 0, 0, 0.5);
   pointer-events: none;
+  z-index: 3;
 }
 
-/* Individual page. Padded generously so the body text breathes. */
+/* v220: the actual flipping page during navigation. It's a clone of
+ * the OLD page (left or right of the previous spread) appended as
+ * an overlay over the freshly-rendered spread. Animation rotates it
+ * around the spine edge; backface-visibility: hidden makes it
+ * disappear at the 90° mark, exposing the new content underneath
+ * which is already in place. No mirrored back-text artifacts.
+ *
+ * Selector specificity note: combined with .book-page (same single-
+ * class specificity AND .book-page is declared later in this file)
+ * we need the compound selector to actually override position +
+ * dimensions. Otherwise the overlay stays in grid flow as a third
+ * cell — flex-sized to content, parked under the spread. */
+.book-page.book-page-flipping {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: auto;
+  width: 50%;
+  z-index: 10;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  margin: 0;
+}
+.book-page.book-page-flipping.flip-forward {
+  right: 0;
+  left: auto;
+  transform-origin: left center;
+  animation: bookFlipForward 620ms cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards;
+}
+.book-page.book-page-flipping.flip-backward {
+  left: 0;
+  right: auto;
+  transform-origin: right center;
+  animation: bookFlipBackward 620ms cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards;
+}
+@keyframes bookFlipForward {
+  0% {
+    transform: rotateY(0deg);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+  50% {
+    box-shadow: -20px 0 40px rgba(0, 0, 0, 0.5);
+  }
+  100% {
+    transform: rotateY(-180deg);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+@keyframes bookFlipBackward {
+  0% {
+    transform: rotateY(0deg);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+  50% {
+    box-shadow: 20px 0 40px rgba(0, 0, 0, 0.5);
+  }
+  100% {
+    transform: rotateY(180deg);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+/* Single-page mobile spreads: the flipping page covers the whole
+ * spread, not just half. Same rotation behavior, just full-width. */
+@media (max-width: 720px) {
+  .book-page.book-page-flipping {
+    width: 100%;
+  }
+  .book-page.book-page-flipping.flip-forward {
+    transform-origin: left center;
+  }
+  .book-page.book-page-flipping.flip-backward {
+    transform-origin: right center;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .book-page.book-page-flipping { display: none !important; }
+}
+
+/* Individual page. Padded generously so the body text breathes.
+ * v220: per-edge inset shadow suggests paper thickness — the outer
+ * edges (away from the spine) get a darker fade, the spine-edge
+ * doesn't (the gutter shadow handles that). Reads as a real paper
+ * stack viewed from above. Left page gets shadow on its left;
+ * right page gets shadow on its right. */
 .book-page {
   padding: 32px 28px;
   overflow: hidden;
@@ -5598,6 +5917,19 @@ button:disabled {
   background: var(--bg-card);
   display: flex;
   flex-direction: column;
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.04);
+}
+/* Spread layout: left page = first child, right page = last child.
+ * The outer edge of each gets a stronger inset shadow. */
+.book-view-spread .book-page:first-child {
+  box-shadow:
+    inset 14px 0 24px rgba(0, 0, 0, 0.08),
+    inset 0 0 24px rgba(0, 0, 0, 0.04);
+}
+.book-view-spread .book-page:last-child:not(:first-child) {
+  box-shadow:
+    inset -14px 0 24px rgba(0, 0, 0, 0.08),
+    inset 0 0 24px rgba(0, 0, 0, 0.04);
 }
 
 /* v211 (M7.1): highlight tools. Floating toolbar above selected

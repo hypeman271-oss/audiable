@@ -141,6 +141,40 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v220</span>
+          <span class="release-tagline">Book view: IA-style "open book on a desk" aesthetic + page-flip animation</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Spread now feels like a physical book.</strong>
+            Darker "shelf" surface frames the spread; the open book
+            sits on it with a soft drop shadow. Strengthened spine
+            shadow gives the gutter the inward depression a real
+            opened book has, and the outer page edges now carry a
+            subtle inset shadow that reads as paper thickness.
+          </li>
+          <li>
+            <strong>Pages flip when you turn them.</strong> Click
+            next / prev, swipe, or hit the arrow keys — the outgoing
+            page rotates around the spine in 3D and the new page is
+            revealed underneath. ~620ms cubic-bezier easing matches
+            the cadence of turning a real page. Skipped automatically
+            for multi-page jumps (TOC, page-jump input, Return to
+            current) where a flip would feel wrong.
+          </li>
+          <li>
+            <strong>Respects accessibility preferences.</strong> If
+            your OS has "Reduce motion" turned on, the flip is
+            replaced by an instant cut — no spinning text, no
+            vestibular trouble. A local-storage flag also lets you
+            opt out manually if you ever want to.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v219</span>
           <span class="release-tagline">Per-clip voice provenance — every clip remembers its license and credit line</span>
         </div>

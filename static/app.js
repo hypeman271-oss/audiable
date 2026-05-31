@@ -988,6 +988,150 @@ settingsBtn.addEventListener("click", () => {
 
 settingsClose.addEventListener("click", () => settingsDialog.close());
 
+// v220h: open /manual.html in an in-app dialog instead of a new tab.
+//
+// Problem: on a phone PWA, target=_blank opens a new tab and the OS
+// suspends the original tab — including its in-flight GitHub fetch
+// and synth SSE. v216 paused our own watchdog on visibility change,
+// but the browser cancels the network requests at a lower level we
+// can't reach. So we just don't navigate away.
+//
+// The dialog has an iframe pointing at /manual.html — same content,
+// but no tab switch. Three call sites use this:
+//   1. The header ? icon (v220e)
+//   2. The empty-state "Read the 2-minute guide" link (v220e)
+//   3. The Settings → "Help & manual →" link (v118+, promoted to top
+//      in v220f)
+//
+// Modifier-clicks (cmd / ctrl / middle / shift) fall through to the
+// native new-tab behavior so desktop power users who want an actual
+// tab can still get one. The "Open in new tab ↗" affordance inside
+// the dialog header is the explicit escape hatch for the same.
+(function _initManualDialog() {
+  const dlg = document.getElementById("manual-dialog");
+  const frame = document.getElementById("manual-dialog-frame");
+  const closeBtn = document.getElementById("manual-dialog-close");
+  if (!dlg || !frame || !closeBtn) return;
+
+  let loaded = false;
+  function openManualDialog() {
+    if (!loaded) {
+      // Lazy-load the iframe content on first open. After that the
+      // user can re-open the dialog without paying the parse cost
+      // again — the iframe stays mounted, just hidden by the close.
+      frame.src = "/manual.html";
+      loaded = true;
+    }
+    // v220l: back to showModal() — matches the Settings dialog
+    // which works fine. The v220j show() detour broke tap on the
+    // page. Modal contract is NOT what caused the post-close scroll
+    // lock; the iframe inside was. See closeManualDialog for the
+    // iframe-specific cleanup.
+    if (!dlg.open) dlg.showModal();
+  }
+  function closeManualDialog() {
+    // v220l: blur the iframe BEFORE closing so its document doesn't
+    // hold scroll focus. Combined with the close() that follows, this
+    // releases the touch context cleanly on Android Chrome.
+    try {
+      if (frame.contentWindow) frame.contentWindow.blur();
+      frame.blur();
+    } catch {}
+    if (dlg.open) dlg.close();
+  }
+  closeBtn.addEventListener("click", closeManualDialog);
+
+  // Click on backdrop (the auto ::backdrop from showModal) closes
+  // the dialog. Same idiom Settings/voice browser dialogs use.
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg) closeManualDialog();
+  });
+
+  // Helper: intercept a manual-targeting <a> click and route through
+  // the dialog instead. Honors modifier-clicks (cmd/ctrl/shift) and
+  // non-primary mouse buttons so power-users can still open in a
+  // new tab if they explicitly ask for it.
+  function _routeManualClick(e) {
+    if (e.defaultPrevented) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (typeof e.button === "number" && e.button !== 0) return;
+    e.preventDefault();
+    openManualDialog();
+  }
+
+  // Wire all three call sites. getElementById for the IDs we have;
+  // querySelector for the empty-state link (no id) and the Settings
+  // link (no id either — it's the first manual.html href in the
+  // settings-body, promoted to top in v220f).
+  const headerHelp = document.getElementById("help-btn");
+  if (headerHelp) headerHelp.addEventListener("click", _routeManualClick);
+
+  const emptyStateLink = document.querySelector(
+    ".empty-state-manual-link a[href='/manual.html']"
+  );
+  if (emptyStateLink) emptyStateLink.addEventListener("click", _routeManualClick);
+
+  // Settings dialog: the Help & manual link. Match by href so we
+  // don't depend on a specific class composition.
+  const settingsManualLinks = document.querySelectorAll(
+    ".settings-body a.settings-help-link[href='/manual.html']"
+  );
+  for (const a of settingsManualLinks) {
+    a.addEventListener("click", _routeManualClick);
+  }
+})();
+
+// v220g: first-load attention animation on the ? and ⚙ icons.
+//
+// Problem: testers consistently miss the gear (and the new ? help
+// icon next to it). Once they don't see them on first paint, they
+// don't come back to look. A subtle 3-pulse animation on both icons
+// — 1.5s after page load — pulls the eye there without screaming.
+//
+// Dismisses for life on:
+//   - click of either icon (they found it — done)
+//   - 3.2s timer (the animation's own end — natural conclusion)
+//
+// Earlier draft also dismissed on pointermove + keydown, but those
+// fire during normal page-load cursor settle, so the animation got
+// killed before the user could see it. Removed. The 3-second pulse
+// is short enough that letting it finish is fine even if the user
+// has already moved on.
+//
+// Replay by clearing narrative.helpAttentionSeen via Settings →
+// Replay onboarding tips (the key is in _ONBOARDING_HINT_KEYS).
+(function _initHelpAttentionPulse() {
+  const HELP_ATTENTION_KEY = "narrative.helpAttentionSeen";
+  let seen = false;
+  try { seen = localStorage.getItem(HELP_ATTENTION_KEY) === "1"; } catch {}
+  if (seen) return;
+  const helpBtn = document.getElementById("help-btn");
+  const gearBtn = document.getElementById("settings-btn");
+  if (!helpBtn || !gearBtn) return;
+
+  const armed = [helpBtn, gearBtn];
+  let dismissTimer = null;
+
+  function dismiss() {
+    for (const el of armed) el.classList.remove("attention-pulse");
+    try { localStorage.setItem(HELP_ATTENTION_KEY, "1"); } catch {}
+    helpBtn.removeEventListener("click", dismiss);
+    gearBtn.removeEventListener("click", dismiss);
+    if (dismissTimer) clearTimeout(dismissTimer);
+  }
+  helpBtn.addEventListener("click", dismiss, { once: true });
+  gearBtn.addEventListener("click", dismiss, { once: true });
+
+  // 1.5s settle delay — page paints, status bar settles, hero
+  // resolves. Then start the pulse.
+  setTimeout(() => {
+    for (const el of armed) el.classList.add("attention-pulse");
+    // CSS plays animation 3x (3s). Schedule cleanup just after the
+    // last iteration completes so we don't leave the class hanging.
+    dismissTimer = setTimeout(dismiss, 3200);
+  }, 1500);
+})();
+
 // v152: keyboard shortcuts overlay. Opens via "?" key (when focus
 // is NOT inside an input/textarea/contenteditable — otherwise the
 // user can't type "?" into a search box) or via the Settings link.
@@ -1319,6 +1463,10 @@ const _ONBOARDING_HINT_KEYS = [
   "narrative.voiceFavTipDismissed",
   // v219: Commercial-only filter chip first-tap hint.
   "narrative.voiceCommercialTipDismissed",
+  // v220g: first-load attention pulse on the ? and ⚙ icons. Clearing
+  // this re-arms the animation on the next page load — useful for
+  // testing the onboarding flow without nuking IndexedDB.
+  "narrative.helpAttentionSeen",
   "narrative.speakerAuditionTipDismissed",
   "narrative.speakerAuditionTipUsed",
   "narrative.hintSeen.speed",
@@ -2727,21 +2875,50 @@ textEl.addEventListener("input", () => {
 });
 updateCounts();
 
-// v149: first-run empty-state. Visible only when the user has NEVER
-// generated/imported a clip AND has nothing typed. Click handlers
-// route to the same import paths the dropdown uses.
+// v149: first-run empty-state. Originally gated to "user has NEVER
+// generated a clip" — but a tester with 11 clips in their library
+// landed on an empty textarea between sessions and didn't know what
+// to do (v220b feedback). The Import ▼ dropdown in the card header
+// is too quiet to be the only orientation cue. Show the cards
+// whenever the textarea is empty + no current clip + not in reading
+// view; adapt the head text so returning users don't see the
+// "New to Narrative?" welcome.
 function _updateEmptyState() {
   if (!emptyStateEl) return;
   // Reading view active → the user is listening to something already.
   // Clip loaded → not the empty case either. Suppress in both cases.
   const hasText = (textEl.value || "").trim().length > 0;
   const inReadingView = !textEl.parentNode || textEl.hidden;
-  const show = !_libraryHasClips && !hasText && !_currentClipId && !inReadingView;
+  const show = !hasText && !_currentClipId && !inReadingView;
   emptyStateEl.hidden = !show;
+  // v220b: swap the head text based on user state. First-time users
+  // get the welcome; returning users get a compact "next thing to do"
+  // prompt so the empty state reads as a quick-pick row, not an
+  // onboarding splash they've already moved past.
+  if (show) {
+    const head = emptyStateEl.querySelector(".empty-state-head");
+    if (head) {
+      head.textContent = _libraryHasClips
+        ? "Start a new clip:"
+        : "New to Narrative? Try one of these to get started.";
+    }
+  }
 }
 // Card clicks reuse the existing Import-dropdown paths so the action
 // behavior stays in one place (no duplicate file pickers, no
 // duplicate showUrlRow callers).
+// v220c: short demo paragraph used by the "Try sample text" empty-state
+// card. Chosen to (a) have rich-enough prosody to showcase the voice,
+// (b) include a comma + a question + a name so the prosody differences
+// vs ElevenLabs-style voices are audible, and (c) be short enough that
+// a brand-new user hears the synth complete in under 20 seconds.
+const _SAMPLE_TEXT =
+  "Welcome to Narrative. I'm a sample paragraph, here so you can hear " +
+  "what this voice sounds like before you paste your own text. Try " +
+  "swapping the voice in the top-right corner, or change the speed " +
+  "and volume sliders below. Then come back and replace me with your " +
+  "own chapter, article, or note — and hit Generate.";
+
 document.querySelectorAll("[data-empty-action]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const action = btn.dataset.emptyAction;
@@ -2760,6 +2937,20 @@ document.querySelectorAll("[data-empty-action]").forEach((btn) => {
           'specific file. We\'ll open a picker so you can choose ' +
           'which chapters to import.',
       });
+    } else if (action === "sample") {
+      // v220c: paste sample text + focus the textarea (cursor lands
+      // at end) + scroll to the Generate button. Re-runs the empty-
+      // state check so the cards hide now that there's text, and
+      // updates the live word-count chip. setStatus gives a one-line
+      // breadcrumb pointing at what to do next.
+      textEl.value = _SAMPLE_TEXT;
+      textEl.focus();
+      textEl.setSelectionRange(_SAMPLE_TEXT.length, _SAMPLE_TEXT.length);
+      updateCounts();
+      _updateEmptyState();
+      const genBtn = document.getElementById("generate");
+      if (genBtn) genBtn.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setStatus("Sample text loaded — hit Generate to hear it.");
     }
   });
 });
@@ -7510,8 +7701,32 @@ function _bookViewPaginate(sentences, pageWidth, pageHeight, imgByIdx, imgDims) 
 // the spread container. The cover takes slot 0 on the first spread;
 // text pages flow into the remaining slots. Returns the total spread
 // count so the indicator + nav state can update.
-function _bookViewRenderSpread(spreadIdx) {
+function _bookViewRenderSpread(spreadIdx, flipDirection = null) {
   if (!bookViewSpread) return 0;
+  // v220: capture the page that's about to flip out BEFORE we wipe
+  // the DOM. We'll re-attach it as an absolutely-positioned overlay
+  // after the new spread is rendered, then animate it rotating
+  // around the spine. backface-visibility: hidden in the CSS makes
+  // the overlay disappear at the 90° mark, revealing the new content
+  // underneath without us having to render anything to the back side.
+  let _flipOverlay = null;
+  if (
+    flipDirection &&
+    bookViewSpread.children.length > 0 &&
+    _bookViewAnimationsEnabled()
+  ) {
+    // forward: the right page flips away; back: the left page does.
+    // On mobile (single-page spreads) there's just one slot, which
+    // is the page we flip regardless of direction.
+    const ppr = _bookViewPagesPerSpread();
+    const flipSlot = ppr === 2 ? (flipDirection === "forward" ? 1 : 0) : 0;
+    const oldPage = bookViewSpread.children[flipSlot];
+    if (oldPage) {
+      _flipOverlay = oldPage.cloneNode(true);
+      _flipOverlay.classList.add("book-page-flipping");
+      _flipOverlay.classList.add(`flip-${flipDirection}`);
+    }
+  }
   bookViewSpread.innerHTML = "";
   _bookSentenceSpans = [];
   const ppr = _bookViewPagesPerSpread();
@@ -7707,7 +7922,42 @@ function _bookViewRenderSpread(spreadIdx) {
   if (activeSentenceIdx >= 0) {
     _bookViewApplyActive(activeSentenceIdx);
   }
+  // v220: page-flip animation. _flipOverlay was captured at the top
+  // of the function from the OLD spread, before this re-render wiped
+  // it. Re-attach it as an absolute overlay over the spread; the CSS
+  // keyframes rotate it around the spine, and backface-visibility:
+  // hidden makes it disappear at the 90° mark — exposing the new
+  // content (already rendered) underneath. We listen for animationend
+  // so we can clean up the orphan node.
+  if (_flipOverlay) {
+    bookViewSpread.appendChild(_flipOverlay);
+    const overlay = _flipOverlay;
+    const cleanup = () => {
+      overlay.removeEventListener("animationend", cleanup);
+      overlay.removeEventListener("animationcancel", cleanup);
+      overlay.remove();
+    };
+    overlay.addEventListener("animationend", cleanup);
+    // Belt-and-suspenders: if a tab-switch or rapid re-render aborts
+    // the animation, animationcancel fires and we still clean up.
+    overlay.addEventListener("animationcancel", cleanup);
+    // Hard fallback — if no event fires within 1.2s (animation is 0.6s),
+    // assume something went wrong and yank the overlay anyway.
+    setTimeout(cleanup, 1200);
+  }
   return totalSpreads;
+}
+
+// v220: prefers-reduced-motion + an opt-out localStorage flag for
+// users who find the flip distracting. Defaults to enabled.
+function _bookViewAnimationsEnabled() {
+  try {
+    if (localStorage.getItem("narrative.bookFlipDisabled") === "1") return false;
+  } catch {}
+  if (typeof window.matchMedia === "function") {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+  }
+  return true;
 }
 
 function _bookViewUpdateNav() {
@@ -7745,7 +7995,16 @@ function _bookViewUpdateNav() {
 function _bookViewNavigateManual(targetSpread) {
   if (targetSpread < 0 || targetSpread >= _bookViewSpreadsCount) return;
   _bookViewUserPaged = true;
-  _bookViewRenderSpread(targetSpread);
+  // v220: pass the direction so _bookViewRenderSpread can play the
+  // page-flip animation. Same-spread or jump-by-N (e.g. page-jump,
+  // TOC) skip the animation by passing null.
+  const dir = targetSpread > _bookViewCurrentSpread ? "forward"
+    : targetSpread < _bookViewCurrentSpread ? "backward"
+    : null;
+  // Only animate single-step transitions; multi-spread jumps (TOC,
+  // page-jump, return-to-current) would look weird with a flip.
+  const animate = dir !== null && Math.abs(targetSpread - _bookViewCurrentSpread) === 1;
+  _bookViewRenderSpread(targetSpread, animate ? dir : null);
 }
 
 // v208 (M6.2): click the spread indicator to enter page-jump mode.

@@ -189,6 +189,22 @@
                 hidden
               >0</span>
             </button>
+            <!-- v220e: dedicated help button. Testers consistently
+                 missed the gear, then missed the manual link buried
+                 inside Settings. A ? icon next to the gear is a
+                 universal "help" affordance — one tap opens the
+                 manual in a new tab, no detour through Settings.
+                 The Help link inside Settings stays as a backup so
+                 returning users who go looking there still find it. -->
+            <a
+              id="help-btn"
+              href="/manual.html"
+              target="_blank"
+              rel="noopener"
+              class="hero-icon-btn help-btn"
+              aria-label="Open the manual"
+              title="Help &amp; manual"
+            >?</a>
             <button
               id="settings-btn"
               type="button"
@@ -221,6 +237,16 @@
           >Close</button>
         </div>
         <div class="settings-body">
+          <!-- v220f: Settings menu reordered. App / Player / Book view
+               groups first (most-used config), then Help & docs cluster
+               with Help & manual PROMOTED to top, then Listen stats
+               (display-only, demoted below the help links), then Tester
+               tools (Replay tips + Debug log), then GitHub config, then
+               version stamp at the bottom. Quiet subheaders group rows
+               so the long list reads as structure not a scroll. -->
+
+          <p class="settings-subheader">App</p>
+
           <div class="settings-row">
             <div class="settings-toggle-label">
               <strong>Mode</strong>
@@ -276,6 +302,8 @@
             </div>
           </div>
 
+          <p class="settings-subheader">Player</p>
+
           <div class="settings-row">
             <div class="settings-toggle-label">
               <strong>Skip interval</strong>
@@ -309,12 +337,14 @@
             </div>
           </div>
 
+          <p class="settings-subheader">Book view</p>
+
           <!-- v197 (M2): Book view text size. Re-paginates on the fly
                if the user is currently in book view, so the change
                is immediately visible. Persists to localStorage. -->
           <div class="settings-row">
             <div class="settings-toggle-label">
-              <strong>Book view text size</strong>
+              <strong>Text size</strong>
               <span class="settings-toggle-desc">
                 How large the body text reads when the book view is
                 open. Larger sizes mean more pages but less squinting.
@@ -350,7 +380,7 @@
                metrics. Independent of the app-wide Dark/Light theme. -->
           <div class="settings-row">
             <div class="settings-toggle-label">
-              <strong>Book view theme</strong>
+              <strong>Typography</strong>
               <span class="settings-toggle-desc">
                 <strong>Paperback</strong>: classic serif, single column.
                 <strong>Magazine</strong>: sans-serif, two columns on
@@ -374,8 +404,55 @@
             </div>
           </div>
 
+          <p class="settings-subheader">Help &amp; docs</p>
+
+          <!-- v220f: Help &amp; manual PROMOTED to first in the link
+               cluster. Testers consistently miss the gear; if they DO
+               open it looking for docs, this is the first thing they
+               should see. -->
+          <a
+            href="/manual.html"
+            target="_blank"
+            rel="noopener"
+            class="settings-help-link"
+          >Help &amp; manual →</a>
+          <a
+            id="settings-whats-new-link"
+            href="/whats-new.html"
+            target="_blank"
+            rel="noopener"
+            class="settings-help-link"
+          >What's new <span class="whats-new-badge" hidden>NEW</span> →</a>
+          <!-- v152: discoverable entry point for the shortcuts dialog
+               so testers who don't know "?" opens it can still find
+               the list. -->
+          <a
+            id="settings-shortcuts-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="Open keyboard shortcuts"
+          >Keyboard shortcuts →</a>
+          <a
+            id="settings-feedback-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="Send feedback via your default mail app"
+          >Send feedback (mail app) →</a>
+          <a
+            id="settings-feedback-gmail-link"
+            href="#"
+            target="_blank"
+            rel="noopener"
+            class="settings-help-link"
+            aria-label="Send feedback via Gmail"
+          >Send feedback (Gmail) →</a>
+
+          <p class="settings-subheader">Stats</p>
+
           <!-- Listen statistics. Read-only summary populated by app.js
-               every time the Settings dialog opens. -->
+               every time the Settings dialog opens. v220f: moved BELOW
+               the help links — it's a display block, not a setting, so
+               it shouldn't push the help cluster down. -->
           <div class="settings-row advanced-only" id="stats-row">
             <div class="settings-toggle-label">
               <strong>Listen stats</strong>
@@ -415,42 +492,8 @@
             >Reset stats</button>
           </div>
 
-          <a
-            id="settings-whats-new-link"
-            href="/whats-new.html"
-            target="_blank"
-            rel="noopener"
-            class="settings-help-link"
-          >What's new <span class="whats-new-badge" hidden>NEW</span> →</a>
-          <a
-            href="/manual.html"
-            target="_blank"
-            rel="noopener"
-            class="settings-help-link"
-          >Help &amp; manual →</a>
-          <!-- v152: discoverable entry point for the shortcuts dialog
-               so testers who don't know "?" opens it can still find
-               the list. -->
-          <a
-            id="settings-shortcuts-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="Open keyboard shortcuts"
-          >Keyboard shortcuts →</a>
-          <a
-            id="settings-feedback-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="Send feedback via your default mail app"
-          >Send feedback (mail app) →</a>
-          <a
-            id="settings-feedback-gmail-link"
-            href="#"
-            target="_blank"
-            rel="noopener"
-            class="settings-help-link"
-            aria-label="Send feedback via Gmail"
-          >Send feedback (Gmail) →</a>
+          <p class="settings-subheader">Tester tools</p>
+
           <!-- v174: replay the discoverability tips. Clears every
                narrative.hintSeen.*, voice-favorites tip dismissal,
                drag-hint dismissal, speaker-audition tip flags, and
@@ -677,6 +720,14 @@
               >Clear</button>
             </div>
           </div>
+
+          <!-- v220f: version stamp at the bottom of Settings. Lets
+               testers reporting bugs say "I'm on Narrative v220f" so
+               the report can be correlated with a deploy. JS in app.js
+               populates the date stamp at load time. -->
+          <p id="settings-version" class="settings-version">
+            Narrative <span id="settings-version-tag">v220f</span>
+          </p>
         </div>
       </dialog>
 
@@ -767,6 +818,86 @@
             >📖 Book view</button>
           </div>
         </div>
+        <!-- v220d: empty-state cards relocated to TOP of the text card.
+             Previously sat below the textarea, which meant on mobile
+             after a tester opened the URL row (e.g. clicked "Browse a
+             GitHub repo"), everything pushed down and the cards (with
+             the all-important ✨ "Try sample text" tile) went
+             off-screen. Now they're the first thing in the text card,
+             so any tester who's stuck can always see — and click —
+             "Try sample text" without scrolling.
+
+             v149: shown only when the textarea is empty AND no clip
+             is loaded AND not in reading view. _updateEmptyState() in
+             app.js owns visibility. v220b: also visible for returning
+             users (not just first-timers). v220c: includes a 4th
+             "Try sample text" tile + "or paste below" arrow. -->
+        <section id="empty-state" class="empty-state" hidden>
+          <p class="empty-state-head">
+            New to Narrative? Try one of these to get started.
+          </p>
+          <div class="empty-state-grid">
+            <button
+              class="empty-state-card"
+              type="button"
+              data-empty-action="url"
+            >
+              <span class="empty-state-emoji" aria-hidden="true">🌐</span>
+              <span class="empty-state-title">Paste an article URL</span>
+              <span class="empty-state-desc">
+                Any blog post, Wikipedia page, news article.
+              </span>
+            </button>
+            <button
+              class="empty-state-card"
+              type="button"
+              data-empty-action="file"
+            >
+              <span class="empty-state-emoji" aria-hidden="true">📄</span>
+              <span class="empty-state-title">Upload a file</span>
+              <span class="empty-state-desc">
+                PDF, EPUB, DOCX, TXT, MD — up to 25 MB.
+              </span>
+            </button>
+            <button
+              class="empty-state-card"
+              type="button"
+              data-empty-action="github"
+            >
+              <span class="empty-state-emoji" aria-hidden="true">📚</span>
+              <span class="empty-state-title">Browse a GitHub repo</span>
+              <span class="empty-state-desc">
+                Pick chapters from a manuscript repo.
+              </span>
+            </button>
+            <button
+              class="empty-state-card"
+              type="button"
+              data-empty-action="sample"
+            >
+              <span class="empty-state-emoji" aria-hidden="true">✨</span>
+              <span class="empty-state-title">Try sample text</span>
+              <span class="empty-state-desc">
+                Drops a short paragraph into the box so you can hear it
+                speak right away.
+              </span>
+            </button>
+          </div>
+          <p class="empty-state-or">↓ Or paste / type your own text into the box below</p>
+          <!-- v220e: discoverable manual link for first-timers who
+               still want context before clicking anything. Sits at
+               the bottom of the empty-state so the action tiles
+               above stay the primary visual anchor; this is the
+               "I want to read the docs first" escape hatch. -->
+          <p class="empty-state-manual-link">
+            First time?
+            <a
+              href="/manual.html"
+              target="_blank"
+              rel="noopener"
+            >Read the 2-minute guide ↗</a>
+          </p>
+        </section>
         <input
           id="upload-input"
           type="file"
@@ -1442,55 +1573,11 @@
         >Queue silently →</button>
       </div>
       <progress id="synth-progress" value="0" max="1" hidden></progress>
+      <!-- v149 empty-state was here originally; moved to top of the
+           text card in v220d so it stays visible on phones when the
+           URL row opens (it was off-screen below the textarea
+           before, defeating the "give the user options" purpose). -->
 
-      <!-- v149: first-run empty-state. Shown only when the textarea
-           is empty AND the library is empty (no clips ever saved on
-           this device). Gives a brand-new tester three concrete
-           starter actions instead of a blank textarea + Generate
-           button that immediately errors on empty text. Auto-hides
-           the moment any starter condition fails — type a character,
-           generate a clip, and it's gone. _updateEmptyState() in
-           app.js owns visibility. -->
-      <section id="empty-state" class="empty-state" hidden>
-        <p class="empty-state-head">
-          New to Narrative? Try one of these to get started.
-        </p>
-        <div class="empty-state-grid">
-          <button
-            class="empty-state-card"
-            type="button"
-            data-empty-action="url"
-          >
-            <span class="empty-state-emoji" aria-hidden="true">🌐</span>
-            <span class="empty-state-title">Paste an article URL</span>
-            <span class="empty-state-desc">
-              Any blog post, Wikipedia page, news article.
-            </span>
-          </button>
-          <button
-            class="empty-state-card"
-            type="button"
-            data-empty-action="file"
-          >
-            <span class="empty-state-emoji" aria-hidden="true">📄</span>
-            <span class="empty-state-title">Upload a file</span>
-            <span class="empty-state-desc">
-              PDF, EPUB, DOCX, TXT, MD — up to 25 MB.
-            </span>
-          </button>
-          <button
-            class="empty-state-card"
-            type="button"
-            data-empty-action="github"
-          >
-            <span class="empty-state-emoji" aria-hidden="true">📚</span>
-            <span class="empty-state-title">Browse a GitHub repo</span>
-            <span class="empty-state-desc">
-              Pick chapters from a manuscript repo.
-            </span>
-          </button>
-        </div>
-      </section>
 
       <section class="player card" id="player-card" hidden>
         <!-- Native audio element kept for the playback API + MediaSession;
@@ -1700,6 +1787,45 @@
            Keyboard shortcuts. Lists the same shortcuts the manual
            §9 documents so a user doesn't need to leave the app to
            remember Ctrl+Enter generates audio. -->
+
+      <!-- v220h: in-app manual dialog. Tester reported that opening
+           /manual.html via target=_blank on a phone PWA cancels any
+           in-progress GitHub fetch + synth — the OS suspends network
+           requests on the backgrounded PWA tab. Solution: render the
+           manual in an iframe inside a dialog so no tab navigation
+           ever happens. Triggered by the ? header icon, the empty-
+           state "Read the 2-minute guide" link, and the Settings
+           "Help & manual" link. Modifier-clicks (cmd / ctrl / middle
+           / shift) still fall through to the native new-tab behavior
+           for desktop power users. -->
+      <dialog id="manual-dialog" class="manual-dialog">
+        <div class="manual-dialog-head">
+          <h2>Help &amp; manual</h2>
+          <div class="manual-dialog-head-actions">
+            <a
+              id="manual-dialog-newtab"
+              href="/manual.html"
+              target="_blank"
+              rel="noopener"
+              class="link-btn"
+              title="Open the manual in a new tab — only safe when nothing is mid-synth"
+            >Open in new tab ↗</a>
+            <button
+              id="manual-dialog-close"
+              type="button"
+              class="link-btn"
+              aria-label="Close manual"
+            >Close</button>
+          </div>
+        </div>
+        <iframe
+          id="manual-dialog-frame"
+          class="manual-dialog-frame"
+          title="Narrative manual"
+          loading="lazy"
+        ></iframe>
+      </dialog>
+
       <dialog id="shortcuts-dialog" class="shortcuts-dialog">
         <div class="voice-browser-head">
           <h2>Keyboard shortcuts</h2>
