@@ -511,6 +511,308 @@ weren't built. Roughly grouped.
 
 ---
 
+## 4. Per-line WAV export for animation pipelines
+
+**Triggered by:** Author / animator asked whether Narrative could replace
+ElevenLabs for animation voice work after the v217 commercial-licensing
+audit. The license + provenance pieces (v217 + v219) are in place; what's
+missing is the *export shape* an animation pipeline actually consumes.
+
+**Status:** Future work. Task #354. The Characters feature + the
+`/api/synthesize/segments/stream` endpoint already produce per-segment
+audio internally — we just don't expose them as standalone files.
+
+**Priority:** Medium. Unblocks "Narrative for animators" as a real use
+case (not just incidental fit). Lifts Narrative from "novel-only" to
+"any voice-line workflow," which matters for the SaaS positioning.
+
+### What's shipped today
+
+- Generate combines all sentences into one MP3 per clip.
+- Download button gives the user that one MP3.
+- The server *can* stream per-sentence WAVs via
+  `/api/synthesize/segments/stream` (used for the Characters feature),
+  but the frontend assembles them into the combined MP3 before exposing.
+
+### What animators actually want
+
+- One short WAV per line of dialogue, named predictably
+  (`chapter01-line0042-bob.wav`)
+- A JSON manifest mapping `{lineIndex → text → speaker → startSec
+  → endSec → durationSec}` so they can drop the WAVs on a timeline
+  with positions pre-computed
+- (Optional, much later) Phoneme-level timing data for lip sync, or
+  at least a one-click "run Rhubarb Lip Sync on this and produce a
+  mouth-shape track" affordance
+
+### Proposed shape
+
+A new "Export per-line WAVs" action in the library card menu (or in
+the Edit dialog) that:
+
+1. Re-runs the clip's text through `/api/synthesize/segments/stream`
+   with `output_format=wav` (server already has the WAV path internally
+   pre-MP3-encode — expose it).
+2. Streams one WAV per sentence + per character (already segmented
+   when Characters are configured).
+3. Packs into a zip: `audio/0001.wav`, `audio/0002.wav`, …,
+   `manifest.json`, `transcript.txt` (one line per WAV).
+4. Manifest schema mirrors the in-zip filenames + adds metadata:
+   `{ schema: 1, source: clipTitle, voiceProvenance: clip.provenance,
+   lines: [{ idx, file, text, voice, speaker, startSec, endSec }] }`.
+
+Reuses the existing zip writer (`makeZip()` in app.js) and the
+segments SSE endpoint. New code is small: a server flag for WAV
+passthrough + a client action that drains segments to a zip.
+
+### Stretch (later)
+
+- "Export with Rhubarb mouth shapes" — calls Rhubarb Lip Sync on each
+  WAV server-side, includes the resulting JSON in the zip.
+- Re-take loop: generate N variations of a single line, let the user
+  pick before bundling.
+- Animation-specific cover-art: per-clip "scene reference" image that
+  travels with the export.
+
+### Why this fits Narrative's positioning
+
+Today's TTS animation pipeline: ElevenLabs ($22+/mo + per-character
+overage + uncertain licensing on cloned voices) → per-line export
+→ Premiere/Toon Boom. With this feature, Narrative replaces step 1
+with: open-license voices + per-line export + provenance baked in,
+for a one-time cost. The audience is small (indie animators) but
+high-affinity and overlaps with the indie-author audience.
+
+---
+
+## 5. Qwen3-TTS as a second engine — GPU-tier quality voices
+
+**Triggered by:** Mid-audition for the novel narrator (Piper/VCTK/Jenny),
+author asked whether Qwen3-TTS was an option. Research confirmed it
+shipped Jan 22 2026 under Apache 2.0 — the cleanest commercial license
+open-source TTS has produced so far. Quality reportedly competitive with
+ElevenLabs.
+
+**Status:** Future work. Task #358. Significant — not a small follow-on
+to v217-v219; a meaningful new engine alongside Piper. Wait until
+v220 ships and the Tauri scaffolding (#213) is far enough along to
+know whether desktop-only or cloud-GPU is the right deploy story.
+
+**Priority:** High *strategically*, medium *tactically*. This is the
+ElevenLabs-killer angle — Apache 2.0 voices with cloning, no per-month
+fee, owned forever. It's also a big enough build that doing it before
+the SaaS basics (Stripe, landing page, license-key validation) ship
+would be premature.
+
+### What Qwen3-TTS is
+
+- Open-source TTS family from Alibaba's Qwen team
+- 0.6B and 1.7B parameter sizes
+- 10 languages including English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian, Chinese
+- Voice cloning from a short reference audio clip
+- 49 stock voices
+- Released January 22, 2026
+- License: **Apache 2.0** — full commercial use, no attribution required, no field-of-use restrictions
+- Repo: <https://github.com/QwenLM/Qwen3-TTS>
+- HuggingFace: <https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base>
+  and <https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice>
+
+### Architectural fit vs Piper
+
+| | Piper (today) | Qwen3-TTS |
+|---|---|---|
+| Model size | 50–130 MB | 1–4 GB |
+| Inference HW | CPU, real-time | GPU required for practical speed |
+| Latency | < 1× real-time on CPU | depends on GPU; claimed 97ms ultra-low |
+| Voice cloning | none | yes, from reference audio |
+| License | per-voice (CC BY 4.0 if green) | Apache 2.0 uniform |
+| Self-host story | tiny VM, $5/mo Fly | needs GPU machine ($0.50-$2/hr) |
+
+The architectural divergence is the issue. Narrative's current
+deploy story is "cheap always-on CPU VM"; Qwen3-TTS breaks that.
+
+### Two viable deploy stories
+
+**A. Local-only via Tauri build (#213).** Ship Qwen3-TTS as a
+desktop-installer feature. User brings their own GPU (Apple Silicon
+M-series, or NVIDIA RTX). Tauri downloads the model on first launch.
+Generated audio never leaves the user's machine. Aligns with the
+"own your voices forever" pitch.
+
+**B. SaaS Pro tier on a GPU machine.** Fly has GPU machines (A10/L4
+at ~$0.50-$2/hr). Wire it as a paid tier — `Pro` ($X/mo) gets access
+to Qwen3-TTS voices in addition to Piper. Auto-stop the GPU machine
+between requests (the v204 keepalive work makes this safer now).
+Higher infra cost but a clearer value ladder.
+
+The two aren't exclusive: ship A first (local-only Qwen3-TTS in the
+desktop installer), validate demand, then build B if the cloud-GPU
+economics work.
+
+### Implementation sketch (high level — refine when picked up)
+
+1. **New engine module** `tts/qwen3.py` (alongside `tts/piper_engine.py`
+   and `tts/sapi.py`). Implements the same `synthesize_iter()` +
+   `list_voices()` shape so the dispatcher stays uniform.
+2. **Voice id prefix**: `qwen3:` (mirrors `piper:`).
+3. **Backend dispatch** in `server.py` routes voice ids by prefix —
+   no change needed beyond adding a case.
+4. **Voice cloning UX**: a new "Clone a voice" action in the voice
+   browser. Upload a 5-30s reference audio → server generates a
+   speaker embedding → custom voice saved + appears in the picker.
+   Provenance (v219) captures the cloning source + a consent
+   checkbox the user has to tick.
+5. **License audit** (mirror of v217 for Piper voices). Apache 2.0
+   on the model release covers a lot, but the training-data
+   provenance is a separate question — pull the Qwen3-TTS model
+   card / paper and confirm what dataset their stock voices were
+   trained on. If any of the 49 stock voices were trained on
+   unlicensed-celebrity / dubious data, flag them like we flag
+   Lessac-finetuned Piper voices.
+6. **Consent UX for cloning**: a checkbox the user has to tick
+   confirming they have the right to clone the voice in the
+   reference audio. Stored on the resulting voice's provenance
+   record so a future audit can confirm.
+
+### Open questions
+
+- **Real quality test**: marketing says "beats ElevenLabs." Needs
+  blind A/B against ElevenLabs Pro on the same prompts before
+  betting product positioning on it.
+- **GPU memory needs**: 1.7B params at fp16 is ~3.4 GB, plus
+  activations. Probably fits in 8 GB; verify before committing
+  to a deploy SKU.
+- **License audit**: Apache 2.0 release ≠ free pass on training
+  data. The actual exposure depends on what Alibaba can prove
+  about training data consent.
+- **Voice library**: do users get to share cloned voices? If yes,
+  that's a marketplace; if no, single-tenant only. Big product
+  decision — likely "no" at launch to avoid the ElevenLabs
+  community-voice publicity-rights mess.
+
+### Why this matters for the product narrative
+
+Today's Narrative pitch (post v217-v219): "own your voices, audit
+the license, publish without ElevenLabs subscription risk." Adding
+Qwen3-TTS turns that into: "own your voices AND your custom-cloned
+voice of yourself AND a quality that rivals ElevenLabs." That's the
+full ElevenLabs replacement story, not just the cheaper alternative.
+
+---
+
+## 6. Book view — two-page spread + page-curl flip animation
+
+**Triggered by:** Author asked, mid-narrator-audition, how hard it would
+be to add page-turning animation to the book view like the
+[Internet Archive BookReader](https://archive.org/details/talkingbeastsboo00wigg/page/n23/mode/2up).
+That viewer renders books as a two-page spread with a 3D corner-curl
+flip when you turn pages, drag-to-flip from any corner, thumbnail
+strip across the bottom.
+
+**Status:** Future work. Task #359. Polish / delight feature, not a
+blocker. Defer until after v220 (per-line WAV), #213 (Tauri
+scaffolding), and the SaaS basics (#216 Stripe, #217 landing page)
+ship — those move the product forward; this makes it more delightful.
+
+**Priority:** Medium-high for product narrative. Book view is already
+a meaningful differentiator vs other TTS apps (most have zero reading
+UI). An IA-style page-flip reinforces the "serious tool for serious
+readers and authors" angle.
+
+### What's shipped today
+
+Book view (v185 onward) already does:
+
+- Paginated reading layout with three themes (paperback / magazine / manuscript) — v199
+- Drop caps, chapter-aware running headers, mini TOC — M4.1-M4.4
+- Inline images with image-load-aware paginator — v200
+- Page numbers + font-size control + print stylesheet — M2.x / M3.3
+- Magazine multi-column layout with overflow handling — M5.x
+- Bookmarks with visible page marks, page-jump input, Ctrl+F find — M6.1-M6.3
+- Touch swipe for page navigation — M6.4
+- Text highlights — M7.1
+
+What's *missing* relative to the IA bookreader:
+
+- Two-page spread (currently single page per viewport)
+- Animated page transition (currently instant)
+- Drag-to-flip interaction (today's swipe just commits, no peel preview)
+- Cover-page treatment (front cover sits solo on the right; back cover solo on the left)
+
+### The two halves
+
+**Layout half: two-page spread (1-2 days).** The existing paginator
+already produces single pages. Render N + N+1 side-by-side in
+landscape; collapse to single-page in portrait / on narrow viewports.
+Cover sits solo, mirroring real books. All current interactions
+(bookmarks, page-jump, find, highlights) just need to know "which
+of the two pages contains this." Theme variants stay per-page.
+
+This alone delivers ~60% of the IA feel.
+
+**Animation half: page-flip (3-5 days).** For IA-quality curl, use
+**[StPageFlip](https://github.com/Nodlik/StPageFlip)** — MIT, ~30KB,
+vanilla JS, actively maintained. Does corner-peel, drag-to-flip,
+both single- and two-page modes.
+
+Integration cost is mostly DOM reconciliation. StPageFlip wants
+to own its page container; our paginator emits pages incrementally
+as the user reads. Clean handoff: pages get added to the flipbook
+as they're generated, not all at once.
+
+### Existing interactions that need attention
+
+| Feature | Concern |
+|---|---|
+| Touch swipe (M6.4) | Replaced by drag-to-flip. Keep keyboard arrows. |
+| Highlights (M7.1) | Text selection must re-enable per-page; cross-spine selection is a special case (probably forbid or render as two highlights). |
+| Find (M6.3) | Match results need a "which spread" lookup; "Next match" flips there. |
+| Audio-pinned scroll | "Current sentence" highlight stays on whichever page contains the audio cursor; if the user has flipped away, a small "Return to current" affordance (already exists from M3) keeps working. |
+| Print stylesheet (M3.3) | Untouched — always emits flat pages. |
+| Book view bookmarks (M6.1) | Page marks render on the spread; jump-to-bookmark flips there. |
+
+### Cheaper alternatives if 3-5 days is too much
+
+- **CSS-only slide transition (4-6 hours).** New page slides in
+  from the right with a subtle drop shadow. Reads as "turning,"
+  not "curling." Kindle does this. Less impressive than IA but
+  10× cheaper.
+- **CSS 3D rotation (1-2 days).** Page rotates around the spine
+  using `transform: rotateY()`. Looks book-like in motion but
+  page edge stays flat — no curl. Halfway point.
+
+Recommended path: ship the two-page spread (layout half) first as
+its own milestone. Add CSS slide as a cheap "transition feels less
+abrupt" win. Hold StPageFlip integration for a later milestone
+once we know users actually want the curl.
+
+### Open questions
+
+- **Does StPageFlip play nice with our paginator's incremental
+  emission?** Worth a small spike before committing — build a
+  toy page that adds pages dynamically and confirm the
+  animation doesn't stutter or reset.
+- **How does the spread render on a phone?** Portrait phones
+  collapse to single-page, but landscape-phone is awkward
+  (pages too narrow to read comfortably). Maybe force single
+  on phones regardless of orientation.
+- **What about RTL languages?** Page-flip direction reverses.
+  Not a v1 concern but worth noting.
+- **Performance on long books.** A 400-page book in a single
+  flipbook DOM might be heavy. May need windowed rendering
+  (only ±5 pages from current materialized) — adds complexity.
+
+### Why this matters
+
+Book view is the feature most TTS apps don't have. Doubling down
+on it — making it feel like a real reading app, not a debug pane
+— compounds Narrative's existing positioning. Combined with the
+v217-v219 licensing story and (eventually) the Qwen3-TTS quality
+story, page-flip turns book view from "we have one" into "we have
+the best one."
+
+---
+
 ## How to use this file
 
 When an idea worth keeping surfaces during use:

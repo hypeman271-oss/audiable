@@ -132,6 +132,45 @@ test.describe("regression — Voice browser plumbing", () => {
     const body = req.postDataJSON();
     expect(body.voice_id).toMatch(/^piper:/);
   });
+
+  test("Voice rows carry license badges — added in v217", async ({ page }) => {
+    // v217 wired per-voice commercial-license metadata through
+    // /api/voices and renders a colored chip next to the name. This
+    // test pins down:
+    //   (a) /api/voices includes license_commercial on every row
+    //   (b) the catalog renders at least one Commercial ✓ badge
+    //       (the dev box has LibriTTS installed → green badge)
+    //   (c) badges carry a non-empty title for the credit-line tooltip
+    await page.goto("/");
+    await expect(page.locator("#voice option")).not.toHaveCount(0, {
+      timeout: 15_000,
+    });
+
+    // Capture /api/voices payload shape.
+    const voicesRes = await page.request.get("/api/voices");
+    expect(voicesRes.ok()).toBeTruthy();
+    const voices = await voicesRes.json();
+    expect(Array.isArray(voices)).toBeTruthy();
+    expect(voices.length).toBeGreaterThan(0);
+    for (const v of voices.slice(0, 5)) {
+      expect(typeof v.license_commercial).toBe("boolean");
+      expect(typeof v.license).toBe("string");
+    }
+    // LibriTTS should be marked commercial-OK.
+    const libritts = voices.find((v) => v.id === "en_US-libritts-high");
+    if (libritts) expect(libritts.license_commercial).toBe(true);
+
+    // Open the voice browser and verify at least one badge renders.
+    await page.locator("#voice-trigger").click();
+    await page.locator("#browse-voices-btn").click();
+    await expect(page.locator(".catalog-voice")).not.toHaveCount(0, {
+      timeout: 15_000,
+    });
+    const badge = page.locator(".catalog-voice-license").first();
+    await expect(badge).toBeVisible();
+    const title = await badge.getAttribute("title");
+    expect(title && title.length).toBeGreaterThan(0);
+  });
 });
 
 test.describe("regression — Chapter detection on URL fetch", () => {

@@ -17,13 +17,21 @@ primary_region = "iad"
 [http_service]
   internal_port = 8000
   force_https = true
-  # Spin the machine DOWN when idle (alpha traffic is bursty: someone
-  # uses it for 20 min, then nobody for hours). Fly only bills for
-  # time the machine is running. First request after idle takes
-  # ~5-10s as the machine spins up — acceptable for alpha.
-  auto_stop_machines = "stop"
+  # v203 (autostop fix): previously auto_stop_machines = "stop" with
+  # min_machines_running = 0 — meant for bursty short-request workloads.
+  # Wrong choice for Narrative because /api/synthesize/segments/stream
+  # is a long-running SSE response (book-chapter synth can take 2-5
+  # minutes on shared CPU). Fly's autostopper doesn't count an active
+  # SSE response as "busy" — only new HTTP requests in the recent
+  # window — so it SIGINTed the Python process mid-synth on 2026-05-30,
+  # killing a phone user's chapter_00 job after 7 minutes of progress.
+  # min_machines_running = 1 keeps one machine alive 24/7; autostop
+  # stays off so a long synth job never gets cut off again. Cost: one
+  # ~$5/mo shared-CPU machine continuously vs the previous near-zero
+  # idle cost. Acceptable for alpha.
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["app"]
 
   [[http_service.checks]]

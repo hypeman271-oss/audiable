@@ -313,11 +313,16 @@
           <li><a href="#voice">Choosing a voice</a></li>
           <li><a href="#player">The player</a></li>
           <li><a href="#reading">Reading view</a></li>
+          <li><a href="#book-view">Book view</a></li>
           <li><a href="#library">The library</a></li>
           <li><a href="#settings">Settings &amp; modes</a></li>
           <li><a href="#phone">Listening on your phone</a></li>
           <li><a href="#shortcuts">Shortcuts &amp; tips</a></li>
-          <li><a href="#walkthroughs">Tester walkthroughs</a></li>
+          <li><a href="#walkthroughs">Tester walkthroughs</a>
+            <ul>
+              <li><a href="#send-feedback">Sending feedback after a walkthrough</a></li>
+            </ul>
+          </li>
         </ol>
       </nav>
 
@@ -1095,9 +1100,47 @@
         <li><strong>× Remove</strong> — appears for installed voices only; deletes both files and frees disk.</li>
       </ul>
       <p>
-        Above the catalog, two filter chips: <strong>★ Favorites only (N)</strong>
-        and <strong>Installed only (N)</strong>. The search input filters by
+        Above the catalog, three filter chips: <strong>★ Favorites
+        only (N)</strong>, <strong>Installed only (N)</strong>, and
+        <strong>Commercial only (N)</strong> (v218). The chips combine
+        — turning on Commercial + Installed gives you the shortlist you
+        can publish with, today, without scrolling. All three reset
+        when you close and reopen the dialog so first-time browsing
+        always sees the full catalog. The search input filters by
         language, country, or name.
+      </p>
+
+      <h3>Commercial-use badges</h3>
+      <p>
+        Each row carries a small license badge next to the voice
+        name. <strong class="catalog-voice-license commercial" style="cursor: text;">Commercial ✓</strong>
+        means the underlying dataset license permits selling audio
+        you generate, with attribution. <strong class="catalog-voice-license noncommercial" style="cursor: text;">Non-commercial</strong>
+        means the license blocks redistribution for profit — fine for
+        personal use, not for publishing an audiobook.
+      </p>
+      <p>
+        Hover (or long-press on touch) the badge to see the dataset,
+        the exact license, and the attribution string you'd put in
+        audiobook credits.
+      </p>
+      <p>
+        <strong>Why this matters.</strong> Piper voices are trained
+        on public datasets, and the dataset's license follows the
+        voice through every step. <em>Lessac</em> — the base voice
+        many Piper models are finetuned from — is licensed under
+        Blizzard Challenge 2013, which is research-only. Anything
+        finetuned from Lessac (including <em>Amy</em>, <em>Alan</em>,
+        and <em>Arctic</em>) inherits that restriction. Currently
+        cleared for commercial use: <em>LibriTTS</em>, <em>LibriTTS-R</em>,
+        <em>VCTK</em> (109 British speakers), and <em>Jenny</em>.
+        If you intend to publish what you generate, stick to those.
+      </p>
+      <p>
+        Voices that haven't been audited yet default to
+        non-commercial — safer than promising the opposite. Future
+        Narrative versions will flip more voices to green as the
+        audit catches up.
       </p>
 
       <h3>Speed &amp; volume</h3>
@@ -1291,6 +1334,118 @@
       </div>
 
       <!-- ============================================================= -->
+      <h2 id="book-view">5.5. Book view</h2>
+      <p>
+        Tap the <strong>📖 Book view</strong> link in the text card
+        actions row (next to <em>▶ Audio view</em>) to flip the
+        reading view into a paginated, two-page-spread book layout.
+        Same clip, same audio, same click-to-seek — different
+        visual model. Toggle back with the <strong>▶ Audio view</strong>
+        link in the same row.
+      </p>
+      <p>
+        Pagination is real: pages are computed by an off-screen
+        measurement pass and break on sentence boundaries so prose
+        never gets cut mid-word. Each spread shows the cover (left)
+        + first text page on spread 1, then two text pages per
+        spread after that. Mobile collapses to one page per spread.
+      </p>
+
+      <h3>Navigation</h3>
+      <ul>
+        <li><strong>‹ / ›</strong> in the nav row → previous / next spread.</li>
+        <li><strong>← / →</strong> keys → same.</li>
+        <li><strong>Swipe</strong> horizontally on the spread (touch only) → page turn. Swipes that start on a sentence, image, or button don't trigger so click-to-seek and text selection still work.</li>
+        <li>Click the <strong>"Spread X of Y"</strong> indicator → it becomes a number input. Type a target spread, press Enter to jump.</li>
+        <li><strong>Ctrl+F / Cmd+F</strong> while in book view → opens a find bar. Case-insensitive substring search; ‹ / › cycle matches; Enter advances; Esc closes. Each match jumps to the page containing it.</li>
+        <li><strong>📑 Contents</strong> button (visible only when chapters are detected) → opens a table of contents listing every chapter with its page number. Click a row to jump.</li>
+        <li><strong>↩ Return to current</strong> button appears whenever you've manually paged away from the spread containing the currently-narrating sentence. One click brings you back; subsequent karaoke flips resume.</li>
+      </ul>
+
+      <h3>Chapter awareness</h3>
+      <p>
+        Narrative tries to find chapter boundaries inside the clip's
+        text using three heuristics: Markdown ATX headings
+        (<code># Title</code> / <code>## Title</code>), explicit
+        "Chapter N" / "Part Three" patterns, and bare Roman numerals
+        as short standalone sentences. When chapters are detected:
+      </p>
+      <ul>
+        <li>The paginator forces a fresh page before each chapter (book convention).</li>
+        <li>A <strong>drop cap</strong> renders on the first letter of every chapter's opening page, not just page 1 of the clip.</li>
+        <li>The <strong>running header</strong> at the top of each page shows the current chapter's title. Pages before the first detected chapter (preamble) fall back to the clip title.</li>
+        <li>The <strong>📑 Contents</strong> button shows; clicking it opens the chapter list.</li>
+      </ul>
+      <p>
+        Clips with no detectable chapter pattern still work — they
+        render as a single section using the clip title for the
+        running header.
+      </p>
+
+      <h3>Theme + text size (Settings)</h3>
+      <p>
+        <strong>Settings → Book view theme</strong> picks the
+        typographic personality of the pages, independent of the
+        app-wide Dark/Light theme:
+      </p>
+      <ul>
+        <li><strong>Paperback</strong> (default): serif, single column, justified — classic novel look.</li>
+        <li><strong>Magazine</strong>: sans-serif, two columns on desktop (one column on phones; two ~140px columns are unreadable). Inline images that fit within one column stay inside it; larger figures span the gutter.</li>
+        <li><strong>Manuscript</strong>: monospace, looser line-height, left-aligned (not justified) — the typewritten-draft look.</li>
+      </ul>
+      <p>
+        <strong>Settings → Book view text size</strong>
+        (Small / Medium / Large / X-Large = 14 / 16 / 18 / 20px)
+        controls the body font size. Changing it re-paginates on
+        the fly and anchors the new spread on the same sentence
+        you were reading — no jumping forty pages because the page
+        breaks shifted.
+      </p>
+
+      <h3>Bookmarks + highlights</h3>
+      <ul>
+        <li>
+          <strong>🔖 Bookmark</strong> (the chip in the hero strip)
+          adds a bookmark at the playhead — same as in audio view.
+          In book view, every bookmarked page gets a small accent-
+          colored ribbon in the top-right corner. The two views
+          share bookmarks: a bookmark made in audio view shows on
+          the right page in book view, and vice versa.
+        </li>
+        <li>
+          <strong>Text highlights</strong> — drag-select any text
+          inside a sentence (in book view OR audio view) and a small
+          floating toolbar appears with three colors (yellow / pink /
+          blue) + an × remove button. Click a color to save the
+          highlight; × removes any highlight under the current
+          selection. Esc dismisses the toolbar without saving.
+          Highlights persist to the clip and show in both views.
+          Multi-sentence selections aren't supported in v1 — the
+          toolbar stays hidden if your selection crosses a sentence
+          boundary.
+        </li>
+      </ul>
+
+      <h3>🖨 Print</h3>
+      <p>
+        Click <strong>🖨 Print</strong> in the nav row to print the
+        entire clip as a stack of paperback-sized sheets
+        (5.5 × 8.5 in, 0.5 in margins). Each page becomes its own
+        printed sheet; the cover prints first; running headers,
+        drop caps, and page numbers carry through. Override the page
+        size in your browser's print dialog if you'd rather print US
+        Letter / A4. Use the dialog's "Save as PDF" destination if
+        you don't have a printer.
+      </p>
+
+      <div class="tip">
+        Page numbers are 1-indexed and live in the outer bottom
+        corner of each page (left page → bottom-left, right page →
+        bottom-right) — matching how printed books carry numbers at
+        the outer corner where you'd thumb the page.
+      </div>
+
+      <!-- ============================================================= -->
       <h2 id="library">6. The library</h2>
       <p>
         Every clip you generate is auto-saved into a per-browser
@@ -1339,7 +1494,7 @@
         <tr><td><strong>📝 Notes indicator</strong></td><td>Small badge under the meta line, shown whenever the clip has free-form notes attached. Tap the ✎ Edit dialog or the 📝 chip in the player to read or extend them. Empty notes hide the badge so clean cards stay clean.</td></tr>
         <tr><td><strong>↺ Reset</strong></td><td>Only shown for in-progress clips. Wipes the saved resume position so next play starts from the top. If you reset the clip you're currently listening to, the player rewinds too.</td></tr>
         <tr><td><strong>+ Cover</strong></td><td>(Only shown for clips without a custom cover.) Quiet dashed-border chip that opens the Edit dialog scrolled straight to the cover picker. Tap → file picker → cover applied + cards re-render with the new tint. Disappears once the clip has a cover. On narrow viewports it collapses to just <code>+</code>.</td></tr>
-        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest. For <strong>GitHub-sourced clips</strong> the dialog also surfaces a <em>"From GitHub: chapters/ch03.md @ <code>a1b2c3d</code>"</em> meta line — short SHA in an accent pill (hover for the full hash) so you can confirm the clip matches the commit you just pushed without alt-tabbing to GitHub.</td></tr>
+        <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest. For <strong>GitHub-sourced clips</strong> the dialog also surfaces a <em>"From GitHub: chapters/ch03.md @ <code>a1b2c3d</code>"</em> meta line — short SHA in an accent pill (hover for the full hash) so you can confirm the clip matches the commit you just pushed without alt-tabbing to GitHub. For clips generated v219 and later, the dialog also shows a <strong>Voice provenance</strong> block with the license + attribution string the clip was generated under (see below).</td></tr>
         <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
       </table>
 
@@ -1365,6 +1520,36 @@
         Export → Import round-trips your full visual workspace.
         Removing a cover (✎ Edit → Remove cover) drops back to the
         gradient + hash-color fallback.
+      </p>
+
+      <h3>Voice provenance (v219+)</h3>
+      <p>
+        Every clip generated v219 and later carries a snapshot of which
+        voice + license were in effect when its audio was rendered.
+        Open ✎ Edit on a recent clip — you'll see a "Voice provenance"
+        block with:
+      </p>
+      <ul>
+        <li>The voice name and (for multi-speaker models) the speaker id used.</li>
+        <li>The license name and the dataset the voice was trained on.</li>
+        <li>The exact <strong>attribution string</strong> you'd put in audiobook credits, video descriptions, or animation end-cards.</li>
+        <li>A green "Commercial ✓" or amber "Non-commercial" badge mirroring the catalog browser.</li>
+        <li>A <strong>Copy</strong> button that lifts the attribution string to your clipboard in one click.</li>
+      </ul>
+      <p>
+        Provenance is a snapshot, not a live lookup: even if Narrative's
+        license audit later changes (a voice gets reclassified, an
+        attribution string updates), the clip remembers what was true
+        when it was generated. That's the right behavior — the audio
+        you have on disk was made under those terms.
+      </p>
+      <p>
+        Provenance ships in the library zip and round-trips through
+        Export → Import, so backups carry the credit information with
+        them. Clips generated before v219 simply don't show the block
+        — the Edit dialog handles the absence quietly. If you want
+        provenance on an older clip, re-narrate it with the same voice
+        and the new generation will capture it.
       </p>
 
       <h3>Sections</h3>
@@ -2112,6 +2297,108 @@
         </li>
       </ol>
 
+      <h3>Walkthrough 5b — Book view end-to-end</h3>
+      <p><em>Tests</em>: pagination, chapter detection (drop caps,
+        running headers, Contents dialog), themes (paperback /
+        magazine / manuscript), font-size repagination, find +
+        page-jump + swipe, bookmark ribbon, text highlights, print.
+        Use the same Tom Sawyer clip from Walkthrough 1 — its 33
+        chapters exercise chapter-aware behaviors well.</p>
+      <ol>
+        <li>
+          Library → open any chapter clip with at least 5,000 chars.
+          Status shows playback ready. The reading view renders;
+          sentences light up as audio plays.
+        </li>
+        <li>
+          Click <strong>📖 Book view</strong> in the text-card
+          actions row. The view flips to a two-page spread (cover
+          on left for the first spread). Indicator reads
+          <em>"Spread 1 of N"</em>. ‹ is disabled.
+        </li>
+        <li>
+          Click <strong>›</strong>. The spread advances. The
+          currently-narrating sentence has a soft accent highlight.
+          Confirm the running header at the top of each text page
+          shows either the chapter title (when chapters detected)
+          or the clip title (when not), and the page number sits
+          in the outer bottom corner.
+        </li>
+        <li>
+          Open <strong>Settings</strong>. Try
+          <em>Book view theme → Magazine</em>: page body becomes
+          sans-serif + two columns (on desktop ≥720px wide). Close
+          Settings. Pagination has been re-run; you'll land on the
+          spread covering the same sentence you were reading.
+          Switch to <em>Manuscript</em>: monospace, looser lines,
+          left-aligned. Switch back to <em>Paperback</em>.
+        </li>
+        <li>
+          Settings → <em>Book view text size → Large</em>. Pages
+          re-paginate; anchor sentence stays put. Indicator's
+          total-spread count grows because each page now holds
+          fewer sentences.
+        </li>
+        <li>
+          Click the <strong>📑 Contents</strong> button (visible
+          only when chapters are detected). A dialog lists every
+          chapter with its page number. Click any row. The spread
+          jumps to that chapter. Drop cap on the chapter's opening
+          letter; running header shows the chapter title.
+        </li>
+        <li>
+          Click the <strong>"Spread X of Y"</strong> indicator. It
+          becomes a number input. Type a number near the middle of
+          the book (e.g. 10), press Enter. The spread jumps.
+        </li>
+        <li>
+          Press <strong>Ctrl+F</strong> (Cmd+F on macOS). A find
+          bar appears above the spread. Type a word you know is in
+          the text. The count badge updates (e.g. <em>"1 / 17"</em>);
+          the spread jumps to the first match. Press Enter or click
+          <strong>›</strong>. Next match. Esc closes the find bar.
+        </li>
+        <li>
+          On a touch device (real phone, or DevTools mobile emulator
+          with touch events on): swipe left across the spread.
+          Page advances. Right swipe goes back. Quick taps on
+          sentences still seek to the audio position.
+        </li>
+        <li>
+          Hit play. While listening, press the
+          <strong>🔖 Bookmark</strong> chip. The book view
+          re-renders; the page you were on shows a small accent
+          ribbon at the top-right corner. Toggle to Audio view
+          (▶ Audio view link), then back to Book view — the ribbon
+          is still there.
+        </li>
+        <li>
+          Drag-select a phrase inside any sentence. A floating
+          toolbar appears above the selection with three colors +
+          ×. Click yellow. The selected text gets a yellow
+          background. Drag-select another phrase. Pink. Drag again
+          on the yellow phrase, click ×. The yellow highlight is
+          removed. Toggle to Audio view; the pink highlight is
+          visible there too (same shared rendering).
+        </li>
+        <li>
+          Back in Book view, click <strong>🖨 Print</strong>.
+          The native browser print dialog opens. The preview
+          shows every page laid out flat, each on its own sheet,
+          with the cover first. Headers / footers / drop caps
+          carry through. Choose <em>Save as PDF</em> if you'd
+          rather not print physical pages — close the dialog when
+          done. The book view restores to the spread you were on.
+        </li>
+        <li>
+          Click <strong>▶ Audio view</strong> to exit. The
+          reading view returns to the same scroll position around
+          your active sentence. All work-in-progress state
+          (bookmarks, highlights) persists; closing and reopening
+          the clip preserves everything.
+        </li>
+      </ol>
+
       <h3>Walkthrough 5 — Install as a phone PWA</h3>
       <p><em>Tests</em>: Manifest, service worker, offline shell,
         media-session integration on the lock screen.</p>
@@ -2148,11 +2435,91 @@
         </li>
       </ol>
 
+      <!-- ============================================================= -->
+      <h3 id="send-feedback">Sending feedback after a walkthrough</h3>
+      <p>
+        Whether something broke or just felt awkward, here's the
+        path to get it back to the maintainer with everything
+        needed to reproduce.
+      </p>
+
+      <h4>If you hit an error</h4>
+      <ol>
+        <li>
+          Open <strong>Settings</strong> (⚙ icon, top-right of the
+          hero). Scroll near the bottom.
+        </li>
+        <li>
+          Tap <strong>View debug log →</strong>. A modal lists every
+          dlog entry from this session (sortable timestamps,
+          namespaces like <code>[bg-queue]</code>,
+          <code>[synth]</code>, <code>[github]</code>). Tap
+          <strong>Download (.txt)</strong> in the dialog header.
+          A file named
+          <code>narrative-debug-YYYY-MM-DDTHH-MM.txt</code> lands
+          in your Downloads folder.
+        </li>
+        <li>
+          Back in Settings, tap one of the two feedback buttons:
+          <ul>
+            <li>
+              <strong>Send feedback (mail app) →</strong> opens
+              your phone's default mail app with the subject
+              prefilled (<em>"Narrative feedback — vNNN"</em>) and
+              a body that already includes your build version, the
+              currently-loaded clip's id, and a blank space to
+              describe what happened.
+            </li>
+            <li>
+              <strong>Send feedback (Gmail) →</strong> opens the
+              same draft inside Gmail's web compose at
+              <code>mail.google.com</code>. Useful when you don't
+              have a system mail app configured (or you're on a
+              shared machine and don't want to lose the draft to
+              a browser refresh — Gmail's web compose autosaves).
+            </li>
+          </ul>
+        </li>
+        <li>
+          <strong>Attach the debug log file</strong> you just
+          downloaded. Both mail-app and Gmail flows let you drop
+          attachments. The maintainer needs that file to see what
+          your client + server saw at each step.
+        </li>
+        <li>
+          Describe the problem in plain language. <em>"Tried to
+          import these 4 chapters; chapter 1 took 30s and the rest
+          failed instantly"</em> beats <em>"didn't work"</em> by a
+          mile. Mention which walkthrough you were on if
+          applicable.
+        </li>
+      </ol>
+
+      <h4>If something just felt off (no error)</h4>
+      <p>
+        You don't have to attach a log for UX feedback. Just hit
+        either <strong>Send feedback</strong> button and describe
+        what you expected vs what happened. A screenshot helps a
+        lot — most phone mail apps let you paste one inline.
+      </p>
+
       <div class="tip">
-        After each walkthrough, the in-app <strong>debug log</strong>
-        (Settings → View debug log) holds the per-step timestamps +
-        any errors you hit. Copy the relevant tail of the log into
-        a feedback message if anything surprises you.
+        The auto-context the feedback buttons inject (build
+        version, currently-loaded clip id) makes a real
+        difference. If you compose the email by hand without
+        clicking those buttons, the maintainer ends up asking
+        "what version are you on?" first. Saves a round-trip.
+      </div>
+
+      <div class="tip">
+        <strong>Don't include a debug log in a public bug report
+        if you've narrated anything sensitive.</strong> The debug
+        log captures clip titles, character names, sample text
+        from the chapter queue, and GitHub repo paths. If you
+        narrated a personal letter or a private manuscript, those
+        details land in the log. The maintainer is fine — they're
+        the only recipient of the feedback emails — but a
+        screenshot posted publicly should be reviewed first.
       </div>
 
       <p style="margin-top: 48px;">

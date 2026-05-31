@@ -243,6 +243,8 @@ const voiceBrowserSearch = $("voice-browser-search");
 const voiceBrowserList = $("voice-browser-list");
 const voiceInstalledToggle = $("voice-installed-toggle");
 const voiceFavoritesToggle = $("voice-favorites-toggle");
+// v218: third filter chip — show only voices cleared for commercial use.
+const voiceCommercialToggle = $("voice-commercial-toggle");
 const voiceLanguageFilter = $("voice-language-filter");
 const voicePreviewText = $("voice-preview-text");
 const voicePreviewClear = $("voice-preview-clear");
@@ -1315,6 +1317,8 @@ const _ONBOARDING_HINT_KEYS = [
   "narrative.firstClipConfettiSeen",
   "narrative.dragHintDismissed",
   "narrative.voiceFavTipDismissed",
+  // v219: Commercial-only filter chip first-tap hint.
+  "narrative.voiceCommercialTipDismissed",
   "narrative.speakerAuditionTipDismissed",
   "narrative.speakerAuditionTipUsed",
   "narrative.hintSeen.speed",
@@ -1352,6 +1356,7 @@ if (settingsResetHintsLink) {
       _lastSeenClipCount = 0;
       if (typeof renderLibrary === "function") renderLibrary();
       if (typeof _updateVoiceFavoritesTip === "function") _updateVoiceFavoritesTip();
+      if (typeof _updateVoiceCommercialTip === "function") _updateVoiceCommercialTip();
       if (typeof _updateSpeakerAuditionTip === "function") {
         // Re-run with the current voice's speaker count so the banner
         // pops back if a high-count voice is selected.
@@ -2213,6 +2218,13 @@ async function addBookmarkAtCurrentTime() {
     clip.bookmarks.sort((a, b) => a.timeSec - b.timeSec);
     await saveClip(clip);
     await renderBookmarks();
+    // v210 (M6.1): if the book view is open, re-stash bookmarks +
+    // re-render the current spread so the new ribbon shows up
+    // immediately on the bookmarked page.
+    if (_bookViewSource && typeof bookView !== "undefined" && bookView && !bookView.hidden) {
+      _bookViewSource.bookmarks = clip.bookmarks;
+      _bookViewRenderSpread(_bookViewCurrentSpread);
+    }
     setStatus(`Bookmark added at ${formatTime(t)}.`);
   } catch (e) {
     console.warn("bookmark add failed:", e);
@@ -4545,6 +4557,29 @@ async function generate() {
               rate: Number(rateEl.value),
               volume: Number(volumeEl.value) / 100,
               speakerId: speakerRow.hidden ? null : Number(speakerEl.value || 0),
+              // v219: snapshot voice provenance at generation time. If a
+              // regen reuses an old voice on a fresh tier, this records
+              // what's true *now*, which is what matters for the audio
+              // file produced now. For library import of pre-v219 clips,
+              // these fields are simply absent and the Edit dialog falls
+              // back to "Unknown provenance."
+              provenance: (() => {
+                const p = _voiceProvenance(voiceEl.value);
+                return p
+                  ? {
+                      voiceId: voiceEl.value || null,
+                      speakerId: speakerRow.hidden
+                        ? null
+                        : Number(speakerEl.value || 0),
+                      voiceName,
+                      license: p.license,
+                      licenseDataset: p.licenseDataset,
+                      licenseCommercial: p.licenseCommercial,
+                      attribution: p.attribution,
+                      capturedAt: Date.now(),
+                    }
+                  : null;
+              })(),
               sentenceOffsetsSec: sentenceOffsetsSec.slice(),
               blob: combined,
               durationSec: isFinite(playerEl.duration) ? playerEl.duration : 0,
@@ -5992,9 +6027,94 @@ async function _preSynthesizeChapter(chapter) {
     let buf = "";
     let combinedMp3 = null;
     let sentenceOffsetsMs = [];
+
+    // v204: SSE watchdog. The server emits ': keepalive\n\n' comment
+    // lines every 15s during synth so intermediaries (Fly's proxy,
+    // nginx) see live traffic. If we go 30s (2x slack) without ANY
+    // bytes on the stream, the upstream is almost certainly dead —
+    // abort the fetch so we get a clear error to surface, rather
+    // than silently waiting on a never-arriving response. The fetch
+    // abort propagates as a reader.read() rejection caught by
+    // _bgTrySynth's outer try/catch, which already triggers the
+    // 1.5s-then-retry path. A failed retry lands in _bgFailures and
+    // shows the "needs a retry" banner.
+    let _watchdogFired = false;
+    let _watchdogTimer = null;
+    const SSE_WATCHDOG_MS = 30000;
+    // v216: pause the watchdog while the tab is hidden. Mobile
+    // browsers throttle background tabs — JS execution slows or
+    // halts, so incoming SSE bytes don't get processed, the
+    // watchdog's timer keeps running on the real clock, and at
+    // 30s it aborts a fetch that the server is happily still
+    // streaming to. The user comes back to a synth that "died" —
+    // because we killed it. Tab-visibility-aware reset fixes that:
+    //   - tab hidden  → don't schedule abort
+    //   - tab visible → schedule abort as normal
+    // Triggered by:
+    //   1. opening the manual / What's new in a new tab (which sets
+    //      the original tab to hidden on phone)
+    //   2. switching to another app
+    //   3. locking the phone
+    const _isVisible = () =>
+      typeof document === "undefined" || document.visibilityState !== "hidden";
+    const _resetWatchdog = () => {
+      if (_watchdogTimer) clearTimeout(_watchdogTimer);
+      if (!_isVisible()) return;  // suspend
+      _watchdogTimer = setTimeout(() => {
+        _watchdogFired = true;
+        try { myController.abort(); } catch {}
+      }, SSE_WATCHDOG_MS);
+    };
+    const _onVisibility = () => {
+      if (!_isVisible()) {
+        // Going hidden — drop the in-flight timer so it doesn't
+        // fire while the tab is throttled.
+        if (_watchdogTimer) {
+          clearTimeout(_watchdogTimer);
+          _watchdogTimer = null;
+        }
+      } else {
+        // Coming back — restart with a fresh 30s window. Any
+        // server-side keepalive that piled up while we were
+        // hidden will tick the wire soon and reset us again.
+        _resetWatchdog();
+      }
+    };
+    document.addEventListener("visibilitychange", _onVisibility);
+    _resetWatchdog();
+
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      let readResult;
+      try {
+        readResult = await reader.read();
+      } catch (err) {
+        if (_watchdogTimer) clearTimeout(_watchdogTimer);
+        // v216: drop the visibility handler now that we're done
+        // with this chapter's watchdog. Otherwise each chapter
+        // queue run leaks a listener.
+        document.removeEventListener("visibilitychange", _onVisibility);
+        if (_watchdogFired) {
+          _dlog("synth", "SSE watchdog timeout — no bytes for 30s", {
+            title: chapter.title,
+            atSentence: _bgSynthSentence,
+            ofTotal: _bgSynthTotal,
+          });
+          throw new Error(
+            "connection lost — server may be restarting or unreachable"
+          );
+        }
+        throw err;
+      }
+      // Reset on ANY incoming bytes — including the keepalive comment
+      // lines, which won't parse as `data:` events but still tick the
+      // wire.
+      _resetWatchdog();
+      const { done, value } = readResult;
+      if (done) {
+        if (_watchdogTimer) clearTimeout(_watchdogTimer);
+        document.removeEventListener("visibilitychange", _onVisibility);
+        break;
+      }
       buf += decoder.decode(value, { stream: true });
       let nl;
       while ((nl = buf.indexOf("\n\n")) >= 0) {
@@ -6027,6 +6147,11 @@ async function _preSynthesizeChapter(chapter) {
               atSentence: _bgSynthSentence,
               ofTotal: _bgSynthTotal,
             });
+            // v204: stop the watchdog so it doesn't fire abort after
+            // we've already thrown.
+            if (_watchdogTimer) clearTimeout(_watchdogTimer);
+            // v216: clean up the visibility listener too.
+            document.removeEventListener("visibilitychange", _onVisibility);
             throw new Error(event.message || "synthesis error");
           }
         }
@@ -6253,7 +6378,14 @@ function splitSentencesClient(text) {
 // on, so we always tag and let the stylesheet decide.
 const LONG_SENTENCE_WORD_THRESHOLD = 35;
 
-function enterReadingView(text, images) {
+// v211 (M7.1): cached highlights for the reading-view sentence
+// builder. Populated by loadClip and updated by _saveHighlight.
+let _readingViewHighlights = [];
+
+function enterReadingView(text, images, highlights) {
+  if (Array.isArray(highlights)) {
+    _readingViewHighlights = highlights;
+  }
   // v185 (M1) fix: if the user is currently in book view and just
   // clicked a different clip in the library, they expect to stay in
   // book view — just with the new chapter's content. Capture the
@@ -6312,7 +6444,11 @@ function enterReadingView(text, images) {
       span.dataset.wordCount = String(wc);
       span.title = `${wc} words`;
     }
-    span.textContent = s;
+    // v211 (M7.1): use the shared content builder so reading view
+    // sentences carry their highlights too. _readingViewHighlights
+    // is populated by loadClip / generate when the clip's
+    // highlights are read in.
+    span.innerHTML = _buildSentenceContentHTML(s, i, _readingViewHighlights || []);
     span.addEventListener("click", () => {
       // v189: clicking a sentence reads as "engage here" — drop
       // any pinned scroll state so the auto-scroll resumes from
@@ -6476,6 +6612,15 @@ saveTextBtn.addEventListener("click", saveCurrentClipText);
 function clearForNewClip() {
   // Cancel any pending auto-advance — the user is clearly starting fresh.
   _cancelAutoAdvance();
+
+  // v205: stop audio + hide the player card. Previously Clear would
+  // wipe the textarea and decouple Save text from the clip, but leave
+  // the audio playing and the player card visible — which felt wrong
+  // (workspace looks empty while the previous clip narrates on). The
+  // user is signaling "fresh slate", so the audio is part of what
+  // gets cleared.
+  if (!playerEl.paused) _pauseAsUser();
+  playerCard.hidden = true;
 
   // Clear text mid-queue also cancels the queue. Otherwise the next
   // chapter would auto-load into the just-cleared textarea and surprise
@@ -6708,6 +6853,24 @@ const bookViewNext = $("book-view-next");
 const bookViewIndicator = $("book-view-indicator");
 const bookViewReturn = $("book-view-return");
 const bookViewToggle = $("book-view-toggle");
+const bookViewPrintBtn = $("book-view-print");
+const bookViewTocBtn = $("book-view-toc");
+const bookViewTocDialog = $("book-view-toc-dialog");
+const bookViewTocList = $("book-view-toc-list");
+const bookViewTocClose = $("book-view-toc-close");
+// v208 (M6.2/M6.3) refs.
+const bookViewFind = $("book-view-find");
+const bookViewFindInput = $("book-view-find-input");
+const bookViewFindCount = $("book-view-find-count");
+const bookViewFindPrev = $("book-view-find-prev");
+const bookViewFindNext = $("book-view-find-next");
+const bookViewFindClose = $("book-view-find-close");
+// v208 (M6.2): flag set while the indicator is in click-to-edit mode
+// so _bookViewUpdateNav doesn't clobber the input's value mid-typing.
+let _bookViewIndicatorEditing = false;
+// v208 (M6.3): current find-mode state. matches is sentence indices.
+let _bookViewFindMatches = [];
+let _bookViewFindCursor = 0;
 // v187: "pinned" state — when the user manually pages (prev/next,
 // arrow keys, swipe), suppress the auto-flip-on-active-sentence
 // behavior so the spread stays where the reader put it while scanning
@@ -6797,8 +6960,25 @@ function _bookViewMakeImageEl(imgRecord, dims, pageWidth, pageHeight) {
   const d = dims.get(imgRecord.src);
   const contentWidth = pageWidth - 64;  // .book-page padding 32×2
   const maxHeight = Math.round(pageHeight * 0.5);
+  // v207 (M5.3): in magazine theme, content flows in 2 columns. By
+  // default an image gets column-span: all (spans both columns) which
+  // suits chapter-opening figures but is overkill for small inline
+  // graphics. Detect "small" via natural width < 1× single column;
+  // mark via data-single-col so CSS skips the column-span override
+  // and the image renders inside whichever column it landed in.
+  const isMagazine =
+    bookView && bookView.dataset.bookTheme === "magazine" && pageWidth > 480;
+  const singleColumnContentWidth =
+    isMagazine ? Math.round((pageWidth - 64 - 24) / 2) : contentWidth;
   if (d && d.width && d.height) {
-    const scale = Math.min(1, contentWidth / d.width);
+    // M5.3: route small-in-magazine images into a single column.
+    if (isMagazine && d.width < singleColumnContentWidth * 1.1) {
+      el.dataset.singleCol = "true";
+    }
+    const targetMaxWidth = el.dataset.singleCol
+      ? singleColumnContentWidth
+      : contentWidth;
+    const scale = Math.min(1, targetMaxWidth / d.width);
     const displayWidth = Math.round(d.width * scale);
     let displayHeight = Math.round(d.height * scale);
     if (displayHeight > maxHeight) {
@@ -6818,6 +6998,346 @@ function _bookViewMakeImageEl(imgRecord, dims, pageWidth, pageHeight) {
   // Failed loads: drop from DOM so they don't leave a void.
   el.addEventListener("error", () => el.remove(), { once: true });
   return el;
+}
+
+// v201 (M5.1): overflow predicate. The previous paginator only
+// checked vertical overflow via `body.scrollHeight > pageHeight - 1`,
+// which works for single-column themes (paperback, manuscript) where
+// body's min-height: auto lets it grow past its flex allocation when
+// content is too tall. Multi-column themes (magazine) overflow
+// DIFFERENTLY: with column-count > 1 + column-fill: auto inside a
+// fixed-height flex child, content past the last column extends
+// horizontally to the right of the body, so scrollWidth grows but
+// scrollHeight stays at clientHeight. The previous check would never
+// fire in magazine, and the paginator would pack every sentence on
+// page 1 (visually clipped by .book-page overflow: hidden).
+//
+// The hybrid below catches both cases. The +1 / -1 tolerances absorb
+// sub-pixel rounding so a body whose content fits exactly to the
+// pixel doesn't get a spurious overflow signal.
+function _bookViewBodyOverflows(body, pageHeight) {
+  if (body.scrollHeight > pageHeight - 1) return true;
+  if (body.scrollWidth > body.clientWidth + 1) return true;
+  return false;
+}
+
+// v211 (M7.1): text highlights. Selection within a single .sentence
+// span surfaces a floating toolbar; clicking a color saves a highlight
+// to clip.highlights[] and re-renders the affected sentence wrapped
+// in coloured spans. Works in both book view and reading view —
+// _buildSentenceContent() is the shared renderer.
+//
+// Storage shape: clip.highlights = [{
+//   id: number (Date.now() unique key),
+//   sentence_index: number,
+//   char_start: number, char_end: number,
+//   color: "yellow" | "pink" | "blue",
+//   createdAt: ISO string,
+// }, ...]
+//
+// Multi-sentence selections are not supported in v1 — the toolbar
+// stays hidden. Users adapt quickly; complex multi-span highlight
+// math can wait for a later iteration.
+const highlightToolbar = $("highlight-toolbar");
+let _highlightActiveSelectionInfo = null;
+
+function _getSelectionInsideSentence() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const startEl = range.startContainer.nodeType === Node.TEXT_NODE
+    ? range.startContainer.parentElement
+    : range.startContainer;
+  const endEl = range.endContainer.nodeType === Node.TEXT_NODE
+    ? range.endContainer.parentElement
+    : range.endContainer;
+  if (!startEl || !endEl) return null;
+  const sentenceSpan = startEl.closest(".sentence");
+  if (!sentenceSpan) return null;
+  // Multi-sentence selections: punt for v1.
+  if (endEl.closest(".sentence") !== sentenceSpan) return null;
+  const sIdx = parseInt(sentenceSpan.dataset.index, 10);
+  if (Number.isNaN(sIdx)) return null;
+  // Compute offset within the sentence's textContent. The sentence
+  // span may contain mixed text + highlight spans (re-rendered). We
+  // walk the span's text nodes summing lengths until we hit the
+  // range's start/end containers.
+  const offsetIn = (container, offset) => {
+    let pos = 0;
+    const walker = document.createTreeWalker(
+      sentenceSpan, NodeFilter.SHOW_TEXT, null
+    );
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node === container) return pos + offset;
+      pos += node.nodeValue.length;
+    }
+    return pos;
+  };
+  let start = offsetIn(range.startContainer, range.startOffset);
+  let end = offsetIn(range.endContainer, range.endOffset);
+  if (start > end) [start, end] = [end, start];
+  if (start === end) return null;
+  return {
+    sentence_index: sIdx,
+    char_start: start,
+    char_end: end,
+    rect: range.getBoundingClientRect(),
+  };
+}
+
+function _showHighlightToolbar(info) {
+  if (!highlightToolbar || !info) return;
+  highlightToolbar.hidden = false;
+  // Position above the selection, clipped to viewport.
+  const r = info.rect;
+  const toolbarH = 36;
+  let top = r.top + window.scrollY - toolbarH - 8;
+  if (top < window.scrollY + 4) top = r.bottom + window.scrollY + 8;
+  let left = r.left + window.scrollX + r.width / 2 - 80;
+  if (left < 8) left = 8;
+  if (left + 160 > window.innerWidth) left = window.innerWidth - 168;
+  highlightToolbar.style.top = `${top}px`;
+  highlightToolbar.style.left = `${left}px`;
+  _highlightActiveSelectionInfo = info;
+}
+
+function _hideHighlightToolbar() {
+  if (highlightToolbar) highlightToolbar.hidden = true;
+  _highlightActiveSelectionInfo = null;
+}
+
+async function _saveHighlight(info, color) {
+  if (!_currentClipId) return;
+  try {
+    const clip = await getClip(_currentClipId);
+    if (!clip) return;
+    if (!Array.isArray(clip.highlights)) clip.highlights = [];
+    if (color === null) {
+      // Remove: drop any highlight that overlaps the selected range
+      // on the same sentence. v1: simple inclusive overlap check.
+      clip.highlights = clip.highlights.filter((h) =>
+        !(h.sentence_index === info.sentence_index &&
+          h.char_end > info.char_start && h.char_start < info.char_end)
+      );
+    } else {
+      clip.highlights.push({
+        id: Date.now(),
+        sentence_index: info.sentence_index,
+        char_start: info.char_start,
+        char_end: info.char_end,
+        color,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    await saveClip(clip);
+    // Re-render affected views.
+    if (sentenceSpans && sentenceSpans[info.sentence_index]) {
+      const span = sentenceSpans[info.sentence_index];
+      span.innerHTML = _buildSentenceContentHTML(
+        _bookViewSource && _bookViewSource.sentences
+          ? _bookViewSource.sentences[info.sentence_index]
+          : span.textContent.replace(/ $/, ""),
+        info.sentence_index,
+        clip.highlights
+      );
+    }
+    if (typeof bookView !== "undefined" && bookView && !bookView.hidden) {
+      if (_bookViewSource) _bookViewSource.highlights = clip.highlights;
+      _bookViewRenderSpread(_bookViewCurrentSpread);
+    }
+  } catch (e) {
+    console.warn("highlight save failed:", e);
+  }
+}
+
+// Build the HTML for a sentence span's content, with any highlight
+// ranges wrapped in <span class="text-highlight" data-color="...">.
+// Used by both book-view sentence rendering and reading-view sentence
+// rendering. Returns a string of innerHTML (caller assigns to span).
+// Highlights are clamped to the sentence's text bounds + de-overlapped
+// by selecting the latest highlight on overlap (last-write-wins).
+function _buildSentenceContentHTML(text, sentenceIdx, highlights) {
+  const myHighlights = (Array.isArray(highlights) ? highlights : [])
+    .filter((h) => h.sentence_index === sentenceIdx)
+    .map((h) => ({
+      ...h,
+      char_start: Math.max(0, Math.min(text.length, h.char_start)),
+      char_end: Math.max(0, Math.min(text.length, h.char_end)),
+    }))
+    .filter((h) => h.char_end > h.char_start)
+    .sort((a, b) => a.char_start - b.char_start || b.id - a.id);
+  if (!myHighlights.length) {
+    return _escapeHtmlForSentence(text);
+  }
+  // Walk text + highlight starts/ends, emitting either plain text or
+  // wrapped highlight segments. Skip overlapping highlights past the
+  // first one on a position.
+  const out = [];
+  let cursor = 0;
+  for (const h of myHighlights) {
+    if (h.char_start < cursor) continue;  // overlaps previously-emitted
+    if (h.char_start > cursor) {
+      out.push(_escapeHtmlForSentence(text.slice(cursor, h.char_start)));
+    }
+    out.push(
+      `<span class="text-highlight" data-color="${h.color}">` +
+      _escapeHtmlForSentence(text.slice(h.char_start, h.char_end)) +
+      `</span>`
+    );
+    cursor = h.char_end;
+  }
+  if (cursor < text.length) {
+    out.push(_escapeHtmlForSentence(text.slice(cursor)));
+  }
+  return out.join("");
+}
+
+function _escapeHtmlForSentence(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// Wire selection listeners + toolbar buttons.
+document.addEventListener("pointerup", (e) => {
+  // Defer to next tick so the selection is finalized.
+  setTimeout(() => {
+    // Ignore if the pointerup was inside the toolbar (color click).
+    if (highlightToolbar && highlightToolbar.contains(e.target)) return;
+    const info = _getSelectionInsideSentence();
+    if (info) {
+      _showHighlightToolbar(info);
+    } else {
+      _hideHighlightToolbar();
+    }
+  }, 0);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && highlightToolbar && !highlightToolbar.hidden) {
+    _hideHighlightToolbar();
+  }
+});
+if (highlightToolbar) {
+  highlightToolbar.addEventListener("pointerdown", (e) => {
+    // Prevent selection collapse when clicking a toolbar button.
+    e.preventDefault();
+  });
+  highlightToolbar.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn || !_highlightActiveSelectionInfo) return;
+    const action = btn.dataset.action;
+    const color = btn.dataset.color;
+    const info = _highlightActiveSelectionInfo;
+    _hideHighlightToolbar();
+    window.getSelection()?.removeAllRanges();
+    await _saveHighlight(info, action === "remove" ? null : color);
+  });
+}
+
+// v206 (M4.1): detect chapter boundaries inside a clip's sentence
+// array. Returns [{sentence_index, title}, ...] for each detected
+// chapter, sorted by sentence_index. The sentence at sentence_index
+// IS the chapter heading (or whatever opens the chapter) — drop cap
+// fires on it, running header on subsequent pages keys off it, TOC
+// jumps to it.
+//
+// Patterns matched (in order, first hit wins per sentence):
+//   1. Markdown ATX heading: # / ## / ### Title
+//   2. "Chapter N" / "CHAPTER 12" / "Part Three" — number or
+//      lowercase word, optional subtitle after :/—/.
+//   3. Bare Roman numeral as a short standalone sentence ("II.")
+//
+// Numeric/Roman-only titles get auto-promoted to "Chapter <N>" so a
+// table of contents reads sensibly.
+function _bookViewDetectChapters(sentences) {
+  if (!Array.isArray(sentences) || sentences.length < 4) return [];
+  const ROMAN = /^[ivxlcdm]+\.?$/i;
+  const NUMERIC = /^[0-9]+$/;
+  const out = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const raw = (sentences[i] || "").trim();
+    if (!raw) continue;
+    let title = null;
+    let m;
+    // 1. Markdown ATX
+    m = raw.match(/^(#{1,3})\s+(.+?)\s*#*$/);
+    if (m) title = m[2].trim();
+    // 2. Chapter/Part/Book/Section + N
+    if (!title) {
+      m = raw.match(
+        /^(chapter|part|book|section)\s+([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty)\b[\s.:—–-]*(.*)$/i
+      );
+      if (m) {
+        const word = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+        const num = m[2].trim();
+        const subtitle = (m[3] || "").trim();
+        title = subtitle ? `${word} ${num}: ${subtitle}` : `${word} ${num}`;
+      }
+    }
+    // 3. Bare Roman numeral as a short sentence (Standard Ebooks
+    //    convention). Cap at 20 chars so a regular sentence
+    //    starting with "I" doesn't get treated as a chapter.
+    if (!title && raw.length < 20 && ROMAN.test(raw)) {
+      title = `Chapter ${raw.replace(/\.$/, "").toUpperCase()}`;
+    }
+    if (!title) continue;
+    // Promote numeric / Roman-only titles to "Chapter <N>" — a TOC
+    // entry of just "II" is useless.
+    if (NUMERIC.test(title) || /^[ivxlcdm]+$/i.test(title)) {
+      title = `Chapter ${title.toUpperCase()}`;
+    }
+    out.push({ sentence_index: i, title });
+  }
+  return out;
+}
+
+// v206 (M4.3): which chapter contains the given sentence index?
+// Returns null if no chapters at all (single-clip mode), or if the
+// sentence falls before the first detected chapter (clip preamble).
+function _bookViewChapterAt(sentenceIdx) {
+  const chapters = (_bookViewSource && _bookViewSource.chapters) || [];
+  let last = null;
+  for (const ch of chapters) {
+    if (ch.sentence_index <= sentenceIdx) last = ch;
+    else break;
+  }
+  return last;
+}
+
+// v210 (M6.1): which pages contain a bookmark? Returns a Set of
+// page indices. Bookmarks are time-based; convert each timeSec to
+// a sentence index via the sentenceOffsetsSec array (cumulative
+// per-sentence start times), then lookup the page via
+// _bookSentenceToPage. Returns empty if no bookmarks or no
+// pagination yet.
+function _bookViewBookmarkedPageSet() {
+  const out = new Set();
+  const bms = (_bookViewSource && _bookViewSource.bookmarks) || [];
+  if (!bms.length || !sentenceOffsetsSec || !sentenceOffsetsSec.length) return out;
+  for (const bm of bms) {
+    const t = (bm && typeof bm.timeSec === "number") ? bm.timeSec : 0;
+    let sIdx = 0;
+    for (let i = 0; i < sentenceOffsetsSec.length; i++) {
+      if (sentenceOffsetsSec[i] <= t) sIdx = i;
+      else break;
+    }
+    const pageIdx = _bookSentenceToPage[sIdx];
+    if (pageIdx !== undefined) out.add(pageIdx);
+  }
+  return out;
+}
+
+// v206 (M4.2): is the given sentence index the first sentence of a
+// chapter? Used by the renderer to decide drop-cap placement.
+function _bookViewIsChapterStart(sentenceIdx) {
+  const chapters = (_bookViewSource && _bookViewSource.chapters) || [];
+  for (const ch of chapters) {
+    if (ch.sentence_index === sentenceIdx) return true;
+    if (ch.sentence_index > sentenceIdx) return false;
+  }
+  return false;
 }
 
 // Pure helper: split a list of sentences into per-page buckets by
@@ -6890,6 +7410,16 @@ function _bookViewPaginate(sentences, pageWidth, pageHeight, imgByIdx, imgDims) 
   // itself). The unit is atomic — if any part overflows, the whole
   // unit moves to the next page so the image stays with its sentence.
   for (let i = 0; i < sentences.length; i++) {
+    // v206 (M4.2): force a page break BEFORE a chapter start so each
+    // chapter opens on a fresh page (book convention). Skip when the
+    // current page is empty — chapter 1 is allowed to lead the first
+    // page. _bookViewIsChapterStart reads from _bookViewSource.chapters
+    // which enterBookView populates before calling the paginator.
+    if (current.length > 0 && _bookViewIsChapterStart(i)) {
+      pages.push([]);
+      current = pages[pages.length - 1];
+      body.innerHTML = "";
+    }
     const imgs = imgByIdx ? (imgByIdx.get(i) || []) : [];
     const placedImgEls = [];
     for (const img of imgs) {
@@ -6901,7 +7431,7 @@ function _bookViewPaginate(sentences, pageWidth, pageHeight, imgByIdx, imgDims) 
     span.className = "sentence";
     span.textContent = sentences[i] + " ";
     body.appendChild(span);
-    if (body.scrollHeight > pageHeight - 1) {
+    if (_bookViewBodyOverflows(body, pageHeight)) {
       // Roll the entire unit off the current page.
       for (const el of placedImgEls) body.removeChild(el);
       body.removeChild(span);
@@ -6936,6 +7466,41 @@ function _bookViewPaginate(sentences, pageWidth, pageHeight, imgByIdx, imgDims) 
     }
   }
   if (current.length === 0 && pages.length > 1) pages.pop();
+  // v207 (M5.2): trailing images (sentence_index >= sentences.length)
+  // get their own paginated section. Previously the renderer just
+  // dumped them on the last text page without an overflow check —
+  // a chapter with many or oversize trailing figures would silently
+  // clip. Now we measure each, fitting on the current (last text)
+  // page first; on overflow, spill into new pages.
+  //
+  // Per-page trailing-image bucket lives on _bookViewSource so the
+  // renderer can look it up by page index without changing the
+  // _bookViewPages return shape. Cleared at the start of every
+  // paginate so a previous run's data doesn't leak in.
+  const trailingByPage = new Map();
+  if (_bookViewSource) _bookViewSource.trailingByPage = trailingByPage;
+  const trailing = imgByIdx ? (imgByIdx.get(sentences.length) || []) : [];
+  if (trailing.length) {
+    // current/body still reflect the state of the last text page
+    // from the loop above. Try fitting each trailing image there
+    // before spilling.
+    for (const img of trailing) {
+      let el = _bookViewMakeImageEl(img, imgDims, pageWidth, pageHeight);
+      body.appendChild(el);
+      if (_bookViewBodyOverflows(body, pageHeight)) {
+        body.removeChild(el);
+        // Spill: create a fresh trailing page (empty sentence list).
+        pages.push([]);
+        current = pages[pages.length - 1];
+        body.innerHTML = "";
+        el = _bookViewMakeImageEl(img, imgDims, pageWidth, pageHeight);
+        body.appendChild(el);
+      }
+      const pageIdx = pages.length - 1;
+      if (!trailingByPage.has(pageIdx)) trailingByPage.set(pageIdx, []);
+      trailingByPage.get(pageIdx).push(img);
+    }
+  }
   probe.remove();
   return pages;
 }
@@ -7009,12 +7574,34 @@ function _bookViewRenderSpread(spreadIdx) {
       const textPageIdx = slot - 1;
       const sentenceIdxs = _bookViewPages[textPageIdx] || [];
 
-      // v197 (M2): running header. Shows the clip title at the top
-      // of every text page. No chapter awareness yet — the clip's
-      // own title is the most reliable "section name" we have.
-      // Suppressed when there's no title (cover-page fallback case).
+      // v210 (M6.1): bookmarked-page ribbon. A small accent-coloured
+      // pennant in the top-right corner appears on every page that
+      // contains a saved bookmark (resolved via timeSec → sentence
+      // → page). Placed at the page level (not body) so it survives
+      // body re-renders and doesn't get caught in column flow.
+      if (_bookViewBookmarkedPageSet().has(textPageIdx)) {
+        const ribbon = document.createElement("div");
+        ribbon.className = "book-page-bookmark";
+        ribbon.setAttribute("aria-label", "Bookmarked page");
+        ribbon.title = "Bookmarked";
+        pageEl.appendChild(ribbon);
+      }
+
+      // v197 (M2) + v206 (M4.3): running header. When chapters are
+      // detected, use the title of the chapter containing this
+      // page's first sentence (book convention — left page would
+      // ideally be the clip title, right page the chapter, but the
+      // simpler "chapter on every page" reads cleanly in a single-
+      // spread book view). Falls back to the clip title when no
+      // chapter covers this page (preamble before chapter 1) OR
+      // when there are no detected chapters at all.
+      const _firstSentenceForHeader =
+        (_bookViewPages[textPageIdx] && _bookViewPages[textPageIdx][0]) || 0;
+      const _chapterForHeader = _bookViewChapterAt(_firstSentenceForHeader);
       const headerTitle =
-        (_bookViewSource && _bookViewSource.title) || "";
+        (_chapterForHeader && _chapterForHeader.title) ||
+        (_bookViewSource && _bookViewSource.title) ||
+        "";
       if (headerTitle) {
         const header = document.createElement("div");
         header.className = "book-page-header";
@@ -7024,18 +7611,22 @@ function _bookViewRenderSpread(spreadIdx) {
 
       const body = document.createElement("div");
       body.className = "book-page-body";
-      // v197 (M2): drop cap on the FIRST text page only. CSS
-      // ::first-letter targets the first character of body's flow
-      // regardless of which span holds it — no DOM restructuring
-      // needed. (Future: chapter-aware drop caps would tag every
-      // page that starts a new chapter; for now once per clip.)
-      if (textPageIdx === 0) {
+      // v197 (M2) + v206 (M4.2): drop cap on the first page of
+      // every chapter. The first text page is treated as chapter 0
+      // even when no chapters are detected — single-clip fallback.
+      const _firstSentence = sentenceIdxs[0];
+      if (textPageIdx === 0 || _bookViewIsChapterStart(_firstSentence)) {
         body.dataset.dropCap = "true";
       }
       // v200 (M3.2): images for any sentence on this page render
       // inline before their anchor sentence. Source of truth is
       // _bookViewSource.imgByIdx (computed in enterBookView and
       // reused on repagination so the renderer never re-buckets).
+      // v206 (M4.2): chapter-aware drop cap. Drop cap fires when
+      // any sentence on this page is the start of a chapter (not
+      // just textPageIdx === 0). The paginator forces a page break
+      // before each chapter, so chapter-start is always the page's
+      // FIRST sentence — that's where ::first-letter targets.
       const imgByIdx = (_bookViewSource && _bookViewSource.imgByIdx) || null;
       for (const sIdx of sentenceIdxs) {
         if (imgByIdx && imgByIdx.has(sIdx)) {
@@ -7059,7 +7650,13 @@ function _bookViewRenderSpread(spreadIdx) {
           span.dataset.wordCount = String(wc);
           span.title = `${wc} words`;
         }
-        span.textContent = _bookViewSource.sentences[sIdx] + " ";
+        // v211 (M7.1): use the shared content builder so any saved
+        // highlights for this sentence render as wrapped spans.
+        // Falls back to plain text when there are no highlights.
+        const _hl = (_bookViewSource && _bookViewSource.highlights) || [];
+        span.innerHTML = _buildSentenceContentHTML(
+          _bookViewSource.sentences[sIdx], sIdx, _hl
+        ) + " ";
         // Click → seek audio. Reuses the existing seekToSentence path.
         // v187: clicking a sentence on the visible spread means
         // "engage here" — drop the pinned state so the highlight
@@ -7072,23 +7669,22 @@ function _bookViewRenderSpread(spreadIdx) {
         body.appendChild(span);
         _bookSentenceSpans[sIdx] = span;
       }
-      // v200 (M3.2): trailing images (sentence_index >= sentences.length)
-      // bucket under key sentences.length. Render them after the
-      // very last sentence on the very last text page.
-      const totalTextPages = _bookViewPages.length;
-      const isLastTextPage = (textPageIdx === totalTextPages - 1);
-      if (isLastTextPage && imgByIdx) {
-        const trailing = imgByIdx.get(_bookViewSource.sentences.length) || [];
-        for (const img of trailing) {
-          const el = document.createElement("img");
-          el.className = "book-inline-image";
-          el.src = img.src;
-          el.alt = img.alt || "";
-          el.loading = "lazy";
-          el.decoding = "async";
-          el.addEventListener("error", () => el.remove(), { once: true });
-          body.appendChild(el);
-        }
+      // v207 (M5.2): trailing images live in a per-page bucket on
+      // _bookViewSource.trailingByPage (populated by the paginator).
+      // Render whatever images this specific page got; if the
+      // paginator put zero on this page, this is a no-op.
+      const _trailingForThisPage =
+        (_bookViewSource && _bookViewSource.trailingByPage &&
+          _bookViewSource.trailingByPage.get(textPageIdx)) || [];
+      for (const img of _trailingForThisPage) {
+        const el = document.createElement("img");
+        el.className = "book-inline-image";
+        el.src = img.src;
+        el.alt = img.alt || "";
+        el.loading = "lazy";
+        el.decoding = "async";
+        el.addEventListener("error", () => el.remove(), { once: true });
+        body.appendChild(el);
       }
       pageEl.appendChild(body);
 
@@ -7117,7 +7713,9 @@ function _bookViewRenderSpread(spreadIdx) {
 function _bookViewUpdateNav() {
   if (bookViewPrev) bookViewPrev.disabled = _bookViewCurrentSpread <= 0;
   if (bookViewNext) bookViewNext.disabled = _bookViewCurrentSpread >= _bookViewSpreadsCount - 1;
-  if (bookViewIndicator) {
+  if (bookViewIndicator && !_bookViewIndicatorEditing) {
+    // v208 (M6.2): guard textContent update during edit mode so the
+    // user's input field isn't clobbered by a re-render mid-typing.
     bookViewIndicator.textContent =
       `Spread ${_bookViewCurrentSpread + 1} of ${_bookViewSpreadsCount}`;
   }
@@ -7148,6 +7746,165 @@ function _bookViewNavigateManual(targetSpread) {
   if (targetSpread < 0 || targetSpread >= _bookViewSpreadsCount) return;
   _bookViewUserPaged = true;
   _bookViewRenderSpread(targetSpread);
+}
+
+// v208 (M6.2): click the spread indicator to enter page-jump mode.
+// Indicator's textContent is replaced with a number input; Enter
+// commits, Esc / blur cancels. Guards against _bookViewUpdateNav
+// overwriting the input mid-edit via _bookViewIndicatorEditing.
+// v209 (M6.4): touch swipe for spread navigation. Pointer Events
+// captures horizontal swipes on the spread element. Swipes that
+// start on an interactive child (sentence span, image, button)
+// don't trigger — that preserves click-to-seek and text selection.
+// Distance threshold 80px keeps accidental drags from paging.
+// Time threshold 800ms keeps slow scroll-and-rest from triggering.
+function _bookViewWireSwipe() {
+  if (!bookViewSpread) return;
+  let startX = 0;
+  let startY = 0;
+  let startTime = 0;
+  let tracking = false;
+  bookViewSpread.addEventListener("pointerdown", (e) => {
+    // Don't swallow swipes that begin on interactive content. Sentence
+    // spans handle click-to-seek; respecting their target lets the
+    // existing click logic fire on tap.
+    const target = e.target;
+    if (
+      target.closest("button") ||
+      target.closest(".sentence") ||
+      target.closest("img")
+    ) {
+      tracking = false;
+      return;
+    }
+    if (e.pointerType !== "touch") return;  // mouse drag = text selection
+    startX = e.clientX;
+    startY = e.clientY;
+    startTime = Date.now();
+    tracking = true;
+  });
+  bookViewSpread.addEventListener("pointerup", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const elapsed = Date.now() - startTime;
+    if (elapsed > 800) return;  // too slow
+    if (Math.abs(dx) < 80) return;  // too short
+    if (Math.abs(dy) > Math.abs(dx)) return;  // vertical, not horizontal
+    if (dx < 0) {
+      // Swipe left → next spread (page advancing direction).
+      _bookViewNavigateManual(_bookViewCurrentSpread + 1);
+    } else {
+      _bookViewNavigateManual(_bookViewCurrentSpread - 1);
+    }
+  });
+  bookViewSpread.addEventListener("pointercancel", () => {
+    tracking = false;
+  });
+}
+_bookViewWireSwipe();
+
+function _bookViewBeginPageJump() {
+  if (!bookViewIndicator || _bookViewIndicatorEditing) return;
+  if (_bookViewSpreadsCount <= 1) return;  // nothing to jump to
+  _bookViewIndicatorEditing = true;
+  const currentSpread = _bookViewCurrentSpread + 1;
+  bookViewIndicator.innerHTML = "";
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "1";
+  input.max = String(_bookViewSpreadsCount);
+  input.value = String(currentSpread);
+  input.className = "book-view-indicator-input";
+  input.setAttribute("aria-label", "Spread number");
+  bookViewIndicator.appendChild(input);
+  input.focus();
+  input.select();
+  const finish = (commit) => {
+    if (!_bookViewIndicatorEditing) return;
+    _bookViewIndicatorEditing = false;
+    if (commit) {
+      const n = parseInt(input.value, 10);
+      if (!Number.isNaN(n)) {
+        const target = Math.max(1, Math.min(_bookViewSpreadsCount, n)) - 1;
+        _bookViewNavigateManual(target);
+      }
+    }
+    _bookViewUpdateNav();  // restore the textContent
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finish(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener("blur", () => finish(false));
+}
+
+// v208 (M6.3): find within book view. Reads from
+// _bookViewSource.sentences; case-insensitive substring match;
+// matches stored as sentence indices. Cursor cycles through them
+// via prev/next. Jumping to a match scrolls to the spread containing
+// that sentence via _bookViewNavigateManual.
+function _bookViewOpenFind() {
+  if (!bookViewFind || !bookViewFindInput) return;
+  if (!_bookViewSource || !_bookViewSource.sentences.length) return;
+  bookViewFind.hidden = false;
+  bookViewFindInput.focus();
+  bookViewFindInput.select();
+}
+function _bookViewCloseFind() {
+  if (!bookViewFind) return;
+  bookViewFind.hidden = true;
+  if (bookViewFindInput) bookViewFindInput.value = "";
+  _bookViewFindMatches = [];
+  _bookViewFindCursor = 0;
+  _bookViewUpdateFindCount();
+}
+function _bookViewUpdateFindCount() {
+  if (!bookViewFindCount) return;
+  const total = _bookViewFindMatches.length;
+  const cur = total ? _bookViewFindCursor + 1 : 0;
+  bookViewFindCount.textContent = `${cur} / ${total}`;
+}
+function _bookViewRunFind(query) {
+  _bookViewFindMatches = [];
+  _bookViewFindCursor = 0;
+  if (!query || !_bookViewSource) {
+    _bookViewUpdateFindCount();
+    return;
+  }
+  const q = query.toLowerCase();
+  const sentences = _bookViewSource.sentences;
+  for (let i = 0; i < sentences.length; i++) {
+    if (sentences[i].toLowerCase().includes(q)) {
+      _bookViewFindMatches.push(i);
+    }
+  }
+  _bookViewUpdateFindCount();
+  // Jump to the first match if any.
+  if (_bookViewFindMatches.length) {
+    _bookViewJumpToFindMatch();
+  }
+}
+function _bookViewJumpToFindMatch() {
+  const sIdx = _bookViewFindMatches[_bookViewFindCursor];
+  if (sIdx === undefined) return;
+  const ppr = _bookViewPagesPerSpread();
+  const targetSpread = _bookViewSpreadOfSentence(sIdx, ppr);
+  _bookViewNavigateManual(targetSpread);
+}
+function _bookViewCycleFind(delta) {
+  if (!_bookViewFindMatches.length) return;
+  _bookViewFindCursor =
+    (_bookViewFindCursor + delta + _bookViewFindMatches.length) %
+    _bookViewFindMatches.length;
+  _bookViewUpdateFindCount();
+  _bookViewJumpToFindMatch();
 }
 
 // Title-hash → CSS gradient. Same hash → same colors → same swatch
@@ -7199,6 +7956,15 @@ async function enterBookView() {
       if (!clip) return;
       _bookViewSource.title = clip.title || "Untitled chapter";
       _bookViewSource.cover = clip.cover || null;
+      // v210 (M6.1): stash bookmarks on the source so the page
+      // renderer can mark bookmarked pages with a ribbon. Bookmarks
+      // are time-based (timeSec); the ribbon helper resolves time →
+      // sentence_index → page_index via sentenceOffsetsSec +
+      // _bookSentenceToPage.
+      _bookViewSource.bookmarks = clip.bookmarks || [];
+      // v211 (M7.1): stash highlights too. The renderer wraps any
+      // highlighted char range in <span class="text-highlight">.
+      _bookViewSource.highlights = clip.highlights || [];
       // Re-render so the cover page updates if the user opens the book
       // view before getClip resolves.
       _bookViewRenderSpread(_bookViewCurrentSpread);
@@ -7211,6 +7977,15 @@ async function enterBookView() {
   // scrub. Without this, a pinned state from a previous session
   // (after exit→re-enter) would persist and confuse.
   _bookViewUserPaged = false;
+
+  // v206 (M4.1): detect chapter boundaries once per book-view
+  // session. Cached on _bookViewSource so theme / font-size changes
+  // don't re-run the detector. _bookViewRepaginate reads from the
+  // same cache (paginator + renderer both call _bookViewIsChapterStart
+  // / _bookViewChapterAt which read _bookViewSource.chapters).
+  if (!_bookViewSource.chapters) {
+    _bookViewSource.chapters = _bookViewDetectChapters(_bookViewSource.sentences);
+  }
 
   // v200 (M3.2): preload image dimensions + bucket by sentence_index
   // before paginating. Without natural dimensions, an <img> in the
@@ -7265,8 +8040,228 @@ async function enterBookView() {
     ? _bookViewSpreadOfSentence(activeSentenceIdx, ppr)
     : 0;
   _bookViewRenderSpread(startSpread);
+  // v206 (M4.4): the Contents button only shows once we've
+  // confirmed chapters exist for THIS clip.
+  _bookViewUpdateTocButton();
   bookView.style.visibility = "visible";
   if (bookViewToggle) bookViewToggle.textContent = "▶ Audio view";
+}
+
+// v202 (M3.3): build a single page element for the given slot
+// (0 = cover, 1+ = text pages). Mirrors the per-page construction
+// inside _bookViewRenderSpread but as a standalone function so the
+// print path can build all pages at once without depending on the
+// spread loop. Duplication is deliberate — the live renderer stays
+// untouched.
+function _bookViewBuildPageElement(slot) {
+  const pageEl = document.createElement("div");
+  pageEl.className = "book-page";
+
+  if (slot === 0) {
+    // Cover — same as the renderer's cover branch.
+    pageEl.classList.add("book-page-cover");
+    const src = _bookViewSource;
+    if (src && src.cover && src.cover.blob) {
+      const img = document.createElement("img");
+      img.className = "book-page-cover-art";
+      img.alt = src.title || "Cover";
+      try {
+        img.src = URL.createObjectURL(src.cover.blob);
+        img.addEventListener("load", () => URL.revokeObjectURL(img.src), { once: true });
+      } catch {}
+      pageEl.appendChild(img);
+    } else {
+      const fb = document.createElement("div");
+      fb.className = "book-page-cover-fallback";
+      const seed = (src && src.title) || "Untitled";
+      fb.style.background = _coverFallbackGradient(seed);
+      fb.textContent = seed.trim().slice(0, 1).toUpperCase() || "•";
+      pageEl.appendChild(fb);
+    }
+    if (src && src.title) {
+      const t = document.createElement("div");
+      t.className = "book-page-cover-title";
+      t.textContent = src.title;
+      pageEl.appendChild(t);
+    }
+    return pageEl;
+  }
+
+  // Text page — mirrors the renderer's text-page branch.
+  const textPageIdx = slot - 1;
+  const sentenceIdxs = _bookViewPages[textPageIdx] || [];
+
+  const headerTitle = (_bookViewSource && _bookViewSource.title) || "";
+  if (headerTitle) {
+    const header = document.createElement("div");
+    header.className = "book-page-header";
+    header.textContent = headerTitle;
+    pageEl.appendChild(header);
+  }
+
+  const body = document.createElement("div");
+  body.className = "book-page-body";
+  if (textPageIdx === 0) {
+    body.dataset.dropCap = "true";
+  }
+
+  const imgByIdx = (_bookViewSource && _bookViewSource.imgByIdx) || null;
+  for (const sIdx of sentenceIdxs) {
+    if (imgByIdx && imgByIdx.has(sIdx)) {
+      for (const img of imgByIdx.get(sIdx)) {
+        const el = document.createElement("img");
+        el.className = "book-inline-image";
+        el.src = img.src;
+        el.alt = img.alt || "";
+        el.loading = "lazy";
+        el.decoding = "async";
+        el.addEventListener("error", () => el.remove(), { once: true });
+        body.appendChild(el);
+      }
+    }
+    const span = document.createElement("span");
+    span.className = "sentence";
+    span.dataset.index = String(sIdx);
+    const wc = _countWords(_bookViewSource.sentences[sIdx]);
+    if (wc >= LONG_SENTENCE_WORD_THRESHOLD) {
+      span.dataset.longSentence = "true";
+      span.dataset.wordCount = String(wc);
+      span.title = `${wc} words`;
+    }
+    span.textContent = _bookViewSource.sentences[sIdx] + " ";
+    span.addEventListener("click", () => {
+      _bookViewUserPaged = false;
+      seekToSentence(sIdx);
+      if (playerEl.paused) playerEl.play().catch(() => {});
+    });
+    body.appendChild(span);
+    _bookSentenceSpans[sIdx] = span;
+  }
+  const totalTextPages = _bookViewPages.length;
+  if (textPageIdx === totalTextPages - 1 && imgByIdx) {
+    const trailing = imgByIdx.get(_bookViewSource.sentences.length) || [];
+    for (const img of trailing) {
+      const el = document.createElement("img");
+      el.className = "book-inline-image";
+      el.src = img.src;
+      el.alt = img.alt || "";
+      el.loading = "lazy";
+      el.decoding = "async";
+      el.addEventListener("error", () => el.remove(), { once: true });
+      body.appendChild(el);
+    }
+  }
+  pageEl.appendChild(body);
+
+  const footer = document.createElement("div");
+  footer.className = "book-page-footer";
+  footer.textContent = String(textPageIdx + 1);
+  pageEl.appendChild(footer);
+
+  return pageEl;
+}
+
+// v202 (M3.3): print the entire book. Rebuilds the spread DOM with
+// every page laid out flat, sets body[data-book-printing] so the
+// @media print rules + the screen rule that moves the book offscreen
+// can take over, fires window.print(). Restores the single-spread
+// rendering on the afterprint event so the user lands back where
+// they were when they came back from the print dialog.
+function _bookViewPrintBook() {
+  if (!_bookViewSource || !_bookViewSource.sentences.length) {
+    setStatus("Load a clip first.", true);
+    return;
+  }
+  if (!_bookViewPages.length) {
+    setStatus("Open the book view first to paginate.", true);
+    return;
+  }
+  const savedSpread = _bookViewCurrentSpread;
+
+  // Switch CSS into "print prep" mode BEFORE rebuilding the DOM —
+  // otherwise the user would briefly see the all-pages layout
+  // crammed into the 2-column spread grid. The screen-mode CSS
+  // rule on body[data-book-printing] positions the book view
+  // off-screen so the rebuild is invisible.
+  document.body.dataset.bookPrinting = "true";
+
+  // Build all pages flat into bookViewSpread.
+  bookViewSpread.innerHTML = "";
+  _bookSentenceSpans = [];
+  const totalSlots = 1 + _bookViewPages.length;  // cover + text pages
+  for (let slot = 0; slot < totalSlots; slot++) {
+    const pageEl = _bookViewBuildPageElement(slot);
+    bookViewSpread.appendChild(pageEl);
+  }
+
+  // Restore on afterprint. Browsers fire this whether the user
+  // confirms printing or cancels the dialog.
+  const cleanup = () => {
+    window.removeEventListener("afterprint", cleanup);
+    delete document.body.dataset.bookPrinting;
+    // Re-render the spread the user was on. This re-populates
+    // _bookSentenceSpans correctly so click-to-seek + karaoke
+    // resume working on the right nodes.
+    _bookViewRenderSpread(savedSpread);
+  };
+  window.addEventListener("afterprint", cleanup);
+
+  // requestAnimationFrame so the DOM rebuild commits before the
+  // print dialog opens (some browsers snapshot at print() call time).
+  requestAnimationFrame(() => {
+    window.print();
+  });
+}
+
+// v206 (M4.4): open the table-of-contents dialog. Populates the list
+// from _bookViewSource.chapters (computed in enterBookView) with
+// per-chapter page numbers looked up via _bookSentenceToPage. Each
+// row jumps via _bookViewNavigateManual so the pinned-scrub flag
+// behaves like a user-initiated paging action.
+function _bookViewOpenToc() {
+  if (!bookViewTocDialog || !bookViewTocList) return;
+  if (!_bookViewSource || !_bookViewSource.chapters) return;
+  const chapters = _bookViewSource.chapters;
+  bookViewTocList.innerHTML = "";
+  if (!chapters.length) {
+    const li = document.createElement("li");
+    li.className = "book-view-toc-empty";
+    li.textContent = "No chapters detected in this clip.";
+    bookViewTocList.appendChild(li);
+  } else {
+    const ppr = _bookViewPagesPerSpread();
+    for (const ch of chapters) {
+      const li = document.createElement("li");
+      li.className = "book-view-toc-row";
+      const titleEl = document.createElement("span");
+      titleEl.className = "book-view-toc-title";
+      titleEl.textContent = ch.title;
+      const pageEl = document.createElement("span");
+      pageEl.className = "book-view-toc-page";
+      const pageIdx = _bookSentenceToPage[ch.sentence_index];
+      pageEl.textContent = (pageIdx !== undefined) ? String(pageIdx + 1) : "—";
+      li.appendChild(titleEl);
+      li.appendChild(pageEl);
+      li.addEventListener("click", () => {
+        const targetSpread = _bookViewSpreadOfSentence(ch.sentence_index, ppr);
+        _bookViewNavigateManual(targetSpread);
+        bookViewTocDialog.close();
+      });
+      bookViewTocList.appendChild(li);
+    }
+  }
+  try { bookViewTocDialog.showModal(); }
+  catch { bookViewTocDialog.show && bookViewTocDialog.show(); }
+}
+
+// v206 (M4.4): show/hide the Contents button based on whether the
+// current clip has detected chapters. Called from enterBookView after
+// chapter detection runs and from exitBookView to reset.
+function _bookViewUpdateTocButton() {
+  if (!bookViewTocBtn) return;
+  const has =
+    !!(_bookViewSource && _bookViewSource.chapters && _bookViewSource.chapters.length > 0);
+  bookViewTocBtn.hidden = !has;
 }
 
 function _bookViewSpreadOfSentence(sIdx, ppr) {
@@ -7378,6 +8373,10 @@ function exitBookView(opts = {}) {
   _bookSentenceSpans = [];
   if (bookViewSpread) bookViewSpread.innerHTML = "";
   if (bookViewToggle) bookViewToggle.textContent = "📖 Book view";
+  // v206 (M4.4): hide Contents until the next book view open.
+  if (bookViewTocBtn) bookViewTocBtn.hidden = true;
+  // v208 (M6.3): close the find bar so re-entering book view starts fresh.
+  if (bookViewFind && !bookViewFind.hidden) _bookViewCloseFind();
   if (!opts.skipReadingView) {
     readingView.hidden = false;
   }
@@ -7389,6 +8388,56 @@ if (bookViewToggle) {
     else exitBookView();
   });
 }
+// v202 (M3.3): print button. Direct call; the function handles
+// the no-paginated-pages edge case via setStatus.
+if (bookViewPrintBtn) {
+  bookViewPrintBtn.addEventListener("click", () => _bookViewPrintBook());
+}
+// v206 (M4.4): table of contents button + dialog close.
+if (bookViewTocBtn) {
+  bookViewTocBtn.addEventListener("click", () => _bookViewOpenToc());
+}
+if (bookViewTocClose && bookViewTocDialog) {
+  bookViewTocClose.addEventListener("click", () => bookViewTocDialog.close());
+}
+// v208 (M6.2): indicator click → page-jump.
+if (bookViewIndicator) {
+  bookViewIndicator.addEventListener("click", () => _bookViewBeginPageJump());
+}
+// v208 (M6.3): find input wiring + close/prev/next + Ctrl+F.
+if (bookViewFindInput) {
+  bookViewFindInput.addEventListener("input", () =>
+    _bookViewRunFind(bookViewFindInput.value)
+  );
+  bookViewFindInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      _bookViewCycleFind(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      _bookViewCloseFind();
+    }
+  });
+}
+if (bookViewFindPrev) {
+  bookViewFindPrev.addEventListener("click", () => _bookViewCycleFind(-1));
+}
+if (bookViewFindNext) {
+  bookViewFindNext.addEventListener("click", () => _bookViewCycleFind(1));
+}
+if (bookViewFindClose) {
+  bookViewFindClose.addEventListener("click", () => _bookViewCloseFind());
+}
+// Ctrl+F / Cmd+F → open the find bar when book view is visible.
+// Override the browser's native find since the book view's text is
+// already on screen and our match-aware paginator can jump to the
+// page containing the hit (browser find can't do that).
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "f" && bookView && !bookView.hidden) {
+    e.preventDefault();
+    _bookViewOpenFind();
+  }
+});
 if (bookViewPrev) {
   bookViewPrev.addEventListener("click", () => {
     // v187: route through _bookViewNavigateManual so the pinned
@@ -8922,6 +9971,51 @@ function _setEditCoverPreview(blob) {
   }
 }
 
+// v219: render the read-only voice-provenance block in the Edit dialog.
+// Returns silently if the clip has no provenance (pre-v219 clips, or
+// clips made against an unaudited voice where we'd be guessing).
+function _renderProvenanceBlock(clip) {
+  const wrap = document.getElementById("clip-edit-provenance");
+  if (!wrap) return;
+  const p = clip && clip.provenance;
+  if (!p) {
+    wrap.hidden = true;
+    return;
+  }
+  const badge = document.getElementById("clip-edit-provenance-badge");
+  const voiceEl = document.getElementById("clip-edit-provenance-voice");
+  const licEl = document.getElementById("clip-edit-provenance-license");
+  const attrEl = document.getElementById("clip-edit-provenance-attribution");
+
+  if (badge) {
+    badge.textContent = p.licenseCommercial ? "Commercial ✓" : "Non-commercial";
+    badge.classList.remove("commercial", "noncommercial");
+    badge.classList.add(p.licenseCommercial ? "commercial" : "noncommercial");
+  }
+  if (voiceEl) {
+    const speakerSuffix = (p.speakerId != null && p.speakerId !== 0)
+      ? ` · speaker ${p.speakerId}`
+      : "";
+    voiceEl.innerHTML =
+      `<span class="clip-edit-provenance-key">Voice:</span> ` +
+      `<span class="clip-edit-provenance-val">${
+        (p.voiceName || p.voiceId || "Unknown").replace(/</g, "&lt;")
+      }${speakerSuffix}</span>`;
+  }
+  if (licEl) {
+    const ds = p.licenseDataset ? ` · ${p.licenseDataset}` : "";
+    licEl.innerHTML =
+      `<span class="clip-edit-provenance-key">License:</span> ` +
+      `<span class="clip-edit-provenance-val">${
+        (p.license || "Unknown").replace(/</g, "&lt;")
+      }${ds.replace(/</g, "&lt;")}</span>`;
+  }
+  if (attrEl) {
+    attrEl.textContent = p.attribution || "(no attribution required)";
+  }
+  wrap.hidden = false;
+}
+
 async function openClipEdit(clipId) {
   const clip = await getClip(clipId);
   if (!clip) return;
@@ -8958,6 +10052,11 @@ async function openClipEdit(clipId) {
     _editPendingCover = null;
     _setEditCoverPreview(null);
   }
+  // v219: voice provenance display. Read-only block shows what voice +
+  // license were in effect when the clip's audio was generated. Hidden
+  // when the clip has no provenance recorded (pre-v219 clips, or clips
+  // generated against an unaudited voice — we don't fabricate).
+  _renderProvenanceBlock(clip);
   clipEditDialog.showModal();
   clipEditTitle.focus();
   clipEditTitle.select();
@@ -9037,6 +10136,29 @@ clipEditCoverRemove.addEventListener("click", () => {
 clipEditClose.addEventListener("click", closeClipEdit);
 clipEditSave.addEventListener("click", saveClipEdit);
 clipEditDialog.addEventListener("close", () => { _editingClipId = null; });
+
+// v219: copy-attribution affordance. Grabs the exact credit line
+// from the currently-displayed provenance block. Lets audiobook
+// publishers / animators paste it straight into a credits roll
+// without having to retype dataset names.
+const _clipEditProvCopy = document.getElementById("clip-edit-provenance-copy");
+if (_clipEditProvCopy) {
+  _clipEditProvCopy.addEventListener("click", async () => {
+    const el = document.getElementById("clip-edit-provenance-attribution");
+    const txt = el ? (el.textContent || "").trim() : "";
+    if (!txt || txt === "(no attribution required)") {
+      setStatus("Nothing to copy — this voice doesn't require attribution.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(txt);
+      setStatus("Attribution copied to clipboard.");
+    } catch (err) {
+      console.warn("provenance copy failed:", err);
+      setStatus("Copy failed — select the text manually.", true);
+    }
+  });
+}
 clipEditTitle.addEventListener("keydown", (e) => {
   // Enter on the title field saves; multi-line note handles Enter natively.
   if (e.key === "Enter") {
@@ -9320,6 +10442,10 @@ async function exportLibrary(idsFilter = null) {
         tags: Array.isArray(clip.tags) ? clip.tags : [],
         coverFile,
         coverColor,
+        // v219: carry voice provenance across export/import so the
+        // attribution string for any clip survives a backup → restore.
+        // null for pre-v219 clips that have no provenance recorded.
+        provenance: clip.provenance || null,
       });
     }
 
@@ -9444,6 +10570,10 @@ async function importLibraryFromFile(file) {
         tags: _normalizeTags(mc.tags),
         // Cover arrived in v125; older manifests don't carry it.
         ...(cover ? { cover } : {}),
+        // v219: provenance carried verbatim if present. Older manifests
+        // simply don't have it and the field stays undefined — the Edit
+        // dialog handles that by hiding the provenance block.
+        ...(mc.provenance ? { provenance: mc.provenance } : {}),
         createdAt: mc.createdAt || new Date(mc.id).toISOString(),
         blob,
       });
@@ -9684,7 +10814,11 @@ async function loadClip(id) {
   renarrateBanner.hidden = true;
   _renarrateDismissedClipId = null;
 
-  enterReadingView(clip.text || "", Array.isArray(clip.images) ? clip.images : []);
+  enterReadingView(
+    clip.text || "",
+    Array.isArray(clip.images) ? clip.images : [],
+    Array.isArray(clip.highlights) ? clip.highlights : []
+  );
   setMediaMetadata(clip.text || "");
 
   // Resume from saved position once metadata is in. Only restore if it's a
@@ -11895,6 +13029,28 @@ function setupMediaSession() {
 // voice shows up in the main dropdown immediately.
 
 let _voiceCatalog = null; // cached per page load
+
+// v219: look up provenance fields (license + attribution) for a voice id.
+// Used by generate() to snapshot the license that applies to a clip's
+// audio at generation time — important because Narrative's license
+// audit may revise commercial-status later, and the clip's recorded
+// attribution should reflect what was true when it was made.
+//
+// voice ids on clips carry the "piper:" prefix (engine route); the
+// catalog stores bare ids. Strip the prefix before lookup.
+function _voiceProvenance(voiceIdWithPrefix) {
+  if (!voiceIdWithPrefix || !_voiceCatalog) return null;
+  const bare = String(voiceIdWithPrefix).replace(/^piper:/, "");
+  const entry = _voiceCatalog.find((v) => v.id === bare);
+  if (!entry) return null;
+  return {
+    license: entry.license || "",
+    licenseDataset: entry.license_dataset || "",
+    licenseCommercial: !!entry.license_commercial,
+    attribution: entry.license_attribution || "",
+  };
+}
+
 // "Show installed only" chip state. Reset each time the dialog opens so
 // the default browsing experience always shows the full catalog.
 let _installedOnly = false;
@@ -11913,9 +13069,27 @@ function updateInstalledToggle() {
 }
 
 let _favoritesOnly = false;
+// v218: "Commercial only" filter state. Reset on every dialog open like
+// the others so first-time discovery sees the whole catalog.
+let _commercialOnly = false;
 // Language-code filter. Empty string = "all languages." Set by the
 // <select> below the filter chips; survives across browser opens.
 let _languageFilter = "";
+
+function updateCommercialToggle() {
+  // Same count idiom as the other chips: show "(N)" of matching voices
+  // when off so the user knows how much narrows in; flip to "All voices"
+  // when on. Counts every voice with license_commercial === true, which
+  // includes the small audited green set today and grows as we audit more.
+  const commercialCount = _voiceCatalog
+    ? _voiceCatalog.filter((v) => v.license_commercial).length
+    : 0;
+  voiceCommercialToggle.classList.toggle("active", _commercialOnly);
+  voiceCommercialToggle.setAttribute("aria-pressed", String(_commercialOnly));
+  voiceCommercialToggle.textContent = _commercialOnly
+    ? "All voices"
+    : `Commercial only (${commercialCount})`;
+}
 
 // Build the language picker options from the catalog. Each option is
 // "Language name (N)" where N is the count of voices in that language.
@@ -12023,19 +13197,46 @@ if (_voiceFavTipDismissBtn) {
   });
 }
 
+// v219: parallel "Commercial only" first-tap hint. Same dismiss
+// pattern as the favorites tip, and self-dismisses the first time
+// the user actually toggles the Commercial chip — proving they know
+// it's there. Persisted in localStorage so a returning user who
+// already used the chip doesn't see the banner again.
+const VOICE_COMM_TIP_KEY = "narrative.voiceCommercialTipDismissed";
+function _updateVoiceCommercialTip() {
+  const tip = document.getElementById("voice-commercial-tip");
+  if (!tip) return;
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(VOICE_COMM_TIP_KEY) === "1"; } catch {}
+  tip.hidden = dismissed;
+}
+const _voiceCommTipDismissBtn = document.getElementById("voice-commercial-tip-dismiss");
+if (_voiceCommTipDismissBtn) {
+  _voiceCommTipDismissBtn.addEventListener("click", () => {
+    try { localStorage.setItem(VOICE_COMM_TIP_KEY, "1"); } catch {}
+    _updateVoiceCommercialTip();
+  });
+}
+
 function renderVoiceCatalog() {
   if (!_voiceCatalog) return;
   updateInstalledToggle();
+  updateCommercialToggle();
   // v167: keep the tip in sync with the current favorites state on
   // every render — covers "user opens browser fresh" and "user just
   // un-starred their last favorite" without extra calls elsewhere.
   _updateVoiceFavoritesTip();
+  // v219: same pattern for the Commercial-only tip.
+  _updateVoiceCommercialTip();
   updateFavoritesToggle();
   const favSet = new Set(getFavoriteVoices());
   const q = voiceBrowserSearch.value.trim().toLowerCase();
   const matches = _voiceCatalog.filter((v) => {
     if (_installedOnly && !v.installed) return false;
     if (_favoritesOnly && !favSet.has(v.id)) return false;
+    // v218: commercial-use filter. Voices fall into license_commercial=true
+    // only when explicitly audited in tts/voice_licenses.py.
+    if (_commercialOnly && !v.license_commercial) return false;
     // v154: match on the ISO 639-1 prefix so the consolidated
     // "English" filter (which now stores "en" as its value) matches
     // both en_US (LibriTTS et al) and en_GB voices. Fall back to
@@ -12157,6 +13358,26 @@ function makeCatalogRow(v) {
   const nameEl = document.createElement("div");
   nameEl.className = "catalog-voice-name";
   nameEl.textContent = `${cap(v.name)} · ${v.quality}`;
+
+  // v217: license badge. Green "Commercial ✓" if the voice is cleared
+  // for distributing generated audio; amber "Non-commercial" otherwise.
+  // Tooltip carries the dataset, license, and required attribution.
+  if (typeof v.license_commercial === "boolean") {
+    const badge = document.createElement("span");
+    badge.className = v.license_commercial
+      ? "catalog-voice-license commercial"
+      : "catalog-voice-license noncommercial";
+    badge.textContent = v.license_commercial ? "Commercial ✓" : "Non-commercial";
+    const tipBits = [];
+    if (v.license) tipBits.push(`License: ${v.license}`);
+    if (v.license_dataset) tipBits.push(`Dataset: ${v.license_dataset}`);
+    if (v.license_attribution)
+      tipBits.push(`Credit: ${v.license_attribution}`);
+    if (v.license_notes) tipBits.push(v.license_notes);
+    badge.title = tipBits.join("\n");
+    nameEl.appendChild(document.createTextNode(" "));
+    nameEl.appendChild(badge);
+  }
 
   const metaParts = [];
   if (v.size_mb) metaParts.push(`${v.size_mb} MB`);
@@ -12567,6 +13788,7 @@ browseVoicesBtn.addEventListener("click", async () => {
   voiceBrowserSearch.value = "";
   _installedOnly = false;
   _favoritesOnly = false;
+  _commercialOnly = false;
   // Custom preview text is preserved across opens — if you pasted a
   // sentence from your manuscript, you probably want to keep auditioning
   // voices on it. Just sync the Clear button visibility.
@@ -12583,6 +13805,18 @@ voiceInstalledToggle.addEventListener("click", () => {
 
 voiceFavoritesToggle.addEventListener("click", () => {
   _favoritesOnly = !_favoritesOnly;
+  renderVoiceCatalog();
+});
+
+// v218: commercial-only chip — show only voices cleared in
+// tts/voice_licenses.py with license_commercial: true. Audited list
+// is small today (LibriTTS, LibriTTS-R, VCTK, Jenny); will grow.
+voiceCommercialToggle.addEventListener("click", () => {
+  _commercialOnly = !_commercialOnly;
+  // v219: tapping the chip is proof the user knows it's there —
+  // dismiss the first-tap tip so the banner doesn't keep occupying
+  // header real estate. Idempotent across taps.
+  try { localStorage.setItem(VOICE_COMM_TIP_KEY, "1"); } catch {}
   renderVoiceCatalog();
 });
 

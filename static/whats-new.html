@@ -141,6 +141,652 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v219</span>
+          <span class="release-tagline">Per-clip voice provenance — every clip remembers its license and credit line</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Generation now snapshots license metadata onto the
+            clip.</strong> The voice id, speaker, license, dataset, and
+            required attribution string are captured the moment the
+            audio is rendered — so even if Narrative's audit later
+            revises the catalog, the clip remembers what was true when
+            you made it.
+          </li>
+          <li>
+            <strong>Edit → Voice provenance block.</strong> Read-only
+            display of the captured fields, with a green/amber commercial
+            badge mirroring the catalog. One-click "Copy" lifts the
+            exact attribution string to the clipboard — paste straight
+            into your audiobook's credits page, an animation's end-card,
+            or a video description.
+          </li>
+          <li>
+            <strong>Export / import round-trip preserved.</strong>
+            Provenance survives library zip backup → restore on a new
+            device. Older clips without provenance just show the
+            standard Edit fields; nothing breaks.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v218</span>
+          <span class="release-tagline">"Commercial only" filter chip in the voice browser</span>
+        </div>
+        <ul>
+          <li>
+            <strong>One-tap narrow to the audited green list.</strong>
+            Third filter chip next to "★ Favorites" and "Installed
+            only" — tap to hide every voice whose dataset license
+            blocks commercial redistribution. Counter shows how many
+            commercial-OK voices are in the current catalog so the
+            chip earns its space even when off.
+          </li>
+          <li>
+            Combines with the existing filters: "Commercial only" +
+            "Installed only" gives you the shortlist you can publish
+            with, today, without scrolling. Resets on every dialog
+            open so first-time discovery still sees the full catalog.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v217</span>
+          <span class="release-tagline">Per-voice commercial-use badges — know which voices are safe to publish with</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Every voice in the browser now carries a license
+            badge.</strong> Green "Commercial ✓" means the voice's
+            training dataset license permits selling the audio you
+            generate (with attribution). Amber "Non-commercial" means
+            the license blocks redistribution for profit — fine for
+            personal listening, not for publishing an audiobook.
+          </li>
+          <li>
+            <strong>Hover the badge for the credit line.</strong>
+            Tooltip shows the dataset, the exact license, the
+            attribution string you'd need to include in audiobook
+            credits, and any nuance worth knowing. (Example: LibriTTS
+            asks you to credit "LibriTTS (Heiga Zen et al.), CC BY 4.0".)
+          </li>
+          <li>
+            <strong>Background — we audited every shipped voice
+            against its upstream MODEL_CARD + the actual dataset
+            license.</strong> Headline findings: <em>LibriTTS</em>,
+            <em>LibriTTS-R</em>, <em>VCTK</em>, and <em>Jenny</em> are
+            all commercial-OK. Anything finetuned from the
+            <em>Lessac</em> base voice — including <em>Amy</em>,
+            <em>Alan</em>, and <em>Arctic</em> — inherits Lessac's
+            research-only Blizzard 2013 license and cannot be used
+            commercially. The badge tells you this at a glance.
+          </li>
+          <li>
+            <strong>Unaudited voices default to non-commercial.</strong>
+            Safer to be told "don't ship this yet" than to learn
+            after the fact. Future audits will flip more voices to
+            green as we verify their dataset licenses.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v216</span>
+          <span class="release-tagline">Synth no longer dies when you open the manual / lock the phone / switch apps</span>
+        </div>
+        <ul>
+          <li>
+            <strong>The v204 watchdog was killing its own synth on
+            mobile.</strong> When the synth tab gets backgrounded
+            (manual opens in a new tab, you switch apps, or the
+            phone locks), mobile Chrome / Safari throttle JS
+            execution on the hidden tab — but
+            <code>setTimeout</code> keeps counting against the real
+            clock. The 30s watchdog timer fires while the tab can't
+            process the server's keepalive bytes that would have
+            reset it; the abort() runs on a fetch that the server
+            is happily streaming to; the user returns to a synth
+            that "died" because we killed it.
+          </li>
+          <li>
+            <strong>Now visibility-aware.</strong> A
+            <code>visibilitychange</code> handler clears the
+            in-flight timer when the tab goes hidden and restarts
+            it with a fresh 30s on visible. Server-side keepalives
+            that piled up while you were away tick the wire as
+            soon as the tab unfreezes, and the watchdog stays
+            quiet through any reasonable away-time.
+          </li>
+          <li>
+            <strong>Listener cleanup on every exit path.</strong>
+            Removed on done / SSE-error throw / read-rejection
+            catch — chapter queues no longer leak handlers across
+            chapter boundaries.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v215</span>
+          <span class="release-tagline">Manual: tester walkthroughs include "How to send feedback" now</span>
+        </div>
+        <ul>
+          <li>
+            <strong>New section §10's footer:
+            "Sending feedback after a walkthrough".</strong>
+            5 numbered steps starting from <em>Settings → View
+            debug log → Download (.txt)</em>, then to one of the
+            two <em>Send feedback</em> buttons, attaching the .txt,
+            and describing the problem.
+          </li>
+          <li>
+            <strong>Two flows documented:</strong> mail-app
+            (system default) and Gmail web compose. Calls out
+            the auto-context (build version + currently-loaded
+            clip id) the buttons inject so testers don't compose
+            by hand and lose it.
+          </li>
+          <li>
+            <strong>Privacy callout.</strong> Debug logs capture
+            clip titles, character names, sample sentence text,
+            and GitHub repo paths. Fine for the maintainer
+            (only recipient), but worth reviewing before
+            screenshot-posting in a public bug tracker.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v214</span>
+          <span class="release-tagline">Dialog headers stay reachable on mobile — dvh fallback added to every dialog</span>
+        </div>
+        <ul>
+          <li>
+            <strong>The Settings dialog (and several others) used
+            <code>max-height: 90vh</code> with no <code>dvh</code>
+            fallback.</strong> On mobile Chrome/Safari where the
+            URL bar is visible, <code>vh</code> measures the
+            <em>largest</em> viewport (URL bar collapsed) — so a
+            90vh dialog overflows the visible area and its centered
+            position pushes the top edge — including the Close
+            button — off-screen.
+          </li>
+          <li>
+            <strong>Added <code>dvh</code> fallback to every dialog
+            max-height.</strong> Settings, Voice browser, Characters,
+            Document picker (GitHub / Scrivener / Obsidian), All
+            bookmarks, Book-view Contents — all now use
+            <code>max-height: 85vh; max-height: 85dvh;</code> (or
+            their respective value).
+            <code>dvh</code> follows the current viewport, so when
+            the URL bar is showing the dialog shrinks to fit visibly.
+          </li>
+          <li>
+            <strong>Same fix on the small-phone full-screen rules.</strong>
+            Settings / Characters / Voice browser at ≤480px viewports
+            use <code>height: 100vh</code> for full-screen presentation.
+            That hid the bottom slice on mobile too. Now uses
+            <code>100dvh</code> as well.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v213</span>
+          <span class="release-tagline">Library + Voice dialogs now actually scroll when content overflows</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Long libraries lost their scrollbar.</strong>
+            The dialogs had <code>max-height: calc(100vh - 48px)</code>
+            and <code>display: flex</code>, but no explicit
+            <code>height</code>. The inner scroll container's
+            <code>height: 100%</code> can't resolve against a
+            max-height-only parent — so the dialog grew to its content
+            size, hit the cap, clipped silently via
+            <code>overflow: hidden</code>, and never engaged the inner
+            <code>overflow-y: auto</code> scroll region.
+          </li>
+          <li>
+            <strong>Two-line fix.</strong> Added an explicit
+            <code>height</code> on both <code>.library-dialog[open]</code>
+            and <code>.voice-dialog[open]</code> — matching the
+            existing max-height in modal mode, and full
+            <code>100dvh</code> at desktop drawer mode. The v156
+            "swap-to-focus stack" rules retain higher specificity
+            (selector chains 4 deep) so the stack behavior when both
+            drawers are open is preserved.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v212</span>
+          <span class="release-tagline">Manual: Book view section + Walkthrough 5b</span>
+        </div>
+        <ul>
+          <li>
+            <strong>New manual section 5.5 — "Book view".</strong>
+            Covers what flips you into book view, navigation (‹/›,
+            keys, swipe, click-to-jump indicator, Ctrl+F, 📑 Contents,
+            ↩ Return to current), chapter awareness (drop caps,
+            running headers, TOC, auto page breaks), the three
+            theme variants (paperback / magazine / manuscript), the
+            font-size repagination flow, bookmark ribbons, the
+            text-highlight toolbar, and 🖨 Print.
+          </li>
+          <li>
+            <strong>New tester walkthrough 5b — "Book view
+            end-to-end".</strong> 13 numbered steps starting from a
+            chapter clip in the library, exercising every M3-M7
+            book-view feature in sequence. Uses the Tom Sawyer
+            chapter set from Walkthrough 1 because its 33 chapters
+            stress chapter-aware behaviors well.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v211</span>
+          <span class="release-tagline">Book view M7.1: select text on a page → save a colored highlight</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Selection → floating toolbar.</strong> Drag-select
+            text inside any sentence (book view or reading view) and
+            a small floating toolbar appears above the selection with
+            three colors (yellow / pink / blue) and an × remove button.
+            Click a color to highlight that range; click × to remove
+            the highlight under the selection. Esc dismisses without
+            saving.
+          </li>
+          <li>
+            <strong>Persisted to the clip.</strong>
+            <code>clip.highlights = [{sentence_index, char_start, char_end, color, id, createdAt}]</code>.
+            Survives reloads, syncs to IndexedDB, included in any
+            future export/import round-trip.
+          </li>
+          <li>
+            <strong>Shared content builder.</strong>
+            <code>_buildSentenceContentHTML()</code> wraps any
+            highlighted char range in
+            <code>&lt;span class="text-highlight" data-color="..."&gt;</code>.
+            Used by both the book view and the reading view's
+            sentence builders, so a highlight made in one view shows
+            in the other.
+          </li>
+          <li>
+            <strong>Caveats logged for follow-ups.</strong>
+            v1 supports only single-sentence selections — drag across
+            two sentences and the toolbar stays hidden (the math for
+            mid-span boundaries gets messy fast). No note field on
+            highlights yet (schema has room; UI to come). Multi-color
+            overlapping highlights resolve via last-write-wins.
+          </li>
+        </ul>
+        <p>
+          <strong>This closes M7 + the original book-view feature
+          roadmap.</strong> Everything from the plan you approved
+          (M3.3 / M4 / M5 / M6 / M7) is now live. Follow-ups go in
+          the task list as users find them.
+        </p>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v210</span>
+          <span class="release-tagline">Book view M6.1: bookmarks show as ribbons on the page</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Bookmarks unified across audio + book view.</strong>
+            The existing 🔖 Bookmark chip already works from anywhere
+            (it's in the v195 hero strip + v198 player-card chip row).
+            Pressing it while in book view adds a time-based bookmark
+            at the playhead — same as in audio view. v210 adds the
+            visual side: a small accent-coloured ribbon at the
+            top-right corner of every page that contains a saved
+            bookmark.
+          </li>
+          <li>
+            <strong>Time → page mapping.</strong>
+            <code>_bookViewBookmarkedPageSet()</code> resolves each
+            bookmark's <code>timeSec</code> to a sentence index via
+            <code>sentenceOffsetsSec</code> (cumulative per-sentence
+            start times), then to a page via
+            <code>_bookSentenceToPage</code>. Bookmarks created in
+            the audio view automatically show on the right page in
+            the book view, and vice versa.
+          </li>
+          <li>
+            <strong>Add-and-see immediate.</strong>
+            <code>addBookmarkAtCurrentTime</code> now re-stashes the
+            updated bookmarks on <code>_bookViewSource</code> and
+            re-renders the current spread, so the new ribbon appears
+            without needing to flip away and back.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v209</span>
+          <span class="release-tagline">Book view M6.4: touch swipe for page navigation</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Swipe horizontally on the spread to page.</strong>
+            Pointer Events handler on <code>.book-view-spread</code>:
+            swipe left → next spread, right → previous. Threshold
+            80px horizontal travel within 800 ms, with the vertical
+            component smaller than the horizontal one (so vertical
+            scrolls don't trigger). Ignored when the swipe starts
+            on a sentence, image, or button — those keep their
+            click-to-seek / interactive behavior.
+          </li>
+          <li>
+            <strong>Mouse drags excluded.</strong> Only touch
+            pointers trigger swipe paging; mouse drags continue
+            to do text selection as users expect on desktop.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v208</span>
+          <span class="release-tagline">Book view M6.2 + M6.3: page-jump + find-in-book</span>
+        </div>
+        <ul>
+          <li>
+            <strong>M6.2: click the spread indicator to jump.</strong>
+            The "Spread X of Y" label is now a button. Click it,
+            type a target spread number, hit Enter. Esc / blur
+            cancels. Reuses <code>_bookViewNavigateManual</code> so
+            the pinned-scrub state flips correctly.
+          </li>
+          <li>
+            <strong>M6.3: Ctrl+F / Cmd+F finds within the book.</strong>
+            New find bar over the spread. Case-insensitive substring
+            search across <code>_bookViewSource.sentences</code>;
+            count badge updates live as you type; Enter + ‹ + › cycle
+            through matches; jumping a match scrolls the spread to
+            the page containing it. Esc closes.
+          </li>
+          <li>
+            <strong>Browser find overridden inside the book view.</strong>
+            The native browser find can't jump to off-screen pages,
+            since the book view only renders the current spread.
+            Intercepting Ctrl+F + delegating to the paginator-aware
+            search means "next match" actually shows you the match.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v207</span>
+          <span class="release-tagline">Book view M5: trailing images get their own pages + magazine-aware image sizing</span>
+        </div>
+        <ul>
+          <li>
+            <strong>M5.2: trailing images paginate properly now.</strong>
+            Previously the renderer just dumped every trailing image
+            (sentence_index past the last sentence) onto the last
+            text page with no overflow check — a chapter with many
+            or oversize trailing figures would silently clip. v207
+            adds a post-sentence pagination pass that measures each
+            trailing image, fits it on the current page first, and
+            spills to fresh trailing pages on overflow. Per-page
+            buckets live on <code>_bookViewSource.trailingByPage</code>
+            so the renderer just looks them up by page index.
+          </li>
+          <li>
+            <strong>M5.3: small images stay inside a column in
+            magazine.</strong> The default is <code>column-span: all</code>
+            (image spans both columns) which suits chapter-opening
+            figures. v207 marks small images (natural width &lt; one
+            column) with <code>data-single-col</code> and CSS skips
+            the column-span — the image renders inside whichever
+            column it landed in. Inline thumbnails and icons now
+            read sensibly in magazine; chapter-opening figures still
+            span. Paperback / manuscript themes unaffected (always
+            full content width).
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v206</span>
+          <span class="release-tagline">Book view M4: chapter awareness — drop caps, running headers, table of contents</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Chapter detection at the sentence level.</strong>
+            <code>_bookViewDetectChapters()</code> scans the clip's
+            sentences for Markdown <code>#</code>/<code>##</code>/<code>###</code> headings,
+            "Chapter N" / "Part Three" patterns, and bare Roman
+            numerals as short standalone sentences. Returns
+            <code>[{sentence_index, title}]</code> stashed on
+            <code>_bookViewSource.chapters</code> for the renderer
+            + paginator + TOC.
+          </li>
+          <li>
+            <strong>Chapter-aware drop caps.</strong> The drop cap
+            now fires on the first text page of every detected
+            chapter, not just page 1 of the clip. Falls back to
+            page-1-only when no chapters are detected (single-clip
+            mode).
+          </li>
+          <li>
+            <strong>Chapter-aware running headers.</strong> Each
+            page's header shows the title of the chapter that
+            contains its first sentence. Pages before the first
+            detected chapter (preamble) fall back to the clip title.
+            Clips with no detected chapters work exactly as before.
+          </li>
+          <li>
+            <strong>📑 Contents button + dialog.</strong> New nav
+            button (hidden when no chapters detected) opens a
+            dialog listing every chapter with its computed page
+            number. Click a row to jump to that spread — routes
+            through the same <code>_bookViewNavigateManual</code>
+            path as the prev/next buttons, so the pinned-scrub
+            state flips correctly.
+          </li>
+          <li>
+            <strong>Paginator forces a page break before each
+            chapter.</strong> Each chapter opens on a fresh page —
+            book convention. Previously a chapter could start
+            mid-page if the preceding chapter ended with room to
+            spare.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v205</span>
+          <span class="release-tagline">Clear button now also stops the audio + hides the player</span>
+        </div>
+        <ul>
+          <li>
+            <strong>The Clear button decouples everything from the
+            previous clip now — audio included.</strong> Previously
+            Clear emptied the textarea, cancelled the chapter queue,
+            and reset the Save Text wiring, but left the player card
+            visible and the audio playing. Felt wrong — workspace
+            looked fresh but the previous clip kept narrating. v205
+            pauses playback (via <code>_pauseAsUser()</code> so the
+            sleep/interruption trackers stay consistent) and hides
+            the player card.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v204</span>
+          <span class="release-tagline">SSE keepalive (server) + watchdog (client) — no more silent hangs on long synth jobs</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Server emits keepalive comments.</strong> A new
+            <code>_sse_with_keepalive()</code> helper wraps both
+            <code>/api/synthesize/stream</code> and
+            <code>/api/synthesize/segments/stream</code>. If the
+            underlying Piper iterator hasn't yielded a sentence event
+            in 15 s, the wrapper emits <code>: keepalive\n\n</code>
+            (an SSE comment line — EventSource clients ignore them
+            per the spec, but every byte counts as response traffic
+            to intermediaries). Fly's autostopper, nginx, Cloudflare —
+            all see continuous bytes and don't decide the connection
+            is dead.
+          </li>
+          <li>
+            <strong>Client watchdog on the bg-synth reader.</strong>
+            <code>_preSynthesizeChapter()</code>'s SSE read loop now
+            resets a 30 s timer on every <code>reader.read()</code>
+            return (including server keepalive bytes). If 30 s pass
+            without ANY bytes — server crashed / network died / proxy
+            killed the connection — the watchdog fires
+            <code>myController.abort()</code>, the read rejects, the
+            catch block re-throws as
+            <code>"connection lost — server may be restarting or
+            unreachable"</code>, and the existing 1.5 s retry path
+            engages. 30 s is 2× slack against the server's 15 s
+            keepalive cadence.
+          </li>
+          <li>
+            <strong>Together: no silent hangs.</strong> The
+            scenario from 2026-05-30 (phone synth job stuck for 11+
+            minutes because Fly autostopped the machine mid-stream
+            and the client kept waiting on a dead TCP socket) now
+            surfaces as a clear failure within 30 s, retries once,
+            and lands in the existing "needs a retry" banner if
+            both attempts fail.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v202</span>
+          <span class="release-tagline">Book view M3.3: print the entire book — one page per sheet</span>
+        </div>
+        <ul>
+          <li>
+            <strong>🖨 Print button in the book-view nav.</strong>
+            Renders the full clip (cover + every text page) as a
+            stack of paperback-sized printed sheets. Use the
+            browser's print dialog to save as PDF or send to a
+            real printer.
+          </li>
+          <li>
+            <strong>One page per sheet.</strong> The print path
+            re-renders the spread as a flat sequence of
+            <code>.book-page</code> elements, each marked with
+            <code>page-break-after: always</code>. The current
+            theme, font size, drop cap, running header, and page
+            numbers all carry through to print. Inline images
+            print at their preloaded sizing.
+          </li>
+          <li>
+            <strong>@page rule sets a US trade paperback sheet
+            size</strong> (5.5 × 8.5 in, 0.5 in margins). Override
+            in your browser's print dialog if you'd rather print
+            US Letter / A4.
+          </li>
+          <li>
+            <strong>State restoration.</strong> When you close the
+            print dialog (confirm OR cancel), the book view
+            restores the single-spread view you were on. Click-
+            to-seek, karaoke, and the floating chip strip all
+            resume operating on the right DOM nodes.
+          </li>
+          <li>
+            <strong>Print-friendly colour stripping.</strong> The
+            <code>@media print</code> rules force black text on
+            white backgrounds for the body, mute the accent to a
+            dark grey for the drop cap, and hide the gutter shadow
+            + binding line so the print doesn't look like a screen
+            screenshot.
+          </li>
+        </ul>
+        <p>
+          M3 is now feature-complete (theme variants v199 + inline
+          images v200 + print v202). Next milestone: M4 — chapter
+          awareness inside a clip, which unlocks chapter-aware drop
+          caps, per-chapter running headers, and a mini table of
+          contents.
+        </p>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v201</span>
+          <span class="release-tagline">Book view M5.1: paginator now catches magazine 2-column overflow</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Magazine pages were silently overflowing.</strong>
+            The v199 paginator only checked vertical overflow via
+            <code>body.scrollHeight &gt; pageHeight</code>. That works
+            for paperback / manuscript (single-column) where the body
+            grows past its flex allocation when content's too tall.
+            But CSS multi-column with <code>column-fill: auto</code>
+            inside a fixed-height flex child overflows
+            <em>horizontally</em> — content past the last column
+            extends to the right of the body. <code>scrollHeight</code>
+            stays at <code>clientHeight</code>, so the old check
+            never fired in magazine mode and the paginator packed
+            every sentence onto page 1 (visually clipped by
+            <code>overflow: hidden</code>).
+          </li>
+          <li>
+            <strong>Hybrid overflow predicate.</strong> v201
+            extracts <code>_bookViewBodyOverflows()</code> that
+            returns true on EITHER vertical
+            (<code>scrollHeight &gt; pageHeight − 1</code>) OR
+            horizontal (<code>scrollWidth &gt; clientWidth + 1</code>)
+            overflow. Magazine theme now paginates correctly into
+            multiple spreads. Paperback / manuscript behavior
+            unchanged — the vertical branch still fires first.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v200</span>
           <span class="release-tagline">Book view M3.2: inline images, paginated alongside the prose</span>
         </div>

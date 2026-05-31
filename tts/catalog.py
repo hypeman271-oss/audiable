@@ -18,6 +18,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .voice_licenses import license_for
+
 VOICES_DIR = Path(__file__).resolve().parent.parent / "voices"
 CATALOG_URL = "https://huggingface.co/rhasspy/piper-voices/raw/main/voices.json"
 DOWNLOAD_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
@@ -73,6 +75,7 @@ def list_for_ui() -> list[dict]:
     voices = []
     for voice_id, v in catalog.items():
         lang = v.get("language") or {}
+        lic = license_for(voice_id)
         voices.append(
             {
                 "id": voice_id,
@@ -85,6 +88,15 @@ def list_for_ui() -> list[dict]:
                 "num_speakers": v.get("num_speakers") or 1,
                 "size_mb": _voice_size_mb(v),
                 "installed": voice_id in installed,
+                # v217: every voice carries license metadata. UI surfaces
+                # `commercial` as a badge; `attribution` is what the user
+                # must credit when distributing generated audio.
+                "license": lic.get("license") or "Unaudited",
+                "license_dataset": lic.get("dataset") or "",
+                "license_dataset_url": lic.get("dataset_url") or "",
+                "license_commercial": bool(lic.get("commercial")),
+                "license_attribution": lic.get("attribution") or "",
+                "license_notes": lic.get("notes") or "",
             }
         )
     return voices

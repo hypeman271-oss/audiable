@@ -1,0 +1,185 @@
+"""Per-voice commercial-licensing metadata for Piper voices.
+
+This module is the authoritative record of which voices Narrative ships
++ recommends for commercial-use scenarios (selling generated audiobooks,
+SaaS production). Built from the audit captured in task #215 — every
+voice listed here was checked against its upstream MODEL_CARD and the
+underlying dataset's actual license text.
+
+Schema per record:
+
+    license: str           # short license name, e.g. "CC BY 4.0"
+    dataset: str           # dataset name, e.g. "LibriTTS"
+    dataset_url: str       # canonical reference URL
+    attribution: str       # exact text to credit when distributing output
+    commercial: bool       # True iff the voice may be used commercially
+    notes: str             # any nuance worth surfacing in the UI
+
+The DEFAULT_RECORD applies to voices not explicitly listed — it's
+intentionally conservative ("unknown — assume non-commercial").
+
+When auditing a new voice:
+
+1. Pull the MODEL_CARD from
+   https://huggingface.co/rhasspy/piper-voices/raw/main/<lang>/<voice>/<quality>/MODEL_CARD
+2. Note the dataset URL.
+3. Verify the dataset's license at its canonical source.
+4. Check for "Finetuned from lessac" — if present, the voice inherits
+   the Blizzard 2013 license, which is research-only / non-commercial.
+5. Add a record below.
+"""
+
+from __future__ import annotations
+
+# v217: every record here is the result of a live audit against the
+# upstream MODEL_CARD + the dataset's canonical license page. Sources:
+#   - https://huggingface.co/rhasspy/piper-voices/raw/main/<path>/MODEL_CARD
+#   - https://creativecommons.org/licenses/*
+#   - https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html
+#   - https://github.com/dioco-group/jenny-tts-dataset
+#   - https://github.com/MycroftAI/mimic3-voices/blob/master/voices/en_UK/apope_low/LICENSE
+VOICE_LICENSES: dict[str, dict] = {
+    # ---- APPROVED — commercial use allowed ----
+    "en_US-libritts-high": {
+        "license": "CC BY 4.0",
+        "dataset": "LibriTTS",
+        "dataset_url": "http://www.openslr.org/60/",
+        "attribution": "LibriTTS (Heiga Zen et al.), CC BY 4.0",
+        "commercial": True,
+        "notes": "904 speakers — multi-speaker; quality varies per speaker, use the speaker wizard to audition.",
+    },
+    "en_US-libritts_r-medium": {
+        "license": "CC BY 4.0",
+        "dataset": "LibriTTS-R",
+        "dataset_url": "http://www.openslr.org/141/",
+        "attribution": "LibriTTS-R, CC BY 4.0",
+        "commercial": True,
+        "notes": "Refined LibriTTS — higher fidelity than the original.",
+    },
+    "en_GB-vctk-medium": {
+        "license": "CC BY 4.0",
+        "dataset": "VCTK (Voice Conversion Toolkit)",
+        "dataset_url": "https://datashare.ed.ac.uk/handle/10283/3443",
+        "attribution": "VCTK — University of Edinburgh CSTR, CC BY 4.0",
+        "commercial": True,
+        "notes": "109 British English speakers, both male and female.",
+    },
+    "en_GB-jenny_dioco-medium": {
+        "license": "Custom permissive (Dioco)",
+        "dataset": "Jenny TTS",
+        "dataset_url": "https://github.com/dioco-group/jenny-tts-dataset",
+        "attribution": "Jenny (Dioco)",
+        "commercial": True,
+        "notes": "Single British female voice; credit as 'Jenny' or 'Jenny (Dioco)'.",
+    },
+
+    # ---- EXCLUDED — Mycroft 'All Rights Reserved' or unverifiable ----
+    "en_US-amy-medium": {
+        "license": "Unverifiable",
+        "dataset": "MycroftAI/mimic3-voices (path missing)",
+        "dataset_url": "https://github.com/MycroftAI/mimic3-voices",
+        "attribution": "",
+        "commercial": False,
+        "notes": "MODEL_CARD points at MycroftAI/mimic3-voices but the 'amy' path does not exist there. Mycroft AI went bankrupt in 2023 — no path to a commercial license. Finetuned from Lessac (research only) on top.",
+    },
+    "en_GB-alan-medium": {
+        "license": "Copyright Mycroft AI / All Rights Reserved",
+        "dataset": "MycroftAI/mimic3-voices apope_low",
+        "dataset_url": "https://github.com/MycroftAI/mimic3-voices/tree/master/voices/en_UK/apope_low",
+        "attribution": "",
+        "commercial": False,
+        "notes": "Proprietary 'All Rights Reserved' notice; Mycroft AI bankrupt 2023, no licensor exists. Also finetuned from Lessac (research only).",
+    },
+
+    # ---- EXCLUDED — research/non-commercial dataset licenses ----
+    "en_US-lessac-low": {
+        "license": "Blizzard Challenge 2013 (research only)",
+        "dataset": "Blizzard Challenge 2013 — Lessac",
+        "dataset_url": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html",
+        "attribution": "",
+        "commercial": False,
+        "notes": "License explicitly forbids commercial use, redistribution, and 'use as audio books'. Any voice finetuned from Lessac inherits these restrictions.",
+    },
+    "en_US-lessac-medium": {
+        "license": "Blizzard Challenge 2013 (research only)",
+        "dataset": "Blizzard Challenge 2013 — Lessac",
+        "dataset_url": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html",
+        "attribution": "",
+        "commercial": False,
+        "notes": "License explicitly forbids commercial use.",
+    },
+    "en_US-lessac-high": {
+        "license": "Blizzard Challenge 2013 (research only)",
+        "dataset": "Blizzard Challenge 2013 — Lessac",
+        "dataset_url": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html",
+        "attribution": "",
+        "commercial": False,
+        "notes": "License explicitly forbids commercial use.",
+    },
+    "en_US-arctic-medium": {
+        "license": "Blizzard 2013 (inherited via Lessac finetune)",
+        "dataset": "CMU Arctic",
+        "dataset_url": "http://www.festvox.org/cmu_arctic/",
+        "attribution": "",
+        "commercial": False,
+        "notes": "Finetuned from Lessac — inherits Blizzard 2013 research-only restriction regardless of CMU Arctic's permissive license.",
+    },
+    "en_US-l2arctic-medium": {
+        "license": "CC BY-NC 4.0",
+        "dataset": "L2-Arctic",
+        "dataset_url": "https://www.isca-speech.org/archive/interspeech_2018/zhao18b_interspeech.html",
+        "attribution": "",
+        "commercial": False,
+        "notes": "NonCommercial — explicit license clause.",
+    },
+    "en_US-hfc_female-medium": {
+        "license": "CC BY-NC-SA 4.0",
+        "dataset": "Hi-Fi Captain",
+        "dataset_url": "https://ast-astrec.nict.go.jp/en/release/hi-fi-captain/",
+        "attribution": "",
+        "commercial": False,
+        "notes": "NonCommercial + ShareAlike.",
+    },
+    "en_US-hfc_male-medium": {
+        "license": "CC BY-NC-SA 4.0",
+        "dataset": "Hi-Fi Captain",
+        "dataset_url": "https://ast-astrec.nict.go.jp/en/release/hi-fi-captain/",
+        "attribution": "",
+        "commercial": False,
+        "notes": "NonCommercial + ShareAlike.",
+    },
+    "en_GB-semaine-medium": {
+        "license": "CC BY-NC-SA 4.0",
+        "dataset": "SEMAINE (DFKI / MaryTTS)",
+        "dataset_url": "https://github.com/marytts/dfki-semaine-data",
+        "attribution": "",
+        "commercial": False,
+        "notes": "NonCommercial + ShareAlike.",
+    },
+}
+
+
+# Voices not in VOICE_LICENSES default to this record. Intentionally
+# conservative — "unknown" means "do not assume commercial use until
+# audited."
+DEFAULT_RECORD: dict = {
+    "license": "Unaudited",
+    "dataset": "Unknown",
+    "dataset_url": "",
+    "attribution": "",
+    "commercial": False,
+    "notes": "Not yet audited. Pull the voice's MODEL_CARD from huggingface.co/rhasspy/piper-voices and verify before commercial use.",
+}
+
+
+def license_for(voice_id: str) -> dict:
+    """Return the license record for a Piper voice id.
+
+    Falls back to DEFAULT_RECORD (commercial=False) for any voice not
+    yet audited — the safer default so we never accidentally promise
+    commercial-OK on an unverified voice.
+    """
+    rec = VOICE_LICENSES.get(voice_id)
+    if rec is None:
+        return dict(DEFAULT_RECORD)
+    return dict(rec)

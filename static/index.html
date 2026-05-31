@@ -80,6 +80,18 @@
       <div class="mini-progress"><div id="mini-progress-fill"></div></div>
     </div>
 
+    <!-- v211 (M7.1): floating highlight toolbar. Appears on text
+         selection inside a .sentence element (book view or reading
+         view). Three colors + a remove button. Click outside / Esc
+         dismisses. Saved highlights become clip.highlights entries
+         and persist via the existing IndexedDB clip schema. -->
+    <div id="highlight-toolbar" class="highlight-toolbar" hidden>
+      <button type="button" class="highlight-toolbar-btn" data-color="yellow" aria-label="Highlight yellow" title="Yellow"></button>
+      <button type="button" class="highlight-toolbar-btn" data-color="pink" aria-label="Highlight pink" title="Pink"></button>
+      <button type="button" class="highlight-toolbar-btn" data-color="blue" aria-label="Highlight blue" title="Blue"></button>
+      <button type="button" class="highlight-toolbar-btn highlight-toolbar-remove" data-action="remove" aria-label="Remove highlight" title="Remove">×</button>
+    </div>
+
     <main class="app">
       <!-- v195: dual chip strips. #hero-controls lives back inside
            .hero-row (v188 position) as a flex middle item, visible
@@ -834,7 +846,15 @@
               aria-label="Previous spread"
               disabled
             >‹</button>
-            <span id="book-view-indicator" class="book-view-indicator">Spread 1 of 1</span>
+            <!-- v208 (M6.2): clickable spread indicator. Click to
+                 enter page-jump mode: indicator becomes a number
+                 input; Enter jumps, Esc cancels. -->
+            <button
+              id="book-view-indicator"
+              type="button"
+              class="book-view-indicator"
+              title="Click to jump to a page"
+            >Spread 1 of 1</button>
             <!-- v187: appears when the user has manually paged away
                  from the spread containing the currently-narrated
                  sentence. One click flips back to wherever the audio
@@ -854,8 +874,68 @@
               aria-label="Next spread"
               disabled
             >›</button>
+            <!-- v202 (M3.3): print affordance. Click rebuilds the
+                 spread DOM with every page laid out flat (cover +
+                 each text page as a separate .book-page), sets
+                 body[data-book-printing="true"] so the @media print
+                 rules take over, and fires window.print(). Restores
+                 the original single-spread view on afterprint. -->
+            <button
+              id="book-view-print"
+              type="button"
+              class="book-view-nav-btn book-view-print-btn"
+              aria-label="Print book"
+              title="Print the entire book — one page per sheet"
+            >🖨 Print</button>
+            <!-- v206 (M4.4): table of contents. Click opens a
+                 dialog listing detected chapters with page numbers.
+                 Hidden when the clip has no detected chapters
+                 (single-section text). -->
+            <button
+              id="book-view-toc"
+              type="button"
+              class="book-view-nav-btn book-view-toc-btn"
+              aria-label="Table of contents"
+              title="Jump to a chapter"
+              hidden
+            >📑 Contents</button>
           </div>
         </div>
+
+        <!-- v208 (M6.3): find-within-book-view floating bar. Hidden
+             by default; Ctrl+F (or the keyboard shortcut overlay)
+             reveals it, Esc dismisses. Matches search across
+             _bookViewSource.sentences; current/total badge updates
+             on input; next/prev cycles. -->
+        <div id="book-view-find" class="book-view-find" hidden>
+          <input
+            id="book-view-find-input"
+            type="text"
+            class="book-view-find-input"
+            placeholder="Find in book…"
+            aria-label="Find in book"
+          />
+          <span id="book-view-find-count" class="book-view-find-count">0 / 0</span>
+          <button id="book-view-find-prev" type="button" class="book-view-find-btn" aria-label="Previous match" title="Previous match">‹</button>
+          <button id="book-view-find-next" type="button" class="book-view-find-btn" aria-label="Next match" title="Next match">›</button>
+          <button id="book-view-find-close" type="button" class="book-view-find-btn" aria-label="Close find" title="Close">×</button>
+        </div>
+
+        <!-- v206 (M4.4): table of contents dialog. Populated on each
+             open by _bookViewOpenToc(); each row jumps to the chapter
+             via _bookViewNavigateToSpread(). -->
+        <dialog id="book-view-toc-dialog" class="book-view-toc-dialog">
+          <div class="voice-browser-head">
+            <h2>Contents</h2>
+            <button
+              id="book-view-toc-close"
+              type="button"
+              class="link-btn"
+              aria-label="Close contents"
+            >Close</button>
+          </div>
+          <ol id="book-view-toc-list" class="book-view-toc-list"></ol>
+        </dialog>
 
         <!-- Chapter auto-split banner. Shown after a paste detects 2+
              "Chapter N" / markdown-heading markers in the text. Split
@@ -1747,6 +1827,17 @@
             class="voice-filter-chip"
             aria-pressed="false"
           >Installed only</button>
+          <!-- v218: only show voices whose dataset license permits
+               selling the generated audio. Audited list lives in
+               tts/voice_licenses.py; "Unaudited" voices fall on
+               the non-commercial side until we verify them. -->
+          <button
+            id="voice-commercial-toggle"
+            type="button"
+            class="voice-filter-chip"
+            aria-pressed="false"
+            title="Show only voices cleared for commercial use (selling generated audio)"
+          >Commercial only</button>
         </div>
         <!-- v167: tip banner shown when no voices are starred yet.
              Hides automatically once the user stars at least one
@@ -1764,6 +1855,27 @@
           </span>
           <button
             id="voice-favorites-tip-dismiss"
+            type="button"
+            class="voice-favorites-tip-dismiss"
+            aria-label="Dismiss tip"
+          >×</button>
+        </div>
+        <!-- v219: first-tap hint pointing at the new Commercial-only
+             filter chip. Reuses the favorites-tip styling so the two
+             banners read as a consistent "did you know?" surface. Shown
+             once for users who haven't dismissed it yet AND haven't
+             toggled the Commercial filter at least once. -->
+        <div id="voice-commercial-tip" class="voice-favorites-tip" hidden>
+          <span class="voice-favorites-tip-icon" aria-hidden="true">⚖️</span>
+          <span class="voice-favorites-tip-text">
+            Publishing what you generate? Tap
+            <strong>Commercial only</strong> to narrow the catalog to
+            voices whose license permits selling the audio (with
+            attribution). The <strong>Voice provenance</strong> block on
+            each clip's ✎ Edit dialog has the exact credit line to copy.
+          </span>
+          <button
+            id="voice-commercial-tip-dismiss"
             type="button"
             class="voice-favorites-tip-dismiss"
             aria-label="Dismiss tip"
@@ -1973,6 +2085,36 @@
               title="Full commit SHA"
             ></code>
           </p>
+          <!-- v219: voice provenance. Shows which voice + license were
+               in effect when this clip was generated. Read-only. Lets
+               the user copy the exact attribution string for audiobook
+               credits / animation sound-credit blocks. Hidden for clips
+               from before v219 (no provenance captured) and for ones
+               generated against an unaudited voice (we'd be guessing). -->
+          <div id="clip-edit-provenance" class="clip-edit-provenance" hidden>
+            <div class="clip-edit-provenance-head">
+              <span class="clip-edit-provenance-label">Voice provenance</span>
+              <span
+                id="clip-edit-provenance-badge"
+                class="catalog-voice-license"
+              ></span>
+            </div>
+            <div id="clip-edit-provenance-voice" class="clip-edit-provenance-row"></div>
+            <div id="clip-edit-provenance-license" class="clip-edit-provenance-row"></div>
+            <div class="clip-edit-provenance-row">
+              <span class="clip-edit-provenance-key">Attribution:</span>
+              <span
+                id="clip-edit-provenance-attribution"
+                class="clip-edit-provenance-val"
+              ></span>
+              <button
+                id="clip-edit-provenance-copy"
+                type="button"
+                class="link-btn"
+                title="Copy this exact credit line to the clipboard"
+              >Copy</button>
+            </div>
+          </div>
           <label for="clip-edit-note" class="label">Note (optional)</label>
           <textarea
             id="clip-edit-note"

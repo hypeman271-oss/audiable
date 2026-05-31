@@ -28,6 +28,61 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap on uploads
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+
+# v204: SSE keepalive wrapper. A long Piper synth (4-8 minutes for a
+# book chapter on shared CPU) yields events sparsely — sometimes zero
+# response bytes between the last per-sentence WAV and the final MP3
+# result. Intermediaries that judge "machine idleness" by recent
+# response traffic (Fly's autostopper, nginx with proxy_read_timeout,
+# Cloudflare's connection scrubbing) decide the connection is dead and
+# kill it. v203 worked around the Fly case by disabling autostop; v204
+# fixes the root cause so we can safely re-enable autostop later AND so
+# the change is portable to other deployment targets.
+#
+# SSE comment lines (start with ':') are part of the protocol — the
+# EventSource spec says clients MUST ignore them. The bytes-on-the-wire
+# are real, though, which is exactly what intermediaries need to see.
+async def _sse_with_keepalive(agen, interval: float = 15.0):
+    """Wrap an async SSE generator. Emits ': keepalive\\n\\n' every
+    `interval` seconds of inactivity from the wrapped generator. The
+    wrapped generator runs concurrently via an asyncio.Task so a
+    timeout-on-the-queue check can race against actual events.
+    """
+    import asyncio
+
+    queue: asyncio.Queue = asyncio.Queue()
+    _SENTINEL = object()
+
+    async def _producer():
+        try:
+            async for item in agen:
+                await queue.put(item)
+        finally:
+            await queue.put(_SENTINEL)
+
+    producer_task = asyncio.create_task(_producer())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                # No event in the last `interval` seconds. Emit a
+                # comment line so the proxy/client see live bytes.
+                yield ": keepalive\n\n"
+                continue
+            if item is _SENTINEL:
+                break
+            yield item
+    finally:
+        # Producer is either finished or we're being torn down. Cancel
+        # in case the client disconnected mid-stream — without this the
+        # producer would hang holding the underlying synth iterator.
+        producer_task.cancel()
+        try:
+            await producer_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
 # Make sure the manifest is served as JSON, not octet-stream.
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
@@ -237,7 +292,7 @@ async def synthesize_segments_stream(req: SynthesizeSegmentsRequest):
             yield f"data: {_json.dumps(event)}\n\n"
 
     return StreamingResponse(
-        _agen(),
+        _sse_with_keepalive(_agen()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -469,7 +524,7 @@ async def synthesize_stream(req: SynthesizeRequest):
             yield f"data: {_json.dumps(event)}\n\n"
 
     return StreamingResponse(
-        _agen(),
+        _sse_with_keepalive(_agen()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
