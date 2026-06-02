@@ -946,6 +946,40 @@ body[data-ui-mode="simple"] .advanced-only {
   display: none !important;
 }
 
+/* v225.tn75 (#557): annotation features (flag chips, tag row, voice
+   notes, palette) are revision tools — they live in Standard +
+   Author tier, alongside bookmarks. Simple mode hides them so
+   "just listen" actually means just listen. */
+body[data-ui-mode="simple"] .phone-tag-row,
+body[data-ui-mode="simple"] .annotate-tag-chip,
+body[data-ui-mode="simple"] .annotate-voice-play,
+body[data-ui-mode="simple"] .annotate-voice-transcript,
+body[data-ui-mode="simple"] .annotate-voice-retry,
+body[data-ui-mode="simple"] #annotate-palette,
+body[data-ui-mode="simple"] #annotate-mode-btn,
+body[data-ui-mode="simple"] .phone-tag-row-hint {
+  display: none !important;
+}
+
+/* v225.tn78 (#560): character-voice assign UI is Author-only.
+   Belt-and-suspenders to the JS gate in #558 — even if some
+   ungated code path triggers the selection state, the visual
+   symptom can't render in Standard or Simple.
+   v225.tn79 (#561) FIX: the previous CSS used `display: none` on
+   .sentence-select-pending, which matched the SENTENCE SPAN itself
+   (since the class gets added TO the sentence), making the whole
+   sentence vanish. Reported by the user as "long press is deleting
+   sentences." Now we ONLY hide the floating bar, and we strip the
+   highlight background — never display:none on a sentence. */
+body:not([data-ui-mode="author"]) .assign-select-bar {
+  display: none !important;
+}
+body:not([data-ui-mode="author"]) .sentence-select-pending {
+  background: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* v220am: GitHub Sync / Re-narrate outdated relocated into their own
  * always-visible row above the library list (see #library-github-tools
  * in index.html). The buttons hide themselves via the `hidden` attr
@@ -1495,10 +1529,13 @@ dialog.manual-dialog:not([open]) {
   text-transform: uppercase;
   color: var(--fg-dim);
   /* v225.tn52 (#529): sticky inside the settings-body scroll so the
-     current section's label stays anchored as the user scrolls
-     through controls. top:48px clears the sticky nav bar above. */
+     current section's label stays anchored as the user scrolls.
+     v225.tn58 (#541): top was 48px which clipped under the ~72px
+     nav bar (chip row + fingerprint stacked); the subheaders
+     became invisible the moment they should stick. Bumped to 76px
+     so they land just below the nav bar's bottom border. */
   position: sticky;
-  top: 48px;
+  top: 76px;
   z-index: 2;
   background: var(--bg-card);
 }
@@ -1506,7 +1543,7 @@ dialog.manual-dialog:not([open]) {
    Tester keys, GitHub) — they're H3-equivalents in this dialog. */
 .settings-body > .settings-section > .settings-section-label {
   position: sticky;
-  top: 48px;
+  top: 76px;
   z-index: 2;
   background: var(--bg-card);
   padding: 12px 0 4px;
@@ -1537,6 +1574,22 @@ dialog.manual-dialog:not([open]) {
   -webkit-overflow-scrolling: touch;
   padding: 2px 4px;
   scrollbar-width: none;
+  /* v225.tn58 (#541): right-edge fade so a chip that's only
+     partly visible reads as "scroll for more" instead of just
+     looking clipped. Masked gradient keeps it accessible to
+     screen readers while signaling overflow visually. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 24px),
+    transparent 100%
+  );
 }
 .settings-nav-chips::-webkit-scrollbar {
   display: none;
@@ -1581,6 +1634,18 @@ dialog.manual-dialog:not([open]) {
 }
 .settings-nav-fingerprint[data-role="none"] {
   color: var(--danger, var(--fg-dim));
+}
+
+/* v225.tn59 (#542): Auto-theme status line. Sits under the theme
+   radios, tells the user what Auto is currently resolving to. */
+.theme-auto-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+.theme-auto-status[hidden] {
+  display: none;
 }
 /* First subheader in the dialog doesn't need a top hairline — the
  * dialog's own padding already separates it from the close button. */
@@ -3255,6 +3320,137 @@ body[data-ui-mode="author"] .reading-view .sentence.played {
  * to a fixed-positioned bar). Amber-toned to read as "warning" without
  * shouting. Pulses gently if the maintenance window has actually
  * started (startsAt <= now) so the user notices the state change. */
+/* v225.tn89 (#571): PWA install prompt banner. Sits above the
+   offline/maintenance banners. One-tap install on Chromium; iOS
+   Safari gets the text-instructions variant.
+   v225.tn91 (#574): match the re-narrate banner's translucent
+   "page-aware" aesthetic — accent-tint background + backdrop blur
+   so the paper texture reads through. */
+.install-banner {
+  position: sticky;
+  top: 0;
+  z-index: 14;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--accent-tint);
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.3;
+  border-bottom: 1px solid var(--accent-tint-3, color-mix(in srgb, var(--accent) 35%, transparent));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.install-banner-icon {
+  font-size: 1.1rem;
+  flex: 0 0 auto;
+}
+.install-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.install-banner-confirm {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--accent, #6aa3ff);
+  color: var(--bg, #0c0c10);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 32px;
+}
+.install-banner-dismiss {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg);
+  font-size: 1.1rem;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.install-banner-dismiss:hover,
+.install-banner-dismiss:active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+/* v225.tn87 (#569): offline indicator. Slim sticky chip at the very
+   top of the viewport, above the maintenance banner. Stays visible
+   the whole time the device is offline; cleans up when reconnected.
+   Body gets data-offline="true" which CSS uses below to grey out
+   network-only CTAs (Generate, Import, Sync, Re-narrate, voice
+   previews, etc.). */
+.offline-banner {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  /* v225.tn91 (#574): match the re-narrate banner's translucent
+     look so multiple stacked banners read as a consistent family. */
+  background: var(--accent-tint);
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.3;
+  border-bottom: 1px solid var(--accent-tint-3, color-mix(in srgb, var(--accent) 30%, transparent));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.offline-banner-icon {
+  font-size: 1rem;
+  flex: 0 0 auto;
+}
+.offline-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.offline-pending-count {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent, #6aa3ff);
+  color: var(--bg, #0c0c10);
+  font-size: 11px;
+  font-weight: 700;
+}
+/* When the body is in offline mode, grey out and disable interaction
+   with network-only CTAs. They keep their place in the layout so the
+   user can SEE what's gated; they just don't fire. The offline chip
+   above is the single source of explanation — no per-button tooltip
+   noise. */
+body[data-offline="true"] #gen-btn,
+body[data-offline="true"] #import-btn,
+body[data-offline="true"] #voice-browser-btn,
+body[data-offline="true"] #speaker-preview-btn,
+body[data-offline="true"] #speaker-audition-btn,
+body[data-offline="true"] #voice-preview-now,
+body[data-offline="true"] #voice-apply-btn,
+body[data-offline="true"] #git-outdated-confirm,
+body[data-offline="true"] #renarrate-confirm,
+body[data-offline="true"] #library-renarrate-outdated,
+body[data-offline="true"] .lib-sync-btn,
+body[data-offline="true"] .lib-renarrate-btn,
+body[data-offline="true"] .voice-apply-confirm,
+body[data-offline="true"] [data-needs-net="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+  filter: grayscale(0.4);
+}
+body[data-offline="true"] .import-dropdown-item {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 .maintenance-banner {
   position: sticky;
   top: 0;
@@ -3434,6 +3630,248 @@ body[data-ui-mode="author"] .reading-view .sentence.played {
 .renarrate-banner {
   margin-top: 14px;
   margin-bottom: 4px;
+}
+
+/* v225.tn85 (#567): voice card preview + apply-to-library section.
+   Sits below the Speed/Volume slider row inside the voice dialog. */
+.voice-preview-now {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--accent-tint, rgba(96, 165, 250, 0.08));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.voice-preview-now-btn {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--accent, #6aa3ff);
+  color: var(--bg, #0c0c10);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color 120ms ease;
+}
+.voice-preview-now-btn:hover,
+.voice-preview-now-btn:active {
+  background: color-mix(in srgb, var(--accent, #6aa3ff) 80%, white 20%);
+}
+.voice-preview-now-btn.loading {
+  opacity: 0.7;
+  cursor: progress;
+}
+.voice-preview-now-btn.playing {
+  background: color-mix(in srgb, var(--accent, #6aa3ff) 70%, var(--danger, #e74c3c) 30%);
+}
+.voice-preview-now-btn.stale {
+  animation: voice-preview-pulse 1.2s ease-in-out infinite;
+}
+@keyframes voice-preview-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #6aa3ff) 60%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, #6aa3ff) 0%, transparent); }
+}
+.voice-preview-now-hint {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  color: var(--fg-muted, #b8b8c0);
+  line-height: 1.4;
+}
+.voice-preview-now-hint .link-btn {
+  margin-left: 4px;
+}
+#voice-preview-now-text {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--bg-card, #15151a);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.voice-apply-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.voice-apply-heading {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-muted, #b8b8c0);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.voice-apply-btn {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.voice-apply-btn:hover,
+.voice-apply-btn:active {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.voice-apply-summary {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: var(--fg-muted, #b8b8c0);
+}
+
+/* v225.tn85 (#567): library-apply picker dialog. */
+.voice-apply-picker {
+  width: min(440px, 92vw);
+  max-width: 92vw;
+  max-height: 88dvh;
+  padding: 0;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 14px;
+  background: var(--bg-card, #15151a);
+  color: var(--fg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.voice-apply-picker::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+.voice-apply-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 8px;
+}
+.voice-apply-picker-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.voice-apply-picker-intro {
+  margin: 0 16px 12px;
+  font-size: 13px;
+  color: var(--fg-muted, #b8b8c0);
+}
+.voice-apply-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 16px 16px;
+}
+.voice-apply-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 64px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.voice-apply-option:hover,
+.voice-apply-option:active {
+  background: color-mix(in srgb, var(--accent, #6aa3ff) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #6aa3ff) 40%, var(--border) 60%);
+}
+.voice-apply-option-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.voice-apply-option-meta {
+  font-size: 12px;
+  color: var(--fg-muted, #b8b8c0);
+}
+
+.voice-apply-multipick {
+  display: flex;
+  flex-direction: column;
+  max-height: 80dvh;
+}
+.voice-apply-multipick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.voice-apply-multipick-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px 8px;
+}
+.voice-apply-multipick-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.voice-apply-multipick-row:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.voice-apply-multipick-row input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+.voice-apply-multipick-meta {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.voice-apply-multipick-meta strong {
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-apply-multipick-meta .muted {
+  font-size: 11px;
+  color: var(--fg-muted, #b8b8c0);
+}
+.voice-apply-multipick-foot {
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.voice-apply-confirm {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--accent, #6aa3ff);
+  color: var(--bg, #0c0c10);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.voice-apply-confirm[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* GitHub-source-outdated banner. Reuses .chapter-banner layout/styles;
@@ -4618,6 +5056,167 @@ button:disabled {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 4px 4px 4px 0;
+  transition: background 0.4s ease, border-color 0.4s ease;
+}
+
+/* v225.tn64 (#546): tap-to-edit note display. Replaces the inline
+   <input> from earlier versions — opening the floating editor on
+   tap dodges the Chromium Android keyboard bug where focusing an
+   input inside a position:fixed drawer caused immediate blur. */
+.bookmark-note-display {
+  flex: 1 1 auto;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--fg);
+  cursor: pointer;
+  border-radius: 4px;
+  min-width: 0;
+  word-break: break-word;
+  /* Match the input's visual weight so the row doesn't shift. */
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+}
+.bookmark-note-display.empty {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.bookmark-note-display:hover,
+.bookmark-note-display:focus-visible {
+  background: var(--hover-soft);
+  outline: none;
+}
+
+/* v225.tn64 (#546): centered floating bookmark editor.
+   Same pattern as the Import modal (#522): position:fixed centered,
+   massive-spread box-shadow as scrim (avoids the .app
+   stacking-context trap), card stays in the visible viewport when
+   the keyboard opens. */
+.bookmark-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  /* Scrim via shadow on the card itself (set below) so we don't
+     introduce a separate body-level overlay that would fight the
+     .app stacking context. */
+}
+.bookmark-editor[hidden] {
+  display: none;
+}
+.bookmark-editor-card {
+  /* v225.tn91 (#574): translucent + blurred so the paper texture
+     reads through, matching the re-narrate / offline banner family. */
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 18px 14px;
+  width: 100%;
+  max-width: 360px;
+  box-sizing: border-box;
+  box-shadow:
+    0 0 0 100vmax rgba(0, 0, 0, 0.55),
+    0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.bookmark-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.bookmark-editor-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.bookmark-editor-close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--fg-dim);
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.bookmark-editor-close:hover {
+  background: var(--hover-soft);
+  color: var(--fg);
+}
+.bookmark-editor-time {
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  margin: 0 0 14px;
+}
+.bookmark-editor-note-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  margin: 0 0 6px;
+}
+#bookmark-editor-note {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1.4;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+#bookmark-editor-note:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.bookmark-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+.bookmark-editor-save {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: var(--accent-on, #fff);
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bookmark-editor-cancel {
+  padding: 8px 14px;
+  font-size: 14px;
+}
+/* v225.tn61 (#534): just-added highlight. Brief accent-tinted pulse
+   on the row after the phone 🔖 button saved a new bookmark, so
+   the author can spot it immediately when the drawer opens. */
+.bookmark-row.just-added {
+  background: var(--accent-tint, rgba(108, 99, 255, 0.18));
+  border-color: var(--accent, #6c63ff);
+  animation: bookmark-just-added 1.6s ease-out 1;
+}
+@keyframes bookmark-just-added {
+  0%   { background: var(--accent-tint, rgba(108, 99, 255, 0.30)); }
+  20%  { background: var(--accent-tint, rgba(108, 99, 255, 0.30)); }
+  100% { background: var(--bg-card-2); }
 }
 
 .bookmark-time {
@@ -6948,35 +7547,101 @@ button:disabled {
   z-index: 50;
   display: flex;
   flex-direction: column;
-  min-width: 140px;
-  padding: 4px;
-  background: var(--bg-card);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  /* v225.tn81 (#563): bump min-width so buttons get fat fingers'
+     worth of horizontal aim, and let height grow with content.
+     v225.tn91 (#574): match the page-aware translucent look so the
+     sheet reads as part of the same family as the re-narrate /
+     offline / install banners. */
+  min-width: 200px;
+  padding: 6px;
+  background: color-mix(in srgb, var(--bg-card) 86%, transparent);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  /* Keep buttons distinct so a tap can't land on the *border*
+     between them and resolve as neither. */
+  gap: 4px;
 }
 .anno-action-sheet button {
   appearance: none;
-  padding: 8px 12px;
+  /* v225.tn81 (#563): 48px min-height matches Apple HIG / Material
+     min tap target. Previous 8px+0.9rem padding rendered at ~32px,
+     which is below the click-cancel threshold on mobile (a 10px
+     drift between pointerdown and pointerup kills the click). The
+     reported "have to tap Remove twice" was actually pointerdown
+     hitting the button but pointerup drifting just enough to
+     cancel the click. */
+  min-height: 48px;
+  padding: 10px 14px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--fg);
-  font-size: 0.9rem;
-  text-align: left;
+  font-size: 1rem;
+  text-align: center;
   cursor: pointer;
+  /* manipulation tells the browser this element isn't going to
+     pinch/double-tap zoom, which can reduce input latency on
+     touch. */
+  touch-action: manipulation;
 }
 .anno-action-sheet .anno-action-remove {
   color: var(--danger);
-  font-weight: 600;
+  font-weight: 700;
 }
-.anno-action-sheet button:hover {
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
+/* v225.tn83 (#565): :hover only fires on real pointing devices.
+   On touch, Android Chromium interprets the first tap as a hover
+   state and only fires click on the second tap (the "fake hover"
+   problem). Gating :hover with @media (hover: hover) makes the
+   first touch directly activate the button. */
+@media (hover: hover) {
+  .anno-action-sheet button:hover {
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
+  }
+}
+.anno-action-sheet button:active {
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
 }
 
 /* Tag chips become tappable as of #498. Cursor cue. */
 .annotate-tag-chip {
   cursor: pointer;
+}
+
+/* v225.tn82 (#564): inline × badge revealed by a tap on a flag chip.
+   Lives as an injected sibling of the chip, sized for fingers (44px
+   min tap target), animated in so the new affordance is obvious. */
+.annotate-tag-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.18));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--danger, #e74c3c) 14%, transparent);
+  color: var(--danger, #e74c3c);
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+  touch-action: manipulation;
+  /* Fade-and-pop in so the user notices it appearing. */
+  animation: annotate-tag-delete-in 160ms ease-out;
+}
+.annotate-tag-delete:hover,
+.annotate-tag-delete:active {
+  background: color-mix(in srgb, var(--danger, #e74c3c) 24%, transparent);
+}
+@keyframes annotate-tag-delete-in {
+  from { transform: scale(0.6); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
 }
 
 /* v223.tn22 (#492): re-transcribe button on voice annotations that
@@ -9053,6 +9718,23 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     max-height: none;
     min-height: 0;
     font-size: 17px;
+    /* v225.tn57 (#540): kill OS text selection in the reading view
+       on phone. v220ad drag-to-select-for-voice-assign uses its
+       own pointer-event highlighting (not OS selection), so we
+       lose nothing — and we stop the Android long-press-on-text
+       Copy/Share/Select-all menu that was firing when the user
+       long-pressed a tag chip and the OS associated the touch
+       with the underlying text. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  /* Belt-and-suspenders: every sentence span inherits, but
+     explicit declarations beat any future stylesheet drift. */
+  #reading-view * {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
 
   /* v225.tn51 (#528): on phone, once a clip is loaded, lock the
@@ -9102,6 +9784,66 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     display: none;
   }
 
+  /* v225.tn84 (#566): stale-audio banner on phone.
+     The git-outdated-banner (and re-narrate banner) live OUTSIDE
+     the fixed-positioned .card.card-text in the DOM, which means
+     once a clip is loaded and body becomes overflow:hidden the
+     banners are visually inaccessible on phone. Reposition them
+     as a slim fixed bar above the reading view when shown, and
+     push the reading-view card down by the banner's height so the
+     first sentence isn't covered. Visibility tracks the [hidden]
+     attribute — when JS sets hidden, the rules collapse and the
+     reading view snaps back to its full size.
+     Git-outdated wins over re-narrate if both ever fire at once
+     (rare but possible). */
+  body:has(#player-card:not([hidden])) #git-outdated-banner:not([hidden]),
+  body:has(#player-card:not([hidden])) #renarrate-banner:not([hidden]) {
+    position: fixed;
+    top: calc(56px + env(safe-area-inset-top, 0px));
+    left: 8px;
+    right: 8px;
+    z-index: 8;
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    /* The chapter-banner base sets background/border; we just
+       reshape it for phone. */
+  }
+  body:has(#git-outdated-banner:not([hidden])) #renarrate-banner {
+    display: none !important;
+  }
+  body:has(#player-card:not([hidden])) #git-outdated-banner:not([hidden]) .chapter-banner-msg,
+  body:has(#player-card:not([hidden])) #renarrate-banner:not([hidden]) .chapter-banner-msg {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12.5px;
+    line-height: 1.3;
+  }
+  body:has(#player-card:not([hidden])) #git-outdated-banner:not([hidden]) .chapter-banner-actions,
+  body:has(#player-card:not([hidden])) #renarrate-banner:not([hidden]) .chapter-banner-actions {
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+  body:has(#player-card:not([hidden])) #git-outdated-banner:not([hidden]) .chapter-banner-btn,
+  body:has(#player-card:not([hidden])) #renarrate-banner:not([hidden]) .chapter-banner-btn {
+    padding: 8px 10px;
+    font-size: 11.5px;
+    min-height: 36px;
+    white-space: nowrap;
+  }
+  /* Push the reading-view card down by ~62px when a banner is up
+     (banner height + a little breathing room). When the banner
+     hides, this rule no longer matches and card-text snaps back. */
+  body:has(#player-card:not([hidden])):has(#git-outdated-banner:not([hidden])) .card.card-text,
+  body:has(#player-card:not([hidden])):has(#renarrate-banner:not([hidden])) .card.card-text {
+    top: calc(56px + 62px + env(safe-area-inset-top, 0px));
+  }
+
   /* v225m (#508): #bookmarks-list lives in the pull-up's Bookmarks
      section now. The relocation happens at boot in JS. We no
      longer hide it — it just shouldn't be a sibling of
@@ -9129,17 +9871,20 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     max-height: 70vh;
     padding: 0 12px calc(96px + env(safe-area-inset-bottom));
     overflow-y: auto;
-    /* v225t (#514): translucent glass surface. --glass landed as a
-       real token in #503 (was self-referential / undefined before).
-       The scrim sibling dims the reading view behind the drawer; the
-       glass + blur here softens it further so the section labels
-       and chips float over a Spotify-style frosted backdrop instead
-       of a flat dark slab. Chips inside already have solid
-       --bg-card-2 backgrounds so their text stays legible against
-       the blurred-and-dimmed underlayer. */
-    background: var(--glass);
-    backdrop-filter: blur(24px) saturate(140%);
-    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    /* v225t (#514): translucent glass surface.
+       v225.tn93 (#576): switched from --glass (88% opaque) to
+       --accent-tint to match the re-narrate banner family.
+       v225.tn94 (#577): the previous blur(32px) saturate(140%)
+       made the drawer LOOK thick even though the fill is only
+       8-14% opaque — backdrop-filter intensity, not fill, was
+       the dominant visual weight. Match the re-narrate banner's
+       blur(8px) exactly, drop the saturation. Drawer now reads
+       as actually-the-same-translucency as the banner. Chip
+       labels inside still have their own solid backgrounds for
+       legibility. */
+    background: var(--accent-tint);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border-top: 1px solid var(--border);
     border-radius: 18px 18px 0 0;
     box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.55);
@@ -9176,12 +9921,22 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   .phone-pullup-content {
     padding: 4px 0 16px;
   }
+  /* v225.tn92 (#575): two-column row layout. Section is a CSS grid
+     with three columns — label / chips / state strip — instead of
+     stacking label above chips with empty space to the right. Gives
+     us a denser drawer AND a place to surface live state (Speed
+     180 · Vol 100% etc.) on the right edge. Bookmarks section
+     overrides this back to full-width below. */
   .phone-pullup-section {
-    margin-bottom: 14px;
+    display: grid;
+    grid-template-columns: 70px 1fr auto;
+    column-gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
   }
   .phone-pullup-section h3 {
-    margin: 0 0 6px;
-    padding: 0 4px;
+    margin: 0;
+    padding: 0;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.08em;
@@ -9191,14 +9946,35 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   .phone-pullup-slots {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    padding: 0 2px;
+    gap: 6px;
+    min-width: 0;     /* let it shrink so the state column survives */
+  }
+  .phone-pullup-state {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--fg-muted, #b8b8c0);
+    text-align: right;
+    white-space: nowrap;
+    line-height: 1.35;
+    /* When empty, collapse so the layout doesn't lurch. */
+    min-width: 0;
+  }
+  .phone-pullup-state:empty {
+    display: none;
   }
   /* v225m (#508): bookmarks slot — full-width column inside the
      pull-up. Houses the relocated #bookmarks-list. The original
      .bookmark-row CSS already styles each row; we just give the
      wrapper enough room and a visible "no bookmarks yet" state
-     via the hint pseudo if empty. */
+     via the hint pseudo if empty.
+     v225.tn92 (#575): override the new two-column grid for this
+     section so the bookmark list spans the full width as before. */
+  .phone-pullup-section:has(.phone-pullup-bookmarks) {
+    display: block;
+  }
+  .phone-pullup-section:has(.phone-pullup-bookmarks) h3 {
+    margin-bottom: 6px;
+  }
   .phone-pullup-bookmarks {
     display: block;
     width: 100%;
@@ -9280,7 +10056,13 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   .phone-pullup-scrim {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.55);
+    /* v225.tn93 (#576): dropped from rgba(0,0,0,0.55) to 0.18 so
+       it doesn't bleed through the now-very-translucent drawer
+       (which used to use the 88%-opaque --glass token). At 18%
+       the scrim still gives a visible "drawer is open, tap to
+       close" cue on the reading view above but doesn't darken
+       the drawer's interior. */
+    background: rgba(0, 0, 0, 0.18);
     z-index: 38;
     opacity: 0;
     pointer-events: none;
@@ -9422,10 +10204,17 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     z-index: 43;
     max-height: 70vh;
     overflow-y: auto;
-    background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    /* v225.tn95 (#578): translucent treatment matching the pull-up
+       drawer (#577) and re-narrate banner family. var(--accent-tint)
+       + blur(8px), no saturation. Menu items keep their transparent
+       backgrounds and use --fg color so text contrast carries even
+       over the reading view behind. */
+    background: var(--accent-tint);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
     border-radius: 14px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
     transform: translateY(-110%);
     opacity: 0;
     transition:
@@ -9477,7 +10266,11 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   .phone-menu-scrim {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.55);
+    /* v225.tn95 (#578): match the pull-up scrim's lower opacity so
+       the translucent menu's interior doesn't get darkened by the
+       backdrop bleeding through. Still gives a visible
+       "tap-outside-to-close" cue. */
+    background: rgba(0, 0, 0, 0.18);
     z-index: 42;
     opacity: 0;
     pointer-events: none;

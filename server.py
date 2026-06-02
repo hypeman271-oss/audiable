@@ -15,7 +15,7 @@ import socket
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 import extract
 import github_oauth
 import library_db
+import synth_jobs
 import tts
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap on uploads
@@ -804,6 +805,112 @@ async def synthesize_stream(req: SynthesizeRequest):
             "X-Accel-Buffering": "no",  # tell nginx not to buffer SSE
         },
     )
+
+
+# v226 / #512: server-side resumable synthesis. See synth_jobs.py for
+# the worker / state model. Endpoints expose: create a job → subscribe
+# to its stream → reconnect mid-stream with ?from=N → check status →
+# cancel. Synthesis lives in a detached asyncio task that survives the
+# originating HTTP request, so a client disconnect (mobile lock, Fly
+# load balancer drop, deploy roll) no longer kills the synth.
+
+
+@app.post("/api/synth/jobs")
+async def synth_jobs_create(req: SynthesizeRequest, request: Request):
+    """Create a synth job, kick off its background worker, return id.
+
+    Returns immediately with {job_id, sentences_total: 0}. The caller
+    follows with GET /api/synth/jobs/{id}/stream to receive events.
+    If the stream drops, GET again with ?from=N to resume.
+    """
+    tenant_key = getattr(request.state, "tenant_key", None)
+    params = synth_jobs.JobParams.from_dict({
+        "text": req.text,
+        "voice_id": req.voice_id,
+        "rate": req.rate,
+        "volume": req.volume,
+        "speaker_id": req.speaker_id,
+    })
+    try:
+        job = await synth_jobs.create_job(params, tenant_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"job_id": job.id, "sentences_total": job.sentences_total}
+
+
+@app.get("/api/synth/jobs/{job_id}")
+async def synth_jobs_status(job_id: str, request: Request):
+    """Snapshot of the job's state. Cheap; safe to poll."""
+    job = synth_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="unknown job")
+    tenant_key = getattr(request.state, "tenant_key", None)
+    if job.tenant_key != tenant_key:
+        raise HTTPException(status_code=404, detail="unknown job")
+    return job.snapshot()
+
+
+@app.get("/api/synth/jobs/{job_id}/stream")
+async def synth_jobs_stream(
+    job_id: str,
+    request: Request,
+    from_sentence: int = Query(0, alias="from"),
+):
+    """SSE stream of the job's events starting from sentence index
+    `from`. Replays already-buffered sentences immediately, then
+    live-streams. Safe to call repeatedly with increasing from= so
+    the client never re-receives sentences it already has.
+
+    `from_sentence` is the actual query-param name `from` (Python
+    keyword), exposed via Query(alias=...).
+    """
+    import json as _json
+
+    job = synth_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="unknown job")
+    tenant_key = getattr(request.state, "tenant_key", None)
+    if job.tenant_key != tenant_key:
+        raise HTTPException(status_code=404, detail="unknown job")
+
+    async def _agen():
+        async for event in synth_jobs.subscribe(job_id, from_sentence):
+            yield f"data: {_json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        _sse_with_keepalive(_agen()),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.delete("/api/synth/jobs/{job_id}")
+async def synth_jobs_cancel(job_id: str, request: Request):
+    """Cancel an in-flight synth. Idempotent."""
+    job = synth_jobs.get_job(job_id)
+    if not job:
+        # Already evicted or never existed — treat as success.
+        return {"cancelled": True}
+    tenant_key = getattr(request.state, "tenant_key", None)
+    if job.tenant_key != tenant_key:
+        raise HTTPException(status_code=404, detail="unknown job")
+    await synth_jobs.cancel_job(job_id)
+    return {"cancelled": True}
+
+
+@app.get("/api/synth/jobs")
+async def synth_jobs_list(request: Request, active: int = 0):
+    """List this tenant's jobs. With ?active=1, only those in flight.
+    Client uses this on app boot to reattach to any in-flight work."""
+    tenant_key = getattr(request.state, "tenant_key", None)
+    return {
+        "jobs": synth_jobs.list_jobs_for_tenant(
+            tenant_key, active_only=bool(active)
+        )
+    }
 
 
 class GithubTreeRequest(BaseModel):

@@ -21,6 +21,20 @@ function _dlog(category, message, data) {
     cat: category || "general",
     msg: String(message || ""),
   };
+  // v225.tn74 (#556): stamp the UI mode on every entry. Mode-gated
+  // features behave differently in Simple / Standard / Author, and
+  // bug reports were missing this context — e.g. "tap a flag does
+  // nothing" diagnosed differently if the user was in Standard
+  // (where the feature might not be wired) vs. Author (where it
+  // should be active). Read via getUIMode() if available; fall
+  // back to "?" so the dlog never throws.
+  try {
+    if (typeof getUIMode === "function") {
+      entry.mode = getUIMode();
+    }
+  } catch {
+    entry.mode = "?";
+  }
   if (data !== undefined) entry.data = data;
   _debugLog.push(entry);
   // FIFO drop when over the cap. Splice from the front so the most
@@ -498,11 +512,238 @@ const synthProgress = $("synth-progress");
 // ID of the clip currently loaded in the player (matches a row in IndexedDB).
 // Set by generate() and loadClip(); used by the progress-save throttle to
 // know which library row to update with currentTime.
+// v225.tn87 (#569): offline-first plumbing. Driven by navigator.onLine
+// + window online/offline events. Body data-attribute lets CSS grey
+// out network-only CTAs. Single source of truth so callers can guard
+// pre-flight: `if (_isOffline()) { ... queue locally ... }`
+function _isOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+const _OFFLINE_PENDING_SYNTH_KEY = "narrative.pendingSynth";
+
+function _readPendingSynths() {
+  try {
+    const raw = localStorage.getItem(_OFFLINE_PENDING_SYNTH_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function _writePendingSynths(list) {
+  try {
+    localStorage.setItem(_OFFLINE_PENDING_SYNTH_KEY, JSON.stringify(list || []));
+  } catch {}
+}
+function _addPendingSynth(entry) {
+  const list = _readPendingSynths();
+  list.push(entry);
+  _writePendingSynths(list);
+  _updateOfflinePendingCount();
+}
+function _clearPendingSynth(id) {
+  const list = _readPendingSynths().filter((e) => e.id !== id);
+  _writePendingSynths(list);
+  _updateOfflinePendingCount();
+}
+function _updateOfflinePendingCount() {
+  const el = document.getElementById("offline-pending-count");
+  if (!el) return;
+  const n = _readPendingSynths().length;
+  if (n > 0) {
+    el.textContent = `${n} draft${n === 1 ? "" : "s"} queued`;
+    el.hidden = false;
+  } else {
+    el.hidden = true;
+  }
+}
+function _renderOfflineState() {
+  const banner = document.getElementById("offline-banner");
+  if (!banner) return;
+  if (_isOffline()) {
+    document.body.dataset.offline = "true";
+    banner.hidden = false;
+    _updateOfflinePendingCount();
+  } else {
+    delete document.body.dataset.offline;
+    banner.hidden = true;
+  }
+}
+async function _drainPendingSynths() {
+  if (_isOffline()) return;
+  const list = _readPendingSynths();
+  if (!list.length) return;
+  setStatus(
+    `Online — synthesizing ${list.length} queued draft${
+      list.length === 1 ? "" : "s"
+    }…`,
+  );
+  for (const entry of list) {
+    try {
+      // Stash voice settings + text on the textarea then trigger
+      // generate(). The bg-queue path will pick it up.
+      if (entry.voiceId && voiceEl) voiceEl.value = entry.voiceId;
+      if (typeof entry.rate === "number" && rateEl) rateEl.value = String(entry.rate);
+      if (typeof entry.volume === "number" && volumeEl) {
+        volumeEl.value = String(Math.round(entry.volume * 100));
+      }
+      if (entry.text && textEl) textEl.value = entry.text;
+      if (typeof generate === "function") {
+        await generate();
+      }
+      _clearPendingSynth(entry.id);
+    } catch (err) {
+      console.warn("[offline] pending synth replay failed:", err);
+      // Leave in queue for next online tick.
+    }
+  }
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => {
+    _renderOfflineState();
+    setStatus("Back online — syncing.");
+    _drainPendingSynths().catch((err) =>
+      console.warn("[offline] drain failed:", err),
+    );
+    // v225.tn88 (#570): also drain queued transcripts so voice notes
+    // recorded offline get their text the moment we're back.
+    if (typeof _drainPendingTranscribes === "function") {
+      _drainPendingTranscribes().catch((err) =>
+        console.warn("[offline] transcribe drain failed:", err),
+      );
+    }
+  });
+  window.addEventListener("offline", () => {
+    _renderOfflineState();
+    setStatus(
+      "Offline — edits, bookmarks, and notes save locally and sync when you're back.",
+    );
+  });
+  // Ask the browser to mark our IndexedDB as durable so it isn't
+  // evicted under storage pressure (especially on iOS). One-shot,
+  // safe to call repeatedly.
+  if (
+    navigator.storage &&
+    typeof navigator.storage.persist === "function"
+  ) {
+    navigator.storage.persist().catch(() => {});
+  }
+
+  // v225.tn89 (#571): PWA install prompt. On Chromium-based browsers
+  // we catch beforeinstallprompt and surface a slim banner with a
+  // one-tap Install button. iOS Safari doesn't fire that event, so
+  // detect the platform and show text instructions instead. Both
+  // honor a one-time dismiss persisted to localStorage.
+  let _deferredInstallPrompt = null;
+  const _INSTALL_DISMISSED_KEY = "narrative.installDismissed";
+  function _isAlreadyInstalled() {
+    try {
+      if (window.matchMedia("(display-mode: standalone)").matches) return true;
+    } catch {}
+    if (navigator && navigator.standalone === true) return true;
+    return false;
+  }
+  function _isIosSafari() {
+    const ua = (navigator && navigator.userAgent) || "";
+    const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+    const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+    return isIOS && isSafari;
+  }
+  function _installDismissed() {
+    try {
+      return localStorage.getItem(_INSTALL_DISMISSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function _setInstallDismissed() {
+    try {
+      localStorage.setItem(_INSTALL_DISMISSED_KEY, "1");
+    } catch {}
+  }
+  function _showInstallBanner(iosVariant) {
+    if (_isAlreadyInstalled() || _installDismissed()) return;
+    const id = iosVariant ? "install-banner-ios" : "install-banner";
+    const el = document.getElementById(id);
+    if (el) el.hidden = false;
+  }
+  function _hideInstallBanner() {
+    const el1 = document.getElementById("install-banner");
+    if (el1) el1.hidden = true;
+    const el2 = document.getElementById("install-banner-ios");
+    if (el2) el2.hidden = true;
+  }
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    _deferredInstallPrompt = e;
+    _showInstallBanner(false);
+  });
+  window.addEventListener("appinstalled", () => {
+    _deferredInstallPrompt = null;
+    _hideInstallBanner();
+    _setInstallDismissed();
+  });
+  // After DOM ready, decide which banner (if any) to show.
+  function _initInstallBanner() {
+    if (_isAlreadyInstalled() || _installDismissed()) return;
+    if (_isIosSafari()) {
+      _showInstallBanner(true);
+    }
+    // For Chromium: wait for beforeinstallprompt; nothing to do now.
+    const btn = document.getElementById("install-banner-confirm");
+    if (btn) {
+      btn.addEventListener("click", async () => {
+        if (!_deferredInstallPrompt) return;
+        _deferredInstallPrompt.prompt();
+        try {
+          const choice = await _deferredInstallPrompt.userChoice;
+          if (choice && choice.outcome === "accepted") {
+            _hideInstallBanner();
+          }
+        } catch {}
+        _deferredInstallPrompt = null;
+      });
+    }
+    const dismiss = document.getElementById("install-banner-dismiss");
+    if (dismiss) {
+      dismiss.addEventListener("click", () => {
+        _hideInstallBanner();
+        _setInstallDismissed();
+      });
+    }
+    const dismissIos = document.getElementById("install-banner-ios-dismiss");
+    if (dismissIos) {
+      dismissIos.addEventListener("click", () => {
+        _hideInstallBanner();
+        _setInstallDismissed();
+      });
+    }
+  }
+  if (document.readyState !== "loading") {
+    _initInstallBanner();
+  } else {
+    document.addEventListener("DOMContentLoaded", _initInstallBanner);
+  }
+  // Initial paint of offline state once DOM is ready.
+  if (document.readyState !== "loading") {
+    _renderOfflineState();
+  } else {
+    document.addEventListener("DOMContentLoaded", _renderOfflineState);
+  }
+}
+
 let _currentClipId = null;
 // Voice that the currently-loaded clip was synthesized with. Used by the
 // listen-stats accumulator so the "top voice" tally reflects what the
 // user actually heard, not whatever the voice picker happens to show.
 let _currentPlayingVoiceId = null;
+// v225.tn85 (#567): snapshot of the loaded clip's baked-in synth
+// settings. Used by _updateRenarrateBanner to detect drift on any
+// voice-card setting, not just voice (#566 generalization).
+let _currentPlayingRate = null;
+let _currentPlayingVolume = null;
+let _currentPlayingSpeakerId = null;
 // Wall-clock timestamp of the last progress save; throttles timeupdate-driven
 // IndexedDB writes to roughly once per PROGRESS_SAVE_INTERVAL_MS.
 let _lastProgressSaveAt = 0;
@@ -558,6 +799,14 @@ function setUIMode(mode) {
   try { localStorage.setItem(UI_MODE_KEY, mode); } catch {}
   document.body.dataset.uiMode = mode;
   _updateModeUnlockHint(mode);
+  // v225.tn78 (#560): when leaving Author, clear any in-flight
+  // character-voice selection. Without this, a selection started
+  // while in Author leaves the data + bar lingering after the user
+  // switches to Standard (and CSS hides the bar but the data
+  // sticks until the next pointer event would clear it).
+  if (mode !== "author" && typeof _clearAssignSelection === "function") {
+    try { _clearAssignSelection(); } catch {}
+  }
 }
 // v150: dynamic "+ unlocks" copy below the Mode picker. Each mode has
 // a list of what it grants on top of the previous tier; the hint
@@ -611,11 +860,25 @@ function getThemePref() {
 
 function resolveTheme(pref) {
   if (pref === "auto") {
-    return matchMedia("(prefers-color-scheme: light)").matches
-      ? "light"
-      : "dark";
+    // v225.tn59 (#542): check BOTH queries explicitly instead of
+    // treating "not light" as "dark". Some browsers (especially in
+    // PWA / standalone mode) report neither query as matching when
+    // they can't read the OS preference. Use _detectSystemTheme()
+    // so callers can also surface the raw state.
+    return _detectSystemTheme() || "dark";
   }
   return pref;
+}
+
+// Returns "light", "dark", or null (when the browser can't read the
+// OS preference — happens in some PWA / WebView contexts). Callers
+// can fall back to a default when this returns null.
+function _detectSystemTheme() {
+  try {
+    if (matchMedia("(prefers-color-scheme: light)").matches) return "light";
+    if (matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+  } catch {}
+  return null;
 }
 
 function applyTheme(pref) {
@@ -657,7 +920,49 @@ function setTheme(pref) {
 // otherwise their explicit pick wins.
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
   if (getThemePref() === "auto") applyTheme("auto");
+  _updateThemeAutoStatus();
 });
+// v225.tn59 (#542): also listen to the dark query — some browsers
+// fire one but not the other when the OS theme changes.
+try {
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (getThemePref() === "auto") applyTheme("auto");
+    _updateThemeAutoStatus();
+  });
+} catch {}
+
+// v225.tn59 (#542): show the user what Auto is resolving to right
+// now. If the OS reports a preference, we say "currently: Dark" or
+// "currently: Light" so they can verify the detection is working.
+// If the OS reports no preference (PWA / WebView quirk), we say so
+// and explain the fallback to Dark.
+function _updateThemeAutoStatus() {
+  const el = document.getElementById("theme-auto-status");
+  if (!el) return;
+  const pref = getThemePref();
+  if (pref !== "auto") {
+    // For explicit Dark/Light, the status line is dead weight — hide.
+    el.textContent = "";
+    el.hidden = true;
+    return;
+  }
+  const sys = _detectSystemTheme();
+  if (sys === "light") {
+    el.textContent =
+      "Following your device: currently Light. Switch your device theme to flip.";
+  } else if (sys === "dark") {
+    el.textContent =
+      "Following your device: currently Dark. Switch your device theme to flip.";
+  } else {
+    // Browser couldn't read the OS preference. The fallback is Dark
+    // (see resolveTheme). Tell the user so they don't think Auto is
+    // broken — they're seeing Dark because the browser can't see
+    // their device theme.
+    el.textContent =
+      "Your browser isn't reporting a device theme — falling back to Dark. Pick Dark or Light here to override.";
+  }
+  el.hidden = false;
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // v221.maint: server-side maintenance warning. Polls /api/maintenance
@@ -1107,7 +1412,10 @@ document
   .querySelectorAll('.theme-picker input[name="theme"]')
   .forEach((radio) => {
     radio.addEventListener("change", () => {
-      if (radio.checked) setTheme(radio.value);
+      if (radio.checked) {
+        setTheme(radio.value);
+        _updateThemeAutoStatus();
+      }
     });
   });
 
@@ -1562,6 +1870,15 @@ settingsBtn.addEventListener("click", () => {
     _initSettingsNav();
     _refreshSettingsNavChips();
     _refreshSettingsFingerprint();
+    // v225.tn58 (#541): reset body scroll to top so each open lands
+    // on the first section, not wherever the user left off. The
+    // dialog retains scrollTop between opens, which is why users
+    // were sometimes seeing content mid-paragraph (e.g. the App
+    // section's Mode description started halfway through "Standard:
+    // …" because the nav-bar sticky overlap + retained scroll
+    // combined to hide the top of the section).
+    const _settingsBody = settingsDialog.querySelector(".settings-body");
+    if (_settingsBody) _settingsBody.scrollTop = 0;
   });
   if (_maintFormStatus) _maintFormStatus.textContent = "";
   if (_tenantsFormStatus) _tenantsFormStatus.textContent = "";
@@ -1577,6 +1894,9 @@ settingsBtn.addEventListener("click", () => {
   document
     .querySelectorAll('.theme-picker input[name="theme"]')
     .forEach((r) => { r.checked = r.value === pref; });
+  // v225.tn59 (#542): refresh the "currently: Dark/Light" status
+  // line so it reflects the live state on every open.
+  if (typeof _updateThemeAutoStatus === "function") _updateThemeAutoStatus();
   // v221.sync-5: Sync library across devices. Mirror current flag
   // into the radios so the dialog always reflects truth.
   const _syncOn = _syncIsEnabled();
@@ -2576,7 +2896,13 @@ function _formatDebugLogForDisplay() {
   }
   const lines = [];
   for (const e of _debugLog) {
-    let line = `${e.t}  [${e.cat}]  ${e.msg}`;
+    // v225.tn77 (#559): include the mode field so v225be's stamp
+    // actually surfaces in the rendered log. Without this, the
+    // stored e.mode was silently dropped at display time and we
+    // couldn't see which tier the user was on while triaging
+    // mode-specific bugs.
+    const modeStr = e.mode ? ` <${e.mode}>` : "";
+    let line = `${e.t}  [${e.cat}]${modeStr}  ${e.msg}`;
     if (e.data !== undefined) {
       let dataStr = "";
       try { dataStr = JSON.stringify(e.data, null, 2); } catch { dataStr = String(e.data); }
@@ -3396,28 +3722,64 @@ async function _renderStatsPanel() {
 // "Add a note…" placeholder reads as a hint without forcing a dialog).
 // Bookmarks live as clip.bookmarks[] in IndexedDB and survive export/import.
 
+// v225.tn61 (#534): returns the new bookmark's id so callers (e.g.
+// the phone 🔖 button) can locate the just-added row in the
+// re-rendered list and scroll/flash it.
+//
+// v225.tn65 (#547): debounce guard against double-fire. User
+// reported duplicate bookmarks appearing in the drawer after a
+// single 🔖 tap. Most likely cause: an Android click that fires
+// twice (touch handlers + click event), OR two code paths
+// dispatching simultaneously. The guard skips any add() called
+// within 600ms of the previous one — comfortable above human
+// double-tap intent (typically <300ms) but below "user really
+// wants two close bookmarks" (which would be much slower).
+let _lastBookmarkAddMs = 0;
 async function addBookmarkAtCurrentTime() {
   if (!_currentClipId) {
     setStatus("Load a clip first — nothing to bookmark.", true);
-    return;
+    return null;
   }
+  const _now =
+    typeof performance !== "undefined" && performance.now
+      ? performance.now()
+      : Date.now();
+  const _gap = Math.round(_now - _lastBookmarkAddMs);
+  if (_now - _lastBookmarkAddMs < 600) {
+    // Silent skip — the user already added one in the last 600ms,
+    // and the previous addBookmarkAtCurrentTime call's status
+    // toast is still showing.
+    _dlog("bookmark", "debounce skip (call within 600ms)", {
+      msSinceLast: _gap,
+      stack: new Error().stack?.split("\n").slice(1, 5).join(" | "),
+    });
+    return null;
+  }
+  _lastBookmarkAddMs = _now;
+  _dlog("bookmark", "addBookmarkAtCurrentTime entry", {
+    clipId: _currentClipId,
+    msSinceLast: _gap,
+    stack: new Error().stack?.split("\n").slice(1, 5).join(" | "),
+  });
   try {
     // v223.tn19 (#488): atomic read-modify-write so a concurrent
     // _syncAbsorbServerClip can't slip between our read and write
     // and cause our save to wipe newly-absorbed content (annotations,
     // highlights, etc.) on the server via LWW.
     const t = virtualTime();
+    let _newBookmarkId = null;
     const clip = await _mutateClipAtomic(_currentClipId, (c) => {
       if (!Array.isArray(c.bookmarks)) c.bookmarks = [];
+      _newBookmarkId = Date.now();
       c.bookmarks.push({
-        id: Date.now(),
+        id: _newBookmarkId,
         timeSec: t,
         note: "",
         createdAt: new Date().toISOString(),
       });
       c.bookmarks.sort((a, b) => a.timeSec - b.timeSec);
     });
-    if (!clip) return;
+    if (!clip) return null;
     await renderBookmarks();
     // v210 (M6.1): if the book view is open, re-stash bookmarks +
     // re-render the current spread so the new ribbon shows up
@@ -3427,11 +3789,116 @@ async function addBookmarkAtCurrentTime() {
       _bookViewRenderSpread(_bookViewCurrentSpread);
     }
     setStatus(`Bookmark added at ${formatTime(t)}.`);
+    _dlog("bookmark", "add OK", {
+      id: _newBookmarkId,
+      timeSec: t,
+      totalBookmarks: clip.bookmarks.length,
+    });
+    return _newBookmarkId;
   } catch (e) {
     console.warn("bookmark add failed:", e);
     setStatus(`Bookmark failed: ${e.message}`, true);
+    _dlog("bookmark", "add FAILED", { error: String(e) });
+    return null;
   }
 }
+
+// v225.tn64 (#546): centered floating bookmark editor — single edit
+// surface for both new and existing bookmarks. Replaces the inline
+// <input> in the pull-up drawer which hit a Chromium Android bug
+// where the keyboard closed immediately on focus (position:fixed
+// drawer didn't resize for the keyboard). The centered modal stays
+// in the visible viewport when the keyboard opens because its
+// translate(-50%,-50%) recenters within whatever viewport is left.
+let _bookmarkEditorBound = false;
+let _bookmarkEditorCurrentId = null;
+
+function _initBookmarkEditor() {
+  if (_bookmarkEditorBound) return;
+  const el = document.getElementById("bookmark-editor");
+  if (!el) return;
+  _bookmarkEditorBound = true;
+  const close = (save) => _closeBookmarkEditor(save);
+  el.querySelector(".bookmark-editor-close").addEventListener("click", () =>
+    close(false),
+  );
+  el.querySelector(".bookmark-editor-cancel").addEventListener("click", () =>
+    close(false),
+  );
+  el.querySelector(".bookmark-editor-save").addEventListener("click", () =>
+    close(true),
+  );
+  // Tap the backdrop (outside the card) to dismiss without saving.
+  el.addEventListener("click", (e) => {
+    if (e.target === el) close(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (el.hidden) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close(false);
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      // Cmd/Ctrl + Enter saves — for desktop power users. Plain
+      // Enter inside the textarea inserts a newline (standard).
+      e.preventDefault();
+      close(true);
+    }
+  });
+}
+
+async function _openBookmarkEditor(bookmarkId) {
+  _initBookmarkEditor();
+  const el = document.getElementById("bookmark-editor");
+  if (!el || !_currentClipId) return;
+  try {
+    const clip = await getClip(_currentClipId);
+    if (!clip || !Array.isArray(clip.bookmarks)) return;
+    const bm = clip.bookmarks.find((b) => b.id === bookmarkId);
+    if (!bm) return;
+    _bookmarkEditorCurrentId = bookmarkId;
+    const timeEl = document.getElementById("bookmark-editor-time-val");
+    const noteEl = document.getElementById("bookmark-editor-note");
+    if (timeEl) timeEl.textContent = formatTime(bm.timeSec);
+    if (noteEl) noteEl.value = bm.note || "";
+    el.hidden = false;
+    // Focus + cursor-to-end after a frame so the modal is in the
+    // render tree before we request keyboard focus. rAF gives the
+    // browser time to paint the centered modal so the auto-scroll
+    // for keyboard appearance has a settled position to scroll to.
+    requestAnimationFrame(() => {
+      if (noteEl) {
+        noteEl.focus();
+        try {
+          const len = noteEl.value.length;
+          noteEl.setSelectionRange(len, len);
+        } catch {}
+      }
+    });
+  } catch (e) {
+    console.warn("[bookmark-editor] open failed:", e);
+  }
+}
+
+async function _closeBookmarkEditor(save) {
+  const el = document.getElementById("bookmark-editor");
+  if (!el || el.hidden) return;
+  const noteEl = document.getElementById("bookmark-editor-note");
+  if (save && _bookmarkEditorCurrentId != null && noteEl) {
+    const newNote = noteEl.value.trim();
+    try {
+      await updateBookmarkNote(_bookmarkEditorCurrentId, newNote);
+      await renderBookmarks();
+    } catch (e) {
+      console.warn("[bookmark-editor] save failed:", e);
+    }
+  }
+  el.hidden = true;
+  _bookmarkEditorCurrentId = null;
+}
+
+// Initialize the editor wiring on first script load so any caller
+// (including the phone 🔖 button) can use it without preflight.
+_initBookmarkEditor();
 
 async function updateBookmarkNote(bookmarkId, newNote) {
   if (!_currentClipId) return;
@@ -3555,7 +4022,17 @@ function seekToTime(t) {
 }
 
 async function renderBookmarks() {
-  bookmarksList.innerHTML = "";
+  // v225.tn67 (#549): fix duplicate-rows race. The clear used to
+  // run BEFORE the await — meaning two concurrent renderBookmarks
+  // calls (e.g. one from addBookmarkAtCurrentTime + one from a sync
+  // absorb echo) would both clear an already-empty list, both await
+  // getClip, then both append rows after their awaits resolved. Net
+  // effect: 1 bookmark in data → 2 rows in DOM. Moving the clear to
+  // AFTER the await makes "last write wins" — each call clears just
+  // before its own append, so the final DOM matches the most recent
+  // call's data. Confirmed via debug log (#548): user's single tap
+  // produced 4 renderBookmarks calls, all observing count:1, but
+  // the DOM ended up with 2 rows due to the interleaving.
   let bookmarks = [];
   if (_currentClipId) {
     try {
@@ -3563,6 +4040,12 @@ async function renderBookmarks() {
       if (clip && Array.isArray(clip.bookmarks)) bookmarks = clip.bookmarks;
     } catch {}
   }
+  bookmarksList.innerHTML = "";
+  _dlog("bookmark", "renderBookmarks", {
+    count: bookmarks.length,
+    ids: bookmarks.map((b) => b.id),
+    times: bookmarks.map((b) => b.timeSec),
+  });
 
   // Update the chip label so the bookmark count is visible even when the
   // list is scrolled out of view.
@@ -3578,6 +4061,9 @@ async function renderBookmarks() {
   for (const bm of bookmarks) {
     const row = document.createElement("div");
     row.className = "bookmark-row";
+    // v225.tn61 (#534): id-tagged so the phone 🔖 button can find
+    // the just-added row after re-render and scroll/flash it.
+    row.dataset.bookmarkId = String(bm.id);
 
     const timeBtn = document.createElement("button");
     timeBtn.type = "button";
@@ -3589,25 +4075,25 @@ async function renderBookmarks() {
       playerEl.play().catch(() => {});
     });
 
-    const noteInput = document.createElement("input");
-    noteInput.type = "text";
-    noteInput.className = "bookmark-note";
-    noteInput.value = bm.note || "";
-    noteInput.maxLength = 200;
-    noteInput.placeholder = "Add a note…";
-    noteInput.addEventListener("change", () => {
-      updateBookmarkNote(bm.id, noteInput.value.trim());
-    });
-    noteInput.addEventListener("keydown", (e) => {
-      // Enter saves + blurs (which triggers the change handler above).
-      // Escape reverts to the saved value and blurs.
-      if (e.key === "Enter") {
-        e.preventDefault();
-        noteInput.blur();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        noteInput.value = bm.note || "";
-        noteInput.blur();
+    // v225.tn64 (#546): tap-to-edit note display. The previous inline
+    // <input> caused the Android keyboard to close on focus because
+    // the row is inside a position:fixed pull-up drawer that didn't
+    // resize for the keyboard. Replaced with a button that opens the
+    // centered floating editor — same edit path for new bookmarks
+    // (via 🔖 button) and existing ones (via this tap).
+    const noteInput = document.createElement("button");
+    noteInput.type = "button";
+    noteInput.className = "bookmark-note-display";
+    if (bm.note && bm.note.length > 0) {
+      noteInput.textContent = bm.note;
+    } else {
+      noteInput.textContent = "Add a note…";
+      noteInput.classList.add("empty");
+    }
+    noteInput.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (typeof _openBookmarkEditor === "function") {
+        _openBookmarkEditor(bm.id);
       }
     });
 
@@ -4653,6 +5139,22 @@ if (_speakerAuditionTipDismissBtn) {
 
 voiceEl.addEventListener("change", onVoiceChange);
 voiceEl.addEventListener("change", _updateRenarrateBanner);
+// v225.tn85 (#567): any voice-card setting that's baked into audio at
+// synth time should also trip the re-narrate banner when it drifts
+// from the loaded clip's recorded settings. Plus update the preview
+// button's hint so the user sees current speed/volume reflected.
+rateEl.addEventListener("input", () => {
+  _updateVoicePreviewNowHint();
+  _updateRenarrateBanner();
+});
+volumeEl.addEventListener("input", () => {
+  _updateVoicePreviewNowHint();
+  _updateRenarrateBanner();
+});
+speakerEl.addEventListener("change", () => {
+  _updateVoicePreviewNowHint();
+  _updateRenarrateBanner();
+});
 speakerEl.addEventListener("change", () => {
   stopSpeakerPreview();
   rememberSpeaker(voiceEl.value, Number(speakerEl.value));
@@ -4690,7 +5192,24 @@ async function _updateRenarrateBanner() {
     return;
   }
   const pickerVoice = voiceEl.value;
-  if (!pickerVoice || pickerVoice === _currentPlayingVoiceId) {
+  // v225.tn85 (#567): banner now fires on ANY voice-card setting
+  // drift, not just voice. Compares voice / speaker / rate / volume
+  // against the snapshot taken at loadClip. If the loaded clip has
+  // no baked-in rate/volume (legacy / never set), treat it as
+  // matching the picker so we don't spam first-time loaders.
+  const pickerSpeaker = Number(speakerEl.value || 0);
+  const pickerRate = Number(rateEl.value);
+  const pickerVolume = Number(volumeEl.value) / 100;
+  const voiceDiffers = pickerVoice && pickerVoice !== _currentPlayingVoiceId;
+  const speakerDiffers =
+    _currentPlayingSpeakerId != null &&
+    pickerSpeaker !== _currentPlayingSpeakerId;
+  const rateDiffers =
+    _currentPlayingRate != null && pickerRate !== _currentPlayingRate;
+  const volumeDiffers =
+    _currentPlayingVolume != null &&
+    Math.abs(pickerVolume - _currentPlayingVolume) > 0.005;
+  if (!voiceDiffers && !speakerDiffers && !rateDiffers && !volumeDiffers) {
     renarrateBanner.hidden = true;
     return;
   }
@@ -4702,9 +5221,19 @@ async function _updateRenarrateBanner() {
   } catch {
     renarrateClipTitle.textContent = "this clip";
   }
-  const voiceName =
-    voiceEl.selectedOptions[0]?.textContent || pickerVoice;
-  renarrateVoiceName.textContent = _displayVoiceName(voiceName) || voiceName;
+  // Compose what changed into the voice-name slot. Voice change reads
+  // as the voice name; pure setting changes read as "new speed /
+  // volume / speaker." Multiple changes get combined.
+  const parts = [];
+  if (voiceDiffers) {
+    const voiceName =
+      voiceEl.selectedOptions[0]?.textContent || pickerVoice;
+    parts.push(_displayVoiceName(voiceName) || voiceName);
+  }
+  if (speakerDiffers) parts.push(`Speaker ${pickerSpeaker}`);
+  if (rateDiffers) parts.push(`Speed ${pickerRate}`);
+  if (volumeDiffers) parts.push(`Volume ${Math.round(pickerVolume * 100)}%`);
+  renarrateVoiceName.textContent = parts.join(" · ");
   renarrateBanner.hidden = false;
 }
 
@@ -4733,6 +5262,365 @@ renarrateConfirm.addEventListener("click", () => {
   _renarrateDismissedClipId = null;
   generate();
 });
+
+// v225.tn85 (#567): Voice card "Preview voice + settings" button.
+// Unlike speakerPreviewBtn (which uses a canned WAV via
+// /api/voices/sample), this button routes through /api/synthesize
+// so it honors the live rate + volume sliders. Optional custom
+// text via the voice-preview-now-text input.
+const voicePreviewNowBtn = $("voice-preview-now");
+const voicePreviewNowRate = $("voice-preview-now-rate");
+const voicePreviewNowVol = $("voice-preview-now-vol");
+const voicePreviewNowText = $("voice-preview-now-text");
+const voicePreviewNowTextToggle = $("voice-preview-now-text-toggle");
+let _voicePreviewNowActive = false;
+let _voicePreviewNowBlobUrl = null;
+const VOICE_PREVIEW_NOW_CANNED =
+  "The quick brown fox jumps over the lazy dog, then turns to listen to its own voice.";
+
+function _updateVoicePreviewNowHint() {
+  if (voicePreviewNowRate) voicePreviewNowRate.textContent = String(rateEl.value);
+  if (voicePreviewNowVol) voicePreviewNowVol.textContent = `${volumeEl.value}%`;
+  // Pulse the button when settings change mid-play so it reads as
+  // "stale — tap to re-play with new settings."
+  if (_voicePreviewNowActive && voicePreviewNowBtn) {
+    voicePreviewNowBtn.classList.add("stale");
+  }
+}
+
+function _stopVoicePreviewNow() {
+  if (!_voicePreviewNowActive) return;
+  const audio = _ensurePreviewAudio && _ensurePreviewAudio();
+  if (audio) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }
+  if (_voicePreviewNowBlobUrl) {
+    URL.revokeObjectURL(_voicePreviewNowBlobUrl);
+    _voicePreviewNowBlobUrl = null;
+  }
+  voicePreviewNowBtn.classList.remove("playing", "loading", "stale");
+  voicePreviewNowBtn.textContent = "▶ Preview voice + settings";
+  voicePreviewNowBtn.disabled = false;
+  _voicePreviewNowActive = false;
+}
+
+if (voicePreviewNowBtn) {
+  voicePreviewNowBtn.addEventListener("click", async () => {
+    if (_voicePreviewNowActive) {
+      _stopVoicePreviewNow();
+      return;
+    }
+    // Stop any other preview in flight.
+    if (typeof stopSpeakerPreview === "function") stopSpeakerPreview();
+    if (typeof stopPreview === "function") stopPreview();
+    const rawVoice = voiceEl.value || "";
+    if (!rawVoice) {
+      setStatus("Pick a voice first.", true);
+      return;
+    }
+    const voiceIdForSynth = rawVoice.startsWith("piper:")
+      ? rawVoice
+      : `piper:${rawVoice}`;
+    const speakerNum = Number(speakerEl.value || 0);
+    const rate = Number(rateEl.value);
+    const volume = Number(volumeEl.value) / 100;
+    const userText = (voicePreviewNowText.value || "").trim();
+    const sampleText = userText || VOICE_PREVIEW_NOW_CANNED;
+    voicePreviewNowBtn.classList.add("loading");
+    voicePreviewNowBtn.classList.remove("stale");
+    voicePreviewNowBtn.textContent = "Synthesizing…";
+    voicePreviewNowBtn.disabled = true;
+    _voicePreviewNowActive = true;
+    try {
+      const res = await fetch("/api/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: sampleText.slice(0, 300),
+          voice_id: voiceIdForSynth,
+          rate,
+          volume,
+          speaker_id: Number.isFinite(speakerNum) ? speakerNum : null,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (_voicePreviewNowBlobUrl) URL.revokeObjectURL(_voicePreviewNowBlobUrl);
+      _voicePreviewNowBlobUrl = URL.createObjectURL(blob);
+      const audio = _ensurePreviewAudio();
+      audio.src = _voicePreviewNowBlobUrl;
+      const onEnded = () => {
+        audio.removeEventListener("ended", onEnded);
+        _stopVoicePreviewNow();
+      };
+      audio.addEventListener("ended", onEnded);
+      await audio.play();
+      voicePreviewNowBtn.classList.remove("loading");
+      voicePreviewNowBtn.classList.add("playing");
+      voicePreviewNowBtn.textContent = "■ Stop preview";
+      voicePreviewNowBtn.disabled = false;
+    } catch (err) {
+      console.warn("voice preview now failed:", err);
+      _stopVoicePreviewNow();
+      setStatus(
+        "Preview failed — voice may not be installed yet.",
+        true,
+      );
+    }
+  });
+}
+
+if (voicePreviewNowTextToggle) {
+  voicePreviewNowTextToggle.addEventListener("click", () => {
+    if (voicePreviewNowText.hidden) {
+      voicePreviewNowText.hidden = false;
+      voicePreviewNowTextToggle.textContent = "Use canned sample";
+      voicePreviewNowText.focus();
+    } else {
+      voicePreviewNowText.hidden = true;
+      voicePreviewNowTextToggle.textContent = "Use your own text";
+    }
+  });
+}
+
+// v225.tn85 (#567): Apply-to-library picker. Three CTAs at the top
+// (just current clip / all using this voice / pick clips...) plus a
+// multi-select drawer. Routes through the existing silent bg-queue
+// path (_libraryRenarrate) so cards visibly pulse 🔄 while
+// re-narrating without auto-playing.
+const voiceApplySection = $("voice-apply-section");
+const voiceApplyBtn = $("voice-apply-btn");
+const voiceApplySummary = $("voice-apply-summary");
+const voiceApplyPicker = $("voice-apply-picker");
+const voiceApplyPickerClose = $("voice-apply-picker-close");
+const voiceApplyJustCurrent = $("voice-apply-just-current");
+const voiceApplyAllVoice = $("voice-apply-all-voice");
+const voiceApplyPick = $("voice-apply-pick");
+const voiceApplyMultipick = $("voice-apply-multipick");
+const voiceApplyMultipickList = $("voice-apply-multipick-list");
+const voiceApplyMultipickCount = $("voice-apply-multipick-count");
+const voiceApplyMultipickBack = $("voice-apply-multipick-back");
+const voiceApplyMultipickAll = $("voice-apply-multipick-all");
+const voiceApplyMultipickConfirm = $("voice-apply-multipick-confirm");
+const _voiceApplySelectedIds = new Set();
+
+async function _updateVoiceApplySummary() {
+  if (!voiceApplySection || !voiceApplySummary) return;
+  try {
+    const clips = await listClips();
+    if (!clips || !clips.length) {
+      voiceApplySection.hidden = true;
+      return;
+    }
+    voiceApplySection.hidden = false;
+    const pickerVoice = voiceEl.value || "";
+    const matching = clips.filter((c) => c.voiceId === pickerVoice).length;
+    if (matching > 0) {
+      voiceApplySummary.textContent = `${matching} clip${
+        matching === 1 ? "" : "s"
+      } currently use this voice.`;
+    } else {
+      voiceApplySummary.textContent = `${clips.length} clip${
+        clips.length === 1 ? "" : "s"
+      } in library.`;
+    }
+  } catch {
+    voiceApplySection.hidden = true;
+  }
+}
+
+voiceEl.addEventListener("change", _updateVoiceApplySummary);
+
+async function _openVoiceApplyPicker() {
+  if (!voiceApplyPicker) return;
+  const pickerVoice = voiceEl.value || "";
+  let clips = [];
+  try {
+    clips = await listClips();
+  } catch {
+    clips = [];
+  }
+  const matching = clips.filter((c) => c.voiceId === pickerVoice);
+  // CTA 1: just current
+  if (_currentClipId) {
+    voiceApplyJustCurrent.hidden = false;
+    const cur = clips.find((c) => c.id === _currentClipId);
+    $("voice-apply-just-current-meta").textContent = cur?.title || "—";
+  } else {
+    voiceApplyJustCurrent.hidden = true;
+  }
+  // CTA 2: all using this voice
+  if (matching.length > 0) {
+    voiceApplyAllVoice.hidden = false;
+    $("voice-apply-all-voice-meta").textContent = `${matching.length} clip${
+      matching.length === 1 ? "" : "s"
+    }`;
+  } else {
+    voiceApplyAllVoice.hidden = true;
+  }
+  // Reset multipick
+  voiceApplyMultipick.hidden = true;
+  $("voice-apply-options").hidden = false;
+  _voiceApplySelectedIds.clear();
+  _renderVoiceApplyMultipickList(clips, pickerVoice);
+  _updateVoiceApplyMultipickFoot();
+  try {
+    voiceApplyPicker.showModal();
+  } catch {
+    voiceApplyPicker.show();
+  }
+}
+
+function _renderVoiceApplyMultipickList(clips, pickerVoice) {
+  if (!voiceApplyMultipickList) return;
+  // Sort: clips using the current voice first (most-likely targets),
+  // then everything else, both sub-sorted by recency.
+  const sorted = [...clips].sort((a, b) => {
+    const aMatch = a.voiceId === pickerVoice ? 0 : 1;
+    const bMatch = b.voiceId === pickerVoice ? 0 : 1;
+    if (aMatch !== bMatch) return aMatch - bMatch;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+  voiceApplyMultipickList.innerHTML = "";
+  for (const clip of sorted) {
+    const row = document.createElement("label");
+    row.className = "voice-apply-multipick-row";
+    row.dataset.clipId = clip.id;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = clip.id;
+    cb.addEventListener("change", () => {
+      if (cb.checked) _voiceApplySelectedIds.add(clip.id);
+      else _voiceApplySelectedIds.delete(clip.id);
+      _updateVoiceApplyMultipickFoot();
+    });
+    const meta = document.createElement("span");
+    meta.className = "voice-apply-multipick-meta";
+    const matchTag = clip.voiceId === pickerVoice ? " · same voice" : "";
+    const strong = document.createElement("strong");
+    strong.textContent = clip.title || "Untitled";
+    const tag = document.createElement("span");
+    tag.className = "muted";
+    tag.textContent = matchTag;
+    meta.appendChild(strong);
+    meta.appendChild(tag);
+    row.appendChild(cb);
+    row.appendChild(meta);
+    voiceApplyMultipickList.appendChild(row);
+  }
+}
+
+function _updateVoiceApplyMultipickFoot() {
+  const n = _voiceApplySelectedIds.size;
+  if (voiceApplyMultipickCount) {
+    voiceApplyMultipickCount.textContent = `${n} selected`;
+  }
+  if (voiceApplyMultipickConfirm) {
+    voiceApplyMultipickConfirm.disabled = n === 0;
+    voiceApplyMultipickConfirm.textContent =
+      n === 0
+        ? "Re-narrate selected"
+        : `Re-narrate ${n} clip${n === 1 ? "" : "s"}`;
+  }
+}
+
+function _closeVoiceApplyPicker() {
+  if (!voiceApplyPicker) return;
+  try {
+    voiceApplyPicker.close();
+  } catch {
+    voiceApplyPicker.hidden = true;
+  }
+}
+
+async function _queueClipsForRenarrate(clipIds, label) {
+  let queued = 0;
+  for (const id of clipIds) {
+    try {
+      // _libraryRenarrate runs through the silent bg-queue (v220az).
+      // We await sequentially so the queue isn't flooded, but the
+      // function itself returns quickly — the synth happens in BG.
+      await _libraryRenarrate(id);
+      queued++;
+    } catch (err) {
+      console.warn("voice-apply: queue failed for", id, err);
+    }
+  }
+  if (queued > 0) {
+    setStatus(
+      `Queued ${queued} clip${queued === 1 ? "" : "s"} for re-narrate (${label}).`,
+    );
+  } else {
+    setStatus("Couldn't queue any clips — check console.", true);
+  }
+  _closeVoiceApplyPicker();
+}
+
+if (voiceApplyBtn) {
+  voiceApplyBtn.addEventListener("click", _openVoiceApplyPicker);
+}
+if (voiceApplyPickerClose) {
+  voiceApplyPickerClose.addEventListener("click", _closeVoiceApplyPicker);
+}
+if (voiceApplyJustCurrent) {
+  voiceApplyJustCurrent.addEventListener("click", () => {
+    if (!_currentClipId) return;
+    _queueClipsForRenarrate([_currentClipId], "current clip");
+  });
+}
+if (voiceApplyAllVoice) {
+  voiceApplyAllVoice.addEventListener("click", async () => {
+    const pickerVoice = voiceEl.value || "";
+    try {
+      const clips = await listClips();
+      const ids = clips
+        .filter((c) => c.voiceId === pickerVoice)
+        .map((c) => c.id);
+      _queueClipsForRenarrate(ids, "same voice");
+    } catch (err) {
+      console.warn("voice-apply all-voice failed:", err);
+    }
+  });
+}
+if (voiceApplyPick) {
+  voiceApplyPick.addEventListener("click", () => {
+    $("voice-apply-options").hidden = true;
+    voiceApplyMultipick.hidden = false;
+  });
+}
+if (voiceApplyMultipickBack) {
+  voiceApplyMultipickBack.addEventListener("click", () => {
+    voiceApplyMultipick.hidden = true;
+    $("voice-apply-options").hidden = false;
+  });
+}
+if (voiceApplyMultipickAll) {
+  voiceApplyMultipickAll.addEventListener("click", () => {
+    const rows = voiceApplyMultipickList.querySelectorAll(
+      "input[type='checkbox']",
+    );
+    const anyUnchecked = Array.from(rows).some((cb) => !cb.checked);
+    for (const cb of rows) {
+      cb.checked = anyUnchecked;
+      if (anyUnchecked) _voiceApplySelectedIds.add(cb.value);
+      else _voiceApplySelectedIds.delete(cb.value);
+    }
+    _updateVoiceApplyMultipickFoot();
+  });
+}
+if (voiceApplyMultipickConfirm) {
+  voiceApplyMultipickConfirm.addEventListener("click", () => {
+    const ids = Array.from(_voiceApplySelectedIds);
+    if (!ids.length) return;
+    _queueClipsForRenarrate(ids, `${ids.length} selected`);
+  });
+}
+// Refresh the summary line whenever the voice picker re-renders or
+// the library changes substantially. Cheap call, but throttle via the
+// existing voiceEl change handler — already attached above.
+_updateVoiceApplySummary();
 
 // Reuse the voice-browser preview's shared Audio element for the inline
 // speaker preview. State machine mirrors togglePreview() in the catalog.
@@ -5654,6 +6542,22 @@ let _suppressNextSentenceClick = false;
 // up the pointerdown that seeds the drag state.
 function _attachSentenceAssignHandlers(span, idx) {
   span.addEventListener("pointerdown", (e) => {
+    // v225.tn76 (#558): character voice assignment is an Author-tier
+    // writing-craft tool — it should not arm in Simple or Standard
+    // mode. Gate the drag handler at the entry. Tap-to-seek still
+    // works in every mode because the seek handler lives on the
+    // reading-view click event, not here. (The Characters dialog
+    // entry button is already .author-only via CSS, and the
+    // colored character rendering is gated by
+    // body[data-ui-mode="author"] selectors — this closes the
+    // last unhandled path into the voice-assign flow.)
+    if (!isAuthorMode()) {
+      _dlog("char-voice", "drag pointerdown — gated (not Author mode)", {
+        idx,
+      });
+      return;
+    }
+    _dlog("char-voice", "drag pointerdown — armed", { idx });
     if (e.pointerType === "mouse" && e.button !== 0) return;
     _dragState = {
       initialIdx: idx,
@@ -5698,8 +6602,22 @@ function _attachSentenceAssignHandlers(span, idx) {
   }, true);
   // Right-click (desktop) → start a one-sentence selection. Useful for
   // grabbing single isolated sentences without dragging.
+  //
+  // v225.tn79 (#561): Android fires `contextmenu` on long-press, so
+  // this handler was the *actual* path the user's long-press hit in
+  // Standard mode — not the pointerdown drag handler we'd already
+  // gated in #558. Without the same isAuthorMode() gate here, the
+  // long-press kept adding sentences to _assignSelectedIndices, the
+  // .sentence-select-pending class got stamped on the sentence, and
+  // the previous (buggy) CSS rule then display:none'd the sentence
+  // entirely — what the user reported as "long press is deleting
+  // sentences." Gating here AND fixing the CSS rule together.
   span.addEventListener("contextmenu", (e) => {
     e.preventDefault();
+    if (typeof isAuthorMode === "function" && !isAuthorMode()) {
+      _dlog("char-voice", "contextmenu — gated (not Author mode)", { idx });
+      return;
+    }
     _addToDragSelection(idx);
   });
 }
@@ -6518,6 +7436,32 @@ async function generate() {
   // tester reaching for reload.
   if (_silentChapterQueue) {
     setStatus("Background queue is running — cancel it to generate manually.", true);
+    return;
+  }
+  // v225.tn87 (#569): offline guard. Synth requires the server. If
+  // we're offline, save the draft to localStorage so we can replay
+  // it once the connection comes back. The user gets immediate
+  // confirmation that nothing was lost.
+  if (_isOffline()) {
+    const offlineText = textEl.value.trim();
+    if (!offlineText) {
+      setStatus("Type or paste some text first.", true);
+      textEl.focus();
+      return;
+    }
+    const entry = {
+      id: `pending_${Date.now()}_${Math.floor((performance.now() || 0) % 1000)}`,
+      text: offlineText,
+      voiceId: voiceEl.value || null,
+      rate: Number(rateEl.value),
+      volume: Number(volumeEl.value) / 100,
+      speakerId: Number(speakerEl.value || 0),
+      queuedAt: Date.now(),
+    };
+    _addPendingSynth(entry);
+    setStatus(
+      "You're offline — draft queued. It will synthesize automatically when you're back online.",
+    );
     return;
   }
   // Reset chapter-queue advance flags so this chapter starts with a
@@ -8637,6 +9581,172 @@ function _advanceChapterQueue() {
 // stream events into a buffer (no reading-view / player updates) and
 // saves the result to IndexedDB as a regular clip. Sets _preSynthChapter
 // when the result is ready; _advanceChapterQueue picks it up from there.
+// v226 / #512: thin wrapper around the new server-side jobs API
+// (synth_jobs.py). Drop-in replacement for the original
+// fetch("/api/synthesize/stream") call — returns a Response whose
+// body is a ReadableStream that internally pipes bytes from the
+// job's SSE stream. On a network error or premature stream-end
+// while the job is still running, the wrapper transparently
+// reopens the stream with `?from=N` (using _bgSynthSentence as the
+// cursor — the downstream reader keeps it up to date). The caller
+// sees one uninterrupted stream of SSE events.
+//
+// Why this exists: a 28-minute synth that died at 177/198 sentences
+// because Fly's load balancer dropped the SSE. The old endpoint ran
+// synth IN the request handler, so a dropped connection killed the
+// synth. The new endpoint detaches the synth into a background
+// asyncio task — a dropped client just means the next reconnect
+// replays whatever's buffered + live-streams the rest.
+async function _openSynthJobStream(payload, externalController) {
+  const createRes = await fetch("/api/synth/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: externalController.signal,
+  });
+  if (!createRes.ok) {
+    // Mimic the original fetch behavior — return the failed
+    // response so the caller's `if (!res.ok)` branch handles it.
+    return createRes;
+  }
+  let jobId = null;
+  try {
+    const cbody = await createRes.json();
+    jobId = cbody.job_id;
+  } catch {}
+  if (!jobId) {
+    return new Response(
+      JSON.stringify({ error: "no job_id from server" }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  _dlog("synth", "resumable job created", { jobId });
+
+  // Resumable byte stream. The downstream code processes SSE events
+  // out of this stream as if it were a single connection. The
+  // controller pushes bytes from one inner fetch at a time; when an
+  // inner fetch ends or errors, we check the job's status, and
+  // either close (terminal) or reopen with from=_bgSynthSentence.
+  let reconnects = 0;
+  const MAX_RECONNECTS = 8;
+  const stream = new ReadableStream({
+    async start(controller) {
+      while (true) {
+        if (externalController.signal.aborted) {
+          controller.close();
+          return;
+        }
+        const fromIdx = typeof _bgSynthSentence === "number" ? _bgSynthSentence : 0;
+        let innerOk = false;
+        try {
+          const res = await fetch(
+            `/api/synth/jobs/${jobId}/stream?from=${fromIdx}`,
+            { signal: externalController.signal },
+          );
+          if (!res.ok) {
+            controller.error(new Error(`HTTP ${res.status}`));
+            return;
+          }
+          const reader = res.body.getReader();
+          innerOk = true;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            controller.enqueue(value);
+          }
+        } catch (err) {
+          if (externalController.signal.aborted) {
+            controller.close();
+            return;
+          }
+          reconnects++;
+          _dlog("synth", "resumable: inner stream error, will check status", {
+            jobId,
+            fromIdx,
+            reconnects,
+            errName: err && err.name,
+            errMsg: err && err.message,
+          });
+          if (reconnects > MAX_RECONNECTS) {
+            controller.error(err);
+            return;
+          }
+          // brief pause before status check + reopen
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+        // Either the inner stream ended cleanly (done=true) or we
+        // hit a network error and are about to retry. Check job
+        // status to decide: terminal → close, running → reopen.
+        try {
+          const statusRes = await fetch(`/api/synth/jobs/${jobId}`, {
+            signal: externalController.signal,
+          });
+          if (statusRes.ok) {
+            const status = await statusRes.json();
+            if (
+              status.status === "done"
+              || status.status === "failed"
+              || status.status === "cancelled"
+            ) {
+              // Terminal. If clean-done the result event already
+              // came through; controller can close.
+              _dlog("synth", "resumable: job terminal, closing stream", {
+                jobId,
+                jobStatus: status.status,
+                sentencesDone: status.sentences_done,
+              });
+              controller.close();
+              return;
+            }
+            // Still running — reopen on next loop iteration.
+            if (innerOk) {
+              _dlog("synth", "resumable: stream ended but job running, reconnecting", {
+                jobId,
+                fromIdx,
+                sentencesDone: status.sentences_done,
+              });
+              reconnects++;
+              if (reconnects > MAX_RECONNECTS) {
+                controller.error(new Error("reconnect budget exhausted"));
+                return;
+              }
+            }
+          } else {
+            // Status check failed but we're not aborting — try to
+            // reopen the stream anyway.
+            _dlog("synth", "resumable: status check failed, retrying", {
+              jobId,
+              statusCode: statusRes.status,
+            });
+          }
+        } catch (err) {
+          if (externalController.signal.aborted) {
+            controller.close();
+            return;
+          }
+          // Status check itself errored. Treat as a normal retry.
+          _dlog("synth", "resumable: status check threw, retrying", {
+            jobId,
+            errMsg: err && err.message,
+          });
+        }
+      }
+    },
+    cancel() {
+      // Caller aborted the response. Tell the server to cancel the
+      // job since we no longer care about its output. Best-effort.
+      try {
+        fetch(`/api/synth/jobs/${jobId}`, { method: "DELETE" }).catch(() => {});
+      } catch {}
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
 async function _preSynthesizeChapter(chapter, opts) {
   // v220t: bg-queue (silent batch import) shares this function with the
   // foreground lookahead caller. The end-of-chapter sleep check was a
@@ -8674,19 +9784,25 @@ async function _preSynthesizeChapter(chapter, opts) {
   const volume = Number(volumeEl.value) / 100;
   const speakerId = speakerRow.hidden ? null : Number(speakerEl.value || 0);
   const voiceName = voiceEl.selectedOptions[0]?.textContent || voiceEl.value || "";
+
   try {
-    const res = await fetch("/api/synthesize/stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    // v226 / #512: route through the new resumable-jobs wrapper
+    // instead of /api/synthesize/stream directly. The wrapper
+    // creates a server-side job (synth runs in a detached asyncio
+    // task), then opens an SSE stream that transparently reconnects
+    // on network drop using _bgSynthSentence as the resume cursor.
+    // Caller code below is unchanged — it just gets a Response
+    // whose body never quits mid-synth.
+    const res = await _openSynthJobStream(
+      {
         text: chapter.text,
         voice_id: voiceId,
         rate,
         volume,
         speaker_id: speakerId,
-      }),
-      signal: myController.signal,
-    });
+      },
+      myController,
+    );
     if (!res.ok) {
       // v177: capture the response body — synthesis errors often
       // include the actual reason (voice not found, OOM, etc.) in
@@ -8724,7 +9840,20 @@ async function _preSynthesizeChapter(chapter, opts) {
     // shows the "needs a retry" banner.
     let _watchdogFired = false;
     let _watchdogTimer = null;
-    const SSE_WATCHDOG_MS = 30000;
+    // v225.tn86 (#568): split into first-byte and steady-state
+    // budgets. Cold-start synth on a large chapter (e.g. 14k chars,
+    // 200 sentences) can take 45-90s to deliver the first byte —
+    // Piper has to warm up the voice model and produce the first
+    // sentence WAV before any data leaves the server. The previous
+    // flat 30s budget tripped on exactly that case. Subsequent
+    // bytes can stay tighter (server emits a keepalive every 15s,
+    // so 30s steady is 2x slack). The watchdog now uses
+    // FIRST_BYTE_MS until any bytes arrive, then drops to
+    // STEADY_MS.
+    const SSE_WATCHDOG_FIRST_BYTE_MS = 90000;
+    const SSE_WATCHDOG_STEADY_MS = 30000;
+    let _watchdogGotFirstByte = false;
+    const SSE_WATCHDOG_MS = SSE_WATCHDOG_FIRST_BYTE_MS;
     // v216: pause the watchdog while the tab is hidden. Mobile
     // browsers throttle background tabs — JS execution slows or
     // halts, so incoming SSE bytes don't get processed, the
@@ -8744,10 +9873,13 @@ async function _preSynthesizeChapter(chapter, opts) {
     const _resetWatchdog = () => {
       if (_watchdogTimer) clearTimeout(_watchdogTimer);
       if (!_isVisible()) return;  // suspend
+      const ms = _watchdogGotFirstByte
+        ? SSE_WATCHDOG_STEADY_MS
+        : SSE_WATCHDOG_FIRST_BYTE_MS;
       _watchdogTimer = setTimeout(() => {
         _watchdogFired = true;
         try { myController.abort(); } catch {}
-      }, SSE_WATCHDOG_MS);
+      }, ms);
     };
     const _onVisibility = () => {
       if (!_isVisible()) {
@@ -8778,10 +9910,14 @@ async function _preSynthesizeChapter(chapter, opts) {
         // queue run leaks a listener.
         document.removeEventListener("visibilitychange", _onVisibility);
         if (_watchdogFired) {
-          _dlog("synth", "SSE watchdog timeout — no bytes for 30s", {
+          const budgetMs = _watchdogGotFirstByte
+            ? SSE_WATCHDOG_STEADY_MS
+            : SSE_WATCHDOG_FIRST_BYTE_MS;
+          _dlog("synth", `SSE watchdog timeout — no bytes for ${budgetMs / 1000}s`, {
             title: chapter.title,
             atSentence: _bgSynthSentence,
             ofTotal: _bgSynthTotal,
+            phase: _watchdogGotFirstByte ? "steady" : "first-byte",
           });
           throw new Error(
             "connection lost — server may be restarting or unreachable"
@@ -8792,6 +9928,10 @@ async function _preSynthesizeChapter(chapter, opts) {
       // Reset on ANY incoming bytes — including the keepalive comment
       // lines, which won't parse as `data:` events but still tick the
       // wire.
+      // v225.tn86 (#568): mark that we've seen at least one byte so
+      // the watchdog drops from the cold-start budget (90s) to the
+      // steady-state budget (30s) for subsequent ticks.
+      if (!_watchdogGotFirstByte) _watchdogGotFirstByte = true;
       _resetWatchdog();
       const { done, value } = readResult;
       if (done) {
@@ -8857,10 +9997,6 @@ async function _preSynthesizeChapter(chapter, opts) {
       }
     }
     if (!combinedMp3) {
-      // v177: the SSE stream ended without a result event. Almost
-      // always means upstream sent only `sentence` events that
-      // produced no audio (all-whitespace text, voice misroute,
-      // server crashed mid-stream). Log everything we know.
       _dlog("synth", "no audio in result", {
         title: chapter.title,
         chars: (chapter.text || "").length,
@@ -10561,6 +11697,67 @@ async function _tombstoneAnnotation(clipId, annoId) {
   }
 }
 
+// v225.tn82 (#564): tap-reveal inline × on a flag chip. The chip
+// itself stays a clean icon. First tap → seek (existing behavior)
+// AND reveal an × badge beside the chip for ~4 seconds. Tap × to
+// remove the annotation. Tap the chip again to reset the timer.
+//
+// Picked over an always-on × (the voice-note pattern) because flag
+// chips can be dense — a chapter with 15 flagged sentences would
+// gain 15 visible × buttons. Tap-reveal keeps the reading view
+// clean while making delete one tap to discover.
+//
+// The long-press → action-sheet path stays as a fallback (bulletproofed
+// in v225.tn80–81). Same `_tombstoneAnnotation` call inside either way.
+let _revealedChipDelete = null;
+let _revealedChipDeleteTimer = null;
+const _CHIP_DELETE_REVEAL_MS = 4000;
+
+function _hideChipDeleteReveal() {
+  if (_revealedChipDeleteTimer) {
+    clearTimeout(_revealedChipDeleteTimer);
+    _revealedChipDeleteTimer = null;
+  }
+  if (_revealedChipDelete) {
+    _revealedChipDelete.remove();
+    _revealedChipDelete = null;
+  }
+}
+
+function _revealChipDelete(chip) {
+  // Only one × at a time across the whole reading view.
+  _hideChipDeleteReveal();
+  if (!chip || !chip.dataset || !chip.dataset.annoId) return;
+  const aid = chip.dataset.annoId;
+  const xBtn = document.createElement("button");
+  xBtn.type = "button";
+  xBtn.className = "annotate-tag-delete";
+  xBtn.textContent = "×";
+  xBtn.title = "Remove flag";
+  xBtn.setAttribute("aria-label", "Remove flag");
+  // Stop pointer events from leaking to the parent sentence (drag-
+  // to-select voice assign) or the chip's own handlers.
+  xBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+  xBtn.addEventListener("pointerup", (e) => e.stopPropagation());
+  xBtn.addEventListener("pointermove", (e) => e.stopPropagation());
+  xBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+  xBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    _dlog("flag-chip", "inline × tapped", { aid });
+    _hideChipDeleteReveal();
+    _tombstoneAnnotation(_currentClipId, aid)
+      .then((ok) => {
+        if (ok) setStatus("Flag removed.");
+      })
+      .catch((err) => console.warn("[annotate] inline-delete failed:", err));
+  });
+  chip.insertAdjacentElement("afterend", xBtn);
+  _revealedChipDelete = xBtn;
+  _revealedChipDeleteTimer = setTimeout(_hideChipDeleteReveal, _CHIP_DELETE_REVEAL_MS);
+  _dlog("flag-chip", "× revealed", { aid });
+}
+
 // Tiny action-sheet popup. Anchored just below the tapped element so
 // it doesn't reflow the reading view. Outside-click dismiss; Esc
 // dismiss. Used by the tag-chip-tap and voice-× paths to confirm
@@ -10595,31 +11792,101 @@ function _showAnnoActionSheet(anchor, label, onConfirm) {
   if (left < window.scrollX + 8) left = window.scrollX + 8;
   sheet.style.top = `${top}px`;
   sheet.style.left = `${left}px`;
+  // v225.tn80 (#562): instrument the action sheet so we can diagnose
+  // "Remove flag takes two taps." Need to see where the sheet
+  // lands, which element each tap hits, and whether the bubble
+  // handler ever fires.
+  _dlog("action-sheet", "opened", {
+    label,
+    anchorRect: { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right },
+    sheetPos: { top, left, w: sheetRect.width, h: sheetRect.height },
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+  });
 
   const cleanup = () => {
     sheet.remove();
     document.removeEventListener("click", dismissOnOutside, true);
     document.removeEventListener("keydown", dismissOnEsc);
   };
+  // v225.tn80 (#562): also treat the anchor (and its descendants) as
+  // "inside." On touch devices, releasing a long-press fires a
+  // synthetic click on the anchor chip *after* this listener is
+  // attached. Without the anchor exemption, that synthetic click
+  // hits the document in capture phase, `sheet.contains(chip)` is
+  // false, and the sheet closes immediately. User then sees no
+  // sheet and has to tap (or long-press) a second time. Reported
+  // as "have to tap Remove flag twice."
   const dismissOnOutside = (e) => {
-    if (!sheet.contains(e.target)) {
-      e.stopPropagation();
-      cleanup();
+    if (sheet.contains(e.target)) return;
+    if (anchor && (anchor === e.target || (anchor.contains && anchor.contains(e.target)))) {
+      _dlog("action-sheet", "ignored click on anchor", {
+        tag: e.target && e.target.tagName,
+      });
+      return;
     }
+    _dlog("action-sheet", "dismissed by outside click", {
+      tag: e.target && e.target.tagName,
+      cls: e.target && e.target.className,
+    });
+    e.stopPropagation();
+    cleanup();
   };
   const dismissOnEsc = (e) => {
     if (e.key === "Escape") { e.stopPropagation(); cleanup(); }
   };
-  removeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
+  // v225.tn83 (#565): switch button activation from `click` to
+  // `pointerup`. The v225bm log confirmed that on Android, the
+  // first tap on Remove fires pointerdown without a paired click
+  // — almost certainly because of the now-removed :hover CSS
+  // triggering the "first tap = hover, second tap = activate"
+  // dance. We keep `click` as a parallel handler for keyboard /
+  // accessibility, and use a `fired` latch so we don't double-
+  // confirm if both fire.
+  let _removeFired = false;
+  let _cancelFired = false;
+  const _runRemove = (via) => {
+    if (_removeFired) return;
+    _removeFired = true;
+    _dlog("action-sheet", `remove via ${via}`, { label });
     cleanup();
     Promise.resolve(onConfirm()).catch((err) =>
       console.warn("[annotate] action-sheet confirm failed:", err),
     );
+  };
+  const _runCancel = (via) => {
+    if (_cancelFired) return;
+    _cancelFired = true;
+    _dlog("action-sheet", `cancel via ${via}`);
+    cleanup();
+  };
+  removeBtn.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    _dlog("action-sheet", "remove pointerdown", { x: e.clientX, y: e.clientY });
+  });
+  cancelBtn.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    _dlog("action-sheet", "cancel pointerdown", { x: e.clientX, y: e.clientY });
+  });
+  // pointerup is the reliable touch-activation path on mobile —
+  // it fires regardless of whether the browser's gesture
+  // recognizer would have suppressed the synthetic click.
+  removeBtn.addEventListener("pointerup", (e) => {
+    e.stopPropagation();
+    _runRemove("pointerup");
+  });
+  cancelBtn.addEventListener("pointerup", (e) => {
+    e.stopPropagation();
+    _runCancel("pointerup");
+  });
+  // Click is the keyboard / a11y fallback. If pointerup already
+  // fired, the latch swallows this safely.
+  removeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    _runRemove("click");
   });
   cancelBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    cleanup();
+    _runCancel("click");
   });
   // Defer the outside-click listener so the click that opened the
   // sheet doesn't immediately close it.
@@ -10635,6 +11902,15 @@ function _showAnnoActionSheet(anchor, label, onConfirm) {
 // the mode survives reload.
 function _setAnnotateMode(on) {
   _annotateMode = !!on;
+  // v225.tn68 (#550): log every flip with a stack snippet so we can
+  // see exactly which caller turned annotate mode on/off and why.
+  // Diagnoses the "tag menu opens on every sentence tap" report:
+  // helps us correlate stuck-mode with the specific user gesture
+  // that left it that way.
+  _dlog("annotate", "_setAnnotateMode", {
+    on: _annotateMode,
+    stack: new Error().stack?.split("\n").slice(1, 5).join(" | "),
+  });
   if (annotateModeBtn) {
     annotateModeBtn.setAttribute("aria-pressed", _annotateMode ? "true" : "false");
   }
@@ -10711,8 +11987,28 @@ function _showAnnotatePalette(sentenceIndex, sentenceText) {
 }
 
 // Restore annotate mode pref on boot.
+//
+// v225.tn69 (#551): skip the restore on phone. Annotate-mode is
+// meaningful only when paired with an in-memory armed tag (the
+// tag-row chip the user selected), and the armed state never
+// survives a reload. So restoring just the flag on phone leaves
+// the user in the stuck state #550 fixed in-session — except the
+// auto-disarm only fires after the first sentence tap, which a
+// passive listener never makes. Clearing the persisted flag here
+// on phone means every reload starts cleanly. Desktop still
+// restores because its annotate-mode toggle is visible and the
+// palette path is intentional UX there.
 try {
-  if (localStorage.getItem("narrative.annotateMode") === "1") {
+  const _annotatePersistedOn =
+    localStorage.getItem("narrative.annotateMode") === "1";
+  const _isPhone = window.matchMedia("(max-width: 767px)").matches;
+  if (_annotatePersistedOn && _isPhone) {
+    // Force OFF on phone boot. Also clear the persisted flag so we
+    // don't keep dlog-ing this every reload.
+    try { localStorage.setItem("narrative.annotateMode", "0"); } catch {}
+    document.body.dataset.annotateMode = "off";
+    _dlog("annotate", "boot: phone — skipping localStorage restore");
+  } else if (_annotatePersistedOn) {
     _setAnnotateMode(true);
   } else {
     document.body.dataset.annotateMode = "off";
@@ -10787,23 +12083,71 @@ document.addEventListener("keydown", (e) => {
 // on-tap handler (which lives in the same reading view container).
 const readingViewEl = document.getElementById("reading-view");
 if (readingViewEl) {
+  // v225.tn71 (#553): coarse-grained pointerdown logger so we can
+  // see WHAT the user is actually tapping when "tap a flag" reports
+  // come in with no flag-chip dlog entries. Logs the target's tag +
+  // class + first few chars of text content. Capture phase so we
+  // catch the event even if downstream handlers stopPropagation.
+  readingViewEl.addEventListener(
+    "pointerdown",
+    (e) => {
+      const t = e.target;
+      if (!t || !t.tagName) return;
+      _dlog("reading-view", "pointerdown target", {
+        tag: t.tagName,
+        cls: t.className && typeof t.className === "string"
+          ? t.className.slice(0, 60)
+          : "",
+        textHead: (t.textContent || "").trim().slice(0, 40),
+        hasAnnoId: !!(t.dataset && t.dataset.annoId),
+      });
+    },
+    true, // capture so we see it first
+  );
   readingViewEl.addEventListener(
     "click",
     (event) => {
       if (!_annotateMode) return;
       const span = event.target.closest(".sentence");
       if (!span) return;
-      event.preventDefault();
-      event.stopPropagation();
       const idx = Number(span.dataset.index);
       if (!isFinite(idx)) return;
+
+      const isPhone = window.matchMedia("(max-width: 767px)").matches;
+      const hasArmedTag =
+        typeof _phoneTagRowArmedTag !== "undefined" && !!_phoneTagRowArmedTag;
+      _dlog("annotate", "reading-view click", {
+        idx,
+        annotateMode: _annotateMode,
+        hasArmedTag,
+        isPhone,
+      });
+
+      // v225.tn68 (#550): on phone with no armed tag, fall through to
+      // seek. The phone has no visible annotate-mode toggle (#520
+      // removed it from the pull-up Author section), so once mode
+      // was stuck "on" — usually because the user tapped a tag chip
+      // and then changed their mind without applying — every
+      // sentence tap opened the palette with no exit. Now: phone +
+      // no armed tag = auto-disarm + let the normal seek handler
+      // fire. Tag-row arm-and-apply is the ONLY annotate path on
+      // phone, which is what the post-v225.tn39 UX intended anyway.
+      if (isPhone && !hasArmedTag) {
+        if (typeof _setAnnotateMode === "function") {
+          _setAnnotateMode(false);
+        }
+        _dlog("annotate", "auto-disarm: phone + no armed tag → seek");
+        return; // no stopPropagation → the seek handler runs
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
       // v225.tn39 (#516): if a tag chip is armed from the bottom
       // tag row, short-circuit the palette and apply directly.
       // This is the "1-tap chip → 1-tap sentence" fast path the
       // double-deck design was built for.
       if (
-        typeof _phoneTagRowArmedTag !== "undefined" &&
-        _phoneTagRowArmedTag &&
+        hasArmedTag &&
         typeof _phoneTagRowApplyArmedToSentence === "function"
       ) {
         if (_phoneTagRowApplyArmedToSentence(idx, span.textContent || "")) {
@@ -11065,20 +12409,98 @@ function _applyAnnotationMarkers(clip) {
       chip.dataset.tag = tagKey;
       chip.dataset.annoId = annoIdForChip;
       chip.textContent = meta.icon;
-      chip.title = `${meta.label} — tap to remove`;
+      chip.title = `${meta.label} — tap to seek; tap × that appears to remove`;
       chip.style.background = meta.color;
-      // v223.tn26 (#498): tap chip → action sheet → tombstone.
-      // stopPropagation so the click doesn't bubble to the sentence
-      // span and trigger tap-to-seek / annotate-mode flag handlers.
+      // v225.tn60 (#543): chip tap was opening the delete action
+      // sheet (v223.tn26 #498), which annoyed users mid-listen who
+      // expected tap-to-seek like the rest of the sentence. New
+      // behavior: tap chip → seek to that sentence; long-press →
+      // delete action sheet. stopPropagation kept so we don't
+      // double-fire seek + annotate-apply via the parent span.
+      let _chipPressTimer = null;
+      let _chipPressFired = false;
+      const HOLD_MS = 500;
+      const _findSentenceIdx = () => {
+        // Walk up to the parent sentence span and read its index.
+        // The reading-view sentence span stores it as data-index
+        // (see the word-wrap path at line ~10242).
+        let n = chip.parentNode;
+        while (n && (!n.dataset || n.dataset.index == null)) {
+          n = n.parentNode;
+        }
+        if (!n) return -1;
+        const idx = parseInt(n.dataset.index, 10);
+        return Number.isFinite(idx) ? idx : -1;
+      };
+      // v225.tn73 (#555): stopPropagation on EVERY pointer event so
+      // the chip's gestures don't bubble up to the reading view's
+      // voice-assign long-press detector (v220aa/v220ad). Previously
+      // only `click` stopped propagation — the pointerdown leaked to
+      // the parent, so a long-press on a flag chip fired BOTH the
+      // chip's "Remove flag" action sheet AND the character-voice
+      // assignment menu, opened simultaneously.
+      chip.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        _chipPressFired = false;
+        _dlog("flag-chip", "pointerdown", { tag: tagKey, annoId: chip.dataset.annoId });
+        _chipPressTimer = setTimeout(() => {
+          _chipPressTimer = null;
+          _chipPressFired = true;
+          const aid = chip.dataset.annoId;
+          _dlog("flag-chip", "long-press fired", { aid });
+          if (!aid) return;
+          _showAnnoActionSheet(chip, "Remove flag", async () => {
+            const ok = await _tombstoneAnnotation(_currentClipId, aid);
+            if (ok) setStatus("Flag removed.");
+          });
+        }, HOLD_MS);
+      });
+      const _cancelChipHold = (e) => {
+        if (e) e.stopPropagation();
+        if (_chipPressTimer) {
+          clearTimeout(_chipPressTimer);
+          _chipPressTimer = null;
+          _dlog("flag-chip", "hold cancelled", { type: e && e.type });
+        }
+      };
+      chip.addEventListener("pointerup", _cancelChipHold);
+      chip.addEventListener("pointercancel", _cancelChipHold);
+      chip.addEventListener("pointerleave", _cancelChipHold);
+      // Also stop pointermove so the v220ad drag-to-select handler
+      // doesn't initiate a multi-sentence selection from a hold on
+      // a chip. (The chip is inline with sentence text; even a small
+      // wobble during long-press would normally drag-extend.)
+      chip.addEventListener("pointermove", (e) => e.stopPropagation());
       chip.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        const aid = chip.dataset.annoId;
-        if (!aid) return;
-        _showAnnoActionSheet(chip, "Remove flag", async () => {
-          const ok = await _tombstoneAnnotation(_currentClipId, aid);
-          if (ok) setStatus("Flag removed.");
+        const idx = _findSentenceIdx();
+        _dlog("flag-chip", "click", {
+          pressFired: _chipPressFired,
+          idx,
+          haveSeekFn: typeof seekToSentence === "function",
         });
+        // If the long-press already fired, suppress the click-as-seek
+        // — the user was reaching for delete, not seek.
+        if (_chipPressFired) {
+          _chipPressFired = false;
+          return;
+        }
+        if (idx >= 0 && typeof seekToSentence === "function") {
+          seekToSentence(idx);
+        }
+        // v225.tn82 (#564): also reveal an inline × beside the chip
+        // for ~4s. Tap × within that window to remove the flag
+        // without ever opening the action sheet.
+        _revealChipDelete(chip);
+      });
+      // Suppress the OS long-press context menu (same family of
+      // fixes as v225.tn56/57 for the tag-row chips).
+      chip.addEventListener("contextmenu", (e) => e.preventDefault());
+      _dlog("flag-chip", "rendered + wired", {
+        tag: tagKey,
+        annoId: annoIdForChip,
+        sentenceIdx: i,
       });
       // Insert after the voice-play button if present; else at head.
       if (insertAnchor && insertAnchor.parentNode === span) {
@@ -11532,12 +12954,83 @@ async function _voiceFinalize() {
   }
 }
 
+// v225.tn88 (#570): offline transcript queue. When _voiceTryServerTranscribe
+// runs while offline (or fails the network call), the request lands here
+// instead of being lost. Same payload that the endpoint expects, plus an
+// id so we can dedupe on retry. Drains on the `online` event.
+const _OFFLINE_PENDING_TRANSCRIBE_KEY = "narrative.pendingTranscribe";
+function _readPendingTranscribes() {
+  try {
+    const raw = localStorage.getItem(_OFFLINE_PENDING_TRANSCRIBE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function _writePendingTranscribes(list) {
+  try {
+    localStorage.setItem(
+      _OFFLINE_PENDING_TRANSCRIBE_KEY,
+      JSON.stringify(list || []),
+    );
+  } catch {}
+}
+function _queuePendingTranscribe(entry) {
+  const list = _readPendingTranscribes();
+  // Dedupe by annoId so a re-tap doesn't queue twice.
+  const filtered = list.filter((e) => e.annoId !== entry.annoId);
+  filtered.push(entry);
+  _writePendingTranscribes(filtered);
+}
+function _clearPendingTranscribe(annoId) {
+  const list = _readPendingTranscribes().filter((e) => e.annoId !== annoId);
+  _writePendingTranscribes(list);
+}
+async function _drainPendingTranscribes() {
+  if (_isOffline()) return;
+  const list = _readPendingTranscribes();
+  if (!list.length) return;
+  // Quiet drain — no toast unless something completes.
+  for (const entry of list) {
+    try {
+      await _voiceTryServerTranscribe(
+        entry.clipId,
+        entry.annoId,
+        entry.audioB64,
+        entry.mime,
+        true /* fromQueue */,
+      );
+      // _voiceTryServerTranscribe clears the queue entry on success.
+    } catch (err) {
+      console.warn("[voice] queued transcribe retry failed:", err);
+      // Leave in queue for next online tick.
+    }
+  }
+}
+
 // v223.tn10 (#475): server-side Whisper fallback. Fire after a memo
 // saves without a browser-SR transcript. Result patches onto the
 // annotation in IDB and rides the next sync push to other devices.
 // Best-effort — failures leave the memo audio-only.
-async function _voiceTryServerTranscribe(clipId, annoId, audioB64, mime) {
+// v225.tn88 (#570): if offline at call time, queue instead of fetching
+// so the audio isn't lost. On reconnect, the queue drains and the
+// transcripts land just like the original first-try path. The
+// `fromQueue` flag suppresses the queue-write-back so we don't pile
+// up duplicates during a retry storm.
+async function _voiceTryServerTranscribe(clipId, annoId, audioB64, mime, fromQueue) {
   if (!clipId || !annoId || !audioB64) return;
+  if (_isOffline()) {
+    _queuePendingTranscribe({
+      clipId, annoId, audioB64, mime: mime || "audio/webm",
+      queuedAt: Date.now(),
+    });
+    setStatus(
+      "Voice note saved — transcript queued (you're offline).",
+    );
+    return;
+  }
   try {
     const res = await fetch("/api/library/transcribe", {
       method: "POST",
@@ -11546,7 +13039,17 @@ async function _voiceTryServerTranscribe(clipId, annoId, audioB64, mime) {
     });
     if (!res.ok) {
       console.warn("[voice] /transcribe HTTP", res.status);
-      setStatus(`Voice note saved (audio only — transcribe HTTP ${res.status}).`);
+      // v225.tn88 (#570): queue for retry on a 5xx (server hiccup).
+      // Hard 4xx is unlikely to succeed on retry, so don't pile up.
+      if (res.status >= 500 && res.status < 600) {
+        _queuePendingTranscribe({
+          clipId, annoId, audioB64, mime: mime || "audio/webm",
+          queuedAt: Date.now(),
+        });
+        setStatus(`Voice note saved — transcript queued (server ${res.status}).`);
+      } else {
+        setStatus(`Voice note saved (audio only — transcribe HTTP ${res.status}).`);
+      }
       return;
     }
     const body = await res.json();
@@ -11593,9 +13096,22 @@ async function _voiceTryServerTranscribe(clipId, annoId, audioB64, mime) {
     }
     const words = text.split(/\s+/).filter(Boolean).length;
     setStatus(`✓ Transcript ready (${words} word${words === 1 ? "" : "s"}).`);
+    // v225.tn88 (#570): success — clear from the offline retry queue
+    // if this was a queued retry.
+    _clearPendingTranscribe(annoId);
   } catch (e) {
     console.warn("[voice] server transcribe failed:", e);
-    setStatus("Voice note saved (audio only — server transcribe failed).");
+    // v225.tn88 (#570): network error counts as "queue for retry."
+    // Most fetch failures here are network, not 4xx — we already
+    // handled HTTP errors above. So queue the audio + annoId and
+    // try again on the next `online` event.
+    if (!fromQueue) {
+      _queuePendingTranscribe({
+        clipId, annoId, audioB64, mime: mime || "audio/webm",
+        queuedAt: Date.now(),
+      });
+      setStatus("Voice note saved — transcript queued (network).");
+    }
   }
 }
 
@@ -14035,6 +15551,43 @@ if (libraryRenarrateOutdatedBtn) {
 // Returns the id of the clip that should play after `fromId` ends, or null
 // if we're at the end of the queue (or shuffle has no other clips). Walks
 // the same sort order the user sees in the library.
+// v225.tn90 (#572): pre-cache the next-up clip's audio while we're
+// playing the current one. Cheap insurance against a mid-row signal
+// drop on a train or plane. Only fetches when the clip has an
+// audioSha256 pointer but no local Blob; never fetches if we're
+// offline (the call would just fail). Best-effort — failures are
+// swallowed since this is purely opportunistic.
+async function _precacheClipAudio(clipId) {
+  if (!clipId || _isOffline()) return;
+  try {
+    const clip = await getClip(clipId);
+    if (!clip) return;
+    // Already have a local Blob? Nothing to do.
+    if (clip.audio && clip.audio instanceof Blob && clip.audio.size > 0) return;
+    if (!clip.audioSha256) return;
+    const url = `/api/library/audio/${clip.audioSha256}.mp3`;
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const blob = await res.blob();
+    if (!blob || blob.size === 0) return;
+    // Atomic write so we don't race with any other clip mutation.
+    const db = await openDB();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const cur = await idbReq(store.get(clipId));
+    if (!cur) return;
+    cur.audio = blob;
+    await idbReq(store.put(cur));
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.info("[precache] next-clip audio fetch failed:", err);
+  }
+}
+
 async function nextClipId(fromId) {
   let clips;
   try {
@@ -16423,6 +17976,27 @@ async function loadClip(id) {
   // which can drift while playback continues). Cached here so the
   // timeupdate accumulator doesn't have to round-trip IDB on every tick.
   _currentPlayingVoiceId = clip.voiceId || null;
+  // v225.tn85 (#567): also snapshot rate/volume/speaker so the
+  // re-narrate banner can detect drift on any of them, not just
+  // voice. Null = "unknown" → banner won't fire on this axis.
+  _currentPlayingRate =
+    typeof clip.rate === "number" ? clip.rate : null;
+  _currentPlayingVolume =
+    typeof clip.volume === "number" ? clip.volume : null;
+  _currentPlayingSpeakerId =
+    typeof clip.speakerId === "number" ? clip.speakerId : null;
+  // v225.tn90 (#572): kick off best-effort pre-cache of the next
+  // clip's audio so a mid-row signal drop on a train/plane doesn't
+  // strand the auto-advance. Runs after a 2s settle so it doesn't
+  // compete with the current clip's audio start.
+  if (typeof _precacheClipAudio === "function") {
+    setTimeout(async () => {
+      try {
+        const nextId = await nextClipId(clip.id);
+        if (nextId) _precacheClipAudio(nextId);
+      } catch {}
+    }, 2000);
+  }
   _lastProgressSaveAt = Date.now();
   // loadClip sets voiceEl.value to clip.voiceId above, so the picker
   // matches the clip's voice on entry — re-narrate banner should be
@@ -19966,8 +21540,14 @@ function _phoneTagRowDisarm() {
 }
 
 function _phoneTagRowArm(tagKey) {
+  _dlog("tag-row-arm", "entry", {
+    tagKey,
+    currentClip: _currentClipId,
+    armed: _phoneTagRowArmedTag,
+  });
   if (!_currentClipId) {
     setStatus("Load a clip first to flag a sentence.", true);
+    _dlog("tag-row-arm", "no clip — bailing");
     return;
   }
   // Tapping the same chip again → cancel.
@@ -20049,15 +21629,22 @@ function _phoneTagRowBoot() {
       chip.style.background = meta.color;
       chip.addEventListener("click", (e) => {
         e.stopPropagation();
+        _dlog("tag-row-chip", "click", { tag: key });
         _phoneTagRowFireTag(key);
       });
-      // v225.tn56 (#539): kill the Android text-selection menu that
-      // long-press triggers on these chips. CSS user-select:none
-      // covers most cases; this preventDefault on contextmenu
-      // catches the rest (Chromium fires contextmenu on long-press
-      // regardless of user-select if the element itself isn't
-      // explicitly suppressing it).
+      // v225.tn56/57 (#539/#540): kill the Android text-selection
+      // menu that long-press triggers. v225.tn72 (#554): removed
+      // the touchstart preventDefault that was here — it ALSO
+      // suppressed the synthetic click event on mobile, which
+      // broke "tap a tag to arm" entirely. The CSS already has
+      // `touch-action: manipulation` + `user-select: none` +
+      // `-webkit-touch-callout: none` (see styles.css for the
+      // .phone-tag-row-chip block), which handle selection
+      // suppression without breaking click. contextmenu +
+      // selectstart preventDefault stays — those don't affect
+      // click firing.
       chip.addEventListener("contextmenu", (e) => e.preventDefault());
+      chip.addEventListener("selectstart", (e) => e.preventDefault());
       chipsContainer.appendChild(chip);
     }
   }
@@ -20320,19 +21907,49 @@ function _phoneMenuBoot() {
     bm.setAttribute("aria-label", "Add bookmark at current time");
     bm.title = "Bookmark current time";
     bm.textContent = "🔖";
-    bm.addEventListener("click", (e) => {
+    bm.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const target = document.getElementById("bookmark-add-btn");
-      if (target) {
-        target.click();
-        // Visual flash + status echo since the target now lives
-        // in the (closed) pull-up drawer where the user can't see
-        // its own pulse animation.
-        bm.classList.remove("flashed");
-        void bm.offsetWidth;
-        bm.classList.add("flashed");
-      } else {
-        setStatus("Bookmark control not ready yet.", true);
+      // v225.tn61 (#534): tap 🔖 → save → open the pull-up to its
+      // Bookmarks section → scroll to and briefly highlight the
+      // just-added row so the author can immediately tap it to add
+      // a note. Replaces the old fire-and-flash behavior — saving
+      // a bookmark silently was leaving authors wondering where
+      // it went, and the natural next action ("add a note while
+      // the moment is fresh") was a deliberate detour through the
+      // drawer.
+      let newId = null;
+      try {
+        if (typeof addBookmarkAtCurrentTime === "function") {
+          newId = await addBookmarkAtCurrentTime();
+        } else {
+          // Fallback: legacy dispatch (shouldn't be reachable).
+          const target = document.getElementById("bookmark-add-btn");
+          if (target) target.click();
+        }
+      } catch (err) {
+        console.warn("[phone-bookmark] save failed:", err);
+        setStatus("Bookmark failed.", true);
+        return;
+      }
+      // Flash the 🔖 button itself so the tap registers visually
+      // even before the drawer slides up.
+      bm.classList.remove("flashed");
+      void bm.offsetWidth;
+      bm.classList.add("flashed");
+
+      if (newId == null) return;
+
+      // v225.tn64 (#546): open the centered floating editor instead
+      // of the pull-up drawer. The drawer-open approach hit a
+      // Chromium Android keyboard bug (#544/#545 didn't fully
+      // resolve). The centered modal sidesteps the drawer's
+      // position:fixed layout entirely — it stays above the
+      // keyboard naturally as the visual viewport shrinks. The
+      // bookmark is already saved by addBookmarkAtCurrentTime;
+      // the editor just lets the author add a note while the
+      // moment is fresh.
+      if (typeof _openBookmarkEditor === "function") {
+        _openBookmarkEditor(newId);
       }
     });
     app.appendChild(bm);
@@ -20507,10 +22124,87 @@ window.addEventListener("resize", () => {
 function _phonePullupIsPhone() {
   return window.matchMedia("(max-width: 767px)").matches;
 }
+// v225.tn92 (#575): live state strip on the right side of each
+// pull-up section. Replaces the empty space that used to sit beside
+// the chip rows. Called on pull-up open (and on any setting change
+// while the drawer is open). Cheap — just reads current values from
+// the existing controls.
+function _updatePullupState() {
+  const playbackEl = document.querySelector('[data-state="playback"]');
+  const listeningEl = document.querySelector('[data-state="listening"]');
+  const authorEl = document.querySelector('[data-state="author"]');
+
+  // Playback: current speed + volume + skip interval.
+  if (playbackEl && rateEl && volumeEl) {
+    const speed = rateEl.value;
+    const vol = volumeEl.value;
+    const skip = typeof _skipIntervalSec === "number" ? _skipIntervalSec : 15;
+    playbackEl.textContent = `Speed ${speed} · Vol ${vol}% · Skip ${skip}s`;
+  }
+
+  // Listening: A↔B markers when set, sleep countdown when active,
+  // otherwise the "nothing active" hint. Reading from the actual
+  // module state vars set by the existing handlers.
+  if (listeningEl) {
+    const parts = [];
+    if (typeof _abLoopA === "number" && _abLoopA > 0) {
+      parts.push(`A ${_formatClockTime ? _formatClockTime(_abLoopA) : _abLoopA.toFixed(0) + "s"}`);
+    }
+    if (typeof _abLoopB === "number" && _abLoopB > 0) {
+      parts.push(`B ${_formatClockTime ? _formatClockTime(_abLoopB) : _abLoopB.toFixed(0) + "s"}`);
+    }
+    if (typeof _sleepEndsAt === "number" && _sleepEndsAt > 0) {
+      const remainMs = _sleepEndsAt - Date.now();
+      if (remainMs > 0) {
+        const m = Math.ceil(remainMs / 60000);
+        parts.push(`Sleep ${m}m`);
+      }
+    }
+    listeningEl.textContent = parts.length ? parts.join(" · ") : "Idle";
+  }
+
+  // Author: annotation counts on the loaded clip. Skip silently if
+  // no clip loaded — the state-strip is hidden via :empty.
+  if (authorEl) {
+    if (!_currentClipId || !Array.isArray(sentenceSpans)) {
+      authorEl.textContent = "";
+    } else {
+      getClip(_currentClipId)
+        .then((clip) => {
+          if (!clip || !Array.isArray(clip.annotations)) {
+            authorEl.textContent = "";
+            return;
+          }
+          const live = clip.annotations.filter(
+            (a) => a && !a.deletedAt && !a.tombstone,
+          );
+          const flags = live.filter((a) => !a.audio).length;
+          const voices = live.filter((a) => a.audio).length;
+          const parts = [];
+          if (flags) parts.push(`${flags} flag${flags === 1 ? "" : "s"}`);
+          if (voices) parts.push(`${voices} voice note${voices === 1 ? "" : "s"}`);
+          if (Array.isArray(clip.bookmarks) && clip.bookmarks.length) {
+            parts.push(
+              `${clip.bookmarks.length} bookmark${
+                clip.bookmarks.length === 1 ? "" : "s"
+              }`,
+            );
+          }
+          authorEl.textContent = parts.length ? parts.join(" · ") : "—";
+        })
+        .catch(() => {
+          authorEl.textContent = "";
+        });
+    }
+  }
+}
+
 function _phonePullupOpen() {
   document.body.dataset.pullup = "open";
   const toggle = document.querySelector(".phone-pullup-toggle");
   if (toggle) toggle.textContent = "⌄";
+  // v225.tn92 (#575): refresh state strips on open.
+  _updatePullupState();
 }
 function _phonePullupClose() {
   if (document.body.dataset.pullup) delete document.body.dataset.pullup;

@@ -2,9 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- v225.tn63 (#545): interactive-widget=resizes-content tells
+         Chromium to shrink the layout viewport when the on-screen
+         keyboard opens, so position:fixed bottom-anchored UI (the
+         pull-up drawer, player bar, tag row) naturally moves up
+         above the keyboard. Without this, the pull-up's bookmark
+         note input would land UNDER the keyboard on focus, Android
+         would auto-blur it because the input was unreachable, and
+         the keyboard would slam closed. iOS Safari ignores this
+         attribute (it uses the visualViewport API instead) — its
+         default behavior of pushing content above the keyboard
+         already works for us. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <!-- Status-bar / browser-chrome tint. Two media-keyed variants so the
          OS-level color follows light/dark without JS. (Explicit Theme
@@ -191,6 +202,54 @@
          /api/library/maintenance every 60s. Hidden by default; JS reveals
          when there's an active window and stores per-session
          dismissal so the × hides it for this tab/visit. -->
+    <!-- v225.tn89 (#571): PWA install prompt. Caught from the
+         beforeinstallprompt event (Chrome / Edge / Samsung). On iOS
+         Safari (which doesn't fire that event), the JS detects the
+         platform and shows the text-instructions variant instead.
+         One-time dismiss persists in localStorage. -->
+    <div id="install-banner" class="install-banner" hidden>
+      <span class="install-banner-icon" aria-hidden="true">📱</span>
+      <span class="install-banner-text">
+        <strong>Install Narrative</strong> for offline access and a
+        full-screen reading view.
+      </span>
+      <button
+        id="install-banner-confirm"
+        type="button"
+        class="install-banner-confirm"
+      >Install</button>
+      <button
+        id="install-banner-dismiss"
+        type="button"
+        class="install-banner-dismiss"
+        aria-label="Dismiss install prompt"
+      >×</button>
+    </div>
+    <div id="install-banner-ios" class="install-banner install-banner-ios" hidden>
+      <span class="install-banner-icon" aria-hidden="true">📱</span>
+      <span class="install-banner-text">
+        Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>
+        to install Narrative for offline access.
+      </span>
+      <button
+        id="install-banner-ios-dismiss"
+        type="button"
+        class="install-banner-dismiss"
+        aria-label="Dismiss install instructions"
+      >×</button>
+    </div>
+
+    <!-- v225.tn87 (#569): offline indicator. Driven by navigator.onLine
+         + online/offline events. When shown, body gets data-offline="true"
+         which CSS uses to grey out network-only CTAs. -->
+    <div id="offline-banner" class="offline-banner" hidden>
+      <span class="offline-banner-icon" aria-hidden="true">⚡</span>
+      <span class="offline-banner-text">
+        Offline — your edits, bookmarks, and annotations save locally and
+        sync when you're back.
+      </span>
+      <span id="offline-pending-count" class="offline-pending-count" hidden></span>
+    </div>
     <div id="maintenance-banner" class="maintenance-banner" hidden>
       <span id="maintenance-banner-text" class="maintenance-banner-text"></span>
       <button
@@ -439,7 +498,7 @@
               <strong>Mode</strong>
               <span class="settings-toggle-desc">
                 <strong>Simple</strong>: just listen — pared-down controls.
-                <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools.
+                <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools, annotations &amp; voice notes.
                 <strong>Author</strong>: writing-craft tools (word count,
                 long-sentence + filler-word callouts, character voices).
               </span>
@@ -487,6 +546,14 @@
                 <span>Light</span>
               </label>
             </div>
+            <!-- v225.tn59 (#542): Auto-resolution status line. Reports
+                 what the OS is telling us right now so the user can
+                 see whether Auto is detecting their system theme
+                 correctly. Hidden when Dark/Light is explicit. -->
+            <p
+              id="theme-auto-status"
+              class="settings-section-hint theme-auto-status"
+            ></p>
           </div>
 
           <!-- v221.sync-5: cross-device library sync. Off by default;
@@ -1173,7 +1240,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225am</span>
+            Narrative <span id="settings-version-tag">v225ca</span>
             <button
               type="button"
               id="settings-force-update"
@@ -1805,6 +1872,119 @@
             <input id="volume" type="range" min="0" max="100" step="1" value="100" />
           </div>
         </div>
+
+        <!-- v225.tn85 (#567): Voice card preview button.
+             One button that synthesizes a short sample using ALL
+             current voice card settings: voice + speaker + speed
+             + volume. The speakerPreviewBtn at the top serves
+             voice+speaker only via a canned WAV; this one routes
+             through /api/synthesize and so honors rate/volume too.
+             Custom text optional — toggle via the hint link. -->
+        <div class="voice-preview-now">
+          <button
+            id="voice-preview-now"
+            type="button"
+            class="voice-preview-now-btn"
+            title="Preview voice with current speed + volume"
+          >▶ Preview voice + settings</button>
+          <p class="voice-preview-now-hint">
+            Plays a short sample with current Speed
+            (<span id="voice-preview-now-rate">180</span>) and Volume
+            (<span id="voice-preview-now-vol">100%</span>).
+            <button
+              id="voice-preview-now-text-toggle"
+              type="button"
+              class="link-btn"
+            >Use your own text</button>
+          </p>
+          <input
+            id="voice-preview-now-text"
+            type="text"
+            maxlength="300"
+            placeholder="Paste a sentence to hear with these settings…"
+            hidden
+          />
+        </div>
+
+        <!-- v225.tn85 (#567): Apply current voice/speed/volume to
+             clips in the library. Opens a small picker with three
+             options: just the loaded clip, all clips using the
+             same voice, or open a multi-select. Routes through the
+             existing bg-queue silent re-narrate path. Hidden when
+             the library is empty. -->
+        <div id="voice-apply-section" class="voice-apply-section" hidden>
+          <h3 class="voice-apply-heading">Apply to library</h3>
+          <button
+            id="voice-apply-btn"
+            type="button"
+            class="voice-apply-btn"
+          >Re-narrate clips with these settings…</button>
+          <p id="voice-apply-summary" class="voice-apply-summary"></p>
+        </div>
+        </div>
+      </dialog>
+
+      <!-- v225.tn85 (#567): library-apply picker. Opens from the
+           Voice card's "Re-narrate clips with these settings"
+           button. Three CTAs at the top, multi-select drawer
+           underneath. -->
+      <dialog id="voice-apply-picker" class="voice-apply-picker">
+        <div class="voice-apply-picker-head">
+          <h2>Re-narrate library</h2>
+          <button
+            id="voice-apply-picker-close"
+            type="button"
+            class="voice-browser-close"
+            aria-label="Close"
+          >×</button>
+        </div>
+        <p class="voice-apply-picker-intro">
+          Which clips should I re-narrate with the new voice card
+          settings?
+        </p>
+        <div id="voice-apply-options" class="voice-apply-options">
+          <button
+            id="voice-apply-just-current"
+            type="button"
+            class="voice-apply-option"
+            hidden
+          >
+            <span class="voice-apply-option-title">Just the clip I'm reading</span>
+            <span class="voice-apply-option-meta" id="voice-apply-just-current-meta">—</span>
+          </button>
+          <button
+            id="voice-apply-all-voice"
+            type="button"
+            class="voice-apply-option"
+            hidden
+          >
+            <span class="voice-apply-option-title">All clips using this voice</span>
+            <span class="voice-apply-option-meta" id="voice-apply-all-voice-meta">—</span>
+          </button>
+          <button
+            id="voice-apply-pick"
+            type="button"
+            class="voice-apply-option"
+          >
+            <span class="voice-apply-option-title">Pick clips…</span>
+            <span class="voice-apply-option-meta">Multi-select from library</span>
+          </button>
+        </div>
+        <div id="voice-apply-multipick" class="voice-apply-multipick" hidden>
+          <div class="voice-apply-multipick-head">
+            <button id="voice-apply-multipick-back" type="button" class="link-btn">‹ Back</button>
+            <span id="voice-apply-multipick-count">0 selected</span>
+            <button id="voice-apply-multipick-all" type="button" class="link-btn">All</button>
+          </div>
+          <div id="voice-apply-multipick-list" class="voice-apply-multipick-list"></div>
+          <div class="voice-apply-multipick-foot">
+            <button
+              id="voice-apply-multipick-confirm"
+              type="button"
+              class="voice-apply-confirm"
+              disabled
+            >Re-narrate selected</button>
+          </div>
         </div>
       </dialog>
 
@@ -2290,17 +2470,25 @@
           <div class="phone-pullup-grip-bar" aria-hidden="true"></div>
         </div>
         <div class="phone-pullup-content">
+          <!-- v225.tn92 (#575): two-column row layout. Label fixed-
+               width left, chips middle, live state strip on the
+               right (where there used to be empty space). State
+               updates whenever the pull-up opens via
+               _updatePullupState(). -->
           <section class="phone-pullup-section">
             <h3>Playback</h3>
             <div class="phone-pullup-slots" data-slot="playback"></div>
+            <span class="phone-pullup-state" data-state="playback"></span>
           </section>
           <section class="phone-pullup-section">
             <h3>Listening</h3>
             <div class="phone-pullup-slots" data-slot="listening"></div>
+            <span class="phone-pullup-state" data-state="listening"></span>
           </section>
           <section class="phone-pullup-section">
             <h3>Author</h3>
             <div class="phone-pullup-slots" data-slot="author"></div>
+            <span class="phone-pullup-state" data-state="author"></span>
           </section>
           <!-- v225.tn47 (#524): Document controls (Clear, Import,
                Edit text, Book/Audio view) moved into the ☰ menu.
@@ -2453,6 +2641,58 @@
           loading="lazy"
         ></iframe>
       </dialog>
+
+      <!-- v225.tn64 (#546): centered floating bookmark editor. The
+           previous "open the pull-up drawer to edit" approach hit a
+           Chromium Android bug where the position:fixed drawer
+           wouldn't budge for the keyboard and the note input was
+           covered, so Android blurred the input on every tap. The
+           centered floating card sidesteps the drawer entirely:
+           position:fixed centered transforms stay above the
+           keyboard naturally (the smaller post-keyboard viewport
+           recenters the modal in the visible area). -->
+      <div
+        id="bookmark-editor"
+        class="bookmark-editor"
+        hidden
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bookmark-editor-title"
+      >
+        <div class="bookmark-editor-card">
+          <header class="bookmark-editor-head">
+            <h3 id="bookmark-editor-title">🔖 Bookmark</h3>
+            <button
+              type="button"
+              class="bookmark-editor-close"
+              aria-label="Close without saving"
+            >✕</button>
+          </header>
+          <div class="bookmark-editor-time">
+            at <span id="bookmark-editor-time-val">--:--</span>
+          </div>
+          <label
+            for="bookmark-editor-note"
+            class="bookmark-editor-note-label"
+          >Note</label>
+          <textarea
+            id="bookmark-editor-note"
+            rows="3"
+            maxlength="200"
+            placeholder="What did you want to remember about this spot?"
+          ></textarea>
+          <div class="bookmark-editor-actions">
+            <button
+              type="button"
+              class="bookmark-editor-cancel link-btn"
+            >Cancel</button>
+            <button
+              type="button"
+              class="bookmark-editor-save primary"
+            >Done</button>
+          </div>
+        </div>
+      </div>
 
       <dialog id="shortcuts-dialog" class="shortcuts-dialog">
         <div class="voice-browser-head">

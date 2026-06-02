@@ -1905,7 +1905,7 @@
               <strong>Mode</strong>
               <span class="settings-toggle-desc">
                 <strong>Simple</strong>: just listen — pared-down controls.
-                <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools.
+                <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools, annotations &amp; voice notes.
                 <strong>Author</strong>: writing-craft tools (word count,
                 long-sentence + filler-word callouts, character voices).
               </span>
@@ -1944,7 +1944,9 @@
             bookmark list; library tools (Export / Import / Hide
             played / Select); play-mode sort; Save preset; Speaker
             Audition; Listen stats; drag-to-reorder; the re-narrate
-            banner. <em>The default.</em>
+            banner; <strong>annotations &amp; voice notes</strong>
+            (flag chips, the phone tag row, voice-memo recording).
+            <em>The default.</em>
           </td>
         </tr>
         <tr>
@@ -1957,7 +1959,10 @@
             counts); <strong>long-sentence highlighter</strong>
             (warm amber wash on sentences over 35 words in the
             reading view); <strong>Characters</strong> link in the
-            voice card (multi-voice synthesis for dialogue).
+            voice card (multi-voice synthesis for dialogue); and
+            the <strong>drag-to-select gesture</strong> in the
+            reading view for assigning a character voice to a
+            sentence range.
           </td>
         </tr>
       </table>
@@ -2230,6 +2235,160 @@ She set both hands flat on the table.</pre>
         Narrative is a Progressive Web App (PWA) — install it from the
         browser and it lives on your home screen, runs in the background,
         and surfaces play / pause / skip on the lock screen.
+      </p>
+      <p>
+        Phone layout is Spotify-style: text fills the screen, controls
+        live at the edges. Every feature in §2–§7 works on phone — the
+        section below is just a map of where each control sits.
+      </p>
+
+      <h3>Phone layout — where everything lives</h3>
+
+      <h4>Top edge</h4>
+      <table>
+        <tr><th>Control</th><th>What it does</th></tr>
+        <tr>
+          <td><strong>☰</strong> (top-left)</td>
+          <td>
+            Menu sheet — Library · Import · New clip · Edit text ·
+            Book view / Audio view · Download MP3 · Settings · Help.
+            All "what document am I on" actions.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>🔖</strong> (top-right)</td>
+          <td>
+            Bookmark current time, then opens a centered editor card
+            with a note field. Tap Done to save, Cancel to discard
+            (the bookmark itself saves either way).
+          </td>
+        </tr>
+      </table>
+
+      <h4>Bottom edges</h4>
+      <table>
+        <tr><th>Bar</th><th>When it shows</th><th>What's on it</th></tr>
+        <tr>
+          <td><strong>Generate audio bar</strong></td>
+          <td>Text loaded, no audio synthesized yet.</td>
+          <td>
+            "▶ Generate audio" big button + "Queue silently →"
+            secondary link. Hides once synth starts; the player bar
+            replaces it.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Player bar</strong></td>
+          <td>Audio is loaded.</td>
+          <td>
+            ↶ skip-back · ▶/⏸ · scrub · ↷ skip-forward · time
+            display. Drag the scrub thumb to seek.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Tag row</strong> (above player)</td>
+          <td>Standard + Author mode only.</td>
+          <td>
+            Annotation tags (🐛 💭 ❓ ⭐ etc.) + 🎤 voice button.
+            Tap a tag → tap a sentence to flag it. Tap or hold 🎤
+            to record a voice note on the current sentence.
+          </td>
+        </tr>
+      </table>
+
+      <h4>Pull-up drawer (chevron above the player)</h4>
+      <p>
+        Tap the chevron (or pull up from the bottom) to open. Tap
+        outside or pull back down to close. The drawer is
+        translucent so the reading view stays partly visible behind
+        it.
+      </p>
+      <table>
+        <tr><th>Section</th><th>Contents</th></tr>
+        <tr>
+          <td><strong>Playback</strong></td>
+          <td>Voice · Speed · Skip interval</td>
+        </tr>
+        <tr>
+          <td><strong>Listening</strong></td>
+          <td>A↔B loop · Sleep timer</td>
+        </tr>
+        <tr>
+          <td><strong>Author</strong></td>
+          <td>Per-clip notes (📝)</td>
+        </tr>
+        <tr>
+          <td><strong>Bookmarks</strong></td>
+          <td>
+            All bookmarks for this clip. Tap a time to seek; tap a
+            note to open the editor card; tap × to delete.
+          </td>
+        </tr>
+      </table>
+
+      <h4>Reading view gestures</h4>
+      <table>
+        <tr><th>Gesture</th><th>What happens</th></tr>
+        <tr>
+          <td>Tap a sentence</td>
+          <td>Seek to that sentence.</td>
+        </tr>
+        <tr>
+          <td>Tap a flag chip (the colored icon on annotated sentences)</td>
+          <td>Seek to that flag's sentence.</td>
+        </tr>
+        <tr>
+          <td>Long-press a flag chip</td>
+          <td>Action sheet → Remove flag.</td>
+        </tr>
+        <tr>
+          <td>Tap a tag in the bottom tag row, then tap a sentence</td>
+          <td>Flag the sentence with that tag.</td>
+        </tr>
+        <tr>
+          <td>Hold 🎤, speak, release</td>
+          <td>
+            Record a voice note on the current sentence. Tap-toggle
+            also works (tap to start, tap again to stop).
+          </td>
+        </tr>
+        <tr>
+          <td>Press-and-drag across sentences (Author mode only)</td>
+          <td>
+            Select a sentence range, then tap Assign → on the
+            floating bar to pick a character voice.
+          </td>
+        </tr>
+      </table>
+
+      <h4>Modes on phone</h4>
+      <p>
+        The phone respects your Mode pick (Settings → App → Mode).
+      </p>
+      <ul>
+        <li>
+          <strong>Simple</strong>: no tag row, no flag chips, no
+          voice-note affordances. Just listen. The pull-up drawer
+          still shows Playback + Listening.
+        </li>
+        <li>
+          <strong>Standard</strong>: bookmarks, annotations, voice
+          notes — everything you'd want for revision.
+        </li>
+        <li>
+          <strong>Author</strong>: adds the drag-to-select gesture
+          for character-voice assignment + the writing-craft
+          tools (long-sentence highlights, filler-word counts).
+        </li>
+      </ul>
+
+      <h4>What's <em>not</em> on phone</h4>
+      <p>
+        A few desktop-only surfaces are simply hidden on phone:
+        keyboard-shortcut overlay (no keyboard), the dual-strip
+        floating chip clone (phone has the pull-up instead), and
+        the wide library grid (phone shows a stacked list in the
+        Library dialog).
       </p>
 
       <h3>Install on iOS (iPhone / iPad)</h3>
