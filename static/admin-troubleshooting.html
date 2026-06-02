@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1020" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf4e3" />
+    <title>Narrative — Admin troubleshooting</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script>
+      // Theme-boot block matches the manual so light-mode users don't get a
+      // dark flash when they land here from a bookmark.
+      (function () {
+        try {
+          var pref = localStorage.getItem("narrative.theme") || "auto";
+          if (!["auto", "dark", "light"].includes(pref)) pref = "auto";
+          var resolved =
+            pref === "auto"
+              ? (matchMedia("(prefers-color-scheme: light)").matches
+                  ? "light"
+                  : "dark")
+              : pref;
+          if (resolved === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        } catch (_) {}
+      })();
+    </script>
+    <style>
+      body { padding-bottom: 80px; }
+      .manual {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px 18px 80px;
+        padding-bottom: calc(80px + env(safe-area-inset-bottom));
+        line-height: 1.55;
+        color: var(--fg);
+      }
+      .manual h1 {
+        font-size: 26px;
+        margin: 0 0 8px;
+      }
+      .manual h1 + p {
+        color: var(--fg-dim);
+        margin: 0 0 28px;
+      }
+      .manual h2 {
+        font-size: 18px;
+        margin: 32px 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .manual h3 { font-size: 15px; margin: 20px 0 6px; }
+      .manual p, .manual li { font-size: 14px; }
+      .manual code {
+        background: var(--bg-card);
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 12.5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .manual pre {
+        background: var(--bg-card);
+        padding: 12px 14px;
+        border-radius: var(--radius);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
+        overflow-x: auto;
+        margin: 10px 0;
+        border: 1px solid var(--border-soft);
+      }
+      .manual pre code { background: none; padding: 0; }
+      .manual .tip,
+      .manual .note,
+      .manual .warn {
+        padding: 10px 14px;
+        border-radius: var(--radius);
+        margin: 12px 0;
+        font-size: 13px;
+      }
+      .manual .note {
+        background: var(--accent-tint);
+        border-left: 3px solid var(--accent);
+      }
+      .manual .tip {
+        background: var(--hover-soft);
+        border-left: 3px solid var(--fg-dim);
+      }
+      .manual .warn {
+        background: var(--danger-tint-soft);
+        border-left: 3px solid var(--danger);
+      }
+      .manual a { color: var(--accent); text-decoration: none; }
+      .manual a:hover { text-decoration: underline; }
+      .manual .check-block {
+        background: var(--bg-card);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 16px 18px;
+        margin: 18px 0;
+      }
+      .manual .check-block h3:first-child { margin-top: 0; }
+      .manual .outcome-list {
+        margin: 8px 0 4px;
+        padding-left: 18px;
+      }
+      .manual .outcome-list li { margin: 4px 0; }
+      .manual .outcome-list code { font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <main class="manual">
+      <h1>Admin troubleshooting — tenant keys</h1>
+      <p>
+        Things to check when the <strong>Tester keys</strong> section
+        doesn't appear in Settings, or when minting / listing / revoking
+        a key isn't working. Admin-only. Bookmark this page —
+        <code>/admin-troubleshooting.html</code>.
+      </p>
+
+      <h2>The short version</h2>
+      <p>
+        The Tester keys form in Settings only appears when the server
+        confirms your bearer is the admin. That's three things in a
+        chain:
+      </p>
+      <ol>
+        <li>
+          The server is running v221.tenants code (so the
+          <code>/api/admin/whoami</code> endpoint exists).
+        </li>
+        <li>
+          Your browser is running the new frontend build (so the
+          Tester keys HTML section is in the DOM).
+        </li>
+        <li>
+          The bearer your browser is sending matches the server's
+          <code>NARRATIVE_KEY</code> exactly (so the server replies
+          <code>is_admin: true</code>).
+        </li>
+      </ol>
+      <p>
+        If any one of those is wrong, the section stays hidden. The
+        checks below walk through each.
+      </p>
+
+      <h2>Step 1 — Is the server up to date?</h2>
+      <p>
+        The <code>/api/admin/*</code> endpoints only exist after the
+        v221.tenants code has shipped. Confirm with a curl from
+        PowerShell:
+      </p>
+      <pre><code>$key = "&lt;paste your NARRATIVE_KEY&gt;"
+$base = "https://narrative-alpha.fly.dev"
+
+curl.exe -H "X-Narrative-Key: $key" "$base/api/admin/whoami"</code></pre>
+
+      <h3>What the response means</h3>
+      <ul class="outcome-list">
+        <li>
+          <code>{"tenant_key":"...","is_admin":true,"tenant_label":"admin"}</code>
+          → server is up to date AND your key matches.
+          <strong>Skip to Step 2</strong> — the problem is on the
+          browser side.
+        </li>
+        <li>
+          <code>{"detail":"Not Found"}</code> or an HTML 404 page
+          → the server hasn't been redeployed yet. Run
+          <code>fly deploy</code> from <code>E:\audiable</code>. Wait
+          for the new build to roll, then re-curl.
+        </li>
+        <li>
+          <code>{"detail":"invalid X-Narrative-Key"}</code>
+          → the bearer your curl sent doesn't match the env var.
+          <strong>Skip to Step 3</strong>.
+        </li>
+        <li>
+          <code>{"is_admin":false,"tenant_label":"alice"}</code>
+          (or some other label) → you're authed as a tester, not the
+          admin. That happens when the bearer you pasted is a tester
+          bearer, not <code>NARRATIVE_KEY</code>. Switch the bearer to
+          the env-var value.
+        </li>
+      </ul>
+
+      <h2>Step 2 — Is your browser running the new frontend?</h2>
+      <p>
+        The service worker caches <code>index.html</code> aggressively.
+        Even after you redeploy, the browser will keep serving
+        yesterday's HTML — which doesn't have the Tester keys section
+        — until the new SW activates.
+      </p>
+
+      <div class="check-block">
+        <h3>Force the SW to update (desktop Chrome / Edge)</h3>
+        <ol>
+          <li>Open the app.</li>
+          <li>
+            Press <strong>F12</strong> → <strong>Application</strong>
+            tab → left sidebar <strong>Service Workers</strong>.
+          </li>
+          <li>
+            Tick <strong>Update on reload</strong>.
+          </li>
+          <li>
+            Close DevTools. Press
+            <strong>Ctrl + Shift + R</strong> (hard refresh).
+          </li>
+          <li>
+            Open Settings. You should now see the
+            <strong>Schedule maintenance</strong> section AND below
+            it, the <strong>Tester keys</strong> section.
+          </li>
+        </ol>
+      </div>
+
+      <div class="check-block">
+        <h3>Force the SW to update (Firefox)</h3>
+        <ol>
+          <li>
+            <strong>Ctrl + Shift + Del</strong> → tick
+            <em>Cookies and Site Data</em> + <em>Cached Web
+            Content</em> → time range <em>Last hour</em> → Clear.
+          </li>
+          <li>Close and reopen the tab.</li>
+        </ol>
+      </div>
+
+      <div class="check-block">
+        <h3>Force the SW to update (mobile PWA)</h3>
+        <p>
+          The PWA stays alive even when you close the visible window.
+        </p>
+        <ol>
+          <li>
+            <strong>iOS</strong>: Settings → Safari → Advanced →
+            Website Data → search "narrative" → swipe to delete.
+            Reopen the PWA from the home screen.
+          </li>
+          <li>
+            <strong>Android</strong>: Settings → Apps → Narrative →
+            Storage → Clear cache (NOT Clear storage — that wipes
+            your local library too). Reopen.
+          </li>
+        </ol>
+      </div>
+
+      <div class="tip">
+        Every time I ship a frontend change I bump
+        <code>CACHE</code> in <code>static/sw.js</code>. That triggers
+        the SW to refetch the shell next time the user opens the app.
+        But it still takes one reload after the first visit because
+        the SW activates in the background — the first page load is
+        served from the old cache, the new cache populates, and the
+        <em>next</em> reload sees the new shell. So if you redeployed
+        seconds ago, refresh twice.
+      </div>
+
+      <h2>Step 3 — Does your bearer match NARRATIVE_KEY?</h2>
+      <p>
+        The middleware does a constant-time compare between the
+        <code>X-Narrative-Key</code> header and the
+        <code>NARRATIVE_KEY</code> env var. They have to match
+        <em>byte-for-byte</em> — a trailing newline, a stray space, or
+        a different copy of the key all fail the compare.
+      </p>
+
+      <h3>Check what the server has</h3>
+      <pre><code>fly secrets list</code></pre>
+      <p>
+        That'll show the secret <em>names</em> (not values). Confirm
+        <code>NARRATIVE_KEY</code> is in the list. To see the actual
+        value the server is using, you have to look in the Fly
+        dashboard secrets UI, or shell in and read the env var:
+      </p>
+      <pre><code>fly ssh console -C 'printenv NARRATIVE_KEY'</code></pre>
+
+      <h3>Check what your browser is sending</h3>
+      <p>
+        Open DevTools → Network → reload the app → click any request
+        to <code>/api/*</code> → look at the request headers. Find
+        <code>X-Narrative-Key</code>. Compare it character-by-character
+        to what the server has. Common culprits:
+      </p>
+      <ul>
+        <li>
+          <strong>Trailing newline</strong> from a copy-paste.
+          PowerShell's <code>Read-Host</code> appends one;
+          <code>fly secrets set NARRATIVE_KEY=$(...)</code> inherits
+          it.
+        </li>
+        <li>
+          <strong>Wrong tester key.</strong> You typed your alpha-
+          tester bearer into the prompt on this device instead of the
+          admin one. Open Settings → clear local storage's
+          <code>narrative.apiKey</code> (or in browser console:
+          <code>localStorage.removeItem('narrative.apiKey')</code>),
+          reload, paste the admin key.
+        </li>
+        <li>
+          <strong>Multi-line paste.</strong> Some clients append CRLF
+          to clipboard contents; the prompt accepts it as-is.
+        </li>
+      </ul>
+
+      <h3>Fix a key mismatch</h3>
+      <p>
+        If the env var is wrong: <code>fly secrets set
+        NARRATIVE_KEY=value</code> then <code>fly deploy</code> (or
+        <code>fly machine restart</code> — secrets aren't reloaded on
+        SIGHUP).
+      </p>
+      <p>
+        If the browser side is wrong: clear
+        <code>narrative.apiKey</code> from localStorage, reload,
+        re-paste at the prompt.
+      </p>
+
+      <h2>Using the Tester keys form (once it's visible)</h2>
+
+      <h3>Minting a key</h3>
+      <ol>
+        <li>
+          Settings → scroll to <strong>Tester keys</strong>.
+        </li>
+        <li>
+          Type a label that helps you identify the tester later:
+          <code>alice — alice@gmail.com</code> works.
+        </li>
+        <li>
+          Click <strong>Mint key</strong>. A green box appears with
+          the raw bearer (looks like
+          <code>narrative-xxxx-xxxx-xxxx-xxxx</code>).
+        </li>
+        <li>
+          Click <strong>Copy</strong>. Paste it somewhere safe
+          immediately — once you close Settings, the key is no longer
+          re-shown in the UI. It still exists in
+          <code>/data/tenants.json</code> on the server, but the API
+          listing endpoint redacts it.
+        </li>
+      </ol>
+
+      <div class="warn">
+        <strong>The raw key is only shown once.</strong> If you click
+        away before copying it, your only recovery is to
+        <code>fly ssh console</code> and grep
+        <code>/data/tenants.json</code> for the label — clunky and
+        feels risky. Just copy it immediately.
+      </div>
+
+      <h3>Sharing the key with a tester</h3>
+      <p>
+        Currently manual: paste the key + the app URL into
+        Signal / email / SMS / paper. There's no in-app delivery
+        mechanism. The tester pastes the key into the
+        <strong>X-Narrative-Key</strong> prompt on first load.
+      </p>
+
+      <h3>Revoking a key</h3>
+      <ol>
+        <li>
+          Settings → Tester keys → <strong>Existing testers</strong>
+          list.
+        </li>
+        <li>
+          Click <strong>Revoke</strong> next to the row. Confirm.
+        </li>
+        <li>
+          That bearer stops authenticating immediately. The tester's
+          library rows stay in the DB but become unreachable. To
+          fully purge their data would need a manual SQL step on the
+          volume — not implemented yet.
+        </li>
+      </ol>
+
+      <h2>Verifying isolation between two testers</h2>
+      <p>
+        Before you hand out keys to multiple real testers, sanity-
+        check that they really are isolated. Mint two keys yourself:
+      </p>
+      <ol>
+        <li>
+          Mint <code>test1</code> and <code>test2</code> via the
+          Settings form.
+        </li>
+        <li>
+          Open the app in two different browser profiles (or one
+          normal window + one private window). Paste
+          <code>test1</code> in the first, <code>test2</code> in the
+          second.
+        </li>
+        <li>
+          In the test1 window, make a clip. Save it. Open Settings →
+          Sync → On.
+        </li>
+        <li>
+          In the test2 window, open Settings → Sync → On. The
+          library should be <em>empty</em>. Tester 1's clip should
+          not appear.
+        </li>
+        <li>
+          Make a different clip in the test2 window. Sanity-check
+          again from the test1 side — only test1's clip.
+        </li>
+      </ol>
+      <p>
+        After confirming, revoke both test keys. They're not needed
+        anymore.
+      </p>
+
+      <h2>If nothing here helps</h2>
+      <p>
+        Check <code>fly logs</code> for a stack trace at the moment
+        you opened Settings or clicked Mint. The most useful filters:
+      </p>
+      <pre><code># Tail the latest minute
+fly logs
+
+# Search for migration / DB issues
+fly logs | findstr "library_db"
+
+# Search for auth issues
+fly logs | findstr "X-Narrative-Key"</code></pre>
+      <p>
+        Send the relevant log line and the curl output from Step 1.
+      </p>
+    </main>
+  </body>
+</html>

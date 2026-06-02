@@ -11,3 +11,19 @@ python-docx==1.2.0
 lameenc==1.8.2
 trafilatura==2.0.0
 striprtf==0.0.27
+# Kokoro TTS — Apache 2.0 model + weights, runs on the ONNX runtime
+# we already pull in via piper-tts. Bundle (one .onnx + one .bin)
+# downloaded into voices/kokoro/ at image build time; see Dockerfile.
+kokoro-onnx==0.4.9
+soundfile==0.12.1
+# v223.tn10 (#475): server-side Whisper for voice-note transcripts.
+# faster-whisper runs a CTranslate2-quantized Whisper model on CPU
+# (~5x faster than openai-whisper). int8 base model picked in
+# transcribe.py — ~74MB on disk, ~250MB resident. Handles webm/opus
+# from MediaRecorder via ffmpeg (installed at the apt layer above).
+faster-whisper==1.0.3
+# faster-whisper 1.0.3 imports `requests` in utils.py but doesn't
+# declare it as a dependency — pin it explicitly so the build doesn't
+# fail at the model-preload step. Used only by faster-whisper's
+# HuggingFace download path.
+requests==2.32.3

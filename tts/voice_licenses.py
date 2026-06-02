@@ -39,6 +39,15 @@ from __future__ import annotations
 #   - https://github.com/dioco-group/jenny-tts-dataset
 #   - https://github.com/MycroftAI/mimic3-voices/blob/master/voices/en_UK/apope_low/LICENSE
 VOICE_LICENSES: dict[str, dict] = {
+    # ---- Kokoro (Apache 2.0) — ALL voices commercial-OK ----
+    # The 82M Kokoro model + bundled voices ship under Apache 2.0
+    # (engine + weights). Permissive for commercial use, modification,
+    # and redistribution. No per-voice attribution required by the
+    # license; we credit "Kokoro by hexgrad" as goodwill.
+    # The catalog auto-applies this record to every kokoro:* voice id
+    # via a fallback in license_for() — listing every voice here would
+    # be busy-work.
+
     # ---- APPROVED — commercial use allowed ----
     "en_US-libritts-high": {
         "license": "CC BY 4.0",
@@ -172,14 +181,38 @@ DEFAULT_RECORD: dict = {
 }
 
 
-def license_for(voice_id: str) -> dict:
-    """Return the license record for a Piper voice id.
+# Kokoro bundle ships under Apache 2.0 (engine + weights). Every
+# voice in the bundle inherits this — the underlying training data was
+# already audited by hexgrad and the release is unambiguously commercial.
+# Applied via license_for() below when a voice_id starts with "kokoro:".
+KOKORO_RECORD: dict = {
+    "license": "Apache 2.0",
+    "dataset": "Kokoro-82M (hexgrad)",
+    "dataset_url": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro by hexgrad, Apache 2.0",
+    "commercial": True,
+    "notes": "82M-parameter Apache 2.0 model. #1 on TTS Arena (Jan 2026). "
+             "Engine + all bundled voices are permissively licensed.",
+}
 
-    Falls back to DEFAULT_RECORD (commercial=False) for any voice not
-    yet audited — the safer default so we never accidentally promise
-    commercial-OK on an unverified voice.
+
+def license_for(voice_id: str) -> dict:
+    """Return the license record for a voice id.
+
+    - kokoro:* voices auto-apply the Apache-2.0 KOKORO_RECORD (no need
+      to enumerate every voice in VOICE_LICENSES).
+    - Piper voices look up by suffix in VOICE_LICENSES.
+    - Anything unknown falls back to DEFAULT_RECORD (commercial=False) —
+      the safer default so we never accidentally promise commercial-OK
+      on an unverified voice.
     """
-    rec = VOICE_LICENSES.get(voice_id)
+    if voice_id.startswith("kokoro:"):
+        return dict(KOKORO_RECORD)
+    # Piper IDs are passed in here as "en_US-libritts-high" (no prefix);
+    # also strip the "piper:" prefix defensively in case a caller passes
+    # the fully-qualified id.
+    key = voice_id[6:] if voice_id.startswith("piper:") else voice_id
+    rec = VOICE_LICENSES.get(key)
     if rec is None:
         return dict(DEFAULT_RECORD)
     return dict(rec)

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 import extract
 import github_oauth
+import library_db
 import tts
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap on uploads
@@ -88,30 +89,150 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 app = FastAPI(title="Narrative", version="0.1.0")
 
+# v221.sync-3: server-side library CRUD endpoints. Lives in a separate
+# module so server.py doesn't bloat further; behind /api/library/*.
+# Gracefully degrades to 503 on every endpoint when library_db isn't
+# available (e.g., volume not mounted yet, or local dev without /data).
+import library_api  # noqa: E402
+import admin_api  # noqa: E402
+
+app.include_router(library_api.router)
+app.include_router(admin_api.router)
+
+
+@app.on_event("startup")
+async def _init_library_db():
+    """v221.sync-2: open the SQLite library DB, run migrations.
+
+    Synchronous + fast (<100ms — schema is small). Runs BEFORE Kokoro
+    warmup so the library API is available immediately on boot. If
+    /data isn't writable (local dev without a volume, or a fresh
+    deploy where the volume hasn't been attached yet), the module
+    logs and disables itself — sync endpoints will 503 but the rest
+    of the app keeps working.
+    """
+    import library_db
+
+    library_db.init_db()
+
+
+# v220ax: Kokoro warmup state. Pre-loading the ONNX session out of the
+# request path is necessary (cold load takes 15-30s; Fly's edge proxy
+# resets idle connections inside that window), but doing it
+# synchronously inside the FastAPI startup event blocks the app from
+# listening on 0.0.0.0:8000, which makes healthchecks fail and the
+# proxy returns 502 for the first ~15s after every deploy.
+#
+# So we fire warmup off as a background task and let startup complete
+# immediately. A shared asyncio.Event is set when the warmup finishes;
+# the preview endpoint awaits it (with a generous timeout) before
+# attempting the synth so the first user request after a cold deploy
+# waits ~15s instead of hard-failing.
+_kokoro_warmup_done: "asyncio.Event | None" = None
+
+
+@app.on_event("startup")
+async def _schedule_kokoro_warmup():
+    """Schedule Kokoro warmup as a background task — does NOT block
+    startup. See _kokoro_warmup_done docstring above for why."""
+    import asyncio
+    import sys as _sys
+
+    from tts import kokoro_engine
+
+    global _kokoro_warmup_done
+    _kokoro_warmup_done = asyncio.Event()
+
+    if not kokoro_engine.bundle_present():
+        print(
+            "[startup] Kokoro bundle missing — voices will not be available. "
+            "Run: python scripts/get_kokoro.py",
+            file=_sys.stderr, flush=True,
+        )
+        # Mark as "done" anyway so the preview endpoint doesn't await
+        # an event that never fires — the engine will raise its own
+        # FileNotFoundError, which the endpoint turns into a 404.
+        _kokoro_warmup_done.set()
+        return
+
+    async def _warm_in_background():
+        import traceback as _tb
+
+        def _do_warm():
+            kokoro_engine._load_engine()
+            kokoro_engine.synthesize(text="Ready.", voice_id="kokoro:af_heart")
+
+        print("[warmup] starting Kokoro warmup…", file=_sys.stderr, flush=True)
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _do_warm)
+            print("[warmup] Kokoro engine ready.", file=_sys.stderr, flush=True)
+        except Exception as e:
+            print(
+                f"[warmup] Kokoro warmup failed: {type(e).__name__}: {e}",
+                file=_sys.stderr, flush=True,
+            )
+            _tb.print_exc()
+        finally:
+            # Mark done EVEN ON FAILURE so the preview endpoint can
+            # surface a proper error instead of waiting forever.
+            _kokoro_warmup_done.set()
+
+    asyncio.create_task(_warm_in_background())
+
+
+async def _await_kokoro_warmup(timeout_sec: float = 25.0):
+    """Block briefly so the first user preview after a cold boot waits
+    for the warmup instead of racing it. Subsequent calls fall through
+    instantly because the event is already set."""
+    import asyncio
+
+    if _kokoro_warmup_done is None or _kokoro_warmup_done.is_set():
+        return
+    try:
+        await asyncio.wait_for(_kokoro_warmup_done.wait(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        # 25s is plenty for cold load on Fly's CPU. If we hit this the
+        # engine is genuinely broken — proceed and let the synth call
+        # raise the real error.
+        pass
+
 
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
-    """Optional shared-secret auth on /api/* — gated by env var NARRATIVE_KEY.
+    """Shared-secret auth on /api/* + multi-tenant bearer resolution.
 
-    Designed for the Cloudflare-tunnel use case: when the app is exposed to
-    the public internet via the tunnel, set NARRATIVE_KEY so random visitors
-    who stumble onto the URL can't run synthesis on your CPU / install
-    voices on your disk / proxy URL fetches through your server.
+    Two layers in one pass:
 
-    When NARRATIVE_KEY is unset (default for purely-local use), this is a
-    no-op and every request passes through. When set, /api/* requires the
-    matching X-Narrative-Key header.
+    1. **Auth.** Gated by env var `NARRATIVE_KEY`. When unset (default for
+       purely-local use), all requests pass through unauthenticated and are
+       treated as the admin tenant — convenient for `python server.py` on
+       your laptop. When set, `/api/*` requires `X-Narrative-Key` to match
+       either NARRATIVE_KEY itself (admin) OR any tester bearer recorded
+       in `/data/tenants.json` (v221.tenants-2).
 
-    Two carve-outs:
-      - Static files (anything not under /api/) are always allowed so the
-        frontend can boot and prompt for the key in the first place.
-      - /api/voices/sample/* is unauthenticated so <audio src="..."> sample
-        previews keep working without each one having to be loaded via
-        Fetch + Blob URL. The samples are already public on HuggingFace,
-        so there's no real privacy lost.
+    2. **Tenant.** On every authed request we stash `request.state.tenant_key`
+       (sha256 of the bearer) and `request.state.is_admin` (True iff the
+       bearer was NARRATIVE_KEY). Library API endpoints use these to scope
+       every query, and admin-only endpoints check is_admin. The bearer
+       itself is never written to a DB column — only its sha256.
+
+    Carve-outs (no auth, no tenant):
+      - Static files (anything not under /api/) — the frontend has to boot
+        before it can prompt for the key.
+      - /api/voices/sample/* — sample previews use <audio src=...> which
+        can't carry a header. Samples are already public on HuggingFace.
+      - /api/github/oauth/* — the OAuth round-trip is hit via redirect,
+        not fetch, so the header isn't available. (v180 carve-out.)
     """
     required_key = os.environ.get("NARRATIVE_KEY", "").strip()
+
+    # Local-dev fallthrough. Everything looks like the admin tenant so
+    # the library API and admin endpoints work without setup.
     if not required_key:
+        request.state.tenant_key = library_db.compute_tenant_key("")
+        request.state.is_admin = True
+        request.state.tenant_label = "local-admin"
         return await call_next(request)
 
     path = request.url.path
@@ -119,24 +240,43 @@ async def require_api_key(request: Request, call_next):
         return await call_next(request)
     if path.startswith("/api/voices/sample/"):
         return await call_next(request)
-    # v180: GitHub OAuth round-trip. /start is hit by the user via a
-    # window.location navigation (no X-Narrative-Key header — that
-    # only goes through fetch); /callback is hit by GitHub redirecting
-    # back. Neither can carry the header, so both must be exempt.
-    # /status is exempt so the frontend can decide whether to surface
-    # the Sign-In button before the user has any key set.
     if path.startswith("/api/github/oauth/"):
         return await call_next(request)
 
     provided = request.headers.get("X-Narrative-Key", "")
-    if not provided or not hmac.compare_digest(
-        provided.encode("utf-8"), required_key.encode("utf-8")
-    ):
+    if not provided:
         return JSONResponse(
             status_code=401,
-            content={"detail": "missing or invalid X-Narrative-Key"},
+            content={"detail": "missing X-Narrative-Key"},
         )
-    return await call_next(request)
+
+    # Admin check first — constant-time compare against env var.
+    if hmac.compare_digest(
+        provided.encode("utf-8"), required_key.encode("utf-8")
+    ):
+        request.state.tenant_key = library_db.compute_tenant_key(required_key)
+        request.state.is_admin = True
+        request.state.tenant_label = "admin"
+        # Fire-and-forget last-seen update (no await needed; the helper
+        # is sync + cheap + minute-bucketed).
+        library_db.touch_tenant_seen(request.state.tenant_key)
+        return await call_next(request)
+
+    # Tester check — sha256(bearer) lookup in /data/tenants.json. The
+    # helper does its own hashing so a leaky log line doesn't expose
+    # the bearer.
+    record = library_db.find_bearer(provided)
+    if record is not None:
+        request.state.tenant_key = record["tenant_key"]
+        request.state.is_admin = False
+        request.state.tenant_label = record.get("label", "")
+        library_db.touch_tenant_seen(record["tenant_key"])
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "invalid X-Narrative-Key"},
+    )
 
 
 class SynthesizeRequest(BaseModel):
@@ -160,6 +300,36 @@ class SynthesizeSegmentsRequest(BaseModel):
     segments: list[SynthesisSegment] = Field(..., min_length=1, max_length=2000)
     rate: int | None = Field(default=None, ge=50, le=400)
     volume: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v221.sync-2: server-side library health.
+# Real CRUD endpoints land in sync-3. This is just the "is the DB up?"
+# probe so the deploy + volume mount can be verified independently of
+# the rest of the sync work.
+# ──────────────────────────────────────────────────────────────────────
+@app.get("/api/library/health")
+def library_health():
+    import library_db
+
+    if not library_db.is_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail=f"library DB disabled: {library_db.disabled_reason()}",
+        )
+    # Round-trip a trivial query to confirm the connection actually works.
+    try:
+        row = library_db.conn().execute(
+            "SELECT version FROM schema_version LIMIT 1"
+        ).fetchone()
+        schema_version = int(row["version"]) if row else 0
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB read failed: {e}")
+    return {
+        "ok": True,
+        "schema_version": schema_version,
+        "data_dir": str(library_db.DATA_DIR),
+    }
 
 
 @app.get("/api/voices")
@@ -253,11 +423,30 @@ async def synthesize_segments_stream(req: SynthesizeSegmentsRequest):
         def _encode_result(ev: dict) -> dict:
             wav_bytes = base64.b64decode(ev["wav_b64"])
             mp3_bytes = wav_to_mp3(wav_bytes, bitrate_kbps=64)
-            return {
+            # v221.sync-4: persist the MP3 server-side so other devices
+            # syncing this clip get a ready-to-stream blob instead of
+            # needing to re-synthesize. Content-addressed by sha256 so
+            # re-narrating with the same voice+text dedups. Guarded:
+            # a volume hiccup mustn't break the in-flight synth — the
+            # client still gets mp3_b64 in this event regardless.
+            audio_sha = None
+            try:
+                import library_db
+                if library_db.is_enabled():
+                    audio_sha = library_db.store_audio(mp3_bytes)
+            except Exception as e:
+                print(
+                    f"[synthesize/stream] audio persist failed: {e}",
+                    file=sys.stderr, flush=True,
+                )
+            out = {
                 "type": "result",
                 "mp3_b64": base64.b64encode(mp3_bytes).decode(),
                 "sentence_offsets_ms": ev["sentence_offsets_ms"],
             }
+            if audio_sha:
+                out["audio_sha256"] = audio_sha
+            return out
 
         while True:
             try:
@@ -375,21 +564,86 @@ async def voices_install_stream(req: InstallVoiceRequest):
 
 @app.get("/api/voices/sample/{voice_id}")
 async def voice_sample(voice_id: str, speaker: int = 0):
-    """Proxy the official Piper preview MP3 for a (voice, speaker) pair.
+    """Return a preview MP3/WAV for a (voice, speaker) pair.
 
-    `?speaker=N` picks a specific speaker for multi-speaker models like
-    LibriTTS. Defaults to 0 — works for every voice. Cached in-process
-    per (voice, speaker), and we ask the browser to cache for a day so
-    flipping back and forth doesn't re-hit the network.
+    Routing:
+      - kokoro:* voices are synth'd on-the-fly from a short fixed
+        sentence (no upstream sample server publishes them).
+      - everything else proxies the official Piper sample MP3 from
+        rhasspy/piper-voices on HuggingFace.
+    `?speaker=N` picks a speaker for multi-speaker Piper models; Kokoro
+    voices are single-speaker and ignore it. The browser cache header
+    keeps repeated taps off the network.
     """
     import asyncio
-
-    from tts import catalog
 
     if speaker < 0 or speaker > 10000:
         raise HTTPException(status_code=400, detail="speaker out of range")
 
     loop = asyncio.get_running_loop()
+
+    # v220au: Kokoro preview path. The Piper catalog publishes
+    # sample MP3s alongside each voice; Kokoro doesn't, so we
+    # synth one here. Same fixed sentence for every voice so the
+    # user can A/B them on the same content — and it's the
+    # canonical pangram, brief enough to render in ~1s on CPU.
+    if voice_id.startswith("kokoro:"):
+        import sys as _sys
+        import traceback as _tb
+
+        from tts import kokoro_engine
+
+        # v220ax: if Kokoro is still warming up from a cold boot, wait
+        # for it instead of racing it. Past the first ~15s of uptime
+        # this is a no-op (event already set).
+        await _await_kokoro_warmup()
+
+        SAMPLE_TEXT = (
+            "The quick brown fox jumps over the lazy dog. "
+            "Hear me read a sentence in this voice."
+        )
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: kokoro_engine.synthesize(
+                    text=SAMPLE_TEXT,
+                    voice_id=voice_id,
+                ),
+            )
+        except FileNotFoundError as e:
+            print(
+                f"[kokoro-preview] FileNotFoundError for {voice_id!r}: {e!r}",
+                file=_sys.stderr, flush=True,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Kokoro voice unavailable: {e}",
+            )
+        except ValueError as e:
+            print(
+                f"[kokoro-preview] ValueError for {voice_id!r}: {e!r}",
+                file=_sys.stderr, flush=True,
+            )
+            _tb.print_exc()
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            print(
+                f"[kokoro-preview] {type(e).__name__} for {voice_id!r}: {e!r}",
+                file=_sys.stderr, flush=True,
+            )
+            _tb.print_exc()
+            raise HTTPException(
+                status_code=502,
+                detail=f"Kokoro preview failed ({type(e).__name__}): {e}",
+            )
+        return Response(
+            content=result.wav,
+            media_type="audio/wav",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    from tts import catalog
+
     try:
         data = await loop.run_in_executor(
             None, catalog.fetch_sample, voice_id, speaker
@@ -487,11 +741,30 @@ async def synthesize_stream(req: SynthesizeRequest):
             """Transcode the combined WAV to MP3 for the final result event."""
             wav_bytes = base64.b64decode(ev["wav_b64"])
             mp3_bytes = wav_to_mp3(wav_bytes, bitrate_kbps=64)
-            return {
+            # v221.sync-4: same server-side persist hook as the
+            # single-voice path. See /api/synthesize/stream for the
+            # rationale; segments synths (multi-character chapters)
+            # are even MORE valuable to cache because they're slower
+            # to produce — phone fetching one shouldn't ever need to
+            # re-run a 90s segment synth.
+            audio_sha = None
+            try:
+                import library_db
+                if library_db.is_enabled():
+                    audio_sha = library_db.store_audio(mp3_bytes)
+            except Exception as e:
+                print(
+                    f"[synthesize/segments/stream] audio persist failed: {e}",
+                    file=sys.stderr, flush=True,
+                )
+            out = {
                 "type": "result",
                 "mp3_b64": base64.b64encode(mp3_bytes).decode(),
                 "sentence_offsets_ms": ev["sentence_offsets_ms"],
             }
+            if audio_sha:
+                out["audio_sha256"] = audio_sha
+            return out
 
         while True:
             try:

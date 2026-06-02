@@ -885,6 +885,56 @@ def _extract_plain(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+# Match `---` on its own line (allowing trailing whitespace), which
+# is how YAML/Jekyll frontmatter fences itself.
+_FRONTMATTER_FENCE_RE = re.compile(r"(?m)^---\s*$")
+
+
+def _strip_yaml_frontmatter(text: str) -> str:
+    """Drop a leading YAML / Jekyll-style frontmatter block, if any.
+
+    GitHub's markdown renderer hides this block — so authors writing
+    chapters with metadata like::
+
+        ---
+        current_word_count: 1290
+        summary: Ilea Vann [POV]
+        ---
+        # Chapter 0
+
+    see only the chapter on github.com. The raw `.md` bytes include
+    the fence, though, and without this strip TTS happily reads
+    "current word count 1290 summary Ilea Vann POV" out loud.
+
+    Recognized shapes:
+      - Opens with `---` on the first line (LF or CRLF).
+      - Closes with `---` on its own line later.
+    Anything not matching is returned unchanged.
+    """
+    if not text:
+        return text
+    # Both LF and CRLF starts are valid.
+    if not (text.startswith("---\n") or text.startswith("---\r\n")):
+        return text
+    fence = _FRONTMATTER_FENCE_RE.search(text[3:])
+    if not fence:
+        # Opener with no closer — likely a horizontal rule used as
+        # a chapter break ("---"), not frontmatter. Leave it.
+        return text
+    return text[3 + fence.end():].lstrip("\r\n")
+
+
+def _extract_markdown(data: bytes) -> str:
+    """Plain decode + frontmatter strip.
+
+    Used for `.md` / `.markdown` file uploads AND for raw markdown URLs
+    fetched via /api/extract/url (e.g. raw.githubusercontent.com files
+    routed through this dispatcher). `.txt` keeps the unstripped path
+    in case a non-markdown text file legitimately starts with `---`.
+    """
+    return _strip_yaml_frontmatter(_extract_plain(data))
+
+
 def _extract_pdf(data: bytes) -> str:
     """Extract reading text from a PDF, stripping common boilerplate.
 
@@ -1309,15 +1359,14 @@ _OBSIDIAN_EMBED = re.compile(r"!\[\[[^\]]+\]\]")
 def _obsidian_strip_frontmatter(md: str) -> tuple[str | None, str]:
     """Return (title, body) for a possibly-frontmatter'd Markdown doc.
 
-    We only need the title field; the rest of the YAML can be ignored
-    (tags, dates, properties all live there but aren't TTS-relevant).
-    Frontmatter spec: --- at line 1, then YAML, then ---. We accept
-    both LF and CRLF.
+    Shares its fence-detection with _strip_yaml_frontmatter (above);
+    the difference is this one also surfaces the YAML's `title:` field
+    so the Obsidian vault picker can label the note. Returns (None, md)
+    unchanged when no frontmatter is present.
     """
     if not (md.startswith("---\n") or md.startswith("---\r\n")):
         return None, md
-    # Find the closing fence — must be at the start of a line.
-    fence = re.search(r"(?m)^---\s*$", md[3:])
+    fence = _FRONTMATTER_FENCE_RE.search(md[3:])
     if not fence:
         return None, md
     yaml_block = md[3:3 + fence.start()]
@@ -1783,8 +1832,10 @@ def _normalize(text: str) -> str:
 
 _HANDLERS = {
     "txt": _extract_plain,
-    "md": _extract_plain,
-    "markdown": _extract_plain,
+    # v220as: `.md` / `.markdown` go through _extract_markdown so the
+    # YAML frontmatter block doesn't end up read aloud by Piper/Kokoro.
+    "md": _extract_markdown,
+    "markdown": _extract_markdown,
     "pdf": _extract_pdf,
     "epub": _extract_epub,
     "docx": _extract_docx,

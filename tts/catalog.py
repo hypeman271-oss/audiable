@@ -69,10 +69,17 @@ def _voice_size_mb(voice: dict) -> float:
 
 
 def list_for_ui() -> list[dict]:
-    """Flatten the catalog into the shape the frontend wants."""
+    """Flatten the catalog into the shape the frontend wants.
+
+    Returns Kokoro voices first (Apache-2.0, ship-installed) then the
+    Piper catalog (per-voice install/license varies). The frontend's
+    voice browser renders them in this order so the commercial-clean
+    Kokoro options surface above the Piper noise by default.
+    """
+    voices: list[dict] = []
+    voices.extend(_kokoro_catalog_entries())
     catalog = fetch_catalog()
     installed = installed_ids()
-    voices = []
     for voice_id, v in catalog.items():
         lang = v.get("language") or {}
         lic = license_for(voice_id)
@@ -88,6 +95,7 @@ def list_for_ui() -> list[dict]:
                 "num_speakers": v.get("num_speakers") or 1,
                 "size_mb": _voice_size_mb(v),
                 "installed": voice_id in installed,
+                "engine": "piper",
                 # v217: every voice carries license metadata. UI surfaces
                 # `commercial` as a badge; `attribution` is what the user
                 # must credit when distributing generated audio.
@@ -100,6 +108,75 @@ def list_for_ui() -> list[dict]:
             }
         )
     return voices
+
+
+def _kokoro_catalog_entries() -> list[dict]:
+    """Build catalog rows for every Kokoro voice surfaced by the engine.
+
+    The Kokoro bundle either is fully installed or fully not. So we
+    report `installed = bundle_present` for every entry, and the size
+    column shows 0 MB per voice (the bundle is amortized across all of
+    them — surfacing 88 MB on each entry would mislead users into
+    thinking each voice costs that). Licensing comes from
+    KOKORO_RECORD (Apache 2.0, commercial-OK).
+    """
+    from . import kokoro_engine
+    from .voice_licenses import KOKORO_RECORD
+
+    bundle_ready = kokoro_engine.bundle_present()
+    entries: list[dict] = []
+    for voice_obj in kokoro_engine.list_voices() if bundle_ready else _kokoro_phantom_voices():
+        # voice_obj is a tts.Voice; ID is "kokoro:af_heart" etc.
+        suffix = voice_obj.id.split(":", 1)[1]
+        # First letter is the language family, second is gender — used
+        # to render a readable language label in the UI.
+        lang_code = (voice_obj.languages or ["en-US"])[0]
+        entries.append(
+            {
+                "id": voice_obj.id,
+                "name": voice_obj.name,
+                "language_code": lang_code,
+                "language_name": "English (US)" if lang_code == "en-US" else "English (UK)",
+                "language_native": "English",
+                "country": "United States" if lang_code == "en-US" else "United Kingdom",
+                "quality": "high",  # Kokoro voices are uniformly hi-q
+                "num_speakers": 1,
+                "size_mb": 0,
+                "installed": bundle_ready,
+                "engine": "kokoro",
+                "license": KOKORO_RECORD["license"],
+                "license_dataset": KOKORO_RECORD["dataset"],
+                "license_dataset_url": KOKORO_RECORD["dataset_url"],
+                "license_commercial": True,
+                "license_attribution": KOKORO_RECORD["attribution"],
+                "license_notes": KOKORO_RECORD["notes"],
+            }
+        )
+    return entries
+
+
+def _kokoro_phantom_voices():
+    """Fallback list when the bundle isn't on disk yet.
+
+    Reads the static _VOICES table from kokoro_engine so the catalog
+    can still show "what you'd get if you installed Kokoro" without
+    loading the ONNX runtime. Returns Voice-shaped duck-types.
+    """
+    from . import Voice, kokoro_engine
+
+    out = []
+    for name, display, gender, lang, quality in kokoro_engine._VOICES:
+        out.append(
+            Voice(
+                id=f"kokoro:{name}",
+                name=f"{display} ({lang}, {quality})",
+                languages=[lang],
+                gender=gender,
+                engine="kokoro",
+                num_speakers=1,
+            )
+        )
+    return out
 
 
 # Per-process cache of preview sample bytes so flipping through the voice

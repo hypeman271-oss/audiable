@@ -5,13 +5,16 @@ Public API:
     synthesize(text, voice_id=None, rate=None, volume=None) -> SynthesisResult
     split_sentences(text) -> list[str]
 
-Two backends are registered and merged into a single voice list:
+Three backends are registered and merged into a single voice list:
+    - kokoro: Apache 2.0 neural TTS via kokoro-onnx, all 54 voices bundled
+              (we surface the en-US + en-GB subset for V1). Bundle lives at
+              voices/kokoro/{kokoro-v1.0.int8.onnx, voices-v1.0.bin}.
     - piper:  neural TTS via piper-tts, voices loaded from `voices/*.onnx`
     - sapi:   OS voices via pyttsx3 (always available on Windows/macOS/Linux)
 
-Voice IDs are namespaced by backend. Piper voice IDs are prefixed with
-"piper:"; everything else is routed to SAPI (whose native IDs are already
-unique — Windows registry paths, etc.).
+Voice IDs are namespaced by backend. Kokoro IDs are prefixed "kokoro:";
+Piper IDs are prefixed "piper:"; everything else is routed to SAPI (whose
+native IDs are already unique — Windows registry paths, etc.).
 
 Synthesis is sentence-by-sentence so the frontend can jump between
 sentence boundaries when the user hits skip on the lock screen.
@@ -22,7 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from . import piper_engine, sapi
+from . import kokoro_engine, piper_engine, sapi
 
 
 @dataclass
@@ -31,7 +34,7 @@ class Voice:
     name: str
     languages: list[str]
     gender: str | None
-    engine: str  # "piper" or "sapi"
+    engine: str  # "kokoro", "piper", or "sapi"
     # Number of distinct speakers baked into the model. 1 for SAPI voices
     # and most Piper voices; LibriTTS/high is 904. The frontend shows a
     # speaker picker only when this is > 1.
@@ -52,17 +55,97 @@ class SynthesisResult:
 # this split on the original input.
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+# v225.tn34 (#510): max chars per "sentence" that we'll hand to Piper.
+# Above ~500 chars the espeak phonemizer starts running out of memory or
+# silently produces zero-frame WAVs (a real tester hit this with a Trump
+# speech transcript that had 2 periods in 2,911 words — the splitter saw
+# the whole 15k-char text as a single "sentence" and Piper bailed mid-way,
+# leaving a 3-second clip marked OK by the bg-queue). We force-split any
+# overlong run at the nearest comma boundary, then whitespace, then a
+# hard char cap. The output is still a valid sentence list to the engines.
+_MAX_SENTENCE_CHARS = 500
+# Punctuation boundaries we'll happily split at, in priority order. Comma
+# first because it gives the most natural breath; semicolon/colon are
+# good fallback breaks; em/en dashes work for verbal pause beats.
+_SECONDARY_SPLIT = re.compile(r"(?<=[,;:—–])\s+")
+
+
+def _force_split_long(sentence: str, max_chars: int = _MAX_SENTENCE_CHARS) -> list[str]:
+    """Break an overlong "sentence" into Piper-digestible chunks.
+
+    Strategy: split at commas/semicolons/colons/dashes if any exist.
+    If the resulting pieces are still too long, split at whitespace.
+    If a single token is still over the cap (rare — long URLs, etc.)
+    hard-cut at the char boundary. We never drop content; the joined
+    output equals the input minus the consumed separators.
+    """
+    if len(sentence) <= max_chars:
+        return [sentence]
+    pieces: list[str] = []
+    # First pass: split on secondary punctuation. This handles "list,
+    # of, items, separated, by, commas" cleanly.
+    for chunk in _SECONDARY_SPLIT.split(sentence):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if len(chunk) <= max_chars:
+            pieces.append(chunk)
+            continue
+        # Still too long → split at whitespace, packing words greedily
+        # into <=max_chars groups.
+        words = chunk.split()
+        cur = ""
+        for w in words:
+            sep = " " if cur else ""
+            if len(cur) + len(sep) + len(w) > max_chars:
+                if cur:
+                    pieces.append(cur)
+                cur = w
+            else:
+                cur += sep + w
+        if cur:
+            # A single token longer than the cap (very rare). Hard-cut
+            # so we never hand the engine an oversize input — the
+            # audio will have a tiny seam in the middle of the token
+            # but at least it'll synthesize.
+            if len(cur) > max_chars:
+                for i in range(0, len(cur), max_chars):
+                    pieces.append(cur[i:i + max_chars])
+            else:
+                pieces.append(cur)
+    return pieces or [sentence[:max_chars]]
+
 
 def split_sentences(text: str) -> list[str]:
     text = (text or "").strip()
     if not text:
         return []
     parts = _SENTENCE_SPLIT.split(text)
-    return [p for p in (p.strip() for p in parts) if p]
+    # v225.tn34: force-split any sentence over the per-sentence cap.
+    # This bulletproofs transcript-style inputs that have few or no
+    # sentence-ending marks. Order is preserved; only oversized
+    # entries get expanded into multiple chunks.
+    out: list[str] = []
+    for raw in parts:
+        s = raw.strip()
+        if not s:
+            continue
+        if len(s) <= _MAX_SENTENCE_CHARS:
+            out.append(s)
+        else:
+            out.extend(_force_split_long(s))
+    return out
 
 
 def list_voices() -> list[Voice]:
-    return piper_engine.list_voices() + sapi.list_voices()
+    # Kokoro first so its higher-quality voices float to the top of the
+    # picker by default. Piper voices follow (legacy + LibriTTS). SAPI
+    # last (OS fallback).
+    return (
+        kokoro_engine.list_voices()
+        + piper_engine.list_voices()
+        + sapi.list_voices()
+    )
 
 
 def synthesize_iter(
@@ -75,10 +158,14 @@ def synthesize_iter(
     """Generator dispatching to the right engine.
 
     Yields per-sentence and final result events. `speaker_id` is honored
-    by Piper voices with num_speakers > 1 and silently ignored by SAPI
-    (which is single-voice per id).
+    by Piper voices with num_speakers > 1 and silently ignored by Kokoro
+    (single-speaker per voice) and SAPI (single-voice per id).
     """
-    if voice_id and voice_id.startswith("piper:"):
+    if voice_id and voice_id.startswith("kokoro:"):
+        yield from kokoro_engine.synthesize_iter(
+            text, voice_id, rate=rate, volume=volume, speaker_id=speaker_id
+        )
+    elif voice_id and voice_id.startswith("piper:"):
         yield from piper_engine.synthesize_iter(
             text, voice_id, rate=rate, volume=volume, speaker_id=speaker_id
         )

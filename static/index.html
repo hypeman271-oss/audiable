@@ -50,8 +50,158 @@
         } catch (_) {}
       })();
     </script>
+    <!-- v221.tn12: brand splash screen. Inlined here (not in styles.css)
+         so it renders BEFORE the external stylesheet loads — otherwise
+         users see a flash of unstyled dark background before the splash
+         appears, which defeats the "this is a polished app" signal a
+         splash exists to send. Theme-aware via data-theme. -->
+    <style>
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #0b1020;
+        color: #fff;
+        font-family: Georgia, "Times New Roman", Times, serif;
+        transition: opacity 320ms ease;
+      }
+      [data-theme="light"] #app-splash {
+        background: #faf4e3;
+        color: #2a2418;
+      }
+      #app-splash.app-splash--hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #app-splash-mark {
+        font-size: 44px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      #app-splash-tagline {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, sans-serif;
+        font-size: 12px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        opacity: 0.55;
+      }
+      #app-splash-dots {
+        display: flex;
+        gap: 7px;
+        margin-top: 4px;
+      }
+      #app-splash-dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.3;
+        animation: app-splash-pulse 1.2s ease-in-out infinite;
+      }
+      #app-splash-dots span:nth-child(2) { animation-delay: 0.18s; }
+      #app-splash-dots span:nth-child(3) { animation-delay: 0.36s; }
+      @keyframes app-splash-pulse {
+        0%, 100% { opacity: 0.3;  transform: scale(1); }
+        50%      { opacity: 1;    transform: scale(1.3); }
+      }
+    </style>
   </head>
   <body>
+    <!-- v221.tn12: brand splash. First child of <body> so it covers
+         the whole viewport before anything else renders. Dismissed by
+         the inline script below (on window.load OR a custom
+         "narrative:ready" event from app.js OR a 4s safety timeout).
+         Markup is intentionally minimal so it parses + paints fast. -->
+    <div id="app-splash" aria-hidden="true">
+      <div id="app-splash-mark">Narrative</div>
+      <div id="app-splash-tagline">Write. Listen. Revise.</div>
+      <div id="app-splash-dots"><span></span><span></span><span></span></div>
+    </div>
+    <script>
+      // Dismiss logic inline so it runs as soon as the splash markup
+      // parses — no wait for app.js. Three dismissal triggers:
+      //   1. window.load (always fires)
+      //   2. "narrative:ready" custom event (app.js can fire this
+      //      after the first renderLibrary() if we want an earlier
+      //      dismissal; not required — left as future hook)
+      //   3. 4-second max-hold timeout — guarantees the splash can
+      //      NEVER trap a user even if both 1 and 2 fail
+      //
+      // Min-hold tiering (v221.tn13):
+      //   - First-time visitors → 1500ms so the brand actually
+      //     registers. Once that's done we stamp localStorage so
+      //     the next 19 loads this week aren't gated on the longer
+      //     animation.
+      //   - Returning visitors → 600ms — just enough that a cached
+      //     shell doesn't pop-flash, but not enough to feel slow.
+      // localStorage failures (incognito with stricter policies,
+      // disabled storage, etc.) fall back to the SHORT hold so we
+      // don't accidentally show the long version every load forever.
+      (function () {
+        var splash = document.getElementById("app-splash");
+        if (!splash) return;
+        var SPLASH_SEEN_KEY = "narrative.splashSeenAt";
+        var seenBefore;
+        try {
+          seenBefore = !!localStorage.getItem(SPLASH_SEEN_KEY);
+        } catch (_) {
+          // localStorage blocked → treat as returning to avoid a
+          // perpetually-slow splash on every reload.
+          seenBefore = true;
+        }
+        var minHoldMs = seenBefore ? 600 : 1500;
+        var dismissed = false;
+        var bootStart = (performance && performance.now)
+          ? performance.now()
+          : Date.now();
+        function dismiss() {
+          if (dismissed) return;
+          dismissed = true;
+          var now = (performance && performance.now)
+            ? performance.now()
+            : Date.now();
+          var elapsed = now - bootStart;
+          var wait = Math.max(0, minHoldMs - elapsed);
+          // Stamp BEFORE the fade so a fast user navigating away
+          // mid-fade still gets the short version on their next visit.
+          try {
+            localStorage.setItem(SPLASH_SEEN_KEY, String(Date.now()));
+          } catch (_) {}
+          setTimeout(function () {
+            splash.classList.add("app-splash--hide");
+            // Remove from DOM after the fade transition completes so
+            // the empty <div> can't intercept clicks accidentally.
+            setTimeout(function () {
+              if (splash.parentNode) splash.parentNode.removeChild(splash);
+            }, 360);
+          }, wait);
+        }
+        window.addEventListener("load", dismiss);
+        window.addEventListener("narrative:ready", dismiss);
+        setTimeout(dismiss, 4000);
+      })();
+    </script>
+    <!-- v221.maint: server-side maintenance warning. Polled from
+         /api/library/maintenance every 60s. Hidden by default; JS reveals
+         when there's an active window and stores per-session
+         dismissal so the × hides it for this tab/visit. -->
+    <div id="maintenance-banner" class="maintenance-banner" hidden>
+      <span id="maintenance-banner-text" class="maintenance-banner-text"></span>
+      <button
+        id="maintenance-banner-dismiss"
+        type="button"
+        class="maintenance-banner-dismiss"
+        aria-label="Dismiss maintenance warning for this session"
+        title="Dismiss for this session"
+      >×</button>
+    </div>
+
     <!-- v126: Libby-style cover-art backdrop. Empty by default; when
          a clip with an uploaded cover is loaded, JS sets its
          background-image inline. CSS blurs + dims so it reads as a
@@ -92,6 +242,43 @@
       <button type="button" class="highlight-toolbar-btn highlight-toolbar-remove" data-action="remove" aria-label="Remove highlight" title="Remove">×</button>
     </div>
 
+    <!-- v223.annotate-1: revision-mark palette. Appears at the bottom
+         of the screen when annotate mode is on and the user taps a
+         sentence. Six default tags map to common proofreading-style
+         marks. Cancel via tap outside, × button, or Esc.
+         See STRATEGY.md "Phone-native annotation" section. -->
+    <div id="annotate-palette" class="annotate-palette" hidden>
+      <div class="annotate-palette-row" id="annotate-palette-tags">
+        <button type="button" class="annotate-tag-btn" data-tag="cut"    title="Cut">✂ Cut</button>
+        <button type="button" class="annotate-tag-btn" data-tag="fact"   title="Fact-check">✓ Fact</button>
+        <button type="button" class="annotate-tag-btn" data-tag="weak"   title="Weak verb / phrasing">⚠ Weak</button>
+        <button type="button" class="annotate-tag-btn" data-tag="pov"    title="POV slip">👁 POV</button>
+        <button type="button" class="annotate-tag-btn" data-tag="expand" title="Expand">➕ Expand</button>
+        <button type="button" class="annotate-tag-btn" data-tag="love"   title="Love this">❤ Love</button>
+        <!-- v223.annotate-4: 🎤 swaps the palette into recording state.
+             Distinct class so the existing data-tag handler doesn't
+             try to save it as a regular flag. -->
+        <button type="button" class="annotate-tag-btn annotate-voice-btn" id="annotate-voice-btn" title="Voice note">🎤 Voice</button>
+        <button type="button" id="annotate-palette-close" class="annotate-palette-close" aria-label="Close palette">×</button>
+      </div>
+      <!-- v223.annotate-4: recording sub-row. Hidden while picking a
+           tag; shown after 🎤 tap. Red pulsing dot + mm:ss timer +
+           big stop target. Auto-stops at 30s to cap base64 payload. -->
+      <div class="annotate-record-row" id="annotate-record-row" hidden>
+        <span class="annotate-record-dot" aria-hidden="true"></span>
+        <span class="annotate-record-timer" id="annotate-record-timer">0:00</span>
+        <button type="button" class="annotate-record-stop" id="annotate-record-stop">⏹ Stop &amp; save</button>
+        <button type="button" class="annotate-record-cancel" id="annotate-record-cancel" aria-label="Cancel recording">×</button>
+      </div>
+      <!-- v223.tn5 (#470): live transcript appears here while recording
+           via Web Speech API. Empty / hidden if the browser doesn't
+           support SpeechRecognition. Interim results shown dimmed,
+           finalized chunks shown solid. The text becomes the
+           annotation's `transcript` field on save. -->
+      <p class="annotate-record-transcript" id="annotate-record-transcript" hidden></p>
+      <p class="annotate-palette-hint" id="annotate-palette-hint">Pick a tag to flag this sentence</p>
+    </div>
+
     <main class="app">
       <!-- v195: dual chip strips. #hero-controls lives back inside
            .hero-row (v188 position) as a flex middle item, visible
@@ -105,7 +292,7 @@
         <div class="hero-row">
           <div>
             <h1>Narrative</h1>
-            <p class="tagline">Type. Listen. Download.</p>
+            <p class="tagline">Write. Listen. Revise.</p>
           </div>
           <!-- Inline strip: sits in the hero's empty middle slot
                between the title block and the icon rail. Chips are
@@ -302,6 +489,73 @@
             </div>
           </div>
 
+          <!-- v221.sync-5: cross-device library sync. Off by default;
+               flipping on enables Path B sync (server-side SQLite +
+               audio blobs on the Fly volume). Existing local clips
+               sync on next save; full migration of existing library
+               lands in #430. Per-device flag — flipping on desktop
+               doesn't auto-enable phone. -->
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Sync library across devices</strong>
+              <span class="settings-toggle-desc">
+                Stores your library on the Narrative server so you can
+                edit on your desktop and listen on your phone. New
+                saves push as you go; pulls happen when you open the
+                library. Off by default — flip on per device.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Library sync">
+              <label>
+                <input type="radio" name="sync-enabled" value="off" />
+                <span>Off</span>
+              </label>
+              <label>
+                <input type="radio" name="sync-enabled" value="on" />
+                <span>On</span>
+              </label>
+            </div>
+            <!-- v223.tn1: manual sync trigger. Pushes every local clip,
+                 then pulls server state. Useful after editing offline,
+                 before swapping devices, or when the 60s auto-pull
+                 timer is too slow for the user's workflow. -->
+            <div class="settings-inline-row">
+              <button
+                type="button"
+                id="sync-now-btn"
+                class="ghost-btn"
+                aria-describedby="sync-status-line"
+              >Sync now</button>
+            </div>
+            <p id="sync-status-line" class="settings-section-hint"></p>
+          </div>
+
+          <!-- v220ap: visibility toggle for the "Start a new clip" helper
+               above the textarea. Returning users can dismiss the helper
+               in-place; this row brings it back. First-time users (no
+               saved clips) always see the helper regardless of this
+               setting — they need the discovery prompt. -->
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Start-a-new-clip helper</strong>
+              <span class="settings-toggle-desc">
+                The four-tile helper above the textarea (Paste URL /
+                Upload file / Browse GitHub / Try sample text). Hide it
+                once you know the moves; bring it back any time.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Start-a-new-clip helper visibility">
+              <label>
+                <input type="radio" name="empty-state-visibility" value="show" />
+                <span>Show</span>
+              </label>
+              <label>
+                <input type="radio" name="empty-state-visibility" value="hide" />
+                <span>Hide</span>
+              </label>
+            </div>
+          </div>
+
           <p class="settings-subheader">Player</p>
 
           <div class="settings-row">
@@ -333,6 +587,43 @@
               <label>
                 <input type="radio" name="skip-interval" value="30" />
                 <span>30s</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- v223.tn15 (#479): auto-pause at paragraph break.
+               Gives the listener a beat to process what they just
+               heard — and on the phone, time to tap-flag in annotate
+               mode without the narrator racing past. Off (0) means
+               continuous playback; 2/4/6 seconds adds a breath after
+               every paragraph. The pause is cancelled if the user
+               presses play or skips. -->
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Pause after paragraph</strong>
+              <span class="settings-toggle-desc">
+                Auto-pause for a beat at the end of each paragraph so
+                you can process what you heard — and tap to flag it
+                in annotate mode. Resumes automatically; press play to
+                skip the wait.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Pause after paragraph">
+              <label>
+                <input type="radio" name="paragraph-pause" value="0" />
+                <span>Off</span>
+              </label>
+              <label>
+                <input type="radio" name="paragraph-pause" value="2" />
+                <span>2s</span>
+              </label>
+              <label>
+                <input type="radio" name="paragraph-pause" value="4" />
+                <span>4s</span>
+              </label>
+              <label>
+                <input type="radio" name="paragraph-pause" value="6" />
+                <span>6s</span>
               </label>
             </div>
           </div>
@@ -518,6 +809,148 @@
             class="settings-help-link"
             aria-label="View the in-app debug log"
           >View debug log →</a>
+
+          <!-- v221.maint: admin form for scheduling a server-side
+               maintenance window. Hidden by JS unless an API key is
+               present (NARRATIVE_KEY identifies the admin in
+               single-tenant alpha). Hidden in normal user sessions
+               so testers never see the controls. -->
+          <div
+            id="settings-maintenance-section"
+            class="settings-section"
+            hidden
+          >
+            <label class="settings-section-label">
+              Schedule maintenance
+            </label>
+            <p class="settings-section-hint">
+              Sets a warning banner that every connected tester sees.
+              Useful before deploys, restarts, or any window where
+              re-narrates may fail.
+            </p>
+            <textarea
+              id="maintenance-message"
+              class="settings-input"
+              rows="2"
+              placeholder="e.g. Restarting at 18:30 UTC — re-narrates in progress will be killed."
+              maxlength="500"
+            ></textarea>
+            <div class="maintenance-form-row">
+              <label class="maintenance-form-field">
+                <span>Starts at</span>
+                <input
+                  id="maintenance-starts-at"
+                  type="datetime-local"
+                  class="settings-input"
+                />
+              </label>
+              <label class="maintenance-form-field">
+                <span>Duration (min)</span>
+                <input
+                  id="maintenance-duration-min"
+                  type="number"
+                  min="1"
+                  max="240"
+                  value="10"
+                  class="settings-input"
+                />
+              </label>
+            </div>
+            <div class="maintenance-form-actions">
+              <button
+                id="maintenance-save-btn"
+                type="button"
+                class="link-btn"
+              >Save warning</button>
+              <button
+                id="maintenance-clear-btn"
+                type="button"
+                class="link-btn"
+              >Clear active warning</button>
+              <span
+                id="maintenance-form-status"
+                class="settings-section-hint"
+              ></span>
+            </div>
+          </div>
+
+          <!-- v221.tenants-5: admin tenant management. Mint per-tester
+               bearers, list them, revoke. Hidden by JS unless the
+               current bearer matches NARRATIVE_KEY (whoami.is_admin
+               === true). Testers never see this section even if they
+               find it in the DOM via dev tools — the underlying POST
+               and DELETE both 403 without admin. -->
+          <div
+            id="settings-tenants-section"
+            class="settings-section"
+            hidden
+          >
+            <label class="settings-section-label">
+              Tester keys
+            </label>
+            <p class="settings-section-hint">
+              Each tester needs their own opaque key so their library
+              stays isolated from everyone else's. Mint one here, then
+              share it with the tester out-of-band — the key is shown
+              once and never re-emitted.
+            </p>
+            <div class="tenants-mint-row">
+              <input
+                id="tenants-new-label"
+                type="text"
+                class="settings-input"
+                placeholder="e.g. alice — beta@gmail.com"
+                maxlength="80"
+              />
+              <button
+                id="tenants-mint-btn"
+                type="button"
+                class="link-btn"
+              >Mint key</button>
+            </div>
+            <div
+              id="tenants-just-minted"
+              class="tenants-just-minted"
+              hidden
+            >
+              <div class="tenants-just-minted-row">
+                <span class="tenants-just-minted-label"
+                  >New tester key — copy this now:</span>
+                <button
+                  id="tenants-just-minted-copy"
+                  type="button"
+                  class="link-btn"
+                >Copy</button>
+              </div>
+              <code
+                id="tenants-just-minted-key"
+                class="tenants-just-minted-key"
+              ></code>
+              <p class="settings-section-hint">
+                This is the only time the key is shown. Share it with
+                the tester via Signal, email, or paper. After this you
+                can only see the tenant_key sha (below).
+              </p>
+            </div>
+            <div class="tenants-list-row">
+              <span class="settings-section-label settings-section-label-inline"
+                >Existing testers</span>
+              <button
+                id="tenants-refresh-btn"
+                type="button"
+                class="link-btn"
+              >Refresh</button>
+            </div>
+            <ul
+              id="tenants-list"
+              class="tenants-list"
+            ></ul>
+            <p
+              id="tenants-form-status"
+              class="settings-section-hint"
+              aria-live="polite"
+            ></p>
+          </div>
 
           <!-- GitHub section: paste a Personal Access Token so URL
                fetch can pull from private repos. Token is stored only
@@ -726,7 +1159,19 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v220aj</span>
+            Narrative <span id="settings-version-tag">v225q</span>
+            <button
+              type="button"
+              id="settings-force-update"
+              class="settings-force-update"
+              title="Wipe local cache and reload — use if a new version isn't showing"
+            >Force update</button>
+            <button
+              type="button"
+              id="settings-switch-key"
+              class="settings-force-update"
+              title="Sign out and paste a different X-Narrative-Key — use if you're sharing a device with another tester"
+            >Switch key</button>
           </p>
         </div>
       </dialog>
@@ -833,6 +1278,18 @@
              users (not just first-timers). v220c: includes a 4th
              "Try sample text" tile + "or paste below" arrow. -->
         <section id="empty-state" class="empty-state" hidden>
+          <!-- v220ap: dismiss button for returning users who already
+               know the import options. Sets a localStorage flag so
+               the helper stays hidden across reloads. First-time
+               users (no clips in library) always see it regardless
+               of the flag — they need the discovery prompt. -->
+          <button
+            id="empty-state-dismiss"
+            type="button"
+            class="empty-state-dismiss"
+            aria-label="Hide this helper"
+            title="Hide this helper (Settings can bring it back)"
+          >×</button>
           <p class="empty-state-head">
             New to Narrative? Try one of these to get started.
           </p>
@@ -1398,25 +1855,14 @@
             class="link-btn"
             aria-label="Enter multi-select mode for bulk delete or export"
           >Select</button>
-          <button
-            id="library-sync-github"
-            type="button"
-            class="link-btn"
-            aria-label="Check all GitHub-sourced clips for upstream commits"
-            hidden
-          >Sync GitHub</button>
-          <!-- v176: "Re-narrate outdated" — the missing companion to
-               Sync all. After Sync flags clips with newer upstream
-               commits, this button re-imports each one through the
-               background queue so the listener-side audio catches up
-               in one click rather than per-clip ✎ → Refetch loops. -->
-          <button
-            id="library-renarrate-outdated"
-            type="button"
-            class="link-btn"
-            aria-label="Re-fetch and re-synthesize every outdated GitHub clip"
-            hidden
-          >Re-narrate outdated</button>
+          <!-- v220am: Sync GitHub + Re-narrate outdated were originally
+               inside this .advanced-only row, which meant Simple-mode
+               users couldn't see them even when their library had
+               outdated GitHub clips screaming for a re-narrate. The
+               two buttons have moved into #library-github-tools below
+               (a sibling row that's always visible when there's
+               anything to do). The IDs / handlers / visibility logic
+               are unchanged. -->
           <button
             id="library-all-bookmarks"
             type="button"
@@ -1430,6 +1876,27 @@
             accept=".zip,application/zip,application/x-zip-compressed"
             hidden
           />
+        </div>
+        <!-- v220am: GitHub sync tools — always visible (no .advanced-only)
+             so Simple-mode users with GitHub-sourced clips can still
+             refresh + re-narrate. Self-hides via the buttons' `hidden`
+             attribute when there are no GitHub clips or no outdated ones
+             (see .library-github-tools:has() CSS rule). -->
+        <div class="library-github-tools" id="library-github-tools">
+          <button
+            id="library-sync-github"
+            type="button"
+            class="link-btn"
+            aria-label="Check all GitHub-sourced clips for upstream commits"
+            hidden
+          >Sync GitHub</button>
+          <button
+            id="library-renarrate-outdated"
+            type="button"
+            class="link-btn"
+            aria-label="Re-fetch and re-synthesize every outdated GitHub clip"
+            hidden
+          >Re-narrate outdated</button>
         </div>
         <!-- Select-mode tools (visible only while choosing clips) -->
         <div class="library-tools library-tools-select" id="library-tools-select" hidden>
@@ -1656,6 +2123,19 @@
             aria-label="Drop a bookmark at the current position"
             title="Drop a bookmark at the current position"
           >🔖 Bookmark</button>
+          <!-- v223.annotate-1: annotate-mode toggle. When active, tapping
+               a sentence in reading view opens the symbol palette
+               (bottom sheet) so the user can quick-flag with one of
+               six revision tags. While active, the toggle is shown
+               with .annotate-mode-active class for visual feedback. -->
+          <button
+            id="annotate-mode-btn"
+            type="button"
+            class="annotate-mode-btn"
+            aria-label="Annotate mode — tap a sentence to flag it"
+            title="Tap to enter annotate mode — then tap any sentence to flag it"
+            aria-pressed="false"
+          >📝 Annotate</button>
           <button
             id="sleep-btn"
             type="button"
@@ -1691,6 +2171,90 @@
         </div>
         <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
       </section>
+
+      <!-- v225.mobile / Phase B (#503): pull-up controls card. Phone
+           only — display:none on desktop. Fixed-positioned above the
+           bottom player bar. Closed by default (transform:
+           translateY(100%)); body[data-pullup="open"] slides it up.
+           App boot relocates the migrated chip nodes into the slot
+           divs below, so event handlers stay wired and we don't have
+           to duplicate any button logic. Sections:
+             • Playback dials — voice swatch, speed, skip interval
+             • Listening tools — A↔B loop, sleep timer
+             • Author tools — annotate mode, 🔖 bookmark, 📝 notes
+           Settings + Help live in the ☰ menu (Phase C), not here. -->
+      <!-- v225.mobile / Phase C (#506): top ☰ menu sheet. Phone only.
+           Mirrors the pull-up pattern: scrim element sibling of the
+           sheet, both inside .app so they share the stacking context.
+           Sheet items dispatch click() on the existing hero icons
+           (#library-trigger, #import-btn, #clear-btn, #settings-btn,
+           #help-btn) so handlers stay wired without relocation. -->
+      <div id="phone-menu-scrim" class="phone-menu-scrim" aria-hidden="true"></div>
+      <div id="phone-menu" class="phone-menu" aria-hidden="true">
+        <div class="phone-menu-content">
+          <button class="phone-menu-item" data-action="library" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">📚</span>
+            <span>Library</span>
+          </button>
+          <button class="phone-menu-item" data-action="import" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">↑</span>
+            <span>Import</span>
+          </button>
+          <button class="phone-menu-item" data-action="new" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">✚</span>
+            <span>New clip</span>
+          </button>
+          <div class="phone-menu-divider"></div>
+          <button class="phone-menu-item" data-action="settings" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">⚙</span>
+            <span>Settings</span>
+          </button>
+          <button class="phone-menu-item" data-action="help" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">?</span>
+            <span>Help &amp; manual</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- v225j: real-element scrim, sibling of #phone-pullup inside
+           .app so it shares .app's stacking context. The earlier
+           body::before scrim sat at root level (z 38) and from there
+           occluded everything inside .app (which is itself at z 1),
+           including the drawer and player bar — blocked clicks +
+           visually layered "over" them. Lives in the DOM always; the
+           body[data-pullup="open"] selector flips opacity +
+           pointer-events on. JS binds a click handler for
+           tap-outside-to-close. -->
+      <div id="phone-pullup-scrim" class="phone-pullup-scrim" aria-hidden="true"></div>
+      <div id="phone-pullup" class="phone-pullup" aria-hidden="true">
+        <div class="phone-pullup-grip-row">
+          <div class="phone-pullup-grip-bar" aria-hidden="true"></div>
+        </div>
+        <div class="phone-pullup-content">
+          <section class="phone-pullup-section">
+            <h3>Playback</h3>
+            <div class="phone-pullup-slots" data-slot="playback"></div>
+          </section>
+          <section class="phone-pullup-section">
+            <h3>Listening</h3>
+            <div class="phone-pullup-slots" data-slot="listening"></div>
+          </section>
+          <section class="phone-pullup-section">
+            <h3>Author</h3>
+            <div class="phone-pullup-slots" data-slot="author"></div>
+          </section>
+          <section class="phone-pullup-section">
+            <h3>Bookmarks</h3>
+            <!-- v225m (#508): #bookmarks-list relocates here at boot.
+                 The rows render via the existing renderBookmarks()
+                 path; placing the container in the pull-up means
+                 the existing JS keeps working but the notes live at
+                 the bottom of the drawer instead of leaking into
+                 the player card. -->
+            <div class="phone-pullup-bookmarks" data-slot="bookmarks"></div>
+          </section>
+        </div>
+      </div>
 
       <!-- Shared document picker. Used by every multi-file manuscript
            source (GitHub, Scrivener, Obsidian). The caller opens it
@@ -1785,7 +2349,7 @@
       <!-- v152: keyboard shortcuts overlay. Open via "?" key (when
            not focused in an input / textarea) or via Settings →
            Keyboard shortcuts. Lists the same shortcuts the manual
-           §9 documents so a user doesn't need to leave the app to
+           §10 documents so a user doesn't need to leave the app to
            remember Ctrl+Enter generates audio. -->
 
       <!-- v220h: in-app manual dialog. Tester reported that opening

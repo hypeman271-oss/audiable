@@ -340,7 +340,7 @@
               <div class="hero-row">
                 <div>
                   <h1>Narrative</h1>
-                  <p class="tagline">Type. Listen. Download.</p>
+                  <p class="tagline">Write. Listen. Revise.</p>
                 </div>
                 <div class="hero-icons">
                   <button type="button" class="hero-icon-btn">
@@ -672,14 +672,14 @@
             offers one-click <strong>"Filter to chapters/"</strong>
             chips above the search box. Each clip remembers its file
             SHA so <strong>Sync GitHub</strong> in the library can
-            flag clips whose upstream commit has moved (see § 6).
+            flag clips whose upstream commit has moved (see § 7).
             <br><br>
             <strong>If you paste a file URL</strong>
             (<code>github.com/owner/repo/blob/&lt;branch&gt;/&lt;path&gt;</code>)
             or any other <code>/owner/repo/...</code> URL, we strip
             it back to the repo root and open the picker, with a
             status line explaining what happened — same outcome,
-            one extra hop. Private repos need a token; see § 7 for
+            one extra hop. Private repos need a token; see § 8 for
             the OAuth <strong>"Sign in with GitHub"</strong> button
             and the PAT paste fallback.</td>
         </tr>
@@ -1385,7 +1385,7 @@
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="book-view">5.5. Book view</h2>
+      <h2 id="book-view">6. Book view</h2>
       <p>
         Tap the <strong>📖 Book view</strong> link in the text card
         actions row (next to <em>▶ Audio view</em>) to flip the
@@ -1462,6 +1462,10 @@
           colored ribbon in the top-right corner. The two views
           share bookmarks: a bookmark made in audio view shows on
           the right page in book view, and vice versa.
+          <strong>Tap a ribbon to remove the bookmark</strong> from
+          that page — useful for clearing a clunky-paragraph mark
+          you already fixed. Multiple bookmarks on the same page
+          remove one tap at a time, oldest first.
         </li>
         <li>
           <strong>Text highlights</strong> — drag-select any text
@@ -1497,7 +1501,7 @@
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="library">6. The library</h2>
+      <h2 id="library">7. The library</h2>
       <p>
         Every clip you generate is auto-saved into a per-browser
         library (IndexedDB). Newest clips appear at the top by
@@ -1553,14 +1557,14 @@
       </figure>
       <table>
         <tr><th>Element</th><th>What it does</th></tr>
-        <tr><td><strong>Title row</strong></td><td>Title (large, semibold) on the left; on the right a small dim duration string (<code>4:08 / 11:22</code> for in-progress clips, just <code>11:22</code> otherwise) and the voice name (e.g. <code>LibriTTS #7</code> — voice + speaker id). Tap anywhere on the row to load and play.</td></tr>
+        <tr><td><strong>Title row</strong></td><td>Title (large, semibold) on the left; on the right a small dim duration string (<code>4:08 / 11:22</code> for in-progress clips, just <code>11:22</code> otherwise) and the voice name. Voice names are shown in short form — <code>Alan</code>, <code>Heart</code>, <code>LibriTTS #7</code> — without the language / quality suffix that clutters the picker. Hover the voice name for the full canonical form. Tap anywhere on the row to load and play.</td></tr>
         <tr><td><strong>⋮⋮</strong></td><td>Drag handle. Press, drag up or down, release to reorder. Works for mouse and touch. Hidden in Simple mode (Settings → Mode picker).</td></tr>
         <tr><td><strong>Cover swatch</strong></td><td>By default a hash-derived gradient tile with the title's first letter — same title renders the same swatch on every device. <strong>Upload custom cover art</strong> via ✎ Edit → Cover image (PNG / JPG / WebP / GIF, auto-resized to 256×256 + JPEG-compressed). The card's dominant color also tints the background of the whole card (Libby-style) and, when the clip is loaded, fades in as a heavily blurred wash behind the entire page. Played clips render the swatch dimmer.</td></tr>
         <tr><td><strong>Tag chips</strong></td><td>Free-form colored labels (set via ✎ Edit), rendered under the swatch. Same tag always renders in the same hash-derived color. The filter chip row above the library composes AND-style across selected tags.</td></tr>
         <tr><td><strong>📝 Notes indicator</strong></td><td>Small badge under the swatch, shown whenever the clip has free-form notes attached. Tap the ✎ Edit dialog or the 📝 chip in the player to read or extend them. Empty notes hide the badge so clean cards stay clean.</td></tr>
         <tr><td><strong>↺ Reset</strong></td><td>Only shown for in-progress clips. Wipes the saved resume position so next play starts from the top. If you reset the clip you're currently listening to, the player rewinds too.</td></tr>
         <tr><td><strong>+ Cover</strong></td><td>(Only shown for clips without a custom cover.) Quiet dashed-border chip that opens the Edit dialog scrolled straight to the cover picker. Tap → file picker → cover applied + cards re-render with the new tint. Disappears once the clip has a cover. On narrow viewports it collapses to just <code>+</code>.</td></tr>
-        <tr><td><strong>🔄 Re-narrate</strong></td><td>One-tap re-render with whatever voice is currently picked in the hero. Use it during a narrator audition — after picking a new voice (e.g. LibriTTS speaker 7), tap 🔄 on every card you want re-rendered with the new voice. The chip <strong>pulses</strong> while synthesis is in flight; the card's title-row voice updates and the audio replaces in place when done. Synthesis runs <strong>silently</strong> — no playback during synth, no stop-and-go between sentences. Tap the card to listen when the chip stops pulsing. The clip's title, notes, tags, cover, and bookmarks are preserved; only text + audio + voice provenance change.</td></tr>
+        <tr><td><strong>🔄 Re-narrate</strong></td><td>One-tap re-render with whatever voice is currently picked in the hero. Use it during a narrator audition — after picking a new voice (e.g. Heart from Kokoro), tap 🔄 on every card you want re-rendered with the new voice. The 🔄 chip now <strong>queues into the background</strong> — playback of whatever you're currently listening to is <strong>not</strong> interrupted, and the text card stays put. The target card shows a <strong>"Syncing now…"</strong> badge with a per-sentence counter while it's the active job, or <strong>"Queued — N ahead"</strong> while waiting. The whole card pulses with an accent border. After the synth lands, a quiet <em>"Last synced 2 min ago"</em> line appears below the tags. The clip's title, notes, tags, cover, and bookmarks are preserved; only text + audio + voice provenance change. The 🔆 screen wake lock is held automatically so phone sleep can't kill the job mid-synth (Android Chrome + iOS Safari 16.4+).</td></tr>
         <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest. For <strong>GitHub-sourced clips</strong> the dialog also surfaces a <em>"From GitHub: chapters/ch03.md @ <code>a1b2c3d</code>"</em> meta line — short SHA in an accent pill (hover for the full hash) so you can confirm the clip matches the commit you just pushed without alt-tabbing to GitHub. For clips generated v219 and later, the dialog also shows a <strong>Voice provenance</strong> block with the license + attribution string the clip was generated under (see below).</td></tr>
         <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
       </table>
@@ -1722,7 +1726,7 @@
         Sync needs a token (PAT or OAuth) with at least public-repo
         scope; private clips need <code>repo</code>. Without a token
         you'll see <em>"Set a GitHub PAT in Settings before syncing"</em>
-        — see § 7.
+        — see § 8.
       </div>
 
       <h3>Export / Import</h3>
@@ -1740,7 +1744,7 @@
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="settings">7. Settings &amp; modes</h2>
+      <h2 id="settings">8. Settings &amp; modes</h2>
       <p>
         The <strong>⚙</strong> at the top right opens Settings. The
         headline control is the <strong>Mode</strong> picker — pick
@@ -1999,8 +2003,82 @@ She set both hands flat on the table.</pre>
         cleanly.
       </div>
 
+      <h3 id="sync">Cross-device sync (v221+)</h3>
+      <p>
+        Settings → App → <strong>Sync library across devices</strong>
+        ties your library to the Narrative server so you can edit on
+        a desktop and listen on a phone without exporting/importing.
+        <strong>Off by default.</strong> Flip on per device.
+      </p>
+      <ol>
+        <li>
+          <strong>On the device that should push:</strong> Settings →
+          App → Sync library across devices → <strong>On</strong>.
+          From now on, every saved clip pushes to the server in the
+          background as you go.
+        </li>
+        <li>
+          <strong>On the device that should pull:</strong> same toggle
+          → <strong>On</strong>. Open the library — within ~30 seconds
+          new clips fetched from the server appear with playable
+          audio.
+        </li>
+      </ol>
+      <p>
+        Under the toggle a status line reads <em>"Sync on. Last
+        pulled 2 min ago."</em> Sync pulls run on library open and
+        every 60 seconds while the app is foreground.
+      </p>
+      <p>
+        <strong>What's on the server:</strong> clip text, voice
+        choice, bookmarks, notes, tags, cover, progress, character
+        roster, voice presets, and the MP3 audio (one copy per unique
+        synth — same text + voice dedups by content hash). What
+        stays per-device: voice favorites, A↔B markers, current
+        playback position in this session, debug log.
+      </p>
+      <p>
+        <strong>Audio re-use is the big win.</strong> When you
+        re-narrate <em>chapter_03</em> at your desk with Kokoro
+        Heart, the resulting MP3 is stored on the server keyed by
+        SHA. Your phone pulling that clip just downloads the
+        finished file — no second synth, no Fly CPU burn, no
+        watchdog timeouts. The same MP3 played from any device is
+        bit-for-bit identical.
+      </p>
+      <div class="tip">
+        <strong>Conflict rule:</strong> if you save the same clip
+        on two devices within the same minute, the last save wins.
+        The losing device shows a quiet <em>"Library was updated on
+        another device; using the latest."</em> status. In practice
+        you rarely edit on two devices simultaneously, so this is
+        almost never visible.
+      </div>
+      <div class="warn">
+        <strong>Privacy caveat:</strong> with sync on, your draft
+        text and the synthesized audio do leave your machine —
+        they live on the Narrative server until you delete the
+        clip. Sync off keeps everything 100% local. The privacy
+        guarantee from the landing page (<em>"Your draft never
+        leaves your machine"</em>) applies to sync-off mode only.
+      </div>
+
+      <h3>Maintenance warnings</h3>
+      <p>
+        When the server is about to restart for a deploy or other
+        maintenance, a sticky amber banner appears at the top of
+        the app with a short message and a countdown. The banner
+        turns red and gently pulses once the maintenance window
+        starts, then vanishes when it ends. Tap × to dismiss it for
+        this session; a new window with a different start time will
+        resurface it. Use a re-narrate that finishes <em>before</em>
+        the start time, or pause and resume after — long synths
+        get killed by deploys (5-minute grace, but a 9-minute
+        chapter is still vulnerable).
+      </p>
+
       <!-- ============================================================= -->
-      <h2 id="phone">8. Listening on your phone</h2>
+      <h2 id="phone">9. Listening on your phone</h2>
       <p>
         Narrative is a Progressive Web App (PWA) — install it from the
         browser and it lives on your home screen, runs in the background,
@@ -2026,14 +2104,118 @@ She set both hands flat on the table.</pre>
       <p>
         The first time you load the alpha, a prompt asks for an
         <strong>API key</strong>. Paste the key you received with the
-        invite. It's saved in your phone's localStorage and sent
-        automatically forever after; you'll never see the prompt
-        again unless you clear browser data.
+        invite — it'll look like
+        <code>narrative-xxxx-xxxx-xxxx-xxxx</code>. It's saved in your
+        phone's localStorage and sent automatically forever after;
+        you'll never see the prompt again unless you clear browser
+        data.
       </p>
       <div class="tip">
-        If you ever DO clear browser data and lose the key, ask the
-        person who invited you — it's a single shared key for the
-        alpha, not unique to you.
+        <strong>Your key is unique to you.</strong> Each tester gets
+        their own key so your library stays isolated from every other
+        tester's. Don't share it — anyone with the key sees (and can
+        edit) your library. If you want to use Narrative on more than
+        one of your own devices, paste the <em>same</em> key on each.
+        That's what makes cross-device sync land on the same library.
+      </div>
+      <div class="tip">
+        If you clear browser data and lose the key, ask the admin to
+        mint you a new one. The library you'd built up under the old
+        key stays on the server but becomes unreachable from the new
+        key — practically a fresh start. Don't lose the key.
+      </div>
+      <div class="note">
+        <strong>Admins only</strong>: troubleshooting the Tester keys
+        form (mint / list / revoke) lives at
+        <a href="/admin-troubleshooting.html" target="_blank" rel="noopener"><code>/admin-troubleshooting.html</code></a>.
+        Bookmark it.
+      </div>
+
+      <h3>Onboarding with your key — step by step</h3>
+      <p>
+        First time on a device. Run this whenever the admin sends you
+        a new key, or when you set up a second device of your own and
+        want it on the same library.
+      </p>
+      <ol>
+        <li>
+          Open the URL the admin sent you — usually something like
+          <code>https://narrative-alpha.fly.dev</code>. On a phone,
+          use Safari (iOS) or Chrome (Android).
+        </li>
+        <li>
+          A small browser dialog appears with the message
+          <em>"This Narrative server requires an API key. Paste your
+          X-Narrative-Key value (set by the server admin):"</em> and
+          an input field. <strong>This is a native browser prompt</strong>
+          (not a Narrative-styled dialog), so it'll look like every
+          other prompt your browser shows.
+        </li>
+        <li>
+          Paste the key exactly as the admin sent it
+          (<code>narrative-xxxx-xxxx-xxxx-xxxx</code>). Don't add
+          spaces, don't add quotes — just the bare string. Click
+          <strong>OK</strong>.
+        </li>
+        <li>
+          The app loads. <strong>No reload needed</strong>. You'll
+          see the empty-library "Get started" tiles (or, if you're
+          setting up a second device with sync on, your existing
+          library).
+        </li>
+        <li>
+          To confirm it stuck: refresh the page. The prompt should
+          <em>not</em> reappear. The key is now saved in your browser's
+          localStorage under the name <code>narrative.apiKey</code>
+          and sent automatically on every request from now on.
+        </li>
+        <li>
+          (Optional, for your own multi-device setup) Open Settings
+          (⚙) → flip <strong>Sync library across devices</strong> to
+          On. Repeat all six steps on every other device of yours
+          using the <em>same</em> key. Same key on multiple devices
+          → same library; see Walkthrough 6 in §11 for the full
+          two-device flow.
+        </li>
+      </ol>
+      <div class="tip">
+        <strong>If you typo the key</strong>: every request fails with
+        an authentication error, and the prompt re-opens automatically
+        on the next request. Paste the right key and click OK — no
+        reload needed. The original prompt may have closed already;
+        just try any action (open the library, browse voices) and the
+        re-prompt fires.
+      </div>
+      <div class="tip">
+        <strong>If you dismiss the prompt without pasting</strong>
+        (clicked Cancel, hit Escape, swiped the dialog away on mobile):
+        nothing breaks — the app loads but every API call fails. Hit
+        refresh, or trigger any action, and the prompt comes back.
+        Paste then.
+      </div>
+      <div class="tip">
+        <strong>Switching to a new key</strong> (admin re-minted you
+        because you lost the old one, or rotated for security): you
+        need to clear the saved value first.
+        <ul>
+          <li>
+            <strong>Easiest</strong>: in the browser console (F12),
+            run
+            <code>localStorage.removeItem("narrative.apiKey")</code>
+            then refresh. Paste the new key at the prompt.
+          </li>
+          <li>
+            <strong>Mobile (no devtools)</strong>: clear the site's
+            cookies + site data. iOS Safari: Settings → Safari →
+            Advanced → Website Data → search "narrative" → swipe
+            delete. Android Chrome: app settings → Storage → Clear
+            cache (NOT Clear storage — that wipes your local library
+            too).
+          </li>
+          <li>
+            Either way, the next page load shows the prompt again.
+          </li>
+        </ul>
       </div>
 
       <h3>Lock-screen + Bluetooth controls</h3>
@@ -2074,7 +2256,7 @@ She set both hands flat on the table.</pre>
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="shortcuts">9. Shortcuts &amp; tips</h2>
+      <h2 id="shortcuts">10. Shortcuts &amp; tips</h2>
 
       <h3>Keyboard</h3>
       <table>
@@ -2154,9 +2336,9 @@ She set both hands flat on the table.</pre>
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="walkthroughs">10. Tester walkthroughs</h2>
+      <h2 id="walkthroughs">11. Tester walkthroughs</h2>
       <p>
-        Five numbered end-to-end runs. Each starts from a clean
+        Six numbered end-to-end runs. Each starts from a clean
         page load (or the closest a state-bearing app can get to
         one). Each step lists the expected screen / status / next
         click so a fresh tester knows what success looks like at
@@ -2524,6 +2706,92 @@ She set both hands flat on the table.</pre>
           deploys.
         </li>
       </ol>
+
+      <h3>Walkthrough 6 — Cross-device sync (desktop ⇄ phone)</h3>
+      <p><em>Tests</em>: Server-side library, per-tester isolation,
+        push-on-save, pull-on-open, per-clip last-write-wins.</p>
+      <p>
+        Prereq: you have Narrative installed (or just bookmarked) on
+        two devices — typically desktop browser + phone PWA — and
+        your tester key is pasted on <em>both</em>. Same key on both
+        devices is what makes them land on the same library; if
+        you've pasted two different keys, the devices won't see each
+        other's clips.
+      </p>
+      <ol>
+        <li>
+          <strong>Desktop.</strong> Open Settings (⚙) → scroll to
+          <em>"Sync library across devices"</em>. The radio reads
+          <strong>Off</strong> by default. Flip to <strong>On</strong>.
+          The status line under the toggle changes to
+          <em>"Sync on. Pulling…"</em> for a second, then settles to
+          <em>"Sync on. Last pulled just now."</em>
+        </li>
+        <li>
+          <em>What just happened</em>: every clip currently in your
+          local library got pushed up to the server. From now on,
+          every save (new clip, edited text, new bookmark, dragged
+          re-order) auto-pushes within a few seconds. You don't have
+          to do anything for it to happen.
+        </li>
+        <li>
+          <strong>Phone.</strong> Open Narrative. Settings → same
+          row, flip <strong>Sync</strong> to <strong>On</strong>.
+          Status line transitions through <em>"Pulling…"</em> →
+          <em>"Last pulled just now."</em>
+        </li>
+        <li>
+          <em>What just happened</em>: the phone asked the server
+          <em>"what's in this tenant's library?"</em> and pulled down
+          every clip the desktop just pushed. Open the library
+          dialog — you should see every clip from your desktop,
+          cover art and all. (Audio streams from the server on
+          demand the first time you play each one; after that it's
+          cached on the phone.)
+        </li>
+        <li>
+          <strong>Desktop edit.</strong> Open any clip. Drop a
+          bookmark at any timestamp. Wait 5 seconds (the push is
+          debounced — multiple edits in quick succession coalesce
+          into one upload).
+        </li>
+        <li>
+          <strong>Phone pull.</strong> Either wait up to 60 seconds
+          (the phone auto-pulls on a timer) <em>or</em>: pull-to-
+          refresh the page, <em>or</em> close the PWA from recents
+          and reopen it. Open the same clip — the bookmark from the
+          desktop is there.
+        </li>
+        <li>
+          <strong>Phone edit.</strong> Add another bookmark from the
+          phone. Wait 5 seconds. Hit refresh on the desktop. The
+          phone's bookmark appears on the desktop side.
+        </li>
+      </ol>
+      <div class="tip">
+        <strong>Per-clip last-write-wins.</strong> If you edit the
+        <em>same</em> clip on both devices while one is offline,
+        whichever side has the later "updated at" timestamp will win
+        when they reconnect. The loser's edits are gone — not
+        merged. In practice this is rare (you're usually editing on
+        one device at a time), but be aware that for the same clip,
+        sync is "newest wins," not "merge."
+      </div>
+      <div class="tip">
+        <strong>Sync is per-device.</strong> Flipping the toggle on
+        the desktop does NOT auto-flip it on the phone. Each device
+        opts in independently — useful when you want one device
+        (say, a shared family iPad) to stay local-only.
+      </div>
+      <div class="tip">
+        <strong>If a clip doesn't show up after pull</strong>: check
+        the status line on the device that made the edit. If it
+        still says <em>"Last pulled N min ago"</em> with no recent
+        timestamp, the push from <em>that</em> device might not have
+        happened — verify sync is on there too. The push side is
+        symmetric: every device with sync on both pushes its own
+        changes and pulls everyone else's.
+      </div>
 
       <!-- ============================================================= -->
       <h3 id="send-feedback">Sending feedback after a walkthrough</h3>

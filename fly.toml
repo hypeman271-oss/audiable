@@ -11,6 +11,22 @@
 app = "narrative-alpha"
 primary_region = "iad"
 
+# v221.sync-3.1: how long Fly waits for in-flight requests to drain
+# before SIGKILLing the old machine during a rolling deploy. Default
+# is 5s which is hopelessly short for a Piper synth — a 10K-char
+# chapter takes 5-10 minutes on shared CPU, and any user-initiated
+# re-narrate that happens to coincide with `fly deploy` gets its SSE
+# connection ripped out and surfaces as "TypeError: network error"
+# in the bg-queue retry path.
+#
+# Fly's hard cap on kill_timeout is 5 minutes (anything higher 422s
+# at update time with `invalid stop_config.timeout`). 5m doesn't
+# fully cover a worst-case 8-min chapter synth, but it covers the
+# typical 3-5 min case and is 60x better than the 5s default. For
+# the residual long-synth case, deploy outside peak writing hours
+# OR kick a single-machine restart by hand after pausing the queue.
+kill_timeout = "5m"
+
 [build]
   # No buildpacks — we have an explicit Dockerfile.
 
@@ -56,6 +72,16 @@ primary_region = "iad"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 2048
+
+# v221.sync-2: persistent volume for SQLite + audio blobs (server-side
+# library, Path B). Mounted at /data which library_db.py looks at by
+# default. One-time create before this fly deploy:
+#   fly volumes create narrative_data --size 3 --region iad
+# Volumes are per-region; if you change primary_region above, create
+# a matching volume there. Costs ~$0.15/GB/month — 3 GB = $0.45/mo.
+[[mounts]]
+  source = "narrative_data"
+  destination = "/data"
 
 [env]
   # NARRATIVE_KEY is NOT set here. Set it via:

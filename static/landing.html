@@ -1,0 +1,945 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Narrative — Hear your draft before you publish it</title>
+
+    <!-- Meta + Open Graph. Replace the og:image with a real 1200x630
+         screenshot once the marketing asset task (#407) is done. -->
+    <meta
+      name="description"
+      content="Narrative is a revision tool for indie authors. Write at your desk, listen on your phone at the gym, bookmark what didn't land, fix it. Your draft, on the devices you own — never used as training data, never shared."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Narrative — Hear your draft before you publish it" />
+    <meta
+      property="og:description"
+      content="A revision tool for indie authors. Write at your desk. Listen on your phone at the gym. Bookmark what didn't land. Fix it the next morning."
+    />
+    <meta property="og:image" content="/landing-assets/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" href="/icons/favicon.png" type="image/png" />
+
+    <style>
+      /* Design tokens — kept in sync with styles.css :root block so the
+         page reads as part of the same family. Inlined (not imported)
+         so this page is self-contained and easy to lift to a separate
+         marketing domain later. */
+      :root {
+        --bg: #0b1020;
+        --bg-card: #141a30;
+        --bg-card-2: #1b2240;
+        --fg: #e7ecff;
+        --fg-dim: #97a0c9;
+        --accent: #7c9cff;
+        --accent-strong: #5b7dff;
+        --radius: 14px;
+        --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+        --shadow-lift: 0 18px 60px rgba(0, 0, 0, 0.5);
+        --on-accent: #0b1020;
+        --border-soft: rgba(231, 236, 255, 0.08);
+        --border: rgba(231, 236, 255, 0.14);
+        --accent-tint: rgba(124, 156, 255, 0.12);
+      }
+      :root[data-theme="light"] {
+        --bg: #faf4e3;
+        --bg-card: #ffffff;
+        --bg-card-2: #f1ebd6;
+        --fg: #1a1f33;
+        --fg-dim: #5f667b;
+        --accent: #4858d9;
+        --accent-strong: #2f3eb8;
+        --on-accent: #ffffff;
+        --border-soft: rgba(20, 25, 50, 0.07);
+        --border: rgba(20, 25, 50, 0.14);
+        --accent-tint: rgba(72, 88, 217, 0.10);
+        --shadow: 0 4px 18px rgba(40, 30, 0, 0.10);
+        --shadow-lift: 0 14px 40px rgba(40, 30, 0, 0.18);
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
+      /* Section scaffolding — every section is a centered max-width
+         container with consistent vertical rhythm. */
+      .lp-section {
+        padding: 80px 24px;
+      }
+      .lp-container {
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      .lp-section--narrow .lp-container {
+        max-width: 760px;
+      }
+      @media (max-width: 640px) {
+        .lp-section { padding: 56px 20px; }
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         Top nav — minimal: wordmark + Sign in. The Sign in route
+         points at the app for trial users; replace with an account
+         route once Stripe + auth land.
+         ────────────────────────────────────────────────────────────── */
+      .lp-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 24px;
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      .lp-wordmark {
+        font-weight: 700;
+        font-size: 20px;
+        letter-spacing: -0.01em;
+        color: var(--fg);
+      }
+      .lp-wordmark:hover { text-decoration: none; }
+      .lp-nav-links {
+        display: flex;
+        gap: 22px;
+        align-items: center;
+        font-size: 14px;
+      }
+      .lp-nav-links a { color: var(--fg-dim); }
+      .lp-nav-links a:hover { color: var(--fg); }
+
+      /* ──────────────────────────────────────────────────────────────
+         Hero
+         ────────────────────────────────────────────────────────────── */
+      .lp-hero {
+        padding-top: 60px;
+        padding-bottom: 80px;
+        text-align: center;
+      }
+      .lp-hero h1 {
+        font-size: clamp(34px, 6vw, 58px);
+        line-height: 1.05;
+        letter-spacing: -0.02em;
+        margin: 0 auto 20px;
+        max-width: 16ch;
+        font-weight: 800;
+        background: linear-gradient(180deg, var(--fg) 0%, var(--accent) 130%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .lp-hero-tagline {
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+        margin: 0 0 16px;
+        font-weight: 600;
+      }
+      .lp-hero-sub {
+        font-size: clamp(17px, 2.2vw, 20px);
+        color: var(--fg-dim);
+        max-width: 56ch;
+        margin: 0 auto 36px;
+      }
+      .lp-cta-row {
+        display: flex;
+        gap: 14px;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }
+      .lp-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 26px;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: transform 0.12s ease, background-color 0.12s ease,
+          border-color 0.12s ease;
+      }
+      .lp-btn--primary {
+        background: var(--accent);
+        color: var(--on-accent);
+        border-color: var(--accent);
+      }
+      .lp-btn--primary:hover {
+        background: var(--accent-strong);
+        border-color: var(--accent-strong);
+        text-decoration: none;
+        transform: translateY(-1px);
+      }
+      .lp-btn--ghost {
+        background: transparent;
+        color: var(--fg);
+        border-color: var(--border);
+      }
+      .lp-btn--ghost:hover {
+        background: var(--accent-tint);
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+      .lp-hero-trust {
+        font-size: 13px;
+        color: var(--fg-dim);
+        margin-top: 14px;
+      }
+      .lp-hero-trust strong {
+        color: var(--fg);
+        font-weight: 600;
+      }
+
+      .lp-hero-visual {
+        margin-top: 56px;
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--bg-card);
+        border: 1px solid var(--border-soft);
+        box-shadow: var(--shadow-lift);
+        aspect-ratio: 16 / 9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--fg-dim);
+        font-size: 14px;
+        position: relative;
+      }
+      .lp-hero-visual img,
+      .lp-hero-visual video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      /* Placeholder shimmer for the hero image slot before the real
+         asset lands. Replace the inner content with <img src="..."> when
+         the screenshot is taken (task #407). */
+      .lp-placeholder {
+        text-align: center;
+        padding: 24px;
+      }
+      .lp-placeholder-tag {
+        display: inline-block;
+        padding: 4px 10px;
+        background: var(--accent-tint);
+        color: var(--accent);
+        border-radius: 999px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-weight: 600;
+        margin-bottom: 10px;
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         Demo block
+         ────────────────────────────────────────────────────────────── */
+      .lp-section--demo {
+        background: linear-gradient(180deg, var(--bg) 0%, var(--bg-card) 100%);
+      }
+      .lp-demo-frame {
+        aspect-ratio: 16 / 9;
+        background: var(--bg-card-2);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        overflow: hidden;
+        box-shadow: var(--shadow-lift);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .lp-demo-captions {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-top: 28px;
+      }
+      .lp-demo-captions p {
+        margin: 0;
+        font-size: 14px;
+        color: var(--fg-dim);
+      }
+      .lp-demo-captions strong {
+        display: block;
+        color: var(--fg);
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      @media (max-width: 640px) {
+        .lp-demo-captions { grid-template-columns: 1fr; }
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         Pillars — 3-up grid of feature cards. Each: headline + 2 lines
+         + screenshot slot. April Dunford rule: exactly three, no
+         "students / accessibility / education" additions that broaden
+         the audience away from writers.
+         ────────────────────────────────────────────────────────────── */
+      .lp-pillars {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 22px;
+      }
+      @media (max-width: 880px) {
+        .lp-pillars { grid-template-columns: 1fr; }
+      }
+      .lp-pillar {
+        background: var(--bg-card);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 26px;
+      }
+      .lp-pillar h3 {
+        margin: 0 0 10px;
+        font-size: 20px;
+        letter-spacing: -0.01em;
+      }
+      .lp-pillar p {
+        margin: 0 0 18px;
+        color: var(--fg-dim);
+        font-size: 15px;
+      }
+      .lp-pillar-shot {
+        aspect-ratio: 4 / 3;
+        background: var(--bg-card-2);
+        border: 1px solid var(--border-soft);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .lp-section-head {
+        text-align: center;
+        margin-bottom: 48px;
+      }
+      .lp-eyebrow {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+        font-weight: 600;
+        margin: 0 0 8px;
+      }
+      .lp-section-head h2 {
+        font-size: clamp(26px, 4vw, 36px);
+        margin: 0 auto;
+        max-width: 26ch;
+        letter-spacing: -0.01em;
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         Trust strip — import sources + voice samples + privacy line
+         ────────────────────────────────────────────────────────────── */
+      .lp-section--trust {
+        background: var(--bg-card);
+      }
+      .lp-import-row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px 28px;
+        margin-bottom: 56px;
+      }
+      .lp-import-row span {
+        color: var(--fg-dim);
+        font-size: 15px;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .lp-voice-samples {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-bottom: 36px;
+      }
+      @media (max-width: 720px) {
+        .lp-voice-samples { grid-template-columns: 1fr; }
+      }
+      .lp-voice-card {
+        background: var(--bg-card-2);
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        padding: 18px;
+      }
+      .lp-voice-card strong {
+        display: block;
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      .lp-voice-card .lp-voice-meta {
+        font-size: 12px;
+        color: var(--fg-dim);
+        margin-bottom: 12px;
+      }
+      .lp-voice-card audio {
+        width: 100%;
+      }
+      .lp-privacy-line {
+        text-align: center;
+        font-size: 17px;
+        color: var(--fg);
+        max-width: 56ch;
+        margin: 0 auto;
+      }
+      .lp-privacy-line span {
+        color: var(--fg-dim);
+        display: block;
+        margin-top: 8px;
+        font-size: 14px;
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         Pricing
+         ────────────────────────────────────────────────────────────── */
+      .lp-pricing-card {
+        max-width: 480px;
+        margin: 0 auto;
+        background: var(--bg-card);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius);
+        padding: 36px;
+        box-shadow: 0 8px 32px var(--accent-tint);
+        text-align: center;
+      }
+      .lp-price {
+        font-size: 56px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        margin: 8px 0 4px;
+        line-height: 1;
+      }
+      .lp-price-sub {
+        color: var(--fg-dim);
+        font-size: 15px;
+        margin-bottom: 22px;
+      }
+      .lp-price-anchor {
+        font-size: 13px;
+        color: var(--fg-dim);
+        margin-top: 22px;
+        font-style: italic;
+      }
+      .lp-included {
+        list-style: none;
+        padding: 0;
+        margin: 24px 0 0;
+        text-align: left;
+        display: grid;
+        gap: 10px;
+      }
+      .lp-included li {
+        font-size: 15px;
+        color: var(--fg);
+        padding-left: 26px;
+        position: relative;
+      }
+      .lp-included li::before {
+        content: "✓";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .lp-trial-line {
+        text-align: center;
+        margin-top: 22px;
+        font-size: 14px;
+        color: var(--fg-dim);
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         FAQ
+         ────────────────────────────────────────────────────────────── */
+      .lp-faq details {
+        background: var(--bg-card);
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        padding: 18px 22px;
+        margin-bottom: 12px;
+        cursor: pointer;
+      }
+      .lp-faq details[open] {
+        border-color: var(--accent);
+      }
+      .lp-faq summary {
+        font-weight: 600;
+        font-size: 16px;
+        list-style: none;
+        position: relative;
+        padding-right: 28px;
+      }
+      .lp-faq summary::-webkit-details-marker { display: none; }
+      .lp-faq summary::after {
+        content: "+";
+        position: absolute;
+        right: 0;
+        top: -2px;
+        font-size: 22px;
+        color: var(--accent);
+        transition: transform 0.15s ease;
+      }
+      .lp-faq details[open] summary::after {
+        content: "−";
+      }
+      .lp-faq p {
+        margin: 12px 0 0;
+        color: var(--fg-dim);
+        font-size: 15px;
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         Bottom CTA + footer
+         ────────────────────────────────────────────────────────────── */
+      .lp-section--cta {
+        text-align: center;
+        background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg) 100%);
+      }
+      .lp-section--cta h2 {
+        font-size: clamp(26px, 4vw, 36px);
+        margin: 0 0 14px;
+        letter-spacing: -0.01em;
+      }
+      .lp-section--cta p {
+        color: var(--fg-dim);
+        margin: 0 0 28px;
+        font-size: 17px;
+      }
+
+      .lp-footer {
+        padding: 36px 24px 56px;
+        border-top: 1px solid var(--border-soft);
+        font-size: 13px;
+        color: var(--fg-dim);
+      }
+      .lp-footer-row {
+        max-width: 1080px;
+        margin: 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px 28px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .lp-footer a { color: var(--fg-dim); }
+      .lp-footer a:hover { color: var(--fg); }
+      .lp-footer-links {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+
+      /* TODO marker style — yellow dashed outline that disappears in
+         print. Easy to grep ("TODO" / .lp-todo) and remove once the
+         real content lands. */
+      .lp-todo {
+        outline: 1px dashed rgba(255, 200, 60, 0.55);
+        outline-offset: 4px;
+      }
+      .lp-todo-note {
+        display: inline-block;
+        background: rgba(255, 200, 60, 0.15);
+        color: #ffcc44;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        margin-left: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Top nav: wordmark left, two quiet links right. Keeps the page
+         feeling like a product site rather than a brochure. -->
+    <nav class="lp-nav">
+      <a href="/" class="lp-wordmark">Narrative</a>
+      <div class="lp-nav-links">
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <!-- TODO: point at /signin or Stripe customer portal once auth lands -->
+        <a href="/" class="lp-todo">Sign in <span class="lp-todo-note">stub</span></a>
+      </div>
+    </nav>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         HERO
+         Headline names the JOB ("hear your draft") not the tool. Sub-head
+         is the revision loop in plain English. Trust line below the CTAs
+         is the privacy differentiator — surfaced above the fold because
+         it's the single thing Speechify et al. cannot say.
+         TODO copy: replace headline + sub-headline with finalized copy
+         from task #406.
+         ════════════════════════════════════════════════════════════════ -->
+    <section class="lp-section lp-hero">
+      <div class="lp-container">
+        <p class="lp-hero-tagline">Write. Listen. Revise.</p>
+        <h1 class="lp-todo">
+          Hear your draft before you publish it.
+          <span class="lp-todo-note">copy</span>
+        </h1>
+        <p class="lp-hero-sub lp-todo">
+          Paste a chapter. Take a walk. Bookmark the parts that didn't
+          land. Fix them. Listen again. A desktop revision tool built
+          for indie authors.
+          <span class="lp-todo-note">copy</span>
+        </p>
+        <div class="lp-cta-row">
+          <!-- TODO (task #216): wire to Stripe Checkout session URL -->
+          <a class="lp-btn lp-btn--primary lp-todo" href="#pricing">
+            Start 7-day free trial
+            <span class="lp-todo-note">→ Stripe</span>
+          </a>
+          <a class="lp-btn lp-btn--ghost" href="#demo">Watch the 60-second demo</a>
+        </div>
+        <p class="lp-hero-trust">
+          <strong>Your draft, on the devices you own.</strong>
+          Never used as training data, never shared with other users.
+        </p>
+
+        <div class="lp-hero-visual lp-todo">
+          <!-- TODO (task #407): replace placeholder with screenshot of
+               the book view, or the demo video's poster frame. Should
+               be 1920×1080 ideally, JPG/WebP. -->
+          <div class="lp-placeholder">
+            <span class="lp-placeholder-tag">Screenshot slot</span>
+            <p style="margin: 0; color: var(--fg-dim);">
+              Book view with a sentence highlighted mid-playback.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         DEMO — 60-90s video, no voiceover, captioned. Three captions
+         below name what the viewer just saw (otherwise non-writers
+         miss the point of the loop).
+         TODO (task #408 script, task #407 file): drop a self-hosted
+         <video> or YouTube embed in the .lp-demo-frame.
+         ════════════════════════════════════════════════════════════════ -->
+    <section id="demo" class="lp-section lp-section--demo">
+      <div class="lp-container">
+        <div class="lp-section-head">
+          <p class="lp-eyebrow">The revision loop</p>
+          <h2>One minute. Paste, listen, mark, fix.</h2>
+        </div>
+        <div class="lp-demo-frame lp-todo">
+          <!-- TODO: replace with
+               <video src="/landing-assets/demo.mp4" poster="..." controls></video>
+               or a YouTube/Vimeo iframe. -->
+          <div class="lp-placeholder">
+            <span class="lp-placeholder-tag">Video slot</span>
+            <p style="margin: 0; color: var(--fg-dim);">
+              60-second demo: paste chapter → listen → bookmark → fix.
+            </p>
+          </div>
+        </div>
+        <div class="lp-demo-captions">
+          <p>
+            <strong>1. Paste at your desk</strong>
+            A chapter from Scrivener, Word, Obsidian, or GitHub.
+            Sync flips on once — every device that's yours now sees
+            the same library.
+          </p>
+          <p>
+            <strong>2. Listen on the move</strong>
+            Open Narrative on your phone before the gym. The new
+            chapter is already there with audio. Bookmark anything
+            that clunks.
+          </p>
+          <p>
+            <strong>3. Fix it at your desk</strong>
+            Bookmarks made on the phone show up on the desk.
+            Edit, re-listen, repeat until the chapter sings.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         THREE FEATURE PILLARS — exactly three. Adding a fourth makes the
+         page stop looking like it's for writers. Each pillar: headline,
+         two-sentence body, screenshot slot.
+         ════════════════════════════════════════════════════════════════ -->
+    <section class="lp-section">
+      <div class="lp-container">
+        <div class="lp-section-head">
+          <p class="lp-eyebrow">What's inside</p>
+          <h2>Three things no other reader does for writers.</h2>
+        </div>
+        <div class="lp-pillars">
+          <div class="lp-pillar">
+            <h3>Hear your draft, not your inner voice.</h3>
+            <p class="lp-todo">
+              Real voices, real cadence — the way a reader will hear it,
+              not the way you hear it in your head at 2am.
+              <span class="lp-todo-note">copy</span>
+            </p>
+            <div class="lp-pillar-shot lp-todo">
+              <span class="lp-placeholder-tag">Reading view shot</span>
+            </div>
+          </div>
+          <div class="lp-pillar">
+            <h3>Cast your characters.</h3>
+            <p class="lp-todo">
+              Assign a voice to each character. Narrative routes
+              dialogue automatically — "she said" stays with the
+              narrator, the quote uses the character.
+              <span class="lp-todo-note">copy</span>
+            </p>
+            <div class="lp-pillar-shot lp-todo">
+              <span class="lp-placeholder-tag">Character casting shot</span>
+            </div>
+          </div>
+          <div class="lp-pillar">
+            <h3>Bookmark from your phone at the gym. Revise at your desk in the morning.</h3>
+            <p class="lp-todo">
+              Edit a chapter at your desk → sync → listen on your phone
+              anywhere → bookmark the clunky paragraphs as you hear
+              them → fix at your desk the next morning. The whole loop
+              works because your library is on every device you write
+              from, with the same audio.
+              <span class="lp-todo-note">copy</span>
+            </p>
+            <div class="lp-pillar-shot lp-todo">
+              <span class="lp-placeholder-tag">Phone bookmark → desktop revision shot</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         TRUST STRIP — import sources, voice samples, privacy line. The
+         voice player is the highest-conversion element on the page: it
+         answers "will it sound bad?" in 5 seconds. Don't bury it.
+         TODO (task #407): drop real WAV/MP3 files at
+         /landing-assets/voice-{1,2,3}.wav (or .mp3, smaller).
+         ════════════════════════════════════════════════════════════════ -->
+    <section class="lp-section lp-section--trust">
+      <div class="lp-container">
+        <div class="lp-section-head">
+          <p class="lp-eyebrow">Fits where you already write</p>
+          <h2>Import from your tools. Listen on your machine.</h2>
+        </div>
+
+        <div class="lp-import-row">
+          <span>📓 Scrivener</span>
+          <span>📁 GitHub</span>
+          <span>🟣 Obsidian</span>
+          <span>📄 Word</span>
+          <span>📚 EPUB</span>
+          <span>📑 PDF</span>
+        </div>
+
+        <div class="lp-voice-samples">
+          <div class="lp-voice-card lp-todo">
+            <strong>LibriTTS speaker 7</strong>
+            <div class="lp-voice-meta">CC BY 4.0 · commercial OK</div>
+            <audio controls preload="none">
+              <source src="/landing-assets/voice-libritts-7.mp3" type="audio/mpeg" />
+              Your browser doesn't support the audio element.
+            </audio>
+          </div>
+          <div class="lp-voice-card lp-todo">
+            <strong>Voice 2</strong>
+            <div class="lp-voice-meta">License pending</div>
+            <audio controls preload="none">
+              <source src="/landing-assets/voice-2.mp3" type="audio/mpeg" />
+              Your browser doesn't support the audio element.
+            </audio>
+          </div>
+          <div class="lp-voice-card lp-todo">
+            <strong>Voice 3</strong>
+            <div class="lp-voice-meta">License pending</div>
+            <audio controls preload="none">
+              <source src="/landing-assets/voice-3.mp3" type="audio/mpeg" />
+              Your browser doesn't support the audio element.
+            </audio>
+          </div>
+        </div>
+
+        <p class="lp-privacy-line">
+          <strong>Your draft, on the devices you own.</strong>
+          <span>
+            Sync off → 100% local; nothing leaves your machine. Sync
+            on → only your devices see your draft and audio. Never
+            used as training data, never shared with other users.
+            You can flip sync off at any time and your library stays
+            on every device you've already used.
+          </span>
+        </p>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         PRICING — one card. $129 one-time. Anchored against Scrivener
+         (~$60) and Speechify (~$139/year). Trial line below the card,
+         not on the button, so the price reads first.
+         ════════════════════════════════════════════════════════════════ -->
+    <section id="pricing" class="lp-section">
+      <div class="lp-container">
+        <div class="lp-section-head">
+          <p class="lp-eyebrow">Pricing</p>
+          <h2>One price. Yours forever.</h2>
+        </div>
+
+        <div class="lp-pricing-card">
+          <div class="lp-price">$129</div>
+          <p class="lp-price-sub">One-time purchase. No subscription.</p>
+
+          <!-- TODO (task #216): wire href to Stripe Checkout session URL.
+               For now, points back to the app so testers can try it. -->
+          <a class="lp-btn lp-btn--primary lp-todo" href="/" style="width: 100%; justify-content: center;">
+            Start 7-day free trial
+            <span class="lp-todo-note">→ Stripe</span>
+          </a>
+
+          <ul class="lp-included">
+            <li>Desktop app for Mac and Windows</li>
+            <li>Character casting + dialogue routing</li>
+            <li>Every voice in the catalog</li>
+            <li>All future v1.x updates</li>
+            <li>Self-hosted server fallback included</li>
+            <li>30-day no-questions refund</li>
+          </ul>
+
+          <p class="lp-price-anchor">
+            Less than two years of Speechify.
+            Yours after that, too.
+          </p>
+        </div>
+
+        <p class="lp-trial-line">
+          Try free for 7 days — no card required.
+        </p>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         FAQ — five questions, no more. The big two ("does it sound
+         good", "does my draft leave my machine") get answered first
+         because they're the conversion-killers if missed.
+         ════════════════════════════════════════════════════════════════ -->
+    <section id="faq" class="lp-section lp-section--narrow lp-faq">
+      <div class="lp-container">
+        <div class="lp-section-head">
+          <p class="lp-eyebrow">FAQ</p>
+          <h2>The five questions writers ask.</h2>
+        </div>
+
+        <details>
+          <summary>Will it sound like a real audiobook?</summary>
+          <p class="lp-todo">
+            Better than you'd expect. Not Audible-studio quality —
+            we're honest about that. Play the samples above and judge
+            for yourself; that's the whole point of putting them on the
+            page.
+            <span class="lp-todo-note">copy</span>
+          </p>
+        </details>
+
+        <details>
+          <summary>Does my draft go to your servers?</summary>
+          <p class="lp-todo">
+            Only if you turn on sync. Default is off — synthesis runs
+            on your machine, the library lives in your browser, nothing
+            leaves. Turn sync on (Settings → App) and your draft + audio
+            land on a Narrative server only YOUR devices can read.
+            Never used as training data. Never shared with other users.
+            Flip sync off and your library stays on every device you've
+            already used; new edits stop syncing.
+            <span class="lp-todo-note">copy</span>
+          </p>
+        </details>
+
+        <details>
+          <summary>Does it work with Scrivener, Word, or my Markdown notes?</summary>
+          <p class="lp-todo">
+            Yes — import directly from Scrivener bundles, Word .docx,
+            GitHub repos, Obsidian vaults, EPUB, and PDF. Or paste
+            text. No file conversion needed.
+            <span class="lp-todo-note">copy</span>
+          </p>
+        </details>
+
+        <details>
+          <summary>Mac and Windows?</summary>
+          <p class="lp-todo">
+            Yes, both. Linux on request. iOS and Android listening via
+            the web app (works offline once installed).
+            <span class="lp-todo-note">copy</span>
+          </p>
+        </details>
+
+        <details>
+          <summary>What if I want a refund?</summary>
+          <p class="lp-todo">
+            30 days, no questions. Email
+            <a href="mailto:support@narrative.app">support@narrative.app</a>
+            and we'll refund you.
+            <span class="lp-todo-note">copy</span>
+          </p>
+        </details>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         BOTTOM CTA + FOOTER
+         ════════════════════════════════════════════════════════════════ -->
+    <section class="lp-section lp-section--cta">
+      <div class="lp-container">
+        <h2>Hear your next chapter before you publish it.</h2>
+        <p>Seven days free. No card. No cloud account.</p>
+        <a class="lp-btn lp-btn--primary lp-todo" href="#pricing">
+          Start 7-day free trial
+          <span class="lp-todo-note">→ Stripe</span>
+        </a>
+      </div>
+    </section>
+
+    <footer class="lp-footer">
+      <div class="lp-footer-row">
+        <div>
+          © 2026 Narrative ·
+          <a href="/manual.html">Manual</a> ·
+          <a href="/whats-new.html">Changelog</a>
+        </div>
+        <div class="lp-footer-links">
+          <!-- TODO: privacy + ToS pages need to exist before launch -->
+          <a class="lp-todo" href="#">Privacy</a>
+          <a class="lp-todo" href="#">Terms</a>
+          <a class="lp-todo" href="#">Refund policy</a>
+          <a href="mailto:support@narrative.app">support@narrative.app</a>
+          <a class="lp-todo" href="#">Discord</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

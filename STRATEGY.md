@@ -34,11 +34,30 @@ from here.
 - Mobile stays PWA-only for V1. Capacitor + native Piper moves to V2
   scope when phone-as-primary-listening becomes a target market.
 
+**Reversal — cross-device sync IS V1 (2026-05-31):**
+
+Earlier framing put cloud sync as a v1.1 enhancement. That was wrong.
+The pitch is "Write. Listen. Revise." — writing happens at a desk,
+listening happens places writing doesn't (gym, car, walking). If
+listening requires the same device as writing, the loop breaks and
+the product becomes "write on phone, listen on phone" — a worse
+Speechify, not a better revision tool.
+
+**Single-tenant sync (Path B) is V1.** Built v221.sync-1..7
+(2026-05-31): SQLite + audio blobs on a Fly volume, opt-in toggle in
+Settings, per-clip last-write-wins, audio dedup by sha256. Desktop
+re-narrate produces an MP3 that the phone fetches without a second
+synth. See `SYNC.md` for the architecture.
+
+**Multi-tenant sync (Path C — Supabase + accounts) is V1.0 launch
+infrastructure**, not a v1.1 enhancement. You need it for license
+validation anyway, AND it's how you turn the single-tenant alpha
+into a multi-user product. Path B becomes the self-hosted-mode
+fallback (one user, one key) that satisfies the privacy-paranoid
+segment.
+
 **Not decided yet:**
 
-- Cloud sync layer (Supabase). Strictly an enhancement — V1 ships
-  desktop-local-only and adds optional sync as a v1.1 feature once the
-  account system is needed for license validation anyway.
 - LLC vs Delaware C-corp — accountant call, not a code decision.
 - Direct sale vs app store — Tauri-first sidesteps this. Sell direct
   through your own site with Stripe Checkout; skip the 30% cut.
@@ -55,15 +74,26 @@ features in Narrative already cover the core of it: character voices,
 bookmark-notes, save-text-with-auto-regen, the Continue Listening shelf,
 word-count + read-aloud-time in Author mode.
 
-Three things differentiate Narrative from anything currently on the market:
+Four things differentiate Narrative from anything currently on the market:
 
 1. **Writer-specific features** (character voices, dialogue analysis,
    bookmark-driven revision loop). No competitor does this well or at all.
-2. **Privacy / local option.** Every cloud TTS service sends your draft
-   to their servers. For writers and regulated industries, that's a real
-   problem.
-3. **High-quality voices at no recurring cost** (when self-hosted).
-   Piper sounds genuinely comparable to ElevenLabs at zero marginal cost.
+2. **The cross-device revision loop.** Edit at your desk, listen on
+   your phone at the gym, bookmark the clunky paragraph, fix it at
+   your desk next morning. Speechify et al. assume you listen on
+   whatever device you imported from; Narrative ships the loop as
+   one product. This is the headline workflow for V1 (not a v1.1
+   enhancement — see decision reversal above).
+3. **Privacy / local option.** When sync is off, your draft never
+   leaves your machine. When sync is on, it lives only on your own
+   Narrative server (Path B, self-hosted) or in your own account
+   (Path C, hosted) — never used as training data, never shared
+   with other users. The privacy story shifts from "nothing leaves"
+   to "only your devices see it" — still real, still defensible
+   against Speechify, just honest.
+4. **High-quality voices at no recurring cost** (when self-hosted).
+   Piper + Kokoro at zero marginal cost; ElevenLabs / Speechify
+   charge per-character forever.
 
 The strategy: lead with Writers, fund Readers later with Writer revenue,
 keep Self-Hosted as a trust play and as protection against your own
@@ -358,9 +388,159 @@ works. Cut everything else from V1, ship, learn.
   Checkout (implicit in Tauri-first; no app store presence in V1).
 - [ ] LLC in your home state or Delaware C-corp from the start?
   (Talk to an accountant.)
-- [ ] Cloud sync for desktop (Supabase) — V1.1 enhancement once the
-  account system exists for license validation. Defer for now.
-- [ ] LibriTTS / Piper voice-by-voice licensing audit before public sale.
+- [x] **Cross-device sync for V1 or V1.1?** → **V1 core feature.**
+  (2026-05-31, reversal.) Single-tenant Path B shipped in v221.
+  Multi-tenant Path C (Supabase + accounts) is V1.0 launch
+  infrastructure — needed for license validation anyway, and the
+  cross-device revision loop is the headline workflow that
+  justifies the price tag.
+- [x] LibriTTS / Piper voice-by-voice licensing audit before public sale. (2026-05-30)
+
+---
+
+## Phone-native annotation (designed 2026-05-31, post-alpha brainstorm)
+
+### Framing
+
+Don't port desktop markup to phone. Track Changes / marginal comments
+were designed for a mouse and a big screen. The phone's strengths are
+quick capture, voice, gestures, and reading on the go — and its
+weaknesses (small screen, imprecise touch) make fiddly text selection
+painful. The whole pitch of Narrative is *"write at desk, listen on
+phone, revise at desk."* The phone side has never had a phone-native
+interaction model. This is the missing piece.
+
+### Five design pillars
+
+1. **Separate capture from resolve.** When you're reading a draft on
+   your phone, you want to flag a spot in under a second and keep
+   reading — not stop to write a paragraph. Then later, when you sit
+   down to actually revise, you work through a queue of everything you
+   flagged. Two modes: a low-friction reading/flagging mode, and a
+   review inbox. This single split fixes the biggest friction in
+   existing tools.
+
+2. **Tap-to-tag with a small symbol palette.** Instead of typing every
+   note, let a tap on a passage bring up a row of predefined quick
+   tags — `✂ cut`, `✓ fact`, `⚠ weak`, `👁 POV`, `➕ expand`,
+   `❤ love`. Maps the old proofreading-mark concept onto thumb-
+   friendly icons. Long-form notes are still possible, but the common
+   case is one tap.
+
+3. **Voice notes.** The phone-native feature desktop apps underuse.
+   Reading on a couch, dictating *"this dialogue feels stiff, maybe
+   cut the second line"* is far faster than typing. Attach the audio
+   and an optional Whisper transcript to the passage. This is also the
+   most on-brand feature for Narrative — *the only app where you can
+   listen to your draft, dictate a fix, and have the fix attached to
+   that line.* Closes the revision loop end-to-end.
+
+4. **Gestures for common actions.** Swipe a paragraph to flag, long-
+   press to select + annotate, double-tap to highlight. Standard
+   mobile patterns so there's nothing to learn. **Collision risk**:
+   long-press is currently used for sentence voice assignment in
+   reading view (per v220aa). Need mode-switching or different
+   gestures before this can land cleanly.
+
+5. **Jump-between-flags control.** One control that cycles through
+   every flagged or "TK" spot in the manuscript so revision becomes
+   "next, next, next." Great on a small screen where scrolling to
+   hunt is annoying.
+
+Plus a sixth implied design rule: **notes are a layer over read-only
+text**. Keep a clear distinction between reading/annotating and
+editing the prose, so users don't fat-finger a change into the
+manuscript when they meant to leave a note.
+
+### Anchoring — the technical decision that bites people late
+
+Anchoring annotations to text is the hard part. Character offsets
+drift when prose is edited above them. The standard answer in editor
+literature is *"anchor to a paragraph ID and an offset within it"*
+because paragraphs are more stable than arbitrary character ranges.
+
+**Narrative's lucky advantage**: every clip is already broken into
+sentences with `sentence_offsets_sec` (audio timeline) AND we render
+`.sentence` spans in the DOM. So we have a natural stable anchor
+unit: **`(clipId, sentenceIndex)`**.
+
+Sentences don't drift the way character offsets do because edits to
+the text trigger a re-narrate, which re-derives sentence boundaries.
+Inserting a paragraph at the top doesn't move sentence 47 to sentence
+51 — sentence 47 just becomes a different sentence (and the
+annotation can carry a fingerprint of the sentence's text at flag
+time to detect "this sentence has changed").
+
+**Schema** (clip.annotations[]):
+
+```js
+{
+  id: uuid,
+  clipId: number,
+  sentenceIndex: number,          // primary anchor
+  sentenceFingerprint: string,    // first ~60 chars of the sentence at flag time
+  startOffset: number?,           // optional char offset within sentence for sub-sentence pinning
+  endOffset: number?,
+
+  // capture metadata
+  flaggedAt: ISOstring,
+  source: "tap" | "swipe" | "voice" | "highlight",
+
+  // payload (any subset present)
+  tags: ["weak-verb", "POV-slip"],
+  text: string,                   // typed note, optional
+  audioBlob: Blob,                // voice note, optional
+  audioSha256: string,            // content-addressed via existing audio path
+  transcript: string,             // STT result, optional
+
+  // resolution state
+  resolvedAt: ISOstring | null,
+  resolution: "fixed" | "wontfix" | "deferred" | null,
+}
+```
+
+**Reanchor-on-text-change**: when a re-narrate completes, walk the
+new sentences, find the one whose fingerprint matches (or fuzzy-
+matches), rebind. If no match, mark `orphaned: true` and surface in
+the review inbox with *"this sentence no longer exists — show me the
+original text → choose a new anchor or discard."*
+
+This is more robust than character offsets *and* simpler to code than
+diff-merge algorithms.
+
+### Build order
+
+In decreasing UX leverage per hour:
+
+1. **Anchoring foundation + tap-to-flag symbol palette** (~half day).
+   `clip.annotations[]` schema, sentence-tap in a new "annotate
+   mode" opens a chip-row palette, saves with default tag. Review
+   surface = existing bookmarks dialog grouped by tag.
+
+2. **Jump-between-flags control** (~1 hour). One chip in the player
+   row, walks the sorted annotation list within the current clip.
+
+3. **Capture vs resolve modes** (~half day). Body-level
+   `data-mode="read"` vs `"review"`. In read mode, gestures default
+   to "flag with last-used tag." In review mode, gestures default
+   to opening for editing. Toggle chip near hero.
+
+4. **Voice notes** (~2-3 days). MediaRecorder client + content-
+   addressed upload via existing audio-sha-on-volume path + Whisper
+   transcription backend job.
+
+5. **Full gesture system** — deferred. Long-press conflicts with
+   voice assignment; swipe conflicts with book-view page-flip. Do
+   a focused design pass once #1-#4 are real, so we know which
+   gestures actually need to exist.
+
+### Why this matters for the V1 thesis
+
+This pillar is what makes Narrative defensibly different from "TTS +
+sync". Once a writer has voice-noted *"cut second line"* attached
+directly to the line in question, every other app's annotation
+system looks slow. It also makes the *gym → flag → desk → fix* loop
+real, not aspirational.
 
 ---
 

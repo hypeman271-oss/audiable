@@ -347,6 +347,11 @@ dialog[open]::backdrop {
   box-shadow: var(--shadow-mini);
   transform: translateY(-100%);
   transition: transform 0.25s ease;
+  /* v222 (#451): whole strip is tappable to expand to the full
+     player view (Spotify-style). Cursor cue matters on desktop;
+     mobile won't show it but the click target is bigger anyway.
+     Child buttons override with their own cursor: pointer. */
+  cursor: pointer;
 }
 
 .mini-player[data-visible="true"] {
@@ -911,6 +916,63 @@ body[data-ui-mode="simple"] .advanced-only {
   display: none !important;
 }
 
+/* v220am: GitHub Sync / Re-narrate outdated relocated into their own
+ * always-visible row above the library list (see #library-github-tools
+ * in index.html). The buttons hide themselves via the `hidden` attr
+ * when there are no GitHub clips, so the row is invisible in libraries
+ * without GitHub-sourced material. */
+.library-github-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0 8px;
+}
+.library-github-tools:empty,
+.library-github-tools:has(> button[hidden]):not(:has(> button:not([hidden]))) {
+  display: none;
+}
+
+/* v220ao: pill-button treatment for the GitHub action buttons. Tester
+ * reported "Re-narrate outdated (2)" was rendering as a flat link
+ * (same as Export/Import) and didn't read as something tappable.
+ * Pill-shaped + accent-tinted background makes both Sync GitHub and
+ * Re-narrate outdated read as "do this now" calls-to-action, while
+ * the quieter chrome (Export/Import/Hide played/Select) stays as
+ * flat link buttons.
+ *
+ * Re-narrate outdated gets the FILLED accent treatment because when
+ * it's visible at all it means there's work waiting — the strongest
+ * possible "tap me" signal. Sync GitHub gets the lighter outlined
+ * treatment since it's an idempotent check-for-updates action. */
+.library-github-tools .link-btn {
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, filter 0.15s ease;
+}
+.library-github-tools .link-btn:hover {
+  background: var(--accent-tint-3);
+}
+.library-github-tools #library-renarrate-outdated {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.library-github-tools #library-renarrate-outdated:hover {
+  filter: brightness(1.1);
+  background: var(--accent);
+}
+.library-github-tools .link-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
 /* Long-press tooltip on touch devices — reads the existing title="..."
    attribute and surfaces it as a styled toast. Desktop users keep the
    native hover tooltip; mobile users get this on ~500 ms hold. */
@@ -1423,6 +1485,26 @@ dialog.manual-dialog:not([open]) {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+/* v223.tn29 (#501): "Force update" button next to the version stamp.
+   Tiny, secondary — it's not a destination, just an escape hatch. */
+.settings-force-update {
+  margin-left: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.10));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 10px;
+  cursor: pointer;
+}
+.settings-force-update:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.settings-force-update:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
 
 /* Settings section — visual grouping for things like the GitHub PAT
    input. A thin top border separates it from the feedback links
@@ -1505,6 +1587,13 @@ dialog.manual-dialog:not([open]) {
   font-size: 12.5px;
   color: var(--fg-dim);
   line-height: 1.5;
+}
+/* v223.tn1: trigger row under a Settings toggle (e.g. Sync now). */
+.settings-inline-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
 }
 .settings-section-hint a {
   color: var(--accent);
@@ -1944,6 +2033,16 @@ dialog.manual-dialog:not([open]) {
   letter-spacing: 0.02em;
   vertical-align: 1px;
 }
+/* v223.tn16 (#485): "· N min ago" next to the ✓ imported badge.
+   Quiet dim color — secondary signal, not the headline. */
+.doc-picker-file-synced-ago {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  margin-left: 2px;
+  vertical-align: 1px;
+}
 /* v176: "Hide already imported" chip below the filter input. Same
    pill vocabulary as the other chip-style toggles (sort, hide-played,
    etc.) — accent-fill when pressed so the state reads at a glance. */
@@ -2235,6 +2334,40 @@ dialog.manual-dialog:not([open]) {
   background: var(--bg-card-2);
   border: 1px solid var(--border-soft);
   border-radius: 12px;
+  /* v220ap: makes room for the absolutely-positioned dismiss button
+     and gives it a parent to anchor to. */
+  position: relative;
+}
+/* v220ap: dismiss × in the top-right corner. Quiet by default — it's
+   metadata, not the main affordance — but brightens to accent on
+   hover so the user can tell it's clickable. Stays inside the card
+   padding so it never clips. */
+.empty-state-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--fg-dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.12s ease, background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+.empty-state-dismiss:hover,
+.empty-state-dismiss:focus-visible {
+  color: var(--accent);
+  background: var(--bg-card);
+  border-color: var(--border-soft);
+  outline: none;
 }
 .empty-state-head {
   margin: 0 0 12px;
@@ -2901,6 +3034,54 @@ body[data-ui-mode="author"]
   color: var(--played-fg);
 }
 
+/* v223.tn13 (#478): reading-ruler effect — author mode only.
+   Played sentences fade further (you've moved past them), upcoming
+   sentences dim to ~half (preview present but not demanding
+   attention), active sentence pops to full opacity. The active
+   sentence's background tint (set above) plus full opacity here
+   makes it the unambiguous focus.
+
+   Listening modes (simple / standard) keep all sentences at full
+   opacity — those users aren't eye-tracking, they're listening,
+   and dimming would feel like a UI bug. The mode picker gates the
+   effect via [data-ui-mode="author"] on body.
+
+   Opacity (not visibility) means dimmed sentences stay tap-targets
+   — important for annotate mode, where the user flags played
+   sentences and previews upcoming ones. */
+body[data-ui-mode="author"] .reading-view .sentence {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+body[data-ui-mode="author"] .reading-view .sentence.active {
+  opacity: 1;
+}
+body[data-ui-mode="author"] .reading-view .sentence.played {
+  opacity: 0.35;
+}
+
+/* v223.tn12 (#477): word-level highlight inside the active sentence.
+   Subtle accent background on the word the narrator is currently
+   hitting — the eye gets a precise "you are here" pointer instead of
+   tracking the whole sentence block. Brightness is dialed down so the
+   sentence's background tint still reads as the larger context. Only
+   active inside .sentence.active so neighbor sentences stay neutral. */
+.reading-view .sentence.active .word.word-active {
+  background-color: var(--accent);
+  color: var(--on-accent, #fff);
+  border-radius: 3px;
+  padding: 0 2px;
+  margin: 0 -2px;        /* compensate so text doesn't shift horizontally */
+  transition: background-color 0.08s ease, color 0.08s ease;
+}
+/* Words that haven't lit yet — keep the default sentence styling.
+   Played words could be dimmed slightly to show the eye where the
+   narrator has been, mirroring sentence-level .played. Soft enough
+   that the active word stays the dominant focus. */
+.reading-view .sentence.active .word {
+  /* Inherit color from .sentence.active; nothing to set. */
+}
+
 /* Inline images sit between sentence spans in the reading view — block
    layout so they break the sentence flow naturally, padded so consecutive
    illustrations don't bump into each other, and constrained so a 4000px
@@ -2924,6 +3105,169 @@ body[data-ui-mode="author"]
    Shown after a paste detects 2+ chapter markers. Sits between the
    textarea and the char-count meta, tinted with the accent color so it
    reads as an actionable suggestion rather than a status line. */
+
+/* v221.maint: server-side maintenance warning banner. Pushes content
+ * down rather than overlaying (so testers don't lose a row of the hero
+ * to a fixed-positioned bar). Amber-toned to read as "warning" without
+ * shouting. Pulses gently if the maintenance window has actually
+ * started (startsAt <= now) so the user notices the state change. */
+.maintenance-banner {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px;
+  background: rgba(255, 200, 60, 0.16);
+  border-bottom: 1px solid rgba(255, 200, 60, 0.42);
+  color: #ffcc44;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+:root[data-theme="light"] .maintenance-banner {
+  background: rgba(200, 130, 0, 0.12);
+  border-color: rgba(200, 130, 0, 0.36);
+  color: #8a4d00;
+}
+.maintenance-banner.is-active {
+  background: rgba(255, 124, 124, 0.16);
+  border-bottom-color: rgba(255, 124, 124, 0.42);
+  color: var(--danger);
+  animation: maintenanceActivePulse 2s ease-in-out infinite;
+}
+@keyframes maintenanceActivePulse {
+  0%, 100% { background: rgba(255, 124, 124, 0.16); }
+  50%      { background: rgba(255, 124, 124, 0.28); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .maintenance-banner.is-active { animation: none; }
+}
+.maintenance-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.maintenance-banner-dismiss {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.maintenance-banner-dismiss:hover,
+.maintenance-banner-dismiss:focus-visible {
+  background: rgba(255, 200, 60, 0.18);
+  border-color: rgba(255, 200, 60, 0.32);
+  outline: none;
+}
+
+/* v221.maint: admin form layout in Settings. */
+.maintenance-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+}
+.maintenance-form-field {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.maintenance-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+/* v221.tenants-5: admin tenant management section. Inherits
+   .settings-section styling — only the unique bits below. */
+.tenants-mint-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  align-items: stretch;
+}
+.tenants-mint-row .settings-input { flex: 1 1 auto; }
+.tenants-just-minted {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--surface-2, #1a2332);
+  border: 1px solid var(--accent, #4caf50);
+  border-radius: 8px;
+}
+.tenants-just-minted-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.tenants-just-minted-label {
+  font-weight: 600;
+  color: var(--accent, #4caf50);
+  font-size: 13px;
+}
+.tenants-just-minted-key {
+  display: block;
+  padding: 8px 10px;
+  background: var(--surface-0, #0b121d);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  word-break: break-all;
+  user-select: all;
+  margin: 6px 0 4px;
+}
+.tenants-list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 18px;
+}
+.settings-section-label-inline { margin: 0; }
+.tenants-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tenants-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--surface-2, #1a2332);
+  border-radius: 6px;
+}
+.tenants-list-label {
+  font-weight: 600;
+}
+.tenants-list-meta {
+  font-size: 12px;
+  color: var(--text-muted, #8a93a3);
+  display: block;
+  margin-top: 2px;
+}
+.tenants-list .link-btn {
+  flex: 0 0 auto;
+  color: var(--danger, #e57373);
+}
+
 .chapter-banner {
   display: flex;
   flex-wrap: wrap;
@@ -4221,7 +4565,7 @@ button:disabled {
 
 /* v122: at tablet+ widths, lift info-level status messages out of the
    flow and float them in the hero's empty top-right area. The text
-   card snaps up under the "Type. Listen. Download." tagline — no
+   card snaps up under the "Write. Listen. Revise." tagline — no
    more dead row between hero and content for routine "Resuming…"
    chatter. Errors stay in flow as a full-width banner since those
    need to stay maximally visible. */
@@ -4763,6 +5107,116 @@ button:disabled {
   }
 }
 
+/* v220as: bg-queue progress visibility. The user can't see WHICH clip
+ * the silent bg-worker is processing during a multi-clip sync sweep —
+ * before this, finishing chapter_00 silently while the user thought
+ * they had cancelled the whole sweep was indistinguishable from "sync
+ * skipped chapter_00." Now:
+ *   .clip.syncing-now      → accent border + subtle pulse
+ *   .clip.syncing-queued   → muted accent border, no pulse
+ *   .clip-sync-status      → "Syncing now…" / "Queued — N ahead" line
+ *   .clip-sync-status.active → bright accent
+ *   .clip-last-synced      → quiet "Last synced 5 min ago" beneath tags
+ */
+.clip.syncing-now {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+  animation: clipSyncingPulse 2.2s ease-in-out infinite;
+}
+.clip.syncing-queued {
+  border-color: var(--accent-tint-2, var(--accent-tint));
+}
+@keyframes clipSyncingPulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--accent) inset; }
+  50%      { box-shadow: 0 0 0 2px var(--accent) inset; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clip.syncing-now { animation: none; }
+}
+.clip-sync-status {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.clip-sync-status.active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+/* v221.tn9: full-width footer strip across the card's bottom edge.
+   Was previously a small inline span tucked inside titleStack — got
+   crushed on narrow cards with the full action chip row. Footer
+   placement reads at a glance, doesn't compete for horizontal space
+   with the chips, and gives the card a clean baseline anchor.
+   The card itself has no internal padding (children own their own),
+   so this spans naturally edge-to-edge with `display: block`. The
+   top border separates it from the action chip row above. */
+.clip-last-synced {
+  display: block;
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  font-style: italic;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+/* v220as (bug #416): partial-synth warning chip. Amber accent so it
+ * reads as "needs attention" without being alarming red. Pairs with
+ * the same theme as the long-sentence highlight (--long-sentence-tint
+ * upstream) for consistency — "warning, not error." */
+.clip-partial-synth-warn {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 200, 60, 0.12);
+  color: #ffcc44;
+  border: 1px solid rgba(255, 200, 60, 0.32);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+:root[data-theme="light"] .clip-partial-synth-warn {
+  background: rgba(200, 130, 0, 0.10);
+  color: #a45f00;
+  border-color: rgba(200, 130, 0, 0.36);
+}
+
+/* v220al: per-card "↻ Sync from GitHub" chip. Same shape as the
+ * re-narrate chip but a quieter color in idle state — it's only
+ * visible on outdated cards, so its mere presence already signals
+ * "something needs attention." Hover lights it up like the renarrate
+ * chip so the user feels the same affordance. */
+.clip-sync {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border-soft);
+  color: var(--accent);
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 16px;
+  font-family: inherit;
+  font-weight: 700;
+  line-height: 1;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.clip-sync:hover {
+  background: var(--accent-tint);
+}
+.clip-sync:disabled {
+  opacity: 0.45;
+  cursor: progress;
+}
+
 /* Edit pencil — sits between clip body and the × delete on each card. */
 .clip-edit {
   background: none;
@@ -5047,7 +5501,17 @@ button:disabled {
   border-radius: var(--radius);
   padding: 0;
   box-shadow: var(--shadow);
-  overflow: hidden;
+  /* v222 (#461): without max-height the dialog grows past the
+     viewport on short screens (phone landscape, small laptop) and
+     the Save button hides under the bottom edge. Use the v214 dvh
+     pattern: vh first as fallback, dvh override for browsers that
+     account for mobile browser chrome. The flex column below this
+     keeps the header pinned and the body scrollable so the Save
+     button always stays reachable. */
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
 }
 
 .clip-edit-dialog::backdrop {
@@ -5059,6 +5523,13 @@ button:disabled {
   flex-direction: column;
   gap: 8px;
   padding: 16px;
+  /* v222 (#461): body fills remaining height under the header and
+     scrolls internally. Without flex:1 + overflow-y:auto the dialog
+     overflows past the viewport on short screens and the Save
+     button hides under the bottom edge. */
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .clip-edit-body .label {
@@ -6110,6 +6581,371 @@ button:disabled {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
 }
 .highlight-toolbar[hidden] { display: none; }
+
+/* v223.annotate-1: bottom-sheet palette for the symbol tags. Sits
+   fixed at the bottom of the viewport, slides up on open. Thumb-
+   friendly tap targets sized for phone use. Safe-area padding so
+   it sits above the iOS home indicator. */
+.annotate-palette {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 300;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+  transform: translateY(0);
+  transition: transform 0.22s ease;
+}
+.annotate-palette[hidden] {
+  /* Use transform instead of display:none so the slide-out animates
+     on close. Visibility hidden prevents focus-trap; pointer-events
+     none so taps fall through. */
+  display: block !important;
+  transform: translateY(100%);
+  visibility: hidden;
+  pointer-events: none;
+}
+.annotate-palette-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.annotate-tag-btn {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.annotate-tag-btn:hover {
+  background: var(--hover-soft);
+  border-color: var(--accent);
+}
+.annotate-tag-btn:active {
+  transform: scale(0.96);
+}
+.annotate-palette-close {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+.annotate-palette-hint {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* v223.annotate-1: annotate-mode toggle chip in the player row. When
+   active, the chip gets the accent treatment so it's visible at a
+   glance that taps will create flags instead of seeking. */
+.annotate-mode-btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+/* v223.annotate-4: voice-note recording sub-row inside the palette.
+   Replaces the tag picker while a memo is being captured. The red
+   dot pulses to signal "live mic"; the timer ticks the elapsed
+   seconds and warns at the 5s-left mark. */
+.annotate-record-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+}
+.annotate-record-dot {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e53935;
+  animation: annotate-record-pulse 1s infinite ease-in-out;
+}
+@keyframes annotate-record-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(1.3); }
+}
+.annotate-record-timer {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--fg);
+  min-width: 50px;
+}
+.annotate-record-timer[data-warning="true"] {
+  color: #e53935;
+}
+.annotate-record-stop {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.annotate-record-stop:active {
+  transform: scale(0.97);
+}
+.annotate-record-cancel {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+/* v223.tn5 (#470): live transcript shown under the recording timer
+   while the user speaks. Interim chunks dimmed; finalized chunks
+   solid. Falls back to display:none if the browser has no
+   SpeechRecognition (Firefox, older WebKit). */
+.annotate-record-transcript {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  background: var(--bg-card-2);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg);
+  font-style: italic;
+  min-height: 1.4em;
+  max-height: 6em;
+  overflow-y: auto;
+  word-break: break-word;
+}
+.annotate-record-transcript .interim {
+  color: var(--fg-dim);
+  opacity: 0.7;
+}
+
+/* v223.tn5 (#470): saved transcript rendered alongside an annotation's
+   ▶ button in the reading view. Small italic block under the sentence
+   so the desktop reviewer can skim without listening; the ▶ button
+   stays for "hear the tone." */
+.annotate-voice-transcript {
+  display: block;
+  margin-top: 4px;
+  padding: 6px 10px;
+  background: var(--bg-card-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--fg-dim);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* v223.tn26 (#498): × delete button next to ▶/↻ on voice
+   annotations. Outline circle, dim color so it reads as clearly
+   secondary (vs the filled ▶ primary). Hover state tints red. */
+.annotate-voice-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  margin-left: -2px;
+  padding: 0;
+  border: 1px solid var(--fg-dim);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.annotate-voice-delete:hover {
+  background: color-mix(in srgb, var(--danger, #e57373) 15%, transparent);
+  border-color: var(--danger, #e57373);
+  color: var(--danger, #e57373);
+}
+
+/* v223.tn26 (#498): action-sheet popup anchored near a tapped chip
+   or × button. Two stacked buttons — destructive on top, dismissive
+   below. Outside-click + Esc dismiss handled in JS. */
+.anno-action-sheet {
+  position: absolute;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+.anno-action-sheet button {
+  appearance: none;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+.anno-action-sheet .anno-action-remove {
+  color: var(--danger);
+  font-weight: 600;
+}
+.anno-action-sheet button:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* Tag chips become tappable as of #498. Cursor cue. */
+.annotate-tag-chip {
+  cursor: pointer;
+}
+
+/* v223.tn22 (#492): re-transcribe button on voice annotations that
+   have audio but no transcript. Outline-style ↻ so it reads as
+   secondary action (vs the filled ▶ primary). .busy state dims +
+   spinner-ish vibe while the Whisper request is in flight. Removed
+   the moment a transcript lands. */
+.annotate-voice-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  margin-left: -2px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.annotate-voice-retry:hover {
+  background: var(--accent-tint, rgba(124, 156, 255, 0.14));
+}
+.annotate-voice-retry.busy {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+/* v223.tn21 (#491): inline tag-icon chip on annotated sentences.
+   One small colored pill per non-voice tag — tells the reader what
+   the annotation actually was (cut / weak / love / etc.) without
+   entering annotate mode or reloading. Sits next to the marker dot
+   at the head of the sentence; same size and vertical rhythm as the
+   ▶ voice-note button so multi-annotation sentences read cleanly. */
+.annotate-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  margin-left: -4px;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+  vertical-align: middle;
+  cursor: default;
+  user-select: none;
+}
+
+/* v223.annotate-4: inline play button injected at the head of any
+   sentence that has a voice note. Click plays the memo without
+   triggering the sentence's seek-on-tap handler. .playing class
+   pulses while the memo is in flight. */
+.annotate-voice-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  margin-left: -4px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.annotate-voice-play:hover { filter: brightness(1.1); }
+.annotate-voice-play.playing {
+  animation: annotate-voice-pulse 0.9s infinite;
+}
+@keyframes annotate-voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.55); }
+  50%      { box-shadow: 0 0 0 8px rgba(255,255,255,0); }
+}
+
+/* v223.annotate-1: sentence-marker dot for annotated sentences. A
+   small accent disc to the left of the sentence span. Bigger / more
+   visible on touch devices. */
+.sentence[data-has-annotation="true"] {
+  position: relative;
+}
+.sentence[data-has-annotation="true"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+  margin-right: 4px;
+  margin-left: -10px;
+}
+
+/* v223.annotate-1: while annotate mode is active, sentences in the
+   reading view show a soft hover/tap affordance so the user knows
+   they're targetable. */
+body[data-annotate-mode="on"] .reading-view .sentence {
+  cursor: pointer;
+}
+body[data-annotate-mode="on"] .reading-view .sentence:hover {
+  background: var(--hover-soft);
+}
 .highlight-toolbar-btn {
   width: 22px;
   height: 22px;
@@ -6176,7 +7012,28 @@ button:disabled {
   background: var(--accent);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
   z-index: 3;
-  pointer-events: none;
+  /* v220bb: ribbon is now a <button> so users can tap to remove the
+   * bookmark. Reset browser button defaults (border, padding) so the
+   * pennant shape stays intact, and bump pointer-events back on so
+   * the click handler fires. */
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.book-page-bookmark:hover,
+.book-page-bookmark:focus-visible {
+  background: var(--accent-strong, var(--accent));
+  outline: none;
+  /* Slight tilt + grow so the user knows the ribbon is interactive
+   * without us having to overlay a × glyph (would require a second
+   * pseudo-element on top of the clip-path). */
+  transform: scale(1.18);
 }
 
 /* Body text. v199 (M3.1): every typographic property reads from a
@@ -7197,5 +8054,559 @@ button:disabled {
     width: calc(100vw - 24px);
     border-radius: 14px;
     justify-content: space-between;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   v225.mobile / Phase A (#502): Spotify-style phone shell.
+   Phone only (max-width: 767px). Desktop + tablet untouched.
+
+   What this phase does (CSS only, no HTML/JS changes):
+     • Hides the Narrative wordmark + tagline. The splash carries
+       the brand now; in-app it's wasted space.
+     • Hides the sticky-top mini-player. The bottom bar replaces it.
+     • Hides the first-clip onboarding banner on phone (it ate the
+       whole hero on narrow widths).
+     • Pins the player card to the bottom of the viewport.
+     • Collapses the player into a single row: [⏪] [▶] time
+       [━━●━━] time [⏩]. Every other player-action chip is hidden
+       — A↔B, sleep, speed, notes, bookmarks, etc. all migrate to
+       the pull-up in Phase B (#503).
+     • Adds bottom padding to body so scroll content clears the
+       fixed bar.
+
+   Reversible: wipe this block to restore the old phone layout.
+   Subsequent phases (B/C/D) build on top of this skeleton.
+   ────────────────────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Brand wordmark + tagline gone. The h1 has no class so target
+     it inside .hero-row's title block directly. */
+  .hero-row > div > h1,
+  .hero-row > div > .tagline {
+    display: none;
+  }
+
+  /* First-clip onboarding banner was a hero-resident strip; the
+     new phone layout doesn't have horizontal hero real estate for
+     it. It still shows on desktop. */
+  #first-clip-tour {
+    display: none !important;
+  }
+
+  /* The sticky-top mini-player was a clever hack to keep playback
+     reachable when scrolled past the player card. We don't need it
+     anymore because the bottom bar IS the mini-player and it's
+     always visible. */
+  #mini-player {
+    display: none !important;
+  }
+
+  /* Pin the player card to the bottom of the viewport. fixed
+     positioning so scroll under it never reveals it. Solid
+     surface — earlier color-mix(var(--surface)…) used an
+     undefined token and resolved to transparent, which let the
+     reading text bleed through AND turned the bottom bar into a
+     pass-through layer when the pull-up scrim/drawer stacked
+     behind it (everything looked uniformly blurred). Using
+     --bg-card directly is opaque and the bar stays legible while
+     the drawer is open. */
+  #player-card {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-radius: 14px 14px 0 0;
+    background: var(--bg-card);
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.45);
+    z-index: 41;          /* above the scrim (z 38) AND the drawer (z 39) */
+  }
+
+  /* Collapse the player into a single horizontal row. Both
+     #custom-player and .player-actions become display:contents so
+     their children become direct flex items of #player-card. */
+  #player-card {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+  }
+  #player-card > #custom-player,
+  #player-card > .player-actions {
+    display: contents;
+  }
+
+  /* Order: ⏪  ▶  time-current  ━━●━━  time-duration  ⏩ */
+  #skip-back-btn { order: 1; }
+  #cp-play-btn { order: 2; }
+  #cp-time-current { order: 3; font-size: 11px; }
+  #cp-scrubber { order: 4; flex: 1; min-width: 60px; }
+  #cp-time-duration { order: 5; font-size: 11px; }
+  #skip-forward-btn { order: 6; }
+
+  /* Hide every action-row chip except skip-back / skip-forward.
+     A↔B, sleep, speed cycle, 📝 notes, 🔖 bookmark, annotate,
+     voice swatch — all moving to the Phase B pull-up. */
+  #player-card .player-actions > button:not(#skip-back-btn):not(#skip-forward-btn),
+  #player-card .player-actions > .chip-group {
+    display: none !important;
+  }
+
+  /* Hide the mute button + effective-time row on phone. Space is
+     tight; mute is one tap into the pull-up's volume slider later. */
+  #cp-mute-btn,
+  #cp-time-effective {
+    display: none !important;
+  }
+
+  /* Tighten button sizes for the bottom bar. Touch targets stay
+     ≥40px via padding; the visible icon shrinks. */
+  #player-card #cp-play-btn {
+    width: 44px;
+    height: 44px;
+  }
+  #player-card #skip-back-btn,
+  #player-card #skip-forward-btn {
+    padding: 8px 10px;
+    font-size: 12px;
+    min-width: 44px;
+  }
+
+  /* Push body content above the fixed bottom bar so the last
+     paragraph isn't hidden. ~80px covers the player + safe area. */
+  body {
+    padding-bottom: calc(86px + env(safe-area-inset-bottom));
+  }
+
+  /* Phase D (#502): when no clip is loaded, #player-card carries
+     the `hidden` attribute → not rendered. In that empty state
+     the body shouldn't reserve room for a bar that isn't there;
+     drop the bottom padding back to just the safe-area inset so
+     the empty-state CTA cards fill the viewport naturally. The
+     :has() selector resolves to "is there a hidden #player-card
+     in the page" — which is always true in this app; the
+     question is whether it's currently `hidden`. We invert by
+     checking for NOT-hidden in the other rule, but the simpler
+     form below works: body sees player[hidden] → no padding. */
+  body:has(#player-card[hidden]) {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* ── Phase A.2 (#502 cont'd): kill the "white-card border" feel.
+     The text needs to dominate, so we strip card chrome off the
+     text container, ditch the .app's side padding, and let the
+     reading view fill from edge to edge with text-internal padding
+     only. Bookmark ribbons in book view hidden — bookmarks will
+     get their own dedicated view in a follow-up phase. */
+
+  /* Edge-to-edge: kill .app side padding + max-width so content
+     fills the viewport. Keep just a tiny top breathing room so the
+     hero icons aren't flush to the screen corner. */
+  .app {
+    max-width: 100%;
+    padding: 6px 0 calc(86px + env(safe-area-inset-bottom));
+  }
+  /* Restore some side breathing room ONLY for the icon row + dialogs
+     anchored to .app — anything that lived inside .app's padding
+     before. Most content (card-text, reading view) goes edge-to-edge. */
+  .hero-row {
+    padding: 0 12px;
+  }
+
+  /* The text card was the source of the "card with white border on
+     dark background" look. Strip it down: no background, no border,
+     no padding, no shadow. The reading view inside handles its own
+     edge spacing. */
+  .card.card-text {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+  }
+
+  /* Reading view: no inner card chrome, no viewport-height cap.
+     Modest internal padding so text doesn't kiss the edge. Slight
+     font bump for phone readability. */
+  #reading-view {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 8px 14px;
+    max-height: none;
+    min-height: 0;
+    font-size: 17px;
+  }
+
+  /* v225m (#508): #bookmarks-list lives in the pull-up's Bookmarks
+     section now. The relocation happens at boot in JS. We no
+     longer hide it — it just shouldn't be a sibling of
+     .player-actions inside the player card flex row, and the
+     relocation handles that. */
+
+  /* ── Phase B (#503): pull-up controls card.
+     A drawer that slides up from above the bottom bar. Closed
+     state: translateY(100%) parks it just below the viewport.
+     Open state: translateY(0). The bottom player bar's chevron
+     button toggles the body[data-pullup] attribute that drives
+     this. Chip nodes are relocated into the .phone-pullup-slots
+     divs at app boot — see _phonePullupRelocate() in app.js.
+
+     The pull-up sits ABOVE the player bar in z-index so the
+     player bar is still visible (and tappable for play/scrub)
+     while the drawer is open. */
+  #phone-pullup {
+    display: block;             /* override `hidden` attribute on phone */
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 39;                /* one below the bottom player (z 40) */
+    max-height: 70vh;
+    padding: 0 12px calc(96px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    /* Solid card surface — the earlier color-mix(var(--surface)…)
+       referenced an undefined token and silently resolved to
+       transparent, which is why the reading text was bleeding
+       through. Use --bg-card directly (the same surface every
+       other card in the app uses). */
+    background: var(--bg-card);
+    /* Strong backdrop blur for whatever shows under the safe-area
+       padding strip on iPhones with the gesture bar. Not load-
+       bearing for legibility now that the background is opaque. */
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.55);
+    transform: translateY(100%);
+    transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+    pointer-events: none;
+  }
+  body[data-pullup="open"] #phone-pullup {
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  /* Grip bar — tappable Spotify-style pill at the top of the card.
+     The whole row is tappable, the bar is the affordance. */
+  .phone-pullup-grip-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 28px;
+    cursor: pointer;
+  }
+  .phone-pullup-grip-bar {
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--fg-dim);
+    opacity: 0.55;
+  }
+
+  /* v225m (#508): peek handle tab that sits ABOVE the bottom bar
+     when the drawer is closed. Always visible so the user can
+     discover the pull-up affordance; supports tap to toggle and
+     drag-up to open. JS injects the element at boot. */
+  .phone-pullup-tab {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    width: 72px;
+    height: 24px;
+    z-index: 42;          /* above the player bar (z 41) */
+    background: var(--bg-card);
+    border-radius: 12px 12px 0 0;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 0;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;   /* let JS handle pointer drag */
+  }
+  .phone-pullup-tab::before {
+    content: "";
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--fg-dim);
+    opacity: 0.6;
+  }
+  /* When the drawer is open, hide the tab — the in-drawer grip
+     takes over as the close affordance. */
+  body[data-pullup="open"] .phone-pullup-tab {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms;
+  }
+  .phone-pullup-content {
+    padding: 4px 0 16px;
+  }
+  .phone-pullup-section {
+    margin-bottom: 14px;
+  }
+  .phone-pullup-section h3 {
+    margin: 0 0 6px;
+    padding: 0 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+  .phone-pullup-slots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 2px;
+  }
+  /* v225m (#508): bookmarks slot — full-width column inside the
+     pull-up. Houses the relocated #bookmarks-list. The original
+     .bookmark-row CSS already styles each row; we just give the
+     wrapper enough room and a visible "no bookmarks yet" state
+     via the hint pseudo if empty. */
+  .phone-pullup-bookmarks {
+    display: block;
+    width: 100%;
+    padding: 0 2px;
+  }
+  .phone-pullup-bookmarks #bookmarks-list {
+    display: block !important;        /* override any earlier hides */
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+  }
+  .phone-pullup-bookmarks .bookmark-row {
+    background: var(--bg-card-2);
+    border-radius: 10px;
+    margin-bottom: 6px;
+  }
+
+  /* Relocated chip nodes: normalize to a consistent pill height +
+     tap target + readable background regardless of the original
+     chip's home class. Without an explicit background, some chips
+     came in transparent and looked ghosted on the drawer surface. */
+  .phone-pullup-slots > button,
+  .phone-pullup-slots > a,
+  .phone-pullup-slots > div,
+  .phone-pullup-slots > span {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    visibility: visible !important;
+    background: var(--bg-card-2);
+    color: var(--fg);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .phone-pullup-slots > button:hover,
+  .phone-pullup-slots > a:hover {
+    border-color: var(--accent);
+  }
+
+  /* Chevron toggle button — injected into the bottom player bar
+     at app boot. Single tap toggles the pull-up. SVG/text content
+     flips between ⌃ (closed → tap to open) and ⌄ (open → tap to
+     close). */
+  .phone-pullup-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--fg-dim);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    order: 0;            /* before everything else in the bottom bar */
+  }
+  .phone-pullup-toggle:hover {
+    color: var(--fg);
+  }
+
+  /* v225j: real-element scrim inside .app so it shares the same
+     stacking context as the drawer + player bar. The earlier
+     body::before scrim was outside .app (root level), and since
+     .app has z-index: 1, the scrim at root z-38 was painted
+     ABOVE the entire .app subtree — including the drawer (z 39)
+     and player bar (z 41), which both live inside .app's local
+     stack. That's why the whole screen looked blurred and
+     unclickable: the scrim was on top of everything. Now the
+     scrim is a sibling of the drawer inside .app, at z 38 of
+     .app's local stack, with the drawer above it at z 39 and
+     the player bar above that at z 41 — they actually stack
+     in the order I expected. */
+  .phone-pullup-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 38;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  body[data-pullup="open"] .phone-pullup-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Desktop: hide the pull-up entirely. Even if app.js doesn't move
+   chips, the markup wouldn't render. */
+@media (min-width: 768px) {
+  #phone-pullup,
+  #phone-pullup-scrim,
+  #phone-menu,
+  #phone-menu-scrim,
+  .phone-menu-btn {
+    display: none !important;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   v225.mobile / Phase C (#506): top ☰ menu sheet.
+
+   On phone the entire hero row (with brand wordmark, tagline, and
+   the 4 icon buttons 🎤 📚 ? ⚙) collapses to ONE ☰ button at top-
+   left. Tapping ☰ opens a small sheet sliding down from the top
+   edge with: 📚 Library / ↑ Import / ✚ New clip / ⚙ Settings /
+   ? Help.
+
+   The menu items don't relocate the existing buttons (the way the
+   pull-up did) — they just dispatch click() on them. The hero icons
+   stay in the DOM, hidden via CSS; their click handlers fire when
+   the menu item is tapped, so all existing wiring keeps working.
+   ────────────────────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Inject the ☰ button at top-left, fixed-positioned so it doesn't
+     interfere with the now-headless body content. JS creates it at
+     boot (similar to the chevron pattern) and adds it as the first
+     child of <main class="app">. */
+  .phone-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    left: 12px;
+    z-index: 41;
+  }
+  .phone-menu-btn:hover {
+    background: var(--bg-card-2);
+  }
+
+  /* Phase C: hide the legacy hero row entirely on phone. The brand
+     wordmark + tagline were already hidden in Phase A; this hides
+     the icon row too. The buttons stay in the DOM so the menu items
+     can dispatch click() on them. */
+  .hero {
+    display: none !important;
+  }
+
+  /* Make room at the top of the body so the ☰ button doesn't sit on
+     top of the first sentence. The hero used to provide this top
+     space; without it the reading view starts flush with the top of
+     the screen. */
+  .app {
+    padding-top: calc(56px + env(safe-area-inset-top));
+  }
+
+  /* Sheet container — slides down from top. Closed by default
+     via translateY(-100%). body[data-menu="open"] flips translateY
+     to 0 and the scrim opacity to 1 in lockstep. */
+  #phone-menu {
+    display: block;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: calc(8px + env(safe-area-inset-top));
+    z-index: 43;
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    transform: translateY(-110%);
+    opacity: 0;
+    transition:
+      transform 220ms cubic-bezier(0.32, 0.72, 0, 1),
+      opacity 220ms cubic-bezier(0.32, 0.72, 0, 1);
+    pointer-events: none;
+  }
+  body[data-menu="open"] #phone-menu {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .phone-menu-content {
+    padding: 6px;
+  }
+  .phone-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 14px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 15px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+  }
+  .phone-menu-item:hover {
+    background: var(--bg-card-2);
+  }
+  .phone-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    font-size: 18px;
+  }
+  .phone-menu-divider {
+    height: 1px;
+    margin: 6px 8px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  /* Same scrim pattern as the pull-up — sibling inside .app so it
+     shares the stacking context. Tap to close. */
+  .phone-menu-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 42;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  body[data-menu="open"] .phone-menu-scrim {
+    opacity: 1;
+    pointer-events: auto;
   }
 }

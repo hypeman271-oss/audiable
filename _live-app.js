@@ -2926,22 +2926,19 @@ async function addBookmarkAtCurrentTime() {
     return;
   }
   try {
-    // v223.tn19 (#488): atomic read-modify-write so a concurrent
-    // _syncAbsorbServerClip can't slip between our read and write
-    // and cause our save to wipe newly-absorbed content (annotations,
-    // highlights, etc.) on the server via LWW.
-    const t = virtualTime();
-    const clip = await _mutateClipAtomic(_currentClipId, (c) => {
-      if (!Array.isArray(c.bookmarks)) c.bookmarks = [];
-      c.bookmarks.push({
-        id: Date.now(),
-        timeSec: t,
-        note: "",
-        createdAt: new Date().toISOString(),
-      });
-      c.bookmarks.sort((a, b) => a.timeSec - b.timeSec);
-    });
+    const clip = await getClip(_currentClipId);
     if (!clip) return;
+    const t = virtualTime();
+    if (!Array.isArray(clip.bookmarks)) clip.bookmarks = [];
+    clip.bookmarks.push({
+      id: Date.now(),
+      timeSec: t,
+      note: "",
+      createdAt: new Date().toISOString(),
+    });
+    // Keep the list sorted by timestamp so display order matches audio order.
+    clip.bookmarks.sort((a, b) => a.timeSec - b.timeSec);
+    await saveClip(clip);
     await renderBookmarks();
     // v210 (M6.1): if the book view is open, re-stash bookmarks +
     // re-render the current spread so the new ribbon shows up
@@ -2960,12 +2957,12 @@ async function addBookmarkAtCurrentTime() {
 async function updateBookmarkNote(bookmarkId, newNote) {
   if (!_currentClipId) return;
   try {
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    await _mutateClipAtomic(_currentClipId, (c) => {
-      if (!Array.isArray(c.bookmarks)) return;
-      const bm = c.bookmarks.find((b) => b.id === bookmarkId);
-      if (bm) bm.note = newNote;
-    });
+    const clip = await getClip(_currentClipId);
+    if (!clip || !Array.isArray(clip.bookmarks)) return;
+    const bm = clip.bookmarks.find((b) => b.id === bookmarkId);
+    if (!bm) return;
+    bm.note = newNote;
+    await saveClip(clip);
     // No re-render needed; the user already sees their typed note.
   } catch (e) {
     console.warn("bookmark note save failed:", e);
@@ -2975,12 +2972,10 @@ async function updateBookmarkNote(bookmarkId, newNote) {
 async function deleteBookmark(bookmarkId) {
   if (!_currentClipId) return;
   try {
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    const clip = await _mutateClipAtomic(_currentClipId, (c) => {
-      if (!Array.isArray(c.bookmarks)) return;
-      c.bookmarks = c.bookmarks.filter((b) => b.id !== bookmarkId);
-    });
-    if (!clip) return;
+    const clip = await getClip(_currentClipId);
+    if (!clip || !Array.isArray(clip.bookmarks)) return;
+    clip.bookmarks = clip.bookmarks.filter((b) => b.id !== bookmarkId);
+    await saveClip(clip);
     await renderBookmarks();
     // v220bb: matching re-render path to addBookmark above. Without
     // this, deleting a bookmark via the Bookmarks dialog leaves the
@@ -3011,30 +3006,33 @@ async function deleteBookmark(bookmarkId) {
 async function _deleteBookmarksOnBookViewPage(textPageIdx) {
   if (!_currentClipId) return;
   try {
+    const clip = await getClip(_currentClipId);
+    if (!clip || !Array.isArray(clip.bookmarks) || clip.bookmarks.length === 0) {
+      return;
+    }
     const sentences = _bookViewPages[textPageIdx] || [];
     if (!sentences.length) return;
     const firstSent = sentences[0];
     const lastSent = sentences[sentences.length - 1];
     const firstSec = sentenceOffsetsSec[firstSent] || 0;
+    // End of the page is the start of the NEXT page's first sentence,
+    // or the clip's full duration if this is the last page.
     const nextSent =
       (_bookViewPages[textPageIdx + 1] && _bookViewPages[textPageIdx + 1][0]) ||
       sentenceOffsetsSec.length;
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    let didDelete = false;
-    const clip = await _mutateClipAtomic(_currentClipId, (c) => {
-      if (!Array.isArray(c.bookmarks) || c.bookmarks.length === 0) return;
-      const lastSec =
-        sentenceOffsetsSec[nextSent] ||
-        Number(c.durationSec) ||
-        (sentenceOffsetsSec[lastSent] || 0) + 60;
-      const victim = c.bookmarks.find(
-        (b) => b.timeSec >= firstSec && b.timeSec < lastSec
-      );
-      if (!victim) return;
-      c.bookmarks = c.bookmarks.filter((b) => b.id !== victim.id);
-      didDelete = true;
-    });
-    if (!clip || !didDelete) return;
+    const lastSec =
+      sentenceOffsetsSec[nextSent] ||
+      Number(clip.durationSec) ||
+      (sentenceOffsetsSec[lastSent] || 0) + 60;
+
+    // Find the earliest bookmark that resolves to this page. timeSec
+    // sort order is already maintained by addBookmark.
+    const victim = clip.bookmarks.find(
+      (b) => b.timeSec >= firstSec && b.timeSec < lastSec
+    );
+    if (!victim) return;
+    clip.bookmarks = clip.bookmarks.filter((b) => b.id !== victim.id);
+    await saveClip(clip);
     await renderBookmarks();
     if (_bookViewSource) {
       _bookViewSource.bookmarks = clip.bookmarks;
@@ -3403,11 +3401,14 @@ async function maybeSaveProgress(force = false) {
 async function markCurrentClipPlayed() {
   if (!_currentClipId) return;
   try {
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    await _mutateClipAtomic(_currentClipId, (c) => {
-      c.progressSec = 0;
-      c.playedAt = new Date().toISOString();
-    });
+    const clip = await getClip(_currentClipId);
+    if (!clip) return;
+    clip.progressSec = 0;
+    // Stamp the completion time so the "Hide played" library filter has
+    // something to key off. We can't distinguish "never played" from
+    // "played and reset" via progressSec alone (both are 0).
+    clip.playedAt = new Date().toISOString();
+    await saveClip(clip);
     renderLibrary();
   } catch (e) {
     console.warn("mark-played failed:", e);
@@ -4857,14 +4858,14 @@ function _applySentenceAssignmentMark(span, idx) {
 async function _persistSentenceAssignments() {
   if (!_currentClipId) return;
   try {
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    await _mutateClipAtomic(_currentClipId, (c) => {
-      c.sentenceAssignments = { ..._currentClipAssignments };
-      // v220-AG: mark the audio as out of date with respect to the
-      // current assignments. The banner watches this flag + the
-      // regen-save path clears it back to false.
-      c.assignmentsDirty = true;
-    });
+    const clip = await getClip(_currentClipId);
+    if (!clip) return;
+    clip.sentenceAssignments = { ..._currentClipAssignments };
+    // v220-AG: mark the audio as out of date with respect to the
+    // current assignments. The banner watches this flag + the
+    // regen-save path clears it back to false.
+    clip.assignmentsDirty = true;
+    await saveClip(clip);
     _currentClipAssignmentsDirty = true;
     _updatePendingAssignmentsBanner();
   } catch (e) {
@@ -6064,37 +6065,6 @@ async function generate() {
       return;
     }
   }
-
-  // v225.tn34 (#510): transcript-pattern warning. A tester hit this
-  // with a speech transcript that had 2 periods in 2,911 words; the
-  // sentence splitter saw a single 15k-char "sentence" and Piper
-  // bailed mid-stream, leaving a 3-second clip. v225.tn34 also adds
-  // server-side force-splitting (so the synth no longer fails) — but
-  // the resulting audio will sound less natural at the forced-split
-  // points (no real sentence boundary = no natural breath). Warn the
-  // user so they can choose to add punctuation first.
-  //
-  // Heuristic: fewer than ONE sentence-end mark per 1000 words. Most
-  // prose runs 50-100/1000. Even sparse modern fiction is ≥10/1000.
-  // <1 is essentially unpunctuated transcript territory.
-  const words = text.split(/\s+/).filter(Boolean);
-  const sentenceEnds = (text.match(/[.!?]/g) || []).length;
-  const ratio = words.length > 0 ? (sentenceEnds * 1000) / words.length : 0;
-  if (words.length >= 300 && ratio < 10) {
-    const msg =
-      `This text has only ${sentenceEnds} sentence-ending mark${sentenceEnds === 1 ? "" : "s"} ` +
-      `(. ! ?) across ${words.length} words — looks like an unpunctuated transcript.\n\n` +
-      "To keep the synth from failing, the server will automatically " +
-      "insert breaks at commas and whitespace every ~500 characters. " +
-      "Those forced breaks won't sound as natural as real sentence " +
-      "boundaries — if you add periods at the real sentence breaks " +
-      "first, the audio will read much more smoothly.\n\n" +
-      "Continue with automatic breaks, or cancel to add punctuation?";
-    if (!window.confirm(msg)) {
-      setStatus("Cancelled — add some punctuation and try again.", true);
-      return;
-    }
-  }
   // Fail fast when no voice is selected — otherwise the empty voice_id
   // routes through to SAPI's default (or worse, falls into a code path
   // that produces a malformed WAV that lameenc can't encode and the
@@ -6152,19 +6122,6 @@ async function generate() {
             typeof existing.sentenceAssignments === "object"
               ? existing.sentenceAssignments
               : {},
-          // v223.tn23 (#493): widen the capture so the post-synth
-          // save can preserve these fields. The old narrow capture
-          // (title/note/createdAt/bookmarks/images/gitRef/assignments)
-          // is why notes/tags/cover/annotations/highlights and both
-          // sync timestamps got silently wiped from local IDB on
-          // every regen. See the matching save block for the wire-up.
-          notes: typeof existing.notes === "string" ? existing.notes : "",
-          tags: Array.isArray(existing.tags) ? existing.tags : [],
-          cover: existing.cover || undefined,
-          annotations: Array.isArray(existing.annotations) ? existing.annotations : [],
-          highlights: Array.isArray(existing.highlights) ? existing.highlights : [],
-          lastSyncedAt: existing.lastSyncedAt || null,
-          lastDeviceSyncAt: existing.lastDeviceSyncAt || undefined,
         };
       }
     } catch {}
@@ -6493,32 +6450,6 @@ async function generate() {
               // persist was disabled / failed). Sync adapter uses
               // this to PUT the clip by reference instead of blob.
               audioSha256: _fgServerAudioSha || undefined,
-              // v223.tn23 (#493): preserve user data the foreground
-              // regen path used to silently drop. See bg-queue site
-              // for the same rationale. Adds: notes body, tags, cover,
-              // annotations, highlights, lastSyncedAt, lastDeviceSyncAt.
-              // Without these, a "wrench"/🔄 re-narrate wipes them all
-              // from local IDB and the next cross-device pull races to
-              // restore them.
-              notes: regenExistingMeta ? regenExistingMeta.notes || "" : "",
-              tags: regenExistingMeta && Array.isArray(regenExistingMeta.tags)
-                ? regenExistingMeta.tags
-                : [],
-              cover: regenExistingMeta ? regenExistingMeta.cover || undefined : undefined,
-              annotations: regenExistingMeta && Array.isArray(regenExistingMeta.annotations)
-                ? regenExistingMeta.annotations
-                : [],
-              highlights: regenExistingMeta && Array.isArray(regenExistingMeta.highlights)
-                ? regenExistingMeta.highlights
-                : [],
-              // lastSyncedAt: regen via foreground path is NOT a fresh
-              // GitHub pull — the text came from the textarea, not
-              // from a refetch. So preserve whatever GitHub sync stamp
-              // the clip already had. (Bg-queue path overrides this
-              // when chapter.gitRef is set, because that path runs the
-              // refetch.)
-              lastSyncedAt: regenExistingMeta ? regenExistingMeta.lastSyncedAt : null,
-              lastDeviceSyncAt: regenExistingMeta ? regenExistingMeta.lastDeviceSyncAt : undefined,
               createdAt: regenExistingMeta
                 ? regenExistingMeta.createdAt
                 : new Date().toISOString(),
@@ -7055,31 +6986,6 @@ let _silentChapterQueue = false;
 // chapter whose synthesis is in flight; _bgSynthSentence /
 // _bgSynthTotal are the latest counter and target.
 let _bgSynthCurrentTitle = "";
-// v225.tn33 (#509): per-synth telemetry surface so the "OK"/"FAIL"
-// log lines can report whether the synthesis was REAL or stunted.
-// The bg-queue's old "OK ${title}" line just said "we didn't throw"
-// — a partial stream that ended cleanly logged success, leaving the
-// tester with a 3-second clip and no audit trail. Telemetry that
-// gets captured per synth and read by the queue-level log:
-//   • startMs / endMs           — wall-clock bracket
-//   • blobSize / durationSec    — what actually landed
-//   • lastSentenceIndex / total — how far the stream got
-//   • truncated                 — sentencesSeen < advertised
-//   • charsPerSec               — sanity check; >800 = impossible
-let _bgLastSynth = null;
-function _bgResetSynthTelemetry() {
-  _bgLastSynth = {
-    startMs: Date.now(),
-    endMs: null,
-    blobSize: null,
-    durationSec: null,
-    sentencesSeen: 0,
-    sentencesAdvertised: 0,
-    sourceUrl: null,
-    truncated: null,    // set at finalize
-    charsPerSec: null,  // set at finalize
-  };
-}
 let _bgSynthSentence = 0;
 // v221.sync-4: server returns audio_sha256 in the result event when it
 // successfully persisted the MP3 to the volume. Captured per-job so
@@ -7538,62 +7444,14 @@ async function _bgTrySynth(job) {
     // v177: log the job's preflight state — voice, lengths, gitRef —
     // so a "chapter 2 keeps failing" report contains everything
     // needed to reproduce. Title + chars almost always pin the cause.
-    // v225.tn33 (#509): fresh telemetry surface so the OK log can
-    // see what _preSynthesizeChapter actually produced.
-    _bgResetSynthTelemetry();
-    // v225.tn35 (#511): compute a text-structure summary so a
-    // transcript-pattern bug (Trump-speech repro: 14997 chars, 2
-    // periods, 1 advertised sentence) is obvious at a glance.
-    // Without this, you'd see chars=14997 in the start log and
-    // sentencesAdvertised=1 in the OK log and have to mentally
-    // connect them. With it, the start log says outright:
-    //   sentenceMarks: 2, words: 2911, longestSentenceChars: 14945
-    // which screams "transcript with no punctuation" on first read.
-    const _jobText = job.text || "";
-    const _jobWords = _jobText.split(/\s+/).filter(Boolean).length;
-    const _jobMarks = (_jobText.match(/[.!?]/g) || []).length;
-    const _jobCommas = (_jobText.match(/,/g) || []).length;
-    // Pre-split locally with the same regex the server uses, so we
-    // know how many sentences the SERVER will see before force-split
-    // kicks in. _MAX_SENTENCE_CHARS on the server (500) gets
-    // duplicated here intentionally — if it drifts, the metric still
-    // diagnoses the pre-split shape, which is what matters for "did
-    // the user paste a transcript".
-    const _preSplitSentences = _jobText
-      .split(/(?<=[.!?])\s+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const _longestPreSplit = _preSplitSentences.reduce(
-      (m, s) => (s.length > m ? s.length : m),
-      0,
-    );
     _dlog("bg-queue", `synth start: ${job.title}`, {
-      chars: _jobText.length,
+      chars: (job.text || "").length,
       voiceId: job.voiceId,
       rate: job.rate,
       volume: job.volume,
       speakerId: job.speakerId,
       targetClipId: job.targetClipId || null,
       gitRefPath: job.gitRef ? job.gitRef.path : null,
-      // v225.tn33: textHead snippets the first ~80 chars so a tester
-      // report with "this URL fails" is reproducible from the log
-      // alone without round-tripping the source.
-      textHead: (_jobText.trim().slice(0, 80) || "(empty)"),
-      // v225.tn35 (#511): text-structure summary — answers "is this
-      // a transcript-style input" before we even start synth.
-      words: _jobWords,
-      sentenceMarks: _jobMarks,                   // count of . ! ?
-      commaCount: _jobCommas,
-      sentencesPreSplit: _preSplitSentences.length,
-      longestSentenceChars: _longestPreSplit,
-      // Flag "transcript-shape" when there are very few sentence
-      // marks per 1000 words. Mirrors the generate() pre-flight
-      // heuristic; sets the keyword so a tester report can be
-      // grepped/sorted by structural class.
-      pattern:
-        _jobWords >= 300 && (_jobMarks * 1000) / Math.max(1, _jobWords) < 10
-          ? "transcript-low-punct"
-          : (_longestPreSplit > 500 ? "long-sentence" : "normal"),
     });
     // v176: thread targetClipId + gitRef so the synth path can
     // overwrite an existing clip (Re-narrate outdated) instead of
@@ -7784,48 +7642,14 @@ async function _bgRunWorker() {
       if (_silentChapterQueue) success = await _bgTrySynth(_bgCurrent);
     }
     if (success) {
-      // v225.tn33 (#509): the OK log used to say "we didn't throw"
-      // and nothing else — a partial stream that ended cleanly
-      // logged success, leaving the tester with a 3-second clip
-      // and no audit trail. Now we surface the per-synth telemetry
-      // so a glance at the log answers "did real synthesis run":
-      //   • charsPerSec > 800 = impossible for Piper on Fly CPU
-      //     (a real bake is ~50-200/s). High value = early bailout.
-      //   • truncated: true   = sentencesSeen < advertised. Server
-      //     dropped the stream before all sentences were synthed.
-      //   • durationSec near 0 or blobSize near 0 = no audio.
-      // The "suspicious" flag is true when any of these red flags
-      // hit — testers don't need to read details, just look for
-      // OK lines tagged suspicious.
-      const t = _bgLastSynth || {};
-      const elapsedMs = (t.endMs || Date.now()) - (t.startMs || Date.now());
-      const charsLen = (_bgCurrent.text || "").length;
-      const suspicious =
-        (t.charsPerSec != null && t.charsPerSec > 800) ||
-        (t.truncated === true) ||
-        (t.durationSec != null && t.durationSec < 2 && charsLen > 200) ||
-        (t.blobSize != null && t.blobSize < 1024);
-      _dlog("bg-queue", `OK ${_bgCurrent.title}${suspicious ? " ⚠ suspicious" : ""}`, {
-        chars: charsLen,
-        elapsedMs,
-        charsPerSec: t.charsPerSec,
-        sentencesSeen: t.sentencesSeen,
-        sentencesAdvertised: t.sentencesAdvertised,
-        truncated: t.truncated,
-        durationSec: t.durationSec,
-        blobSize: t.blobSize,
-        suspicious,
+      _dlog("bg-queue", `OK ${_bgCurrent.title}`, {
+        chars: (_bgCurrent.text || "").length,
       });
       _bgOkCount += 1;
     } else if (_silentChapterQueue) {
-      const t = _bgLastSynth || {};
       _dlog("bg-queue", `FAIL ${_bgCurrent.title} (both attempts)`, {
         chars: (_bgCurrent.text || "").length,
         gitRefPath: _bgCurrent.gitRef ? _bgCurrent.gitRef.path : null,
-        // v225.tn33: same telemetry as OK so a FAIL report shows
-        // whether the stream got partway before bailing.
-        sentencesSeen: t.sentencesSeen,
-        sentencesAdvertised: t.sentencesAdvertised,
       });
       _bgFailures.push(_bgCurrent);
     }
@@ -8341,14 +8165,6 @@ async function _preSynthesizeChapter(chapter, opts) {
             _bgSynthTotal = event.total || 0;
             _updateChapterQueueUI();
           }
-          // v225.tn33 (#509): record sentence progress regardless of
-          // queue mode so the OK telemetry knows how far the stream
-          // got. Updated on EVERY sentence event so a truncated
-          // stream shows "got 1 of 47" instead of "got 47 of 47".
-          if (event.type === "sentence" && _bgLastSynth) {
-            _bgLastSynth.sentencesSeen = (event.index || 0) + 1;
-            _bgLastSynth.sentencesAdvertised = event.total || 0;
-          }
           if (event.type === "result") {
             combinedMp3 = new Blob([base64ToBytes(event.mp3_b64)], {
               type: "audio/mpeg",
@@ -8408,29 +8224,6 @@ async function _preSynthesizeChapter(chapter, opts) {
       tmpAudio.src = tmpUrl;
     });
     URL.revokeObjectURL(tmpUrl);
-
-    // v225.tn33 (#509): finalize per-synth telemetry — this is where
-    // the bg-queue OK log will read its detail fields from. Includes
-    // the truncated + charsPerSec derived signals so a tester report
-    // showing "OK with charsPerSec: 10500, truncated: true" is the
-    // smoking gun for "synth bailed mid-stream but the bg-queue
-    // marked it success." Computed inline so we don't have to thread
-    // the data back through return values.
-    if (_bgLastSynth) {
-      const now = Date.now();
-      _bgLastSynth.endMs = now;
-      _bgLastSynth.blobSize = combinedMp3 ? combinedMp3.size : 0;
-      _bgLastSynth.durationSec = duration;
-      const elapsedSec = Math.max(0.001, (now - _bgLastSynth.startMs) / 1000);
-      const chars = (chapter.text || "").length;
-      _bgLastSynth.charsPerSec = Math.round(chars / elapsedSec);
-      // Truncated when sentence count is known + we saw fewer than
-      // advertised. If advertised is 0 (older server) treat unknown.
-      _bgLastSynth.truncated =
-        _bgLastSynth.sentencesAdvertised > 0
-          ? _bgLastSynth.sentencesSeen < _bgLastSynth.sentencesAdvertised
-          : null;
-    }
 
     // Cancelled mid-flight (user cancelled queue, started a regen, etc.)?
     // Don't write a stale clip to the library.
@@ -8549,37 +8342,6 @@ async function _preSynthesizeChapter(chapter, opts) {
         (chapter.gitRef || (existingClip && existingClip.gitRef))
           ? new Date().toISOString()
           : (existingClip ? existingClip.lastSyncedAt : null),
-      // v223.tn23 (#493): preserve cross-device sync ledger across
-      // re-narrate. Previously these fields got dropped from local
-      // IDB on every regen because the save object built from
-      // scratch. Symptom: library footer reverted from "Synced · X"
-      // to "GitHub · X" after any re-narrate, because lastDeviceSyncAt
-      // went null. Worse, annotations/highlights silently disappeared
-      // until the next cross-device pull restored them (and if local
-      // updatedAt was newer at push time, they'd be wiped on the
-      // server too — same LWW class as #488).
-      lastDeviceSyncAt: existingClip ? existingClip.lastDeviceSyncAt : undefined,
-      annotations: existingClip && Array.isArray(existingClip.annotations)
-        ? existingClip.annotations
-        : [],
-      highlights: existingClip && Array.isArray(existingClip.highlights)
-        ? existingClip.highlights
-        : [],
-      // sentenceAssignments — bg-queue path doesn't change voice
-      // assignments, so preserve any per-sentence overrides the user
-      // set in the reading view (v220aa feature).
-      sentenceAssignments:
-        existingClip && existingClip.sentenceAssignments
-          ? existingClip.sentenceAssignments
-          : {},
-      // Voice provenance — bg-queue synth captures it on the request
-      // side via voiceId/voiceName/speakerId; if the existing clip had
-      // a provenance snapshot we keep it (the new audio was generated
-      // with the same voice the user picked, so the snapshot is still
-      // accurate). Fresh clips get null.
-      provenance: existingClip && existingClip.provenance
-        ? existingClip.provenance
-        : null,
       createdAt: existingClip
         ? existingClip.createdAt
         : new Date().toISOString(),
@@ -9002,29 +8764,31 @@ async function saveCurrentClipText() {
   const oldLabel = saveTextBtn.textContent;
   saveTextBtn.textContent = "Saving…";
   try {
-    const newText = textEl.value;
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    // Need a few values back from the mutation (oldText, needsRegen, clip
-    // itself for the downstream branches), so capture them through the
-    // closure rather than just returning from the mutator.
-    let oldText = "";
-    let needsRegen = false;
-    const clip = await _mutateClipAtomic(_currentClipId, (c) => {
-      oldText = c.text || "";
-      const oldSentenceCount = splitSentencesClient(oldText).length;
-      const newSentenceCount = splitSentencesClient(newText).length;
-      needsRegen = oldSentenceCount !== newSentenceCount;
-      c.text = newText;
-      if (needsRegen) {
-        // Old resume position likely doesn't map cleanly to the new audio,
-        // so reset it before we save and kick off the regen.
-        c.progressSec = 0;
-      }
-    });
+    const clip = await getClip(_currentClipId);
     if (!clip) {
       setStatus("Clip not found — it may have been deleted in another tab.", true);
       return;
     }
+    const oldText = clip.text || "";
+    const newText = textEl.value;
+
+    // Compare sentence counts to decide whether to trigger an auto-regen.
+    // The karaoke highlight + sentence-skip lock-screen buttons map audio
+    // time → sentence index, so as long as the number of sentences stays
+    // the same the existing audio + offsets keep aligning. Add or remove
+    // a sentence and every sentence past that point gets highlighted in
+    // the wrong place — only a fresh synthesis can fix that.
+    const oldSentenceCount = splitSentencesClient(oldText).length;
+    const newSentenceCount = splitSentencesClient(newText).length;
+    const needsRegen = oldSentenceCount !== newSentenceCount;
+
+    clip.text = newText;
+    if (needsRegen) {
+      // Old resume position likely doesn't map cleanly to the new audio,
+      // so reset it before we save and kick off the regen.
+      clip.progressSec = 0;
+    }
+    await saveClip(clip);
 
     if (!needsRegen) {
       // Typo / capitalization / whitespace fix — same sentence boundaries,
@@ -9746,28 +9510,27 @@ function _hideHighlightToolbar() {
 async function _saveHighlight(info, color) {
   if (!_currentClipId) return;
   try {
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    const clip = await _mutateClipAtomic(_currentClipId, (c) => {
-      if (!Array.isArray(c.highlights)) c.highlights = [];
-      if (color === null) {
-        // Remove: drop any highlight that overlaps the selected range
-        // on the same sentence. v1: simple inclusive overlap check.
-        c.highlights = c.highlights.filter((h) =>
-          !(h.sentence_index === info.sentence_index &&
-            h.char_end > info.char_start && h.char_start < info.char_end)
-        );
-      } else {
-        c.highlights.push({
-          id: Date.now(),
-          sentence_index: info.sentence_index,
-          char_start: info.char_start,
-          char_end: info.char_end,
-          color,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    });
+    const clip = await getClip(_currentClipId);
     if (!clip) return;
+    if (!Array.isArray(clip.highlights)) clip.highlights = [];
+    if (color === null) {
+      // Remove: drop any highlight that overlaps the selected range
+      // on the same sentence. v1: simple inclusive overlap check.
+      clip.highlights = clip.highlights.filter((h) =>
+        !(h.sentence_index === info.sentence_index &&
+          h.char_end > info.char_start && h.char_start < info.char_end)
+      );
+    } else {
+      clip.highlights.push({
+        id: Date.now(),
+        sentence_index: info.sentence_index,
+        char_start: info.char_start,
+        char_end: info.char_end,
+        color,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    await saveClip(clip);
     // Re-render affected views.
     if (sentenceSpans && sentenceSpans[info.sentence_index]) {
       const span = sentenceSpans[info.sentence_index];
@@ -9899,16 +9662,13 @@ let _annotateWasPlayingBeforePalette = false;
 
 // Default tag → label mapping for the six starter chips. Keep in sync
 // with the data-tag attributes on the buttons in index.html.
-// v223.tn21 (#491): icon column added so _applyAnnotationMarkers can
-// render inline tag chips on annotated sentences — answers "what was
-// the annotation?" without requiring annotate mode or a refresh.
 const ANNOTATE_TAGS = {
-  cut:    { label: "Cut",    color: "#e57373", icon: "✂" },
-  fact:   { label: "Fact",   color: "#64b5f6", icon: "✓" },
-  weak:   { label: "Weak",   color: "#ffb74d", icon: "⚠" },
-  pov:    { label: "POV",    color: "#ba68c8", icon: "👁" },
-  expand: { label: "Expand", color: "#81c784", icon: "➕" },
-  love:   { label: "Love",   color: "#f06292", icon: "❤" },
+  cut:    { label: "Cut",    color: "#e57373" },
+  fact:   { label: "Fact",   color: "#64b5f6" },
+  weak:   { label: "Weak",   color: "#ffb74d" },
+  pov:    { label: "POV",    color: "#ba68c8" },
+  expand: { label: "Expand", color: "#81c784" },
+  love:   { label: "Love",   color: "#f06292" },
 };
 
 // Lightweight UUIDv4-ish — doesn't need to be cryptographically random,
@@ -9965,22 +9725,6 @@ async function _addAnnotation(clipId, anno) {
         console.warn("[sync] push failed:", e),
       );
     }
-    // v223.tn25 (#497): live-paint the new annotation. Previously the
-    // tag-only call site flipped data-has-annotation manually to show
-    // the dot, but the inline tag chip (cut/fact/love icon) wasn't
-    // injected until the next loadClip rebuild — so the dot would
-    // sit there orphaned until refresh. The reconciler handles
-    // every marker type (dot, tag chip, voice ▶, transcript, ↻
-    // retry) in one pass; calling it here keeps add/remove/edit
-    // visually consistent regardless of which caller is mutating.
-    if (
-      _currentClipId === clipId &&
-      typeof _applyAnnotationMarkers === "function"
-    ) {
-      try { _applyAnnotationMarkers(clip); } catch (e) {
-        console.warn("[annotate] post-add repaint failed:", e);
-      }
-    }
     return anno;
   } catch (e) {
     console.warn("[annotate] add failed:", e);
@@ -10012,145 +9756,11 @@ async function _removeAnnotation(clipId, annoId) {
         console.warn("[sync] push failed:", e),
       );
     }
-    // v223.tn25 (#497): live-repaint after delete — drop the chip,
-    // dot, voice ▶, transcript, ↻ retry, whichever was rendered.
-    if (
-      _currentClipId === clipId &&
-      typeof _applyAnnotationMarkers === "function"
-    ) {
-      try { _applyAnnotationMarkers(clip); } catch (e) {
-        console.warn("[annotate] post-remove repaint failed:", e);
-      }
-    }
     return true;
   } catch (e) {
     console.warn("[annotate] remove failed:", e);
     return false;
   }
-}
-
-// v223.tn26 (#498): tombstone-based delete. After #495 the server
-// merges incoming annotations against stored — a stale push with a
-// shorter array no longer wipes anything. To actually propagate a
-// delete cross-device, the client must set `deletedAt` on the
-// specific annotation: that survives the merge, and the server's
-// GET response filters tombstoned entries before returning so the
-// client never sees ghost data. The reconciler filters them too in
-// case a local repaint runs before the server round-trip lands.
-//
-// We don't reuse _removeAnnotation (which array-filters) because
-// (a) its push would no longer reach the server's merge intent, and
-// (b) we want the tombstone in local IDB too so a re-open of the
-// app doesn't re-show the dot.
-async function _tombstoneAnnotation(clipId, annoId) {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(STORE, "readwrite");
-    const store = tx.objectStore(STORE);
-    const clip = await idbReq(store.get(clipId));
-    if (!clip) return false;
-    const list = Array.isArray(clip.annotations) ? clip.annotations.slice() : [];
-    const idx = list.findIndex((a) => a && a.id === annoId);
-    if (idx === -1) return false;
-    const now = new Date().toISOString();
-    // Replace with a shallow copy so the array element identity
-    // changes — defensive against any code that holds a reference
-    // and might still think it's live.
-    list[idx] = { ...list[idx], deletedAt: now, updatedAt: now };
-    clip.annotations = list;
-    clip.updatedAt = now;
-    await idbReq(store.put(clip));
-    await new Promise((res, rej) => {
-      tx.oncomplete = res;
-      tx.onerror = () => rej(tx.error);
-      tx.onabort = () => rej(tx.error);
-    });
-    if (typeof _syncPushClip === "function") {
-      _syncPushClip(clip).catch((e) =>
-        console.warn("[sync] push failed:", e),
-      );
-    }
-    if (
-      _currentClipId === clipId &&
-      typeof _applyAnnotationMarkers === "function"
-    ) {
-      try { _applyAnnotationMarkers(clip); } catch (e) {
-        console.warn("[annotate] post-tombstone repaint failed:", e);
-      }
-    }
-    return true;
-  } catch (e) {
-    console.warn("[annotate] tombstone failed:", e);
-    return false;
-  }
-}
-
-// Tiny action-sheet popup. Anchored just below the tapped element so
-// it doesn't reflow the reading view. Outside-click dismiss; Esc
-// dismiss. Used by the tag-chip-tap and voice-× paths to confirm
-// destructive actions inline without a full modal.
-function _showAnnoActionSheet(anchor, label, onConfirm) {
-  // Tear down any prior sheet — at most one open at a time.
-  const prior = document.querySelector(".anno-action-sheet");
-  if (prior) prior.remove();
-
-  const sheet = document.createElement("div");
-  sheet.className = "anno-action-sheet";
-  const removeBtn = document.createElement("button");
-  removeBtn.type = "button";
-  removeBtn.className = "anno-action-remove";
-  removeBtn.textContent = label || "Remove";
-  const cancelBtn = document.createElement("button");
-  cancelBtn.type = "button";
-  cancelBtn.className = "anno-action-cancel";
-  cancelBtn.textContent = "Cancel";
-  sheet.appendChild(removeBtn);
-  sheet.appendChild(cancelBtn);
-  document.body.appendChild(sheet);
-
-  // Position below the anchor; clamp to viewport so an edge-chip
-  // doesn't push the sheet off-screen.
-  const rect = anchor.getBoundingClientRect();
-  const sheetRect = sheet.getBoundingClientRect();
-  let top = rect.bottom + window.scrollY + 4;
-  let left = rect.left + window.scrollX;
-  const maxLeft = window.scrollX + window.innerWidth - sheetRect.width - 8;
-  if (left > maxLeft) left = maxLeft;
-  if (left < window.scrollX + 8) left = window.scrollX + 8;
-  sheet.style.top = `${top}px`;
-  sheet.style.left = `${left}px`;
-
-  const cleanup = () => {
-    sheet.remove();
-    document.removeEventListener("click", dismissOnOutside, true);
-    document.removeEventListener("keydown", dismissOnEsc);
-  };
-  const dismissOnOutside = (e) => {
-    if (!sheet.contains(e.target)) {
-      e.stopPropagation();
-      cleanup();
-    }
-  };
-  const dismissOnEsc = (e) => {
-    if (e.key === "Escape") { e.stopPropagation(); cleanup(); }
-  };
-  removeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    cleanup();
-    Promise.resolve(onConfirm()).catch((err) =>
-      console.warn("[annotate] action-sheet confirm failed:", err),
-    );
-  });
-  cancelBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    cleanup();
-  });
-  // Defer the outside-click listener so the click that opened the
-  // sheet doesn't immediately close it.
-  setTimeout(() => {
-    document.addEventListener("click", dismissOnOutside, true);
-    document.addEventListener("keydown", dismissOnEsc);
-  }, 0);
 }
 
 // Toggle annotate mode. Updates the button's aria-pressed for screen
@@ -10336,284 +9946,24 @@ if (readingViewEl) {
 function _applyAnnotationMarkers(clip) {
   if (!Array.isArray(sentenceSpans) || !sentenceSpans.length) return;
   const annos = _listAnnotations(clip);
-  // Index annotated sentences + best voice anno per sentence so we can
-  // reconcile each span below. v223.tn20 (#490): made this function
-  // RECONCILING (handles add + remove + transcript update) so a
-  // cross-device pull that lands new — or removes — annotations
-  // updates the reading view inline without a page reload.
-  // v223.tn21 (#491): also collect a per-sentence list of non-voice
-  // tag annotations so we can render inline tag-icon chips (✂ ⚠ etc.)
-  // — answers "what was the annotation?" without entering annotate
-  // mode. Dedup tags within a sentence (a user can flag the same
-  // sentence twice with the same tag from different devices).
-  const annotatedSentences = new Set();
+  if (!annos.length) return;
+  // Index voice annos by sentenceIndex so a single sentence with two
+  // memos still gets exactly one button (most recent wins).
   const voiceBySentence = new Map();
-  // v223.tn26 (#498): tag chips now carry the annotation ID so a click
-  // on the chip can resolve to a specific anno → tombstone via the
-  // action sheet. Map shape: sentenceIndex → Map<tagKey, annoId>.
-  const tagsBySentence = new Map();
-  // v223.tn26: filter tombstoned annotations at the head of the
-  // reconcile pass. Server stores them so the cross-device merge can
-  // recognize the delete intent; client treats them as gone for all
-  // rendering purposes. Doing this in one place means every downstream
-  // map (annotatedSentences, voiceBySentence, tagsBySentence) is
-  // automatically tombstone-aware.
-  const liveAnnos = annos.filter((a) => a && !a.deletedAt);
-  for (const a of liveAnnos) {
-    if (!Number.isInteger(a.sentenceIndex)) continue;
-    annotatedSentences.add(a.sentenceIndex);
+  for (const a of annos) {
+    if (!a || !Number.isInteger(a.sentenceIndex)) continue;
+    const span = sentenceSpans[a.sentenceIndex];
+    if (span) span.dataset.hasAnnotation = "true";
     if (a.audio && a.audio.base64) {
       const prev = voiceBySentence.get(a.sentenceIndex);
       if (!prev || (a.flaggedAt || "") > (prev.flaggedAt || "")) {
         voiceBySentence.set(a.sentenceIndex, a);
       }
     }
-    if (Array.isArray(a.tags)) {
-      for (const t of a.tags) {
-        if (t === "voice") continue; // voice already has ▶
-        if (!ANNOTATE_TAGS[t]) continue;
-        let m = tagsBySentence.get(a.sentenceIndex);
-        if (!m) { m = new Map(); tagsBySentence.set(a.sentenceIndex, m); }
-        // Last write wins per (sentence, tag) pair. Multi-device
-        // duplicates of the same tag on the same sentence are rare;
-        // tapping the chip deletes the most-recently-stamped one.
-        m.set(t, a.id);
-      }
-    }
   }
-  // Walk every sentence span and reconcile its markers against the
-  // (new) annotation set. Sentence with anno → set the dot attr;
-  // sentence without → clear it. Same for the inline ▶ button +
-  // transcript block: ensure present when the anno calls for it,
-  // strip otherwise.
-  for (let i = 0; i < sentenceSpans.length; i++) {
-    const span = sentenceSpans[i];
-    if (!span) continue;
-    const isAnnotated = annotatedSentences.has(i);
-    // v223.tn27 (#499): defer dataset.hasAnnotation toggle to the END
-    // of this iteration. The dot is now a *fallback* marker — shown
-    // only when the reconciler couldn't paint any richer affordance
-    // for this annotation. Clear it up-front; the tail block below
-    // re-asserts it if nothing else gets rendered.
-    if ("hasAnnotation" in span.dataset) {
-      delete span.dataset.hasAnnotation;
-    }
-    // v223.tn22 (bugfix): sweep duplicate transcript siblings before
-    // anything else. Earlier reconciler runs (pre-fix) could add a
-    // second transcript span because `_voiceInjectPlayButton` already
-    // injected one but our cached `existingTr` was queried before
-    // that call and was stale-null. Cleans up any DOM that the old
-    // bug left behind, on every pass.
-    const allTr = span.querySelectorAll(".annotate-voice-transcript");
-    if (allTr.length > 1) {
-      for (let k = 1; k < allTr.length; k++) allTr[k].remove();
-    }
-    const voiceAnno = voiceBySentence.get(i);
-    const existingBtn = span.querySelector(".annotate-voice-play");
-    if (voiceAnno) {
-      if (!existingBtn) {
-        // No button yet → let _voiceInjectPlayButton add BOTH button
-        // and transcript. Don't run the manual transcript branch
-        // below — it would double up. The function reads the same
-        // anno.transcript field we'd check anyway.
-        _voiceInjectPlayButton(span, voiceAnno);
-      } else {
-        // Button already there. Whisper may have landed a transcript
-        // later, OR another device edited it. Re-query the transcript
-        // AFTER any inject so we don't see stale null.
-        const existingTr = span.querySelector(".annotate-voice-transcript");
-        const want = voiceAnno.transcript ? "“" + voiceAnno.transcript + "”" : "";
-        if (want) {
-          if (!existingTr) {
-            const t = document.createElement("span");
-            t.className = "annotate-voice-transcript";
-            t.textContent = want;
-            t.dataset.annoId = voiceAnno.id;
-            span.appendChild(t);
-          } else if (existingTr.textContent !== want) {
-            existingTr.textContent = want;
-          }
-        } else if (existingTr) {
-          existingTr.remove();
-        }
-      }
-      // v223.tn22 (#492): re-transcribe affordance. Some memos save
-      // audio but no transcript — Whisper's VAD filter returns "" on
-      // quiet audio, and network blips silently drop the transcribe
-      // call. Show a small ↻ button next to ▶ so the user can retry
-      // server-side Whisper on demand. Removed once a transcript
-      // lands.
-      let existingRetry = span.querySelector(".annotate-voice-retry");
-      const needsTranscribe = voiceAnno.audio
-        && voiceAnno.audio.base64
-        && !voiceAnno.transcript;
-      if (needsTranscribe) {
-        if (!existingRetry) {
-          const retry = document.createElement("button");
-          retry.type = "button";
-          retry.className = "annotate-voice-retry";
-          retry.textContent = "↻";
-          retry.title = "Transcribe this voice note via server";
-          retry.dataset.annoId = voiceAnno.id;
-          // Capture clipId at injection time. The reading view is
-          // bound to _currentClipId; if the user navigates away mid-
-          // request, the result still writes to the correct clip.
-          const capturedClipId = _currentClipId;
-          const capturedAnno = voiceAnno;
-          retry.addEventListener("click", async (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            if (retry.classList.contains("busy")) return;
-            retry.classList.add("busy");
-            retry.textContent = "…";
-            try {
-              await _voiceTryServerTranscribe(
-                capturedClipId,
-                capturedAnno.id,
-                capturedAnno.audio.base64,
-                capturedAnno.audio.mime || "audio/webm",
-              );
-              // _voiceTryServerTranscribe injects the transcript
-              // inline when it succeeds. If the block is now there
-              // we know it worked — remove ourselves. If not,
-              // Whisper returned empty again (truly silent audio);
-              // restore the button so the user knows + can retry.
-              if (span.querySelector(".annotate-voice-transcript")) {
-                retry.remove();
-              } else {
-                retry.classList.remove("busy");
-                retry.textContent = "↻";
-              }
-            } catch (err) {
-              console.warn("[voice] retry transcribe failed:", err);
-              retry.classList.remove("busy");
-              retry.textContent = "↻";
-            }
-          });
-          // Insert right after the ▶ button (or at head if no button).
-          const btn = span.querySelector(".annotate-voice-play");
-          if (btn) btn.insertAdjacentElement("afterend", retry);
-          else span.insertBefore(retry, span.firstChild);
-        }
-      } else if (existingRetry) {
-        existingRetry.remove();
-      }
-      // v223.tn26 (#498): × delete button next to ▶. Tap fires the
-      // action sheet → tombstone. Sibling to ▶ + ↻ so all three
-      // controls stack inline at the head of the sentence.
-      let existingDel = span.querySelector(".annotate-voice-delete");
-      if (!existingDel) {
-        const del = document.createElement("button");
-        del.type = "button";
-        del.className = "annotate-voice-delete";
-        del.textContent = "×";
-        del.title = "Remove this voice note";
-        del.dataset.annoId = voiceAnno.id;
-        const capturedClipIdDel = _currentClipId;
-        const capturedAnnoIdDel = voiceAnno.id;
-        del.addEventListener("click", (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          _showAnnoActionSheet(del, "Remove voice note", async () => {
-            const ok = await _tombstoneAnnotation(
-              capturedClipIdDel,
-              capturedAnnoIdDel,
-            );
-            if (ok) setStatus("Voice note removed.");
-          });
-        });
-        // Insert at the END of the inline controls (after ▶ and ↻ if
-        // present). Walk forward from the play button to the last
-        // sibling that's part of this anno's control cluster.
-        const playBtn = span.querySelector(".annotate-voice-play");
-        const retryBtn = span.querySelector(".annotate-voice-retry");
-        const anchor = retryBtn || playBtn;
-        if (anchor) anchor.insertAdjacentElement("afterend", del);
-        else span.insertBefore(del, span.firstChild);
-      } else {
-        existingDel.dataset.annoId = voiceAnno.id;
-      }
-    } else {
-      if (existingBtn) existingBtn.remove();
-      const existingTr = span.querySelector(".annotate-voice-transcript");
-      if (existingTr) existingTr.remove();
-      const existingRetry = span.querySelector(".annotate-voice-retry");
-      if (existingRetry) existingRetry.remove();
-      const existingDel = span.querySelector(".annotate-voice-delete");
-      if (existingDel) existingDel.remove();
-    }
-    // v223.tn21 (#491): reconcile inline tag-icon chips. One chip per
-    // unique non-voice tag on this sentence. Anchored to the sentence
-    // span so they ride with the text in the reading-ruler dim/bright
-    // pass and travel with the sentence in scroll.
-    const wantTagsMap = tagsBySentence.get(i) || new Map();
-    const existingChips = span.querySelectorAll(".annotate-tag-chip");
-    const existingTagKeys = new Set();
-    for (const chip of existingChips) {
-      const k = chip.dataset.tag;
-      const wantedAnnoId = wantTagsMap.get(k);
-      if (wantedAnnoId !== undefined) {
-        existingTagKeys.add(k);
-        // Refresh the annoId binding in case the chip survived from
-        // a prior render where a different annotation owned this tag
-        // (e.g., one was deleted, another added with same tag).
-        chip.dataset.annoId = wantedAnnoId;
-      } else {
-        chip.remove();
-      }
-    }
-    // Insert any new chips just after the ▶ button (or at the head if
-    // there isn't one). Sorted by ANNOTATE_TAGS declaration order so
-    // multi-tag sentences read in a consistent order across devices.
-    const insertAnchor = span.querySelector(".annotate-voice-play") || null;
-    for (const tagKey of Object.keys(ANNOTATE_TAGS)) {
-      const annoIdForChip = wantTagsMap.get(tagKey);
-      if (annoIdForChip === undefined) continue;
-      if (existingTagKeys.has(tagKey)) continue;
-      const meta = ANNOTATE_TAGS[tagKey];
-      const chip = document.createElement("span");
-      chip.className = "annotate-tag-chip";
-      chip.dataset.tag = tagKey;
-      chip.dataset.annoId = annoIdForChip;
-      chip.textContent = meta.icon;
-      chip.title = `${meta.label} — tap to remove`;
-      chip.style.background = meta.color;
-      // v223.tn26 (#498): tap chip → action sheet → tombstone.
-      // stopPropagation so the click doesn't bubble to the sentence
-      // span and trigger tap-to-seek / annotate-mode flag handlers.
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const aid = chip.dataset.annoId;
-        if (!aid) return;
-        _showAnnoActionSheet(chip, "Remove flag", async () => {
-          const ok = await _tombstoneAnnotation(_currentClipId, aid);
-          if (ok) setStatus("Flag removed.");
-        });
-      });
-      // Insert after the voice-play button if present; else at head.
-      if (insertAnchor && insertAnchor.parentNode === span) {
-        insertAnchor.insertAdjacentElement("afterend", chip);
-      } else {
-        span.insertBefore(chip, span.firstChild);
-      }
-    }
-    // v223.tn27 (#499): fallback dot. If this sentence is annotated
-    // but none of the richer affordances (tag chip, voice ▶,
-    // transcript) made it onto the DOM, keep the dataset attribute
-    // so the CSS dot at least signals "there's something here." This
-    // covers legacy entries with unrecognized tags and any future
-    // client/server skew where a new tag ships before this build
-    // knows about it. Normal annotations now paint their icon
-    // *instead* of the dot, not in addition to it.
-    if (isAnnotated) {
-      const hasVisibleMarker = !!span.querySelector(
-        ".annotate-tag-chip, .annotate-voice-play, .annotate-voice-transcript",
-      );
-      if (!hasVisibleMarker) {
-        span.dataset.hasAnnotation = "true";
-      }
-    }
+  for (const [idx, a] of voiceBySentence) {
+    const span = sentenceSpans[idx];
+    if (span) _voiceInjectPlayButton(span, a);
   }
 }
 
@@ -12602,53 +11952,6 @@ function idbReq(req) {
   });
 }
 
-// v223.tn19 (#488): atomic read-modify-write helper. Every clip
-// mutation (bookmarks, highlights, mark-played, voice assignments,
-// edit dialog saves, cover/tags/notes updates, etc.) was previously
-// shaped as `getClip → mutate → saveClip`. Between the read and the
-// write, _syncAbsorbServerClip could land — overwriting the IDB row
-// with server's newer content (e.g. annotations from another
-// device). Caller's saveClip then wrote back its stale snapshot,
-// bumped updatedAt to NOW, and the resulting push wiped the
-// just-absorbed content from the server via LWW.
-//
-// _mutateClipAtomic opens ONE readwrite transaction, reads the
-// latest row inside it, runs the caller's mutator on that fresh
-// clip, writes, awaits the tx commit, then pushes. IDB serializes
-// readwrite transactions on the same object store, so absorb cannot
-// interleave between this fn's read and write. The mutator
-// receives the latest IDB state — never a stale snapshot.
-//
-// Use this anywhere a caller would normally do
-//   `const clip = await getClip(id); clip.x = y; await saveClip(clip);`
-// and replace it with
-//   `await _mutateClipAtomic(id, (clip) => { clip.x = y; });`.
-// The mutator can be async; return value is ignored.
-async function _mutateClipAtomic(clipId, mutator) {
-  if (clipId == null) return null;
-  const db = await openDB();
-  const tx = db.transaction(STORE, "readwrite");
-  const store = tx.objectStore(STORE);
-  const clip = await idbReq(store.get(clipId));
-  if (!clip) return null;
-  try { await mutator(clip); } catch (e) {
-    console.warn("[saveClip] mutator threw:", e);
-    try { tx.abort(); } catch {}
-    throw e;
-  }
-  clip.updatedAt = new Date().toISOString();
-  await idbReq(store.put(clip));
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-  if (typeof _syncPushClip === "function") {
-    _syncPushClip(clip).catch((e) => console.warn("[sync] push failed:", e));
-  }
-  return clip;
-}
-
 async function saveClip(clip) {
   const db = await openDB();
   // v222 (#453): ALWAYS stamp a fresh updatedAt on every save — not
@@ -13033,25 +12336,6 @@ async function _syncAbsorbServerClip(sc) {
   await idbReq(
     db.transaction(STORE, "readwrite").objectStore(STORE).put(localShape),
   );
-  // v223.tn20 (#490): if the user is currently viewing this clip, the
-  // reading-view spans were built with whatever annotations existed at
-  // load time and don't auto-refresh. Repaint markers + voice-note ▶
-  // buttons + transcripts inline so new content from another device
-  // shows up without a page reload.
-  if (_currentClipId === localShape.id) {
-    try {
-      if (typeof _applyAnnotationMarkers === "function") {
-        _applyAnnotationMarkers(localShape);
-      }
-      // Bookmarks list (if visible) also reads from IDB — re-render so a
-      // bookmark added on another device appears immediately.
-      if (typeof renderBookmarks === "function") {
-        renderBookmarks().catch(() => {});
-      }
-    } catch (e) {
-      console.warn("[sync] post-absorb refresh failed:", e);
-    }
-  }
 }
 
 // Throttled pull from renderLibrary. We don't want to hit the server
@@ -14295,14 +13579,13 @@ async function _libraryRenarrate(clipId) {
 
 async function resetClipProgress(id) {
   try {
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    const clip = await _mutateClipAtomic(id, (c) => {
-      c.progressSec = 0;
-      // Manual reset means "I want this back in my listening queue" — clear
-      // playedAt so the Hide-played filter shows it again.
-      c.playedAt = null;
-    });
+    const clip = await getClip(id);
     if (!clip) return;
+    clip.progressSec = 0;
+    // Manual reset means "I want this back in my listening queue" — clear
+    // playedAt so the Hide-played filter shows it again.
+    clip.playedAt = null;
+    await saveClip(clip);
     // If the user is hitting reset on the clip they're currently listening
     // to, rewind the player itself too — otherwise the IndexedDB row says
     // 0 but the audio keeps playing from where it was.
@@ -15149,27 +14432,26 @@ async function saveClipEdit() {
   if (!_editingClipId) return closeClipEdit();
   const id = _editingClipId;
   try {
+    const clip = await getClip(id);
+    if (!clip) return closeClipEdit();
     const newTitle = (clipEditTitle.value || "").trim() || "(untitled)";
     const newNote = (clipEditNote.value || "").trim();
     const newNotes = (clipEditNotes.value || "").trim();
     const newTags = _normalizeTags(clipEditTags.value);
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    const clip = await _mutateClipAtomic(id, (c) => {
-      c.title = newTitle;
-      c.note = newNote;
-      c.notes = newNotes;
-      c.tags = newTags;
-      // Apply the staged cover. null = "remove cover".
-      if (_editPendingCover && _editPendingCover.blob) {
-        c.cover = {
-          blob: _editPendingCover.blob,
-          color: _editPendingCover.color || null,
-        };
-      } else {
-        delete c.cover;
-      }
-    });
-    if (!clip) return closeClipEdit();
+    clip.title = newTitle;
+    clip.note = newNote;
+    clip.notes = newNotes;
+    clip.tags = newTags;
+    // Apply the staged cover. null = "remove cover".
+    if (_editPendingCover && _editPendingCover.blob) {
+      clip.cover = {
+        blob: _editPendingCover.blob,
+        color: _editPendingCover.color || null,
+      };
+    } else {
+      delete clip.cover;
+    }
+    await saveClip(clip);
     closeClipEdit();
     renderLibrary();
     // If the user edited the currently-loaded clip's cover, refresh
@@ -15260,19 +14542,17 @@ async function _commitNotes() {
   const id = _notesEditingClipId;
   if (!id) return;
   try {
+    const clip = await getClip(id);
+    if (!clip) return;
     const newNotes = (notesDialogText.value || "").trim();
-    // v223.tn19 (#488): atomic so concurrent absorb can't lose annotations.
-    // Mutator returns early via the "did we change anything" flag captured
-    // in the closure — if notes unchanged, no write happens.
-    let changed = false;
-    await _mutateClipAtomic(id, (c) => {
-      if ((c.notes || "") === newNotes) return;
-      c.notes = newNotes;
-      changed = true;
-    });
+    // Skip the write if nothing changed — avoids touching the
+    // IndexedDB record (and its updatedAt-like fields) on every close.
+    if ((clip.notes || "") === newNotes) return;
+    clip.notes = newNotes;
+    await saveClip(clip);
     // Refresh the library so the 📝 card indicator appears/disappears
-    // without requiring a reload. Only if we actually wrote.
-    if (changed) renderLibrary();
+    // without requiring a reload.
+    renderLibrary();
   } catch (e) {
     console.warn("notes save failed:", e);
   }
@@ -15621,15 +14901,6 @@ async function importLibraryFromFile(file) {
           };
         }
       }
-      // v223.tn24 (#494 guard): if a clip with this ID already exists
-      // locally, read its annotations/highlights and prefer them when
-      // the manifest doesn't carry the field. Older exports (pre-v223)
-      // don't include annotations — without this preservation, an
-      // import of an old zip would clobber any flags the user added
-      // since then AND push the empty array up to the server,
-      // wiping marks across all devices.
-      let _existingForMerge = null;
-      try { _existingForMerge = await getClip(mc.id); } catch {}
       await saveClip({
         id: mc.id,
         title: mc.title || "(untitled)",
@@ -15658,23 +14929,6 @@ async function importLibraryFromFile(file) {
         // simply don't have it and the field stays undefined — the Edit
         // dialog handles that by hiding the provenance block.
         ...(mc.provenance ? { provenance: mc.provenance } : {}),
-        // v223.tn24: prefer manifest's annotations/highlights; if the
-        // manifest lacks them but the local clip has them, keep local.
-        // This means "import older zip" is no longer a wipe vector.
-        annotations: Array.isArray(mc.annotations)
-          ? mc.annotations
-          : (_existingForMerge && Array.isArray(_existingForMerge.annotations)
-              ? _existingForMerge.annotations
-              : []),
-        highlights: Array.isArray(mc.highlights)
-          ? mc.highlights
-          : (_existingForMerge && Array.isArray(_existingForMerge.highlights)
-              ? _existingForMerge.highlights
-              : []),
-        // Cross-device sync ledger — local-only field, never in
-        // manifests. Preserve so a re-import doesn't reset the
-        // "Synced · X ago" footer to GitHub.
-        lastDeviceSyncAt: _existingForMerge ? _existingForMerge.lastDeviceSyncAt : undefined,
         createdAt: mc.createdAt || new Date(mc.id).toISOString(),
         blob,
       });
@@ -19384,443 +18638,5 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker
       .register("/sw.js")
       .catch((err) => console.info("SW registration skipped:", err.message));
-  });
-}
-
-// v225.mobile / Phase C (#506): ☰ top menu sheet.
-//
-// On phone the entire hero (brand + tagline + 4 icon buttons) is
-// hidden in CSS. A single ☰ button gets injected at top-left and
-// opens a small sheet that slides down from the top with shortcuts
-// to Library / Import / New clip / Settings / Help. Items don't
-// relocate the hero buttons (which broke pull-up because of the
-// transparent surfaces; here we don't need to anyway) — they just
-// dispatch click() on the corresponding existing buttons that
-// stay in the hidden hero. All wiring is preserved automatically.
-function _phoneMenuIsPhone() {
-  return window.matchMedia("(max-width: 767px)").matches;
-}
-function _phoneMenuOpen() {
-  document.body.dataset.menu = "open";
-}
-function _phoneMenuClose() {
-  if (document.body.dataset.menu) delete document.body.dataset.menu;
-}
-function _phoneMenuToggle() {
-  if (document.body.dataset.menu === "open") _phoneMenuClose();
-  else _phoneMenuOpen();
-}
-function _phoneMenuBoot() {
-  if (!_phoneMenuIsPhone()) return;
-  const app = document.querySelector(".app");
-  if (!app) return;
-  // Inject the ☰ button as the first child of .app if not already
-  // present. It's fixed-positioned via CSS so its DOM location only
-  // matters for stacking context (we want it inside .app).
-  if (!app.querySelector(".phone-menu-btn")) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "phone-menu-btn";
-    btn.setAttribute("aria-label", "Open menu");
-    btn.title = "Menu";
-    btn.textContent = "☰";
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      _phoneMenuToggle();
-    });
-    app.insertBefore(btn, app.firstChild);
-  }
-
-  // Wire menu items → dispatch click() on the corresponding hidden
-  // hero button. The hero is display:none on phone but its buttons
-  // are still in the DOM with their handlers attached.
-  const menu = document.getElementById("phone-menu");
-  if (menu && !menu.dataset.bound) {
-    menu.dataset.bound = "1";
-    const triggers = {
-      library: "library-trigger",
-      import: "import-btn",
-      new: "clear-btn",
-      settings: "settings-btn",
-      help: "help-btn",
-    };
-    menu.addEventListener("click", (e) => {
-      const item = e.target.closest(".phone-menu-item");
-      if (!item) return;
-      e.stopPropagation();
-      const action = item.dataset.action;
-      const targetId = triggers[action];
-      // Close the sheet BEFORE firing the target — otherwise the
-      // target's dialog opens with our scrim still up + can't be
-      // dismissed by tap-outside (our scrim eats the clicks).
-      _phoneMenuClose();
-      if (!targetId) return;
-      const target = document.getElementById(targetId);
-      if (target) {
-        // Use a microtask so the sheet's close transition starts
-        // before the target dialog fires its own open animation.
-        Promise.resolve().then(() => target.click());
-      }
-    });
-  }
-
-  // Scrim click → close.
-  const scrim = document.getElementById("phone-menu-scrim");
-  if (scrim && !scrim.dataset.bound) {
-    scrim.dataset.bound = "1";
-    scrim.addEventListener("click", (e) => {
-      e.stopPropagation();
-      _phoneMenuClose();
-    });
-  }
-
-  // Esc closes (in addition to the pull-up's existing Esc handler).
-  if (!document.body.dataset.menuEscBound) {
-    document.body.dataset.menuEscBound = "1";
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && document.body.dataset.menu === "open") {
-        e.stopPropagation();
-        _phoneMenuClose();
-      }
-    });
-  }
-}
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", _phoneMenuBoot);
-} else {
-  _phoneMenuBoot();
-}
-window.addEventListener("resize", () => {
-  if (_phoneMenuIsPhone()) _phoneMenuBoot();
-});
-
-// v225.mobile / Phase B (#503): pull-up controls drawer.
-//
-// On phone widths (≤767px) the Spotify-style bottom bar carries only
-// play / scrubber / skip. Everything else — voice swatch, speed,
-// skip interval, A↔B, sleep, annotate, 🔖, 📝 — migrates into a
-// pull-up drawer that slides up from the bottom. Tap a chevron in
-// the player bar to open; tap the grip, the scrim, or Esc to close.
-//
-// Chip relocation: rather than duplicating markup + handlers, we
-// MOVE the actual chip nodes from their original homes into the
-// drawer's slots at boot. Event listeners stay attached because
-// they're on the element, not its position in the tree. The Phase A
-// hide-rule (`#player-card .player-actions > button:not(skip)`)
-// stops matching once the chips move out of .player-actions, so
-// they re-appear in their new home automatically.
-function _phonePullupIsPhone() {
-  return window.matchMedia("(max-width: 767px)").matches;
-}
-function _phonePullupOpen() {
-  document.body.dataset.pullup = "open";
-  const toggle = document.querySelector(".phone-pullup-toggle");
-  if (toggle) toggle.textContent = "⌄";
-}
-function _phonePullupClose() {
-  if (document.body.dataset.pullup) delete document.body.dataset.pullup;
-  const toggle = document.querySelector(".phone-pullup-toggle");
-  if (toggle) toggle.textContent = "⌃";
-}
-function _phonePullupToggle() {
-  if (document.body.dataset.pullup === "open") _phonePullupClose();
-  else _phonePullupOpen();
-}
-function _phonePullupRelocate() {
-  // Only relocate on phone. On desktop the slots stay empty and the
-  // drawer is display:none via @media (min-width: 768px).
-  if (!_phonePullupIsPhone()) return;
-
-  const playbackSlot = document.querySelector('[data-slot="playback"]');
-  const listeningSlot = document.querySelector('[data-slot="listening"]');
-  const authorSlot = document.querySelector('[data-slot="author"]');
-  if (!playbackSlot || !listeningSlot || !authorSlot) return;
-
-  // Helper: move a node by id into a slot. No-op on missing nodes
-  // (so we don't crash if some optional control wasn't rendered).
-  const move = (id, slot) => {
-    const el = document.getElementById(id);
-    if (el && slot && el.parentNode !== slot) slot.appendChild(el);
-  };
-
-  // Playback: voice swatch (from hero), speed cycle, skip-interval picker.
-  move("voice-trigger", playbackSlot);
-  move("speed-btn", playbackSlot);
-  move("skip-interval-btn", playbackSlot);
-
-  // Listening: A↔B start/end, sleep timer.
-  move("ab-loop-btn", listeningSlot);
-  move("ab-loop-clear-btn", listeningSlot);
-  move("sleep-btn", listeningSlot);
-
-  // Author: annotate mode toggle, bookmark add, notes shortcut.
-  move("annotate-mode-btn", authorSlot);
-  move("bookmark-add-btn", authorSlot);
-  move("notes-btn", authorSlot);
-
-  // v225m (#508): Bookmarks slot — relocate #bookmarks-list (the
-  // jump rows with [time][note][×]) into the pull-up so it has a
-  // proper home instead of leaking into the player card flex row.
-  const bookmarksSlot = document.querySelector('[data-slot="bookmarks"]');
-  move("bookmarks-list", bookmarksSlot);
-  // Re-paint so existing rows render at the new location.
-  if (typeof renderBookmarks === "function") {
-    renderBookmarks().catch(() => {});
-  }
-
-  // v225m (#508): peek handle tab. Always-visible affordance that
-  // sits above the bottom bar so the pull-up is discoverable.
-  // Tap → toggle. Drag up → open. Drag down (when open) is handled
-  // by the in-drawer grip row.
-  if (!document.querySelector(".phone-pullup-tab")) {
-    const tab = document.createElement("div");
-    tab.className = "phone-pullup-tab";
-    tab.setAttribute("role", "button");
-    tab.setAttribute("aria-label", "Open playback controls");
-    tab.tabIndex = 0;
-    document.body.appendChild(tab);
-
-    // Pointer-events drag: distinguish tap vs drag. Quick + small
-    // movement → tap. Upward drift of >10px → open.
-    let dragStart = null;
-    const TAP_MS = 250;
-    const DRAG_THRESHOLD_PX = 10;
-    tab.addEventListener("pointerdown", (e) => {
-      dragStart = { y: e.clientY, t: Date.now() };
-      try { tab.setPointerCapture(e.pointerId); } catch {}
-    });
-    tab.addEventListener("pointermove", (e) => {
-      if (!dragStart) return;
-      const dy = e.clientY - dragStart.y;
-      // Negative dy = upward drag = open the drawer immediately.
-      if (dy < -DRAG_THRESHOLD_PX) {
-        dragStart = null;
-        _phonePullupOpen();
-      }
-    });
-    tab.addEventListener("pointerup", (e) => {
-      if (!dragStart) return;
-      const dy = e.clientY - dragStart.y;
-      const dt = Date.now() - dragStart.t;
-      // Quick + small movement = tap → toggle.
-      if (dt < TAP_MS && Math.abs(dy) < DRAG_THRESHOLD_PX) {
-        _phonePullupToggle();
-      }
-      dragStart = null;
-      try { tab.releasePointerCapture(e.pointerId); } catch {}
-    });
-    tab.addEventListener("pointercancel", () => { dragStart = null; });
-    // Keyboard accessibility: Space / Enter to toggle.
-    tab.addEventListener("keydown", (e) => {
-      if (e.key === " " || e.key === "Enter") {
-        e.preventDefault();
-        _phonePullupToggle();
-      }
-    });
-  }
-
-  // Inject the chevron toggle into the bottom player bar if not
-  // already present. Tap to open/close the drawer. Placed at order:0
-  // so it sits leftmost in the flex-row bar (before the skip-back
-  // button at order:1).
-  const playerCard = document.getElementById("player-card");
-  if (playerCard && !playerCard.querySelector(".phone-pullup-toggle")) {
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "phone-pullup-toggle";
-    toggle.setAttribute("aria-label", "Open playback controls");
-    toggle.title = "More controls";
-    toggle.textContent = "⌃";
-    toggle.addEventListener("click", (e) => {
-      e.stopPropagation();
-      _phonePullupToggle();
-    });
-    playerCard.appendChild(toggle);
-  }
-
-  // Tap the grip row to close (in addition to the scrim).
-  const grip = document.querySelector(".phone-pullup-grip-row");
-  if (grip && !grip.dataset.bound) {
-    grip.dataset.bound = "1";
-    grip.addEventListener("click", _phonePullupClose);
-  }
-  // v225j: explicit click handler on the real-element scrim. Replaces
-  // the body-level document click handler for outside-tap (the scrim
-  // now intercepts clicks while open via pointer-events: auto, so we
-  // just close on its own click). The body-level handler is still
-  // there as belt-and-suspenders but the scrim handler fires first.
-  const scrim = document.getElementById("phone-pullup-scrim");
-  if (scrim && !scrim.dataset.bound) {
-    scrim.dataset.bound = "1";
-    scrim.addEventListener("click", (e) => {
-      e.stopPropagation();
-      _phonePullupClose();
-    });
-  }
-  // Tap on the scrim (the body::before) closes — the scrim is a
-  // pseudo-element so we can't bind directly. Use a body-level click
-  // that filters out clicks inside the drawer and bottom bar.
-  if (!document.body.dataset.pullupScrimBound) {
-    document.body.dataset.pullupScrimBound = "1";
-    document.addEventListener("click", (e) => {
-      if (document.body.dataset.pullup !== "open") return;
-      const drawer = document.getElementById("phone-pullup");
-      const player = document.getElementById("player-card");
-      if (drawer && drawer.contains(e.target)) return;
-      if (player && player.contains(e.target)) return;
-      _phonePullupClose();
-    });
-    // Esc closes too.
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && document.body.dataset.pullup === "open") {
-        e.stopPropagation();
-        _phonePullupClose();
-      }
-    });
-  }
-}
-// Run after the DOM is ready + after the existing hero-controls
-// migration has settled (v188 moves chips around at boot). app.js
-// loads at the end of <body> without defer, so DOMContentLoaded
-// has ALREADY fired by the time this script executes — registering
-// a listener for it would never fire. Detect readyState and just
-// run if the DOM is already parsed.
-function _phonePullupBoot() {
-  setTimeout(_phonePullupRelocate, 50);
-}
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", _phonePullupBoot);
-} else {
-  _phonePullupBoot();
-}
-// Re-relocate if the viewport crosses the phone threshold (e.g.,
-// device rotation, devtools resize). Idempotent — the `parentNode`
-// check inside `move()` skips already-relocated nodes.
-window.addEventListener("resize", () => {
-  if (_phonePullupIsPhone()) _phonePullupRelocate();
-});
-
-// v223.tn28 (#500): keep the Settings version stamp in sync with the
-// actual SW cache name. Previously index.html hardcoded a string
-// ("v221e") that drifted because we never updated it on each SW bump
-// — testers ended up reporting bugs against stale versions. Reading
-// caches.keys() at boot makes the stamp self-updating: whatever the
-// currently-installed SW named its cache wins. Falls back to the
-// static HTML value if no cache is installed yet (first load) or
-// if the browser doesn't expose the Cache API.
-async function _stampAppVersion() {
-  const el = document.getElementById("settings-version-tag");
-  if (!el) return;
-  try {
-    if (!("caches" in window)) return;
-    const keys = await caches.keys();
-    const ours = keys.find((k) => k.startsWith("narrative-shell-"));
-    if (ours) {
-      const tag = ours.replace("narrative-shell-", "");
-      if (tag && tag !== el.textContent) el.textContent = tag;
-    }
-  } catch (e) {
-    console.info("[version] stamp failed:", e && e.message);
-  }
-}
-// Run once at boot, then again ~3s later in case the SW installed
-// asynchronously after the first read. Cheap (a single Cache API
-// call) and means the stamp updates within a few seconds of a SW
-// swap landing.
-_stampAppVersion();
-setTimeout(_stampAppVersion, 3000);
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.addEventListener("controllerchange", _stampAppVersion);
-}
-
-// v225.tn31 (#505): "Switch key" button in Settings. The on-call
-// scenario: two testers sharing one device (same PWA install) end
-// up on the same tenant because the X-Narrative-Key persists in
-// localStorage. The second tester opens the app and sees the
-// first tester's library because both bearer keys → same tenant
-// hash. The fix is to clear the key + clear the local library +
-// reload — the next /api/ call 401s and the existing prompt
-// flow asks for the new key.
-const settingsSwitchKey = document.getElementById("settings-switch-key");
-if (settingsSwitchKey) {
-  settingsSwitchKey.addEventListener("click", async () => {
-    if (settingsSwitchKey.disabled) return;
-    const ok = window.confirm(
-      "Switch key clears the current API key and wipes the local " +
-      "library on this device, then reloads. You'll be prompted " +
-      "to paste your own key. Continue?",
-    );
-    if (!ok) return;
-    settingsSwitchKey.disabled = true;
-    settingsSwitchKey.textContent = "Switching…";
-    try {
-      // Drop the bearer key so the next /api/ request triggers the
-      // 401-prompt flow (the existing fetch wrapper handles this).
-      setApiKey("");
-
-      // Wipe the IndexedDB clips store so the previous tester's
-      // library doesn't sit there and clobber the incoming user's
-      // on next push. Annotations + voice notes live inside each
-      // clip, so this catches them too.
-      try {
-        const db = await openDB();
-        await new Promise((resolve, reject) => {
-          const tx = db.transaction(STORE, "readwrite");
-          const req = tx.objectStore(STORE).clear();
-          req.onsuccess = resolve;
-          req.onerror = () => reject(req.error);
-          tx.onerror = () => reject(tx.error);
-          tx.onabort = () => reject(tx.error);
-        });
-      } catch (e) {
-        console.warn("[switch-key] IDB clear failed:", e);
-      }
-    } catch (e) {
-      console.warn("[switch-key] sweep failed:", e);
-    }
-    location.reload();
-  });
-}
-
-// v223.tn29 (#501): "Force update" button in Settings. Nukes every
-// SW registration + every Cache API entry, then reloads. This is
-// the escape hatch when a phone or installed PWA is stuck on a
-// stale SW — common enough during active development that asking
-// users to "open DevTools and unregister" wasn't workable. Wipes
-// only the SW + caches; localStorage and IndexedDB (i.e. the user's
-// library) survive untouched.
-const settingsForceUpdate = document.getElementById("settings-force-update");
-if (settingsForceUpdate) {
-  settingsForceUpdate.addEventListener("click", async () => {
-    if (settingsForceUpdate.disabled) return;
-    const ok = window.confirm(
-      "Force update will wipe the cached app code and reload. " +
-      "Your library + annotations stay safe. Continue?",
-    );
-    if (!ok) return;
-    settingsForceUpdate.disabled = true;
-    settingsForceUpdate.textContent = "Updating…";
-    try {
-      // Unregister every SW registration we know about. Each one
-      // gets its own waitable so a slow unregister doesn't lose
-      // us the reload.
-      if ("serviceWorker" in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
-      }
-      // Then drop every cache the browser knows about for this
-      // origin. Don't filter by name — if there's something stale
-      // we don't recognize, we want it gone too.
-      if ("caches" in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map((k) => caches.delete(k).catch(() => false)));
-      }
-    } catch (e) {
-      console.warn("[force-update] sweep failed:", e);
-    }
-    // Hard reload — bypass the SW even if a residual controller is
-    // still around for the current page lifecycle. `location.reload`
-    // with no args is enough now that the SW + caches are gone.
-    location.reload();
   });
 }
