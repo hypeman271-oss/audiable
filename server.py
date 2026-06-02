@@ -809,7 +809,11 @@ async def synthesize_stream(req: SynthesizeRequest):
 class GithubTreeRequest(BaseModel):
     url: str = Field(..., min_length=8, max_length=2048)
     branch: str | None = Field(default=None, max_length=200)
-    github_token: str | None = Field(default=None, max_length=200)
+    # v225.tn50: bumped from 200 to 300 to cover fine-grained PATs
+    # (~93 chars) with headroom; the 200 cap didn't accidentally
+    # bounce real tokens but it sat unnervingly close to the boundary
+    # for any future token format change.
+    github_token: str | None = Field(default=None, max_length=300)
 
 
 @app.post("/api/github/tree")
@@ -844,14 +848,75 @@ async def github_tree_endpoint(req: GithubTreeRequest):
     return result
 
 
+# v225.tn50 (#527): Test-token endpoint. The picker's HTTP 401 looks
+# the same whether the token wasn't sent, was empty after trim, was
+# expired, or doesn't have access to a specific repo. This endpoint
+# calls GitHub /user with the saved token and surfaces login + scopes
+# so the user can confirm in one tap whether their token is good or
+# rejected (and if rejected, exactly which HTTP code came back).
+class GithubUserRequest(BaseModel):
+    # 300 covers fine-grained PATs (~93 chars) with headroom for any
+    # future format change without bouncing the request at validation.
+    github_token: str = Field(..., min_length=1, max_length=300)
+    host: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/github/user")
+async def github_user_endpoint(req: GithubUserRequest):
+    """Probe a GitHub token by calling /user and report the result."""
+    import asyncio
+    import functools
+    import json
+    import urllib.error
+    import urllib.request
+
+    def _check():
+        api_base = extract._github_api_base(req.host)
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "Narrative/0.1",
+            "Authorization": f"Bearer {req.github_token}",
+        }
+        url = f"{api_base}/user"
+        try:
+            r = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(r, timeout=15) as resp:
+                data = json.load(resp)
+                # X-OAuth-Scopes — present on classic PATs + OAuth.
+                # Fine-grained PATs don't return this header (scopes
+                # are repo-pinned not account-wide), so an empty
+                # string here doesn't mean "no scopes."
+                scopes = resp.headers.get("X-OAuth-Scopes") or ""
+                token_type = resp.headers.get("X-GitHub-Authentication-Token-Expiration") or ""
+                return {
+                    "ok": True,
+                    "login": data.get("login"),
+                    "name": data.get("name") or None,
+                    "scopes": scopes.strip(),
+                    "expires": token_type.strip(),
+                }
+        except urllib.error.HTTPError as e:
+            return {
+                "ok": False,
+                "status": e.code,
+                "reason": e.reason or "unauthorized",
+            }
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            return {"ok": False, "status": 0, "reason": str(e)}
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _check)
+
+
 class GithubBranchesRequest(BaseModel):
     url: str = Field(..., min_length=8, max_length=2048)
-    github_token: str | None = Field(default=None, max_length=200)
+    github_token: str | None = Field(default=None, max_length=300)
 
 
 class GistMetaRequest(BaseModel):
     url: str = Field(..., min_length=8, max_length=2048)
-    github_token: str | None = Field(default=None, max_length=200)
+    github_token: str | None = Field(default=None, max_length=300)
 
 
 @app.post("/api/gist/meta")
@@ -1121,7 +1186,7 @@ class ExtractUrlRequest(BaseModel):
     # middleware doesn't have to special-case it. The fetcher only
     # forwards it to github.com / raw.githubusercontent.com (verified
     # post-rewrite), so a token for repo X never leaks to host Y.
-    github_token: str | None = Field(default=None, max_length=200)
+    github_token: str | None = Field(default=None, max_length=300)
     # Pre-supplied SHA from the repo browser path (saves a contents API
     # round-trip). Optional; if missing for a GitHub URL the backend
     # looks it up.
@@ -1133,7 +1198,7 @@ class GithubSyncCheckRequest(BaseModel):
     returns the current SHA for each path, so the frontend can flag
     library clips whose stored SHA no longer matches."""
     items: list[dict] = Field(default_factory=list)
-    github_token: str | None = Field(default=None, max_length=200)
+    github_token: str | None = Field(default=None, max_length=300)
 
 
 @app.post("/api/github/sync-check")

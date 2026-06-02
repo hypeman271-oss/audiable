@@ -1413,6 +1413,135 @@ document.querySelectorAll("dialog").forEach((d) => {
   });
 });
 
+// v225.tn52 (#529): Settings dialog nav bar — sticky chip row +
+// fingerprint badge.
+//
+// Problem: Settings has 6+ sections (App, Player, Book view, Help &
+// docs, Stats, Tester tools, + admin sections when signed in as admin)
+// and they all live in one scrolling body. Finding "GitHub" or
+// "Tester keys" on phone meant scrolling through a long list with no
+// map. Adding a chip row at the top with one chip per visible
+// section, and stickying the subheaders below it, gives both the
+// "jump to anywhere" affordance and the "where am I" anchor.
+//
+// The fingerprint badge ("Key …xxxx · Admin") answers the
+// recurring "am I on the right tenant?" question without leaving
+// the dialog.
+function _initSettingsNav() {
+  if (!settingsDialog) return;
+  const body = settingsDialog.querySelector(".settings-body");
+  if (!body || body.querySelector(".settings-nav-bar")) return;
+  const nav = document.createElement("div");
+  nav.className = "settings-nav-bar";
+  nav.innerHTML =
+    '<div class="settings-nav-chips" role="tablist" aria-label="Jump to section"></div>' +
+    '<div class="settings-nav-fingerprint" data-role="none">Loading…</div>';
+  body.insertBefore(nav, body.firstChild);
+}
+
+function _refreshSettingsNavChips() {
+  if (!settingsDialog) return;
+  const body = settingsDialog.querySelector(".settings-body");
+  const chipRow = body && body.querySelector(".settings-nav-chips");
+  if (!chipRow) return;
+
+  // Collect visible sections in document order. Two kinds:
+  //   - .settings-subheader paragraphs (App / Player / Book view / …)
+  //   - .settings-section[id]:not([hidden]) with a label (admin
+  //     sections, GitHub) — gated by whoami.is_admin where applicable.
+  const sections = [];
+  for (const node of Array.from(body.children)) {
+    if (node.classList.contains("settings-nav-bar")) continue;
+    if (node.classList.contains("settings-subheader")) {
+      sections.push({ el: node, title: node.textContent.trim() });
+    } else if (
+      node.classList.contains("settings-section") &&
+      !node.hidden
+    ) {
+      const label = node.querySelector(".settings-section-label");
+      const title = label
+        ? label.textContent.trim()
+        : (node.id ? node.id.replace(/^settings-/, "") : "Section");
+      sections.push({ el: node, title });
+    }
+  }
+
+  chipRow.innerHTML = "";
+  for (const sec of sections) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "settings-nav-chip";
+    chip.textContent = sec.title;
+    chip.addEventListener("click", () => {
+      // scrollIntoView aligns the section under the sticky nav bar.
+      // block:"start" + the section's own sticky offset (top:48px)
+      // means the label lands just below the chip row.
+      sec.el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    chipRow.appendChild(chip);
+  }
+
+  // Highlight the chip whose section is currently visible. Throttled
+  // scroll listener — single observer would be cleaner but our
+  // section list is small enough that a scroll handler is fine.
+  if (!body.dataset.navScrollBound) {
+    body.dataset.navScrollBound = "1";
+    let _rafId = 0;
+    body.addEventListener("scroll", () => {
+      if (_rafId) return;
+      _rafId = requestAnimationFrame(() => {
+        _rafId = 0;
+        _highlightActiveNavChip();
+      });
+    });
+  }
+  _highlightActiveNavChip();
+}
+
+function _highlightActiveNavChip() {
+  if (!settingsDialog) return;
+  const body = settingsDialog.querySelector(".settings-body");
+  const chipRow = body && body.querySelector(".settings-nav-chips");
+  if (!chipRow) return;
+  // Find the section whose top is closest to (but above) the nav bar's
+  // bottom. That's the one the user is "in".
+  const navBar = body.querySelector(".settings-nav-bar");
+  const threshold = body.getBoundingClientRect().top +
+    (navBar ? navBar.getBoundingClientRect().height : 0) + 8;
+  const chips = Array.from(chipRow.children);
+  let activeIdx = 0;
+  const headingNodes = Array.from(body.children).filter(
+    (n) =>
+      n.classList.contains("settings-subheader") ||
+      (n.classList.contains("settings-section") && !n.hidden)
+  );
+  for (let i = 0; i < headingNodes.length; i++) {
+    const r = headingNodes[i].getBoundingClientRect();
+    if (r.top <= threshold) activeIdx = i;
+    else break;
+  }
+  chips.forEach((c, i) => c.classList.toggle("active", i === activeIdx));
+}
+
+function _refreshSettingsFingerprint() {
+  if (!settingsDialog) return;
+  const fp = settingsDialog.querySelector(".settings-nav-fingerprint");
+  if (!fp) return;
+  const key = (typeof getApiKey === "function" ? getApiKey() : "") || "";
+  if (!key) {
+    fp.textContent = "No key on this device";
+    fp.dataset.role = "none";
+    return;
+  }
+  const tail = key.slice(-4);
+  const me = _whoamiCache || {};
+  let role = "Tester";
+  if (me.is_admin) role = "Admin";
+  else if (me.tenant_label) role = "Tester · " + me.tenant_label;
+  fp.textContent = "Key …" + tail + "  ·  " + role;
+  fp.dataset.role = me.is_admin ? "admin" : "tester";
+}
+
 settingsBtn.addEventListener("click", () => {
   // v221.tenants-5: maintenance + tenants forms are admin-only. Refresh
   // visibility based on /api/admin/whoami every time the dialog opens —
@@ -1426,6 +1555,13 @@ settingsBtn.addEventListener("click", () => {
       _renderTenantsList();
       if (_tenantsJustMinted) _tenantsJustMinted.hidden = true;
     }
+    // v225.tn52 (#529): build/refresh the jump-to chip row + key
+    // fingerprint badge AFTER admin visibility is settled, so the
+    // chip list reflects which sections are actually visible
+    // (admin sections only appear for the admin).
+    _initSettingsNav();
+    _refreshSettingsNavChips();
+    _refreshSettingsFingerprint();
   });
   if (_maintFormStatus) _maintFormStatus.textContent = "";
   if (_tenantsFormStatus) _tenantsFormStatus.textContent = "";
@@ -1503,6 +1639,10 @@ settingsBtn.addEventListener("click", () => {
   if (_gh && _ghStatus) {
     _gh.value = "";
     const saved = getGithubToken();
+    // v225.tn50: reveal/hide the "Test token" button alongside the
+    // saved-state banner so the action sits next to the affordance
+    // it acts on.
+    const _ghTestBtn = $("settings-github-token-test");
     if (saved) {
       const tail = saved.slice(-4);
       // v140: prominent banner state — accent border + ✓ icon — so a
@@ -1512,11 +1652,13 @@ settingsBtn.addEventListener("click", () => {
       _ghStatus.dataset.state = "saved";
       _ghStatus.textContent =
         `Token saved (ending in …${tail}). Paste a new value to replace it; the field stays blank for safety.`;
+      if (_ghTestBtn) _ghTestBtn.hidden = false;
     } else {
       // No token → no banner. The hint paragraph below the empty
       // input already explains the section.
       _ghStatus.dataset.state = "empty";
       _ghStatus.textContent = "";
+      if (_ghTestBtn) _ghTestBtn.hidden = true;
     }
   }
   // v149: collapsed-by-default help disclosure is right for repeat
@@ -1608,6 +1750,17 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     if (typeof e.button === "number" && e.button !== 0) return;
     e.preventDefault();
+    // v225.tn49 (#526): on phone, route to the swipeable section
+    // viewer instead of the iframe dialog. Iframe + dialog stacking
+    // makes phone manual navigation painful (no map, no jump-to-
+    // section, no sticky header). The new viewer fetches +
+    // splits manual.html by H2 anchors at runtime, so the manual
+    // file itself stays untouched and desktop continues to use the
+    // existing iframe path unchanged.
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      _openPhoneManualViewer();
+      return;
+    }
     openManualDialog();
   }
 
@@ -1647,6 +1800,248 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
     a.addEventListener("click", _routeManualClick);
   }
 })();
+
+// v225.tn49 (#526): Phone manual viewer — swipeable section sheets.
+//
+// Desktop opens manual.html in an iframe-in-dialog (above). On
+// phone, that's painful to navigate: no map, no jump-to-section, no
+// sticky context. We solve it by fetching /manual.html once,
+// parsing out the 11 H2-anchored sections, and rendering each as
+// its own swipeable horizontal page. The manual file itself stays
+// untouched — single source of truth for the prose.
+//
+// UX:
+//   Top bar:  ← close  |  Section N / 11: Title  |  ≡ TOC
+//   Body:     horizontal scroll-snap, one section per page,
+//             vertical scroll inside each
+//   Bottom:   ← Prev   ● ● ● ● ● ● ● ● ● ● ●   Next →
+//   TOC:      slide-up sheet listing all 11 sections, tap to jump
+//
+// Touch swipe falls out for free from horizontal scroll-snap
+// (native momentum + page snap). The dot strip tracks the active
+// section via IntersectionObserver on each page.
+let _phoneManualLoaded = false;
+let _phoneManualSections = [];
+
+function _openPhoneManualViewer() {
+  _ensurePhoneManualViewer();
+  const viewer = document.getElementById("phone-manual-viewer");
+  if (!viewer) return;
+  viewer.hidden = false;
+  document.body.dataset.phoneManualOpen = "1";
+  // Reset scroll to first section on each open so the user lands
+  // somewhere predictable. Defer to next frame so the show has
+  // committed before we measure.
+  requestAnimationFrame(() => {
+    const pages = viewer.querySelector(".pmv-pages");
+    if (pages) pages.scrollLeft = 0;
+  });
+  if (!_phoneManualLoaded) {
+    _loadPhoneManualContent();
+  }
+}
+
+function _closePhoneManualViewer() {
+  const viewer = document.getElementById("phone-manual-viewer");
+  if (viewer) viewer.hidden = true;
+  delete document.body.dataset.phoneManualOpen;
+}
+
+function _ensurePhoneManualViewer() {
+  if (document.getElementById("phone-manual-viewer")) return;
+  const v = document.createElement("div");
+  v.id = "phone-manual-viewer";
+  v.className = "phone-manual-viewer";
+  v.hidden = true;
+  v.innerHTML =
+    '<header class="pmv-header">' +
+    '<button type="button" class="pmv-close" aria-label="Close manual">' +
+    "<span aria-hidden=\"true\">←</span>" +
+    "</button>" +
+    '<div class="pmv-title">' +
+    '<div class="pmv-section-num">Loading…</div>' +
+    '<div class="pmv-section-name"></div>' +
+    "</div>" +
+    '<button type="button" class="pmv-toc-btn" aria-label="Table of contents">' +
+    "<span aria-hidden=\"true\">☰</span>" +
+    "</button>" +
+    "</header>" +
+    '<div class="pmv-pages" role="region" aria-label="Manual sections">' +
+    '<div class="pmv-loading">Loading manual…</div>' +
+    "</div>" +
+    '<footer class="pmv-footer">' +
+    '<button type="button" class="pmv-prev" aria-label="Previous section">' +
+    "<span aria-hidden=\"true\">←</span> Prev" +
+    "</button>" +
+    '<div class="pmv-dots" role="tablist" aria-label="Section indicator"></div>' +
+    '<button type="button" class="pmv-next" aria-label="Next section">' +
+    "Next <span aria-hidden=\"true\">→</span>" +
+    "</button>" +
+    "</footer>" +
+    '<div class="pmv-toc-sheet" hidden>' +
+    '<header class="pmv-toc-header">' +
+    "<h2>Sections</h2>" +
+    '<button type="button" class="pmv-toc-close" aria-label="Close table of contents">' +
+    "<span aria-hidden=\"true\">✕</span>" +
+    "</button>" +
+    "</header>" +
+    '<ol class="pmv-toc-list"></ol>' +
+    "</div>";
+  document.body.appendChild(v);
+
+  v.querySelector(".pmv-close").addEventListener(
+    "click",
+    _closePhoneManualViewer
+  );
+  v.querySelector(".pmv-toc-btn").addEventListener("click", () => {
+    const sheet = v.querySelector(".pmv-toc-sheet");
+    if (sheet) sheet.hidden = false;
+  });
+  v.querySelector(".pmv-toc-close").addEventListener("click", () => {
+    const sheet = v.querySelector(".pmv-toc-sheet");
+    if (sheet) sheet.hidden = true;
+  });
+  v.querySelector(".pmv-prev").addEventListener("click", () =>
+    _phoneManualMove(-1)
+  );
+  v.querySelector(".pmv-next").addEventListener("click", () =>
+    _phoneManualMove(1)
+  );
+}
+
+async function _loadPhoneManualContent() {
+  const viewer = document.getElementById("phone-manual-viewer");
+  if (!viewer) return;
+  const pages = viewer.querySelector(".pmv-pages");
+  const tocList = viewer.querySelector(".pmv-toc-list");
+  const dots = viewer.querySelector(".pmv-dots");
+  try {
+    const resp = await fetch("/manual.html", { credentials: "same-origin" });
+    if (!resp.ok) throw new Error("manual fetch " + resp.status);
+    const html = await resp.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    // Anchored H2s only — these are the 11 numbered sections. The
+    // "Contents" H2 has no id and is skipped; we render our own TOC.
+    const heads = Array.from(doc.querySelectorAll("h2[id]"));
+    _phoneManualSections = [];
+    pages.innerHTML = "";
+    tocList.innerHTML = "";
+    dots.innerHTML = "";
+    heads.forEach((h2, idx) => {
+      // Gather every sibling between this H2 and the next H2 as the
+      // section body. Preserves all the H3/H4 structure intact.
+      const wrap = document.createElement("article");
+      wrap.className = "pmv-page";
+      wrap.dataset.idx = String(idx);
+      wrap.appendChild(h2.cloneNode(true));
+      let n = h2.nextElementSibling;
+      while (n && n.tagName !== "H2") {
+        wrap.appendChild(n.cloneNode(true));
+        n = n.nextElementSibling;
+      }
+      pages.appendChild(wrap);
+
+      // TOC entry
+      const li = document.createElement("li");
+      const a = document.createElement("button");
+      a.type = "button";
+      a.className = "pmv-toc-item";
+      a.dataset.idx = String(idx);
+      a.textContent = h2.textContent.trim();
+      a.addEventListener("click", () => {
+        _phoneManualGoto(idx);
+        const sheet = viewer.querySelector(".pmv-toc-sheet");
+        if (sheet) sheet.hidden = true;
+      });
+      li.appendChild(a);
+      tocList.appendChild(li);
+
+      // Dot
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = "pmv-dot";
+      dot.dataset.idx = String(idx);
+      dot.setAttribute("aria-label", "Go to section " + (idx + 1));
+      dot.addEventListener("click", () => _phoneManualGoto(idx));
+      dots.appendChild(dot);
+
+      _phoneManualSections.push({
+        idx,
+        id: h2.id,
+        title: h2.textContent.trim(),
+      });
+    });
+
+    // Track which page is in view via IntersectionObserver. Update
+    // header title, active dot, and active TOC entry as the user
+    // swipes. threshold:0.55 means a page has to be majority-visible
+    // before it claims the active state — avoids title flicker at
+    // the seam between two pages.
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && e.intersectionRatio >= 0.55) {
+            _phoneManualSetActive(parseInt(e.target.dataset.idx, 10));
+          }
+        }
+      },
+      { root: pages, threshold: [0.55] }
+    );
+    pages.querySelectorAll(".pmv-page").forEach((p) => io.observe(p));
+
+    _phoneManualLoaded = true;
+    _phoneManualSetActive(0);
+  } catch (err) {
+    pages.innerHTML =
+      '<div class="pmv-loading pmv-loading-error">' +
+      "Couldn't load the manual. Check your connection and try again." +
+      "</div>";
+    console.warn("phone manual load failed", err);
+  }
+}
+
+function _phoneManualSetActive(idx) {
+  const viewer = document.getElementById("phone-manual-viewer");
+  if (!viewer) return;
+  const total = _phoneManualSections.length;
+  if (!total) return;
+  const sec = _phoneManualSections[idx];
+  if (!sec) return;
+  viewer.querySelector(".pmv-section-num").textContent =
+    "Section " + (idx + 1) + " of " + total;
+  viewer.querySelector(".pmv-section-name").textContent = sec.title;
+  viewer.querySelectorAll(".pmv-dot").forEach((d) => {
+    d.classList.toggle("active", parseInt(d.dataset.idx, 10) === idx);
+  });
+  viewer.querySelectorAll(".pmv-toc-item").forEach((a) => {
+    a.classList.toggle("active", parseInt(a.dataset.idx, 10) === idx);
+  });
+  viewer.querySelector(".pmv-prev").disabled = idx === 0;
+  viewer.querySelector(".pmv-next").disabled = idx >= total - 1;
+}
+
+function _phoneManualGoto(idx) {
+  const viewer = document.getElementById("phone-manual-viewer");
+  if (!viewer) return;
+  const page = viewer.querySelector('.pmv-page[data-idx="' + idx + '"]');
+  if (!page) return;
+  page.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+  // Also reset the section's own vertical scroll so the user
+  // lands at the top of the section, not wherever they last left it.
+  page.scrollTop = 0;
+}
+
+function _phoneManualMove(delta) {
+  const viewer = document.getElementById("phone-manual-viewer");
+  if (!viewer) return;
+  const active = viewer.querySelector(".pmv-dot.active");
+  const cur = active ? parseInt(active.dataset.idx, 10) : 0;
+  const next = Math.max(
+    0,
+    Math.min(_phoneManualSections.length - 1, cur + delta)
+  );
+  _phoneManualGoto(next);
+}
 
 // v220g: first-load attention animation on the ? and ⚙ icons.
 //
@@ -1761,6 +2156,10 @@ document.addEventListener("keydown", (e) => {
     input.value = ""; // don't keep it visible in the DOM
     // v180: signed-in user line updates from the new token.
     if (typeof _refreshGithubOAuthUI === "function") _refreshGithubOAuthUI();
+    // v225.tn50: reveal the Test token button now that there's
+    // something to test.
+    const _tb = document.getElementById("settings-github-token-test");
+    if (_tb) _tb.hidden = false;
   });
   clearBtn.addEventListener("click", () => {
     setGithubToken("");
@@ -1769,7 +2168,79 @@ document.addEventListener("keydown", (e) => {
     status.textContent = "Token cleared from this device.";
     // v180: signed-in user line clears with the token.
     if (typeof _refreshGithubOAuthUI === "function") _refreshGithubOAuthUI();
+    // v225.tn50: hide the test button when token clears.
+    const _tb = document.getElementById("settings-github-token-test");
+    if (_tb) _tb.hidden = true;
   });
+
+  // v225.tn50 (#527): Test token button. Calls /api/github/user with
+  // the saved token and reports whether GitHub accepts it. The
+  // picker's HTTP 401 looks the same whether the token wasn't
+  // sent, was wrong, was expired, or doesn't have access to a
+  // specific repo — this gives a yes/no answer with the actual
+  // GitHub user attached, so the tester knows whether to re-paste
+  // a fresh token or open a scope/repo issue.
+  const testBtn = $("settings-github-token-test");
+  if (testBtn) {
+    testBtn.addEventListener("click", async () => {
+      const tok = getGithubToken();
+      if (!tok) {
+        status.dataset.state = "error";
+        status.textContent =
+          "No token saved on this device — paste one above first.";
+        return;
+      }
+      testBtn.disabled = true;
+      const _origLabel = testBtn.textContent;
+      testBtn.textContent = "Testing…";
+      try {
+        const r = await fetch("/api/github/user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ github_token: tok }),
+        });
+        const data = await r.json();
+        if (data && data.ok) {
+          const tail = tok.slice(-4);
+          const who = data.login ? `@${data.login}` : "your account";
+          const scopesNote = data.scopes
+            ? ` Scopes: ${data.scopes}.`
+            : " (Fine-grained PAT — repo-pinned, no scope list returned.)";
+          const expiresNote = data.expires
+            ? ` Expires: ${data.expires}.`
+            : "";
+          status.dataset.state = "saved";
+          status.textContent =
+            `✓ GitHub accepted this device's token (…${tail}). ` +
+            `Signed in as ${who}.${scopesNote}${expiresNote}`;
+        } else {
+          const tail = tok.slice(-4);
+          const code = data && data.status ? data.status : "?";
+          const reason = (data && data.reason) || "unknown reason";
+          let hint = "";
+          if (code === 401) {
+            hint =
+              " — token is invalid, expired, or revoked. Re-paste a fresh PAT (or sign in via OAuth) above.";
+          } else if (code === 403) {
+            hint =
+              " — token authenticated but is missing access. For fine-grained PATs, check that the target repo is in the token's allowed-repos list.";
+          } else if (code === 0) {
+            hint = " — couldn't reach GitHub from this server.";
+          }
+          status.dataset.state = "error";
+          status.textContent =
+            `✗ GitHub rejected this device's token (…${tail}): HTTP ${code} ${reason}${hint}`;
+        }
+      } catch (e) {
+        status.dataset.state = "error";
+        status.textContent =
+          `✗ Test failed before reaching GitHub: ${e && e.message ? e.message : e}`;
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = _origLabel;
+      }
+    });
+  }
 
   // v144: when the "Show me what to copy" disclosure opens, pull its
   // summary up to the top of the dialog scroll area so the mock
@@ -2042,6 +2513,11 @@ const _ONBOARDING_HINT_KEYS = [
   "narrative.hintSeen.playMode",
   "narrative.hintSeen.hidePlayed",
   "narrative.hintSeen.speakerAudition",
+  // v225.tn55 (#533): tag-row first-tap hint. The tag row above the
+  // player bar (annotation arm-and-apply) reads as decoration until
+  // the user discovers it works. Hint shows once, dismisses on
+  // first successful apply OR explicit close.
+  "narrative.hintSeen.tagRow",
 ];
 if (settingsResetHintsLink) {
   settingsResetHintsLink.addEventListener("click", (e) => {
@@ -10321,6 +10797,19 @@ if (readingViewEl) {
       event.stopPropagation();
       const idx = Number(span.dataset.index);
       if (!isFinite(idx)) return;
+      // v225.tn39 (#516): if a tag chip is armed from the bottom
+      // tag row, short-circuit the palette and apply directly.
+      // This is the "1-tap chip → 1-tap sentence" fast path the
+      // double-deck design was built for.
+      if (
+        typeof _phoneTagRowArmedTag !== "undefined" &&
+        _phoneTagRowArmedTag &&
+        typeof _phoneTagRowApplyArmedToSentence === "function"
+      ) {
+        if (_phoneTagRowApplyArmedToSentence(idx, span.textContent || "")) {
+          return;
+        }
+      }
       _showAnnotatePalette(idx, span.textContent || "");
     },
     true, // capture phase so we win over the seek handler
@@ -10747,6 +11236,11 @@ async function _voiceStart() {
   _voiceRecorder.start();
   _voiceIsRecording = true;
   _voiceStartedAt = Date.now();
+  // v225.tn40 (#517): body-level signal so any "is recording" UI
+  // anywhere in the app can pulse without each one having to track
+  // _voiceRecorder. Removed in _voiceReleaseStream when the
+  // recorder is cleared.
+  document.body.dataset.voiceRecording = "1";
   _voiceShowRecordRow();
   // v223.tn5 (#470): best-effort live transcription via Web Speech
   // API. On Android Chrome this often gets starved by MediaRecorder's
@@ -10952,6 +11446,16 @@ function _voiceReleaseStream() {
   _voiceChunks = [];
   _voiceMimeType = "";
   _voiceStartedAt = 0;
+  // v225.tn40 (#517): clear the global recording signal. Catches
+  // every termination path — explicit stop, auto-stop at
+  // VOICE_NOTE_MAX_SEC, cancel button, error during finalize.
+  if (document.body.dataset.voiceRecording) {
+    delete document.body.dataset.voiceRecording;
+  }
+  // Sync the tag-row mic button's own gesture state so a long-press
+  // that was followed by auto-stop doesn't leave isPressed/mode
+  // sticky for the next interaction.
+  _phoneTagRowVoicePressMode = null;
   // v223.tn4: clear the "recording in flight" guard so the
   // visibilitychange auto-resume can fire again next time.
   _voiceIsRecording = false;
@@ -16000,11 +16504,28 @@ libraryClearBtn.addEventListener("click", async () => {
 function _openImportMenu() {
   importMenu.hidden = false;
   importBtn.setAttribute("aria-expanded", "true");
+  // v225.tn45 (#522): on phone, render the menu as a centered
+  // modal instead of the trigger-anchored dropdown. The pull-up
+  // (if open) closes so the modal lands cleanly on the reading
+  // view background rather than stacked over the drawer.
+  const isPhone = window.matchMedia("(max-width: 767px)").matches;
+  if (isPhone) {
+    document.body.dataset.importMenu = "open";
+    if (
+      document.body.dataset.pullup === "open" &&
+      typeof _phonePullupClose === "function"
+    ) {
+      _phonePullupClose();
+    }
+  }
 }
 
 function _closeImportMenu() {
   importMenu.hidden = true;
   importBtn.setAttribute("aria-expanded", "false");
+  if (document.body.dataset.importMenu) {
+    delete document.body.dataset.importMenu;
+  }
 }
 
 importBtn.addEventListener("click", (e) => {
@@ -19387,6 +19908,361 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+// v225.tn38 (#515): persistent tag row above the player bar.
+//
+// Spotify-style double-deck bottom. The row contains the 6 annotation
+// tag chips (✂ ✓ ⚠ 👁 ➕ ❤) + a 🎤 voice button + a ⌃ chevron that
+// opens the existing pull-up drawer. Tapping a chip flags the
+// sentence that's currently being narrated (read from
+// activeSentenceIdx) — no need for the author to tap the sentence
+// first.
+//
+// Coexists with the original palette flow: tap a sentence in
+// annotate mode to open the palette for that specific sentence
+// (good for flagging a non-current sentence). The tag row is the
+// fast path for "listening live, react in 1 tap."
+// v225.tn39 (#516): two-step tag-row flow.
+//   1. Tap a chip → ARM that tag (pause playback, enter annotate mode,
+//                                  chip glows to show what's loaded)
+//   2. Tap a sentence → APPLY armed tag, exit annotate mode, resume
+//
+// Originally (#515) chip-tap fired immediately against the currently-
+// narrating sentence. Two problems with that: (a) by the time the
+// author taps, the narrator may be partway into the NEXT sentence
+// so the wrong span gets flagged, (b) the author can't decide
+// retroactively to flag the previous sentence they were thinking
+// about. The two-step model fixes both — pausing on arm gives the
+// author room to scan the reading view and pick the right sentence.
+//
+// Tap the same armed chip again → DISARM (cancel + resume).
+// Tap a different chip while armed → switch arm (mode + pause persist).
+// Esc / outside-tap → disarm.
+let _phoneTagRowArmedTag = null;
+let _phoneTagRowWasPlaying = false;
+// v225.tn40 (#517): tracks which gesture the user used to start the
+// voice recording — "tap" means recording stops on next tap of the
+// 🎤 button (hands-free mode); "hold" means recording stops on the
+// pointerup event of the original press (walkie-talkie mode). Cleared
+// in _voiceReleaseStream so an auto-stop at VOICE_NOTE_MAX_SEC doesn't
+// leave stale state for the next gesture.
+let _phoneTagRowVoicePressMode = null;
+
+function _phoneTagRowDisarm() {
+  if (!_phoneTagRowArmedTag) return;
+  _phoneTagRowArmedTag = null;
+  // Clear armed visual on every chip — defensive in case multiple
+  // got the class somehow.
+  document.querySelectorAll(".phone-tag-row-chip.armed")
+    .forEach((c) => c.classList.remove("armed"));
+  // Exit annotate mode (which also closes the palette if it opened).
+  if (typeof _setAnnotateMode === "function") _setAnnotateMode(false);
+  // Resume playback if we paused on arm. _voiceResumeMainPlaybackIfNeeded
+  // already exists for this pattern; reuse it so we share the
+  // "wasPlaying" semantics.
+  if (_phoneTagRowWasPlaying && playerEl && playerEl.paused) {
+    try { playerEl.play().catch(() => {}); } catch {}
+  }
+  _phoneTagRowWasPlaying = false;
+}
+
+function _phoneTagRowArm(tagKey) {
+  if (!_currentClipId) {
+    setStatus("Load a clip first to flag a sentence.", true);
+    return;
+  }
+  // Tapping the same chip again → cancel.
+  if (_phoneTagRowArmedTag === tagKey) {
+    _phoneTagRowDisarm();
+    setStatus("Cancelled.");
+    return;
+  }
+  // First arm OR switch-arm: pause playback once + enter annotate mode.
+  const wasFirstArm = _phoneTagRowArmedTag == null;
+  _phoneTagRowArmedTag = tagKey;
+  if (wasFirstArm) {
+    _phoneTagRowWasPlaying = !!(playerEl && !playerEl.paused);
+    if (_phoneTagRowWasPlaying) {
+      try { _pauseAsUser(); } catch { try { playerEl.pause(); } catch {} }
+    }
+    if (typeof _setAnnotateMode === "function") _setAnnotateMode(true);
+  }
+  // Update chip visuals: armed chip glows, others reset.
+  document.querySelectorAll(".phone-tag-row-chip").forEach((c) => {
+    if (c.dataset.tag === tagKey) c.classList.add("armed");
+    else c.classList.remove("armed");
+  });
+  setStatus(`${ANNOTATE_TAGS[tagKey].icon} ${ANNOTATE_TAGS[tagKey].label} armed — tap a sentence.`);
+}
+
+// Called from the reading-view click handler (the existing
+// annotate-mode listener) when a sentence is tapped AND a tag is
+// armed. Bypasses the palette since the tag is already chosen.
+function _phoneTagRowApplyArmedToSentence(sentenceIndex, sentenceText) {
+  const tagKey = _phoneTagRowArmedTag;
+  if (!tagKey) return false;
+  if (!_currentClipId) return false;
+  const anno = {
+    id: _annotateNewId(),
+    sentenceIndex,
+    sentenceFingerprint: _annotateFingerprint(sentenceText || ""),
+    flaggedAt: new Date().toISOString(),
+    source: "tagrow-arm",
+    tags: [tagKey],
+  };
+  _addAnnotation(_currentClipId, anno).catch((e) =>
+    console.warn("[tagrow] apply failed:", e),
+  );
+  // Flash the chip as confirmation + disarm + resume.
+  const chip = document.querySelector(
+    `.phone-tag-row-chip[data-tag="${tagKey}"]`,
+  );
+  if (chip) {
+    chip.classList.remove("flashed");
+    void chip.offsetWidth;
+    chip.classList.add("flashed");
+  }
+  setStatus(`✓ ${ANNOTATE_TAGS[tagKey].label} · sentence ${sentenceIndex + 1}`);
+  _phoneTagRowDisarm();
+  // v225.tn55 (#533): they got it — kill the hint forever so it
+  // doesn't keep nagging an author who now knows the pattern.
+  _phoneTagRowDismissHint();
+  return true;
+}
+
+// Back-compat name (the chip click handler below still calls this).
+function _phoneTagRowFireTag(tagKey) {
+  _phoneTagRowArm(tagKey);
+}
+
+function _phoneTagRowBoot() {
+  if (!_phonePullupIsPhone()) return;
+  const chipsContainer = document.getElementById("phone-tag-row-chips");
+  if (chipsContainer && !chipsContainer.children.length) {
+    for (const [key, meta] of Object.entries(ANNOTATE_TAGS)) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "phone-tag-row-chip";
+      chip.dataset.tag = key;
+      chip.title = `${meta.label} — flag the currently-playing sentence`;
+      chip.setAttribute("aria-label", `Flag current sentence as ${meta.label}`);
+      chip.textContent = meta.icon;
+      chip.style.background = meta.color;
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        _phoneTagRowFireTag(key);
+      });
+      // v225.tn56 (#539): kill the Android text-selection menu that
+      // long-press triggers on these chips. CSS user-select:none
+      // covers most cases; this preventDefault on contextmenu
+      // catches the rest (Chromium fires contextmenu on long-press
+      // regardless of user-select if the element itself isn't
+      // explicitly suppressing it).
+      chip.addEventListener("contextmenu", (e) => e.preventDefault());
+      chipsContainer.appendChild(chip);
+    }
+  }
+  // v225.tn40 (#517): voice button — dual gesture mode.
+  //   • TAP: starts recording, second tap stops (hands-free).
+  //   • PRESS-AND-HOLD: starts after ~250ms while held, stops on
+  //     release (walkie-talkie style for quick bursts).
+  // Pointer events distinguish the two: short release before the
+  // threshold = tap (toggle); release after threshold = hold-end.
+  const voiceBtn = document.getElementById("phone-tag-row-voice");
+  if (voiceBtn && !voiceBtn.dataset.bound) {
+    voiceBtn.dataset.bound = "1";
+    // v225.tn56 (#539): voice button's whole point is press-and-hold,
+    // so the Android long-press → context menu is doubly broken
+    // here — it both interrupts the hold gesture AND shows a Copy
+    // menu over an icon. preventDefault on contextmenu fixes both.
+    voiceBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+    let holdTimer = null;
+    let pressStart = 0;
+    const HOLD_THRESHOLD_MS = 250;
+    const _startVoiceAtCurrentSentence = () => {
+      if (!_currentClipId) {
+        setStatus("Load a clip first to record a voice note.", true);
+        return false;
+      }
+      const idx = typeof activeSentenceIdx === "number"
+        ? activeSentenceIdx : -1;
+      if (idx < 0) {
+        setStatus("Play a clip first — voice notes attach to the current sentence.", true);
+        return false;
+      }
+      _annotatePendingSentenceIndex = idx;
+      _voiceStart();
+      return true;
+    };
+    voiceBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      pressStart = Date.now();
+      try { voiceBtn.setPointerCapture(e.pointerId); } catch {}
+      // If already recording in tap mode, this pointerdown becomes
+      // "second tap to stop" at pointerup — don't schedule a hold
+      // start that would conflict.
+      if (_phoneTagRowVoicePressMode === "tap" && _voiceRecorder) return;
+      // Schedule the press-hold start. If the user releases before
+      // this fires, the pointerup handler clears it and treats the
+      // gesture as a tap.
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (_startVoiceAtCurrentSentence()) {
+          _phoneTagRowVoicePressMode = "hold";
+        }
+      }, HOLD_THRESHOLD_MS);
+    });
+    voiceBtn.addEventListener("pointerup", (e) => {
+      pressStart = 0;
+      try { voiceBtn.releasePointerCapture(e.pointerId); } catch {}
+
+      // v225.tn41 (#518): rewrote this state machine. The earlier
+      // version (v225w) bailed when pointerdown early-returned during
+      // the "second tap to stop a tap-mode recording" — that path
+      // never scheduled a holdTimer, so the pointerup branch keyed
+      // on holdTimer existence fell through and the stop never
+      // fired. User saw the tap-highlight blue square (the OS
+      // confirming the tap landed) but recording kept going.
+      //
+      // Cases handled, in order:
+      //   1. Hold-mode release → stop. Hold mode is set by the
+      //      hold-timer callback; reaching pointerup with that mode
+      //      means we're ending a press-and-hold.
+      //   2. Tap-mode + recording → stop. This is the new branch.
+      //      The first tap left mode = "tap" and a recorder running;
+      //      this pointerup is the second tap, and it stops cleanly
+      //      regardless of whether a holdTimer was scheduled.
+      //   3. Quick tap, not yet recording → start in tap mode. The
+      //      hold timer hadn't fired (release was fast); pointerdown
+      //      had no recorder yet so it scheduled one, and we cancel
+      //      it here before starting the recording.
+
+      // 1. Hold-mode release.
+      if (_phoneTagRowVoicePressMode === "hold") {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        _voiceStop();
+        _phoneTagRowVoicePressMode = null;
+        return;
+      }
+
+      // Cancel any pending hold-start timer regardless of which
+      // branch we end up in — the gesture is resolved at pointerup.
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+
+      // 2. Tap-mode + already recording → second tap stops it.
+      if (_voiceRecorder && _phoneTagRowVoicePressMode === "tap") {
+        _voiceStop();
+        _phoneTagRowVoicePressMode = null;
+        return;
+      }
+
+      // 3. Quick tap, no recorder → start in tap mode.
+      if (!_voiceRecorder) {
+        if (_startVoiceAtCurrentSentence()) {
+          _phoneTagRowVoicePressMode = "tap";
+        }
+      }
+    });
+    // pointercancel happens when the OS interrupts the gesture
+    // (system gesture, scroll lock, etc.). Treat it as a release of
+    // any in-flight hold so we don't end up stuck recording.
+    voiceBtn.addEventListener("pointercancel", (e) => {
+      pressStart = 0;
+      try { voiceBtn.releasePointerCapture(e.pointerId); } catch {}
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      if (_phoneTagRowVoicePressMode === "hold" && _voiceRecorder) {
+        _voiceStop();
+        _phoneTagRowVoicePressMode = null;
+      }
+    });
+  }
+  // v225.tn39 (#516): Esc cancels an armed tag (in addition to the
+  // chip-tap-same-twice cancel and the implicit disarm-on-apply).
+  if (!document.body.dataset.tagrowEscBound) {
+    document.body.dataset.tagrowEscBound = "1";
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && _phoneTagRowArmedTag) {
+        e.stopPropagation();
+        _phoneTagRowDisarm();
+        setStatus("Cancelled.");
+      }
+    });
+  }
+
+  // Chevron toggles the existing pull-up drawer.
+  const chevron = document.getElementById("phone-tag-row-chevron");
+  if (chevron && !chevron.dataset.bound) {
+    chevron.dataset.bound = "1";
+    chevron.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _phonePullupToggle();
+    });
+  }
+
+  // v225.tn55 (#533): first-tap hint above the tag row. Authors
+  // can't tell that those icons do anything until they tap one.
+  // Inject a one-shot bubble that explains the arm-and-apply
+  // pattern, dismisses on the first successful apply OR the ✕.
+  // Lives in localStorage so it doesn't reappear; "Replay
+  // onboarding tips" clears the key (registered in
+  // _ONBOARDING_HINT_KEYS above).
+  _phoneTagRowMaybeShowHint();
+}
+
+const _TAGROW_HINT_KEY = "narrative.hintSeen.tagRow";
+
+function _phoneTagRowHintDismissed() {
+  try {
+    return localStorage.getItem(_TAGROW_HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function _phoneTagRowDismissHint() {
+  try {
+    localStorage.setItem(_TAGROW_HINT_KEY, "1");
+  } catch {}
+  const el = document.getElementById("phone-tag-row-hint");
+  if (el) el.hidden = true;
+}
+
+function _phoneTagRowMaybeShowHint() {
+  if (_phoneTagRowHintDismissed()) return;
+  const app = document.querySelector(".app");
+  const tagRow = document.getElementById("phone-tag-row");
+  if (!app || !tagRow) return;
+  let hint = document.getElementById("phone-tag-row-hint");
+  if (!hint) {
+    hint = document.createElement("div");
+    hint.id = "phone-tag-row-hint";
+    hint.className = "phone-tag-row-hint";
+    hint.setAttribute("role", "status");
+    hint.innerHTML =
+      '<span class="phone-tag-row-hint-icon" aria-hidden="true">💡</span>' +
+      '<span class="phone-tag-row-hint-text">Tap a tag, then tap a sentence to flag it.</span>' +
+      '<button type="button" class="phone-tag-row-hint-dismiss" aria-label="Dismiss hint">✕</button>';
+    hint
+      .querySelector(".phone-tag-row-hint-dismiss")
+      .addEventListener("click", (e) => {
+        e.stopPropagation();
+        _phoneTagRowDismissHint();
+      });
+    // Append as sibling of #phone-tag-row inside .app so it can
+    // anchor above the row using fixed positioning with shared
+    // stacking context.
+    app.appendChild(hint);
+  }
+  hint.hidden = false;
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", _phoneTagRowBoot);
+} else {
+  _phoneTagRowBoot();
+}
+window.addEventListener("resize", () => {
+  if (_phonePullupIsPhone()) _phoneTagRowBoot();
+});
+
 // v225.mobile / Phase C (#506): ☰ top menu sheet.
 //
 // On phone the entire hero (brand + tagline + 4 icon buttons) is
@@ -19431,6 +20307,117 @@ function _phoneMenuBoot() {
     app.insertBefore(btn, app.firstChild);
   }
 
+  // v225.tn42 (#519): quick-access bookmark button at top-right.
+  // Mirror to the ☰ on the left. Tap fires the existing
+  // #bookmark-add-btn handler (now living in the pull-up drawer's
+  // Author section) so the addBookmarkAtCurrentTime flow + sync
+  // pipeline keep their single source of truth. Brief flash
+  // confirms the tap landed.
+  if (!app.querySelector(".phone-bookmark-btn")) {
+    const bm = document.createElement("button");
+    bm.type = "button";
+    bm.className = "phone-bookmark-btn";
+    bm.setAttribute("aria-label", "Add bookmark at current time");
+    bm.title = "Bookmark current time";
+    bm.textContent = "🔖";
+    bm.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = document.getElementById("bookmark-add-btn");
+      if (target) {
+        target.click();
+        // Visual flash + status echo since the target now lives
+        // in the (closed) pull-up drawer where the user can't see
+        // its own pulse animation.
+        bm.classList.remove("flashed");
+        void bm.offsetWidth;
+        bm.classList.add("flashed");
+      } else {
+        setStatus("Bookmark control not ready yet.", true);
+      }
+    });
+    app.appendChild(bm);
+  }
+
+  // v225.tn48 (#525): Generate audio bar — fixed bottom CTA on
+  // phone when text is loaded but no audio exists yet. Replaces
+  // the desktop-style Generate / Download / Queue silently row,
+  // which ate ~250px below the chapter queue on phone. Download
+  // moves into ☰; Queue silently rides along as a secondary link
+  // here because it's the contextual alternative to Generate.
+  if (!app.querySelector(".phone-generate-bar")) {
+    const bar = document.createElement("div");
+    bar.className = "phone-generate-bar";
+    bar.hidden = true;
+    bar.innerHTML =
+      '<button type="button" class="phone-generate-btn" aria-label="Generate audio from this text">' +
+      '<span class="phone-generate-icon" aria-hidden="true">▶</span>' +
+      '<span class="phone-generate-label">Generate audio</span>' +
+      "</button>" +
+      '<button type="button" class="phone-generate-queue" aria-label="Queue silently in background">' +
+      "Queue silently →" +
+      "</button>";
+    bar.querySelector(".phone-generate-btn").addEventListener("click", () => {
+      const t = document.getElementById("generate");
+      if (t) t.click();
+    });
+    bar.querySelector(".phone-generate-queue").addEventListener("click", () => {
+      const t = document.getElementById("queue-silently");
+      if (t) t.click();
+    });
+    app.appendChild(bar);
+
+    // Visibility sync. Show when: phone width AND no player card AND
+    // (textarea has text OR chapter queue active) AND generate button
+    // is enabled (means the underlying state machine agrees we can).
+    const _syncGenerateBar = () => {
+      const isPhone = window.matchMedia("(max-width: 767px)").matches;
+      if (!isPhone) {
+        bar.hidden = true;
+        return;
+      }
+      const playerCard = document.getElementById("player-card");
+      const gen = document.getElementById("generate");
+      const text = document.getElementById("text");
+      const playerVisible = playerCard && !playerCard.hidden;
+      const genUsable = gen && !gen.hidden && !gen.disabled;
+      const hasText =
+        (text && (text.value || "").trim().length > 0) ||
+        !!document.querySelector("#chapter-queue-pill:not([hidden])");
+      const shouldShow = !playerVisible && hasText && genUsable;
+      bar.hidden = !shouldShow;
+      // Body data attribute so CSS can shift the chapter-pill / reading
+      // view's bottom padding to clear the bar without measuring it.
+      if (shouldShow) document.body.dataset.phoneGenerateBar = "1";
+      else delete document.body.dataset.phoneGenerateBar;
+    };
+    _syncGenerateBar();
+    const playerCard = document.getElementById("player-card");
+    const gen = document.getElementById("generate");
+    const text = document.getElementById("text");
+    const chapterPill = document.getElementById("chapter-queue-pill");
+    if (playerCard) {
+      new MutationObserver(_syncGenerateBar).observe(playerCard, {
+        attributes: true,
+        attributeFilter: ["hidden"],
+      });
+    }
+    if (gen) {
+      new MutationObserver(_syncGenerateBar).observe(gen, {
+        attributes: true,
+        attributeFilter: ["disabled", "hidden"],
+      });
+    }
+    if (text) text.addEventListener("input", _syncGenerateBar);
+    if (chapterPill) {
+      new MutationObserver(_syncGenerateBar).observe(chapterPill, {
+        attributes: true,
+        attributeFilter: ["hidden"],
+      });
+    }
+    // Resize → media query change can flip phone/desktop mode.
+    window.addEventListener("resize", _syncGenerateBar, { passive: true });
+  }
+
   // Wire menu items → dispatch click() on the corresponding hidden
   // hero button. The hero is display:none on phone but its buttons
   // are still in the DOM with their handlers attached.
@@ -19441,6 +20428,14 @@ function _phoneMenuBoot() {
       library: "library-trigger",
       import: "import-btn",
       new: "clear-btn",
+      // v225.tn47 (#524): Edit text + Book view consolidated into
+      // ☰ from the (removed) pull-up Document section. Same
+      // dispatch pattern as the rest — menu close, then click()
+      // the original button.
+      edit: "edit-text",
+      bookview: "book-view-toggle",
+      // v225.tn48 (#525): Download MP3 dispatch.
+      download: "download",
       settings: "settings-btn",
       help: "help-btn",
     };
@@ -19553,9 +20548,58 @@ function _phonePullupRelocate() {
   move("ab-loop-clear-btn", listeningSlot);
   move("sleep-btn", listeningSlot);
 
-  // Author: annotate mode toggle, bookmark add, notes shortcut.
-  move("annotate-mode-btn", authorSlot);
-  move("bookmark-add-btn", authorSlot);
+  // v225.tn43 (#520): if a prior boot had moved annotate-mode-btn
+  // or bookmark-add-btn into the Author slot, slide them back to
+  // their original .player-actions home (which is hidden via Phase
+  // A CSS). Without this, a stale cached client would still see
+  // them sitting in the drawer until a hard reload rebuilt the DOM.
+  const _legacyChipsToReturn = ["annotate-mode-btn", "bookmark-add-btn"];
+  const _origHome = document.querySelector("#player-card .player-actions");
+  for (const id of _legacyChipsToReturn) {
+    const el = document.getElementById(id);
+    if (el && _origHome && el.parentNode !== _origHome) {
+      _origHome.appendChild(el);
+    }
+  }
+
+  // v225.tn47 (#524): Document controls moved into ☰ menu (#524).
+  // No relocation needed — the actual buttons stay in
+  // .label-row-actions, hidden by CSS (.label-row height:0
+  // overflow:hidden), and the ☰ menu dispatches click() on them.
+  // .import-menu-wrap stays in its original DOM spot too so the
+  // import-menu modal renders via position:fixed when opened.
+  // Defensive cleanup: if a previous build relocated any of these
+  // into the pull-up, return them home so the dispatch still finds
+  // them in their original parent.
+  const _origLabelRowActions = document.querySelector(
+    "#player-card .card-text .label-row-actions, .card-text .label-row-actions"
+  );
+  if (_origLabelRowActions) {
+    const _toReturn = ["clear-btn", "edit-text", "book-view-toggle"];
+    for (const id of _toReturn) {
+      const el = document.getElementById(id);
+      if (el && el.parentNode !== _origLabelRowActions) {
+        _origLabelRowActions.appendChild(el);
+      }
+    }
+    const _importWrap = document.querySelector(".import-menu-wrap");
+    if (_importWrap && _importWrap.parentNode !== _origLabelRowActions) {
+      _origLabelRowActions.appendChild(_importWrap);
+    }
+  }
+
+  // Author: just Notes now. (#520)
+  //   • annotate-mode-btn removed — the arm-and-apply tag flow in
+  //     the bottom tag row auto-enters annotate mode when a chip is
+  //     armed, so the manual toggle is dead UI.
+  //   • bookmark-add-btn removed — the top-right 🔖 button (#519)
+  //     is the user-visible bookmark add now; this row chip
+  //     was duplicated reach.
+  //   Both buttons stay in their original .player-actions home
+  //   (hidden via Phase A CSS); their click() handlers still fire
+  //   when dispatched programmatically (the top-right 🔖 dispatches
+  //   on #bookmark-add-btn, and arming a tag chip calls
+  //   _setAnnotateMode(true) directly).
   move("notes-btn", authorSlot);
 
   // v225m (#508): Bookmarks slot — relocate #bookmarks-list (the
@@ -19568,75 +20612,29 @@ function _phonePullupRelocate() {
     renderBookmarks().catch(() => {});
   }
 
-  // v225m (#508): peek handle tab. Always-visible affordance that
-  // sits above the bottom bar so the pull-up is discoverable.
-  // Tap → toggle. Drag up → open. Drag down (when open) is handled
-  // by the in-drawer grip row.
-  if (!document.querySelector(".phone-pullup-tab")) {
-    const tab = document.createElement("div");
-    tab.className = "phone-pullup-tab";
-    tab.setAttribute("role", "button");
-    tab.setAttribute("aria-label", "Open playback controls");
-    tab.tabIndex = 0;
-    document.body.appendChild(tab);
-
-    // Pointer-events drag: distinguish tap vs drag. Quick + small
-    // movement → tap. Upward drift of >10px → open.
-    let dragStart = null;
-    const TAP_MS = 250;
-    const DRAG_THRESHOLD_PX = 10;
-    tab.addEventListener("pointerdown", (e) => {
-      dragStart = { y: e.clientY, t: Date.now() };
-      try { tab.setPointerCapture(e.pointerId); } catch {}
-    });
-    tab.addEventListener("pointermove", (e) => {
-      if (!dragStart) return;
-      const dy = e.clientY - dragStart.y;
-      // Negative dy = upward drag = open the drawer immediately.
-      if (dy < -DRAG_THRESHOLD_PX) {
-        dragStart = null;
-        _phonePullupOpen();
-      }
-    });
-    tab.addEventListener("pointerup", (e) => {
-      if (!dragStart) return;
-      const dy = e.clientY - dragStart.y;
-      const dt = Date.now() - dragStart.t;
-      // Quick + small movement = tap → toggle.
-      if (dt < TAP_MS && Math.abs(dy) < DRAG_THRESHOLD_PX) {
-        _phonePullupToggle();
-      }
-      dragStart = null;
-      try { tab.releasePointerCapture(e.pointerId); } catch {}
-    });
-    tab.addEventListener("pointercancel", () => { dragStart = null; });
-    // Keyboard accessibility: Space / Enter to toggle.
-    tab.addEventListener("keydown", (e) => {
-      if (e.key === " " || e.key === "Enter") {
-        e.preventDefault();
-        _phonePullupToggle();
-      }
-    });
-  }
+  // v225s (#513): peek handle tab removed per user feedback. The
+  // chevron ⌃ button on the bottom player bar (injected below) is
+  // the only open affordance; the in-drawer grip closes. Defensively
+  // remove any tab left over from a stale cached app.js so a partial
+  // SW swap doesn't leave the user with an orphan handle.
+  const _staleTab = document.querySelector(".phone-pullup-tab");
+  if (_staleTab) _staleTab.remove();
 
   // Inject the chevron toggle into the bottom player bar if not
   // already present. Tap to open/close the drawer. Placed at order:0
   // so it sits leftmost in the flex-row bar (before the skip-back
   // button at order:1).
+  // v225.tn38 (#515): the chevron used to inject into the bottom
+  // player bar so the user had a way to open the drawer. The new
+  // tag row (#phone-tag-row) above the player has its own chevron
+  // now — this injection is redundant. Defensively remove any
+  // stale ⌃ left by a previous app.js so cached clients don't end
+  // up with two chevrons.
   const playerCard = document.getElementById("player-card");
-  if (playerCard && !playerCard.querySelector(".phone-pullup-toggle")) {
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "phone-pullup-toggle";
-    toggle.setAttribute("aria-label", "Open playback controls");
-    toggle.title = "More controls";
-    toggle.textContent = "⌃";
-    toggle.addEventListener("click", (e) => {
-      e.stopPropagation();
-      _phonePullupToggle();
-    });
-    playerCard.appendChild(toggle);
-  }
+  const _stalePullToggle = playerCard
+    ? playerCard.querySelector(".phone-pullup-toggle")
+    : null;
+  if (_stalePullToggle) _stalePullToggle.remove();
 
   // Tap the grip row to close (in addition to the scrim).
   const grip = document.querySelector(".phone-pullup-grip-row");

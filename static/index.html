@@ -1152,6 +1152,20 @@
                 aria-label="Clear stored token"
               >Clear</button>
             </div>
+            <!-- v225.tn50 (#527): "Test token" probes GitHub /user
+                 with the saved token and reports whether GitHub
+                 accepts it. Disambiguates "token not on this device"
+                 from "token rejected by GitHub" — both currently
+                 surface as the same opaque 401 in the picker. -->
+            <div class="settings-token-row settings-token-test-row">
+              <button
+                id="settings-github-token-test"
+                type="button"
+                class="settings-token-test"
+                hidden
+                aria-label="Verify this device's saved token with GitHub"
+              >Test token</button>
+            </div>
           </div>
 
           <!-- v220f: version stamp at the bottom of Settings. Lets
@@ -1159,7 +1173,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225q</span>
+            Narrative <span id="settings-version-tag">v225am</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2172,6 +2186,32 @@
         <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
       </section>
 
+      <!-- v225.tn38 (#515): persistent tag row above the bottom player
+           bar. Spotify-style "double stack" bottom — playback below,
+           quick-action chips above. Tapping a chip flags the
+           currently-narrating sentence (via activeSentenceIdx) so the
+           author doesn't have to tap the sentence first. The chevron
+           on the right opens the full controls drawer below.
+           JS at boot populates the chip row from ANNOTATE_TAGS so
+           the icons stay in sync with one source of truth. -->
+      <div id="phone-tag-row" class="phone-tag-row">
+        <div id="phone-tag-row-chips" class="phone-tag-row-chips"></div>
+        <button
+          type="button"
+          id="phone-tag-row-voice"
+          class="phone-tag-row-voice"
+          aria-label="Record voice note on current sentence"
+          title="Voice note on current sentence"
+        >🎤</button>
+        <button
+          type="button"
+          id="phone-tag-row-chevron"
+          class="phone-tag-row-chevron"
+          aria-label="More controls"
+          title="More controls"
+        >⌃</button>
+      </div>
+
       <!-- v225.mobile / Phase B (#503): pull-up controls card. Phone
            only — display:none on desktop. Fixed-positioned above the
            bottom player bar. Closed by default (transform:
@@ -2203,6 +2243,25 @@
           <button class="phone-menu-item" data-action="new" type="button">
             <span class="phone-menu-icon" aria-hidden="true">✚</span>
             <span>New clip</span>
+          </button>
+          <!-- v225.tn47 (#524): Edit text + Book view consolidated
+               into ☰ from the (removed) pull-up Document section.
+               Live data-action ids match the triggers map in JS. -->
+          <button class="phone-menu-item" data-action="edit" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">✏</span>
+            <span>Edit text</span>
+          </button>
+          <button class="phone-menu-item" data-action="bookview" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">📖</span>
+            <span>Book view / Audio view</span>
+          </button>
+          <!-- v225.tn48 (#525): Download MP3 — moved here from the
+               text card's secondary actions row. Only useful AFTER
+               audio is generated; the ☰ family of "what document"
+               actions is the right home. -->
+          <button class="phone-menu-item" data-action="download" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">↓</span>
+            <span>Download MP3</span>
           </button>
           <div class="phone-menu-divider"></div>
           <button class="phone-menu-item" data-action="settings" type="button">
@@ -2243,6 +2302,11 @@
             <h3>Author</h3>
             <div class="phone-pullup-slots" data-slot="author"></div>
           </section>
+          <!-- v225.tn47 (#524): Document controls (Clear, Import,
+               Edit text, Book/Audio view) moved into the ☰ menu.
+               Pull-up now scopes purely to "how am I listening" —
+               playback dials, listening session tools, author
+               annotations, and bookmarks. -->
           <section class="phone-pullup-section">
             <h3>Bookmarks</h3>
             <!-- v225m (#508): #bookmarks-list relocates here at boot.

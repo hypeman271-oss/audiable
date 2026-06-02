@@ -15,23 +15,53 @@
 
   /* Semantic tokens. Tuned per-theme so the dark UI's white-alpha borders
      become black-alpha in light mode (otherwise everything looks washed
-     out and the cards lose their edges). */
-  --border-soft: var(--border-soft);
-  --border: var(--border);
-  --border-strong: var(--border-strong);
-  --border-emph: var(--border-emph);
-  --scrim: var(--scrim);
-  --glass: var(--glass);
-  --hover-soft: var(--hover-soft);
+     out and the cards lose their edges).
+
+     v225+ (#503): replacing the self-referential placeholders that used
+     to live here. They were defined as `--border: var(--border);` etc.,
+     which CSS treats as invalid → the property silently resolves to
+     nothing → in DARK mode (which is the default) every card border,
+     hover tint, scrim, and accent wash that used these tokens rendered
+     transparent / missing. The light theme block below DID define real
+     values for these, so light mode was fine, masking the bug. The
+     ladder of alpha values mirrors the light theme's intent: soft <
+     normal < strong < emph as the visual weight increases. White-alpha
+     here because the dark surfaces (--bg #0b1020, --bg-card #141a30)
+     are dark enough that low-alpha-white reads as a subtle, neutral
+     border without competing with the accent color. */
+  --border-soft:     rgba(255, 255, 255, 0.05);
+  --border:          rgba(255, 255, 255, 0.08);
+  --border-strong:   rgba(255, 255, 255, 0.12);
+  --border-emph:     rgba(255, 255, 255, 0.18);
+  /* Scrim for dialog/sheet/pull-up backdrops. Pure black at 55% reads
+     as "the rest of the app is dimmed but not gone." Higher alpha than
+     light mode (0.35) because dark surfaces have lower contrast with
+     a black overlay — needs more push to feel distinct. */
+  --scrim:           rgba(0, 0, 0, 0.55);
+  /* Glass for translucent surfaces (mini-player, hero-controls float,
+     manual dialog header). Uses --bg-card at high opacity so the
+     backdrop-filter blur effect actually shows. */
+  --glass:           rgba(20, 26, 48, 0.88);
+  /* Hover wash for list rows + outline pills. Subtle enough that a
+     non-hovering eye sees "no border change" but the hover state still
+     reads on mouseover. */
+  --hover-soft:      rgba(255, 255, 255, 0.04);
   /* Text color for buttons painted with var(--accent) as their fill. In
      dark mode the accent is light blue, so dark text reads best; in light
      mode the accent flips to a deeper blue and we want white text on it. */
   --on-accent: #0b1020;
-  --accent-tint: var(--accent-tint);
-  --accent-tint-2: var(--accent-tint-2);
-  --accent-tint-3: var(--accent-tint-3);
-  --danger-tint: var(--danger-tint);
-  --danger-tint-soft: var(--danger-tint-soft);
+  /* Accent-tint ladder for tinted backgrounds (selected pill bg,
+     "active" row highlights, etc.). The dark-mode accent is #7c9cff
+     (light blue), so RGB(124,156,255) at three weights. Slightly higher
+     alpha than light mode because the dark surface needs more push for
+     the tint to read. */
+  --accent-tint:     rgba(124, 156, 255, 0.14);
+  --accent-tint-2:   rgba(124, 156, 255, 0.20);
+  --accent-tint-3:   rgba(124, 156, 255, 0.28);
+  /* Danger-tint for "remove/delete" hover washes. Mirrors the
+     --danger color at low alpha. */
+  --danger-tint:     rgba(255, 124, 124, 0.14);
+  --danger-tint-soft: rgba(255, 124, 124, 0.08);
   --bg-gradient-edge: #1c2550;
   --played-fg: #b9c3eb;
   --shadow-mini: 0 6px 22px rgba(0, 0, 0, 0.4);
@@ -1464,6 +1494,93 @@ dialog.manual-dialog:not([open]) {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--fg-dim);
+  /* v225.tn52 (#529): sticky inside the settings-body scroll so the
+     current section's label stays anchored as the user scrolls
+     through controls. top:48px clears the sticky nav bar above. */
+  position: sticky;
+  top: 48px;
+  z-index: 2;
+  background: var(--bg-card);
+}
+/* Same sticky treatment for admin-section labels (Maintenance,
+   Tester keys, GitHub) — they're H3-equivalents in this dialog. */
+.settings-body > .settings-section > .settings-section-label {
+  position: sticky;
+  top: 48px;
+  z-index: 2;
+  background: var(--bg-card);
+  padding: 12px 0 4px;
+  margin-top: 6px;
+}
+
+/* v225.tn52 (#529): jump-to chip row + fingerprint badge.
+   Injected at the top of .settings-body on dialog open. Sticky so
+   it stays reachable while the user scrolls. */
+.settings-nav-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: -16px -16px 0;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-nav-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 4px;
+  scrollbar-width: none;
+}
+.settings-nav-chips::-webkit-scrollbar {
+  display: none;
+}
+.settings-nav-chip {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  background: var(--hover-soft);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.settings-nav-chip:hover,
+.settings-nav-chip:focus-visible {
+  background: var(--accent-tint-soft, var(--hover-soft));
+  color: var(--accent, var(--fg));
+}
+.settings-nav-chip.active {
+  background: var(--accent);
+  color: var(--accent-on, #fff);
+  border-color: var(--accent);
+}
+.settings-nav-fingerprint {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 2px 0 0;
+}
+.settings-nav-fingerprint[data-role="admin"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+.settings-nav-fingerprint[data-role="tester"] {
+  color: var(--fg);
+}
+.settings-nav-fingerprint[data-role="none"] {
+  color: var(--danger, var(--fg-dim));
 }
 /* First subheader in the dialog doesn't need a top hairline — the
  * dialog's own padding already separates it from the close button. */
@@ -1627,6 +1744,33 @@ dialog.manual-dialog:not([open]) {
 .settings-token-clear:hover {
   background: var(--hover-soft);
   color: var(--fg);
+}
+
+/* v225.tn50 (#527): Test token button — small action under the
+   token-paste row that probes /api/github/user with the saved
+   token. Reveals whether GitHub accepts this device's token in
+   one tap (vs. inferring from the picker's opaque 401). */
+.settings-token-test-row {
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.settings-token-test {
+  padding: 8px 14px;
+  background: var(--accent-tint-soft, var(--hover-soft));
+  color: var(--accent, var(--fg));
+  border: 1px solid var(--accent, var(--border));
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+.settings-token-test:hover {
+  background: var(--accent-tint, var(--hover-soft));
+}
+.settings-token-test:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 /* v140: token-status banner. Lives at the top of the GitHub section
@@ -8174,9 +8318,169 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   }
 
   /* Push body content above the fixed bottom bar so the last
-     paragraph isn't hidden. ~80px covers the player + safe area. */
+     paragraph isn't hidden. v225.tn38: bumped to account for the
+     new tag row that stacks above the player bar (player ~64px +
+     tag row ~52px + breathing room). */
   body {
-    padding-bottom: calc(86px + env(safe-area-inset-bottom));
+    padding-bottom: calc(140px + env(safe-area-inset-bottom));
+  }
+
+  /* ── v225.tn38 (#515): persistent tag row above the player bar.
+     Spotify-style double-deck bottom. Sits at z-42 (above player at
+     z-41 and drawer scrim at z-38). Translucent glass surface, same
+     family as the drawer so the two read as one stack when the
+     drawer slides up behind/below it. */
+  .phone-tag-row {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(64px + env(safe-area-inset-bottom));
+    z-index: 42;
+    height: 52px;
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.25);
+    /* v225.tn56 (#539): suppress OS text-selection on long-press of
+       tag chips. Without these, an Android long-press on a chip
+       fell through to the reading-view text underneath (the tag
+       row is translucent) and triggered Copy/Share/Select-all
+       context menus. -webkit-touch-callout kills iOS Safari's
+       callout too. touch-action:manipulation also disables
+       double-tap-to-zoom on the chips. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  .phone-tag-row-chips {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .phone-tag-row-chips::-webkit-scrollbar {
+    display: none;
+  }
+  /* Each tag chip: solid colored circle with white icon. Reads as
+     "instant action" — these aren't toggle states, each tap fires a
+     flag on the currently-playing sentence. Hover/active state
+     pulses to confirm. */
+  .phone-tag-row-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 0;
+    color: #fff;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform 120ms;
+    /* v225.tn56 (#539): kill OS selection menu on long-press. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  .phone-tag-row-chip:active {
+    transform: scale(0.92);
+  }
+  /* Brief flash animation after a tag fires — visual confirmation
+     so the author knows their tap registered without having to
+     look away from the reading view. */
+  @keyframes _phoneTagChipFlash {
+    0%   { box-shadow: 0 0 0 0 currentColor; }
+    100% { box-shadow: 0 0 0 12px rgba(255, 255, 255, 0); }
+  }
+  .phone-tag-row-chip.flashed {
+    animation: _phoneTagChipFlash 380ms ease-out;
+  }
+  /* v225.tn39 (#516): armed state — the user has tapped this chip
+     and is now expected to tap a sentence. White ring around the
+     chip + slight scale up to read as "loaded and waiting." */
+  .phone-tag-row-chip.armed {
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.95),
+      0 0 0 5px rgba(255, 255, 255, 0.25);
+    transform: scale(1.06);
+  }
+  /* v225.tn40 (#517): voice button gets a pulsing red while
+     MediaRecorder is live. The signal is body-level
+     (data-voice-recording) so any "is recording" UI in the app
+     can hook in — currently just the tag-row mic, but cheap to
+     extend. Touch-action:none ensures the press-hold gesture
+     doesn't get swallowed by browser scroll-snap. */
+  .phone-tag-row-voice {
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  body[data-voice-recording="1"] .phone-tag-row-voice {
+    background: #e53935;
+    color: #fff;
+    border-color: #e53935;
+    animation: _phoneTagVoicePulse 1.1s ease-in-out infinite;
+  }
+  @keyframes _phoneTagVoicePulse {
+    0%, 100% {
+      box-shadow:
+        0 0 0 0 rgba(229, 57, 53, 0.55),
+        0 0 8px 0 rgba(229, 57, 53, 0.45);
+    }
+    50% {
+      box-shadow:
+        0 0 0 9px rgba(229, 57, 53, 0),
+        0 0 12px 2px rgba(229, 57, 53, 0.55);
+    }
+  }
+
+  /* Voice + chevron sit at the right edge as discrete shapes so
+     they don't blend with the colored tag chips. */
+  .phone-tag-row-voice,
+  .phone-tag-row-chevron {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg-card-2);
+    color: var(--fg);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .phone-tag-row-chevron {
+    font-size: 18px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--fg-dim);
+  }
+  .phone-tag-row-chevron:hover {
+    color: var(--fg);
+  }
+
+  /* When the drawer is open, hide the tag row so the drawer
+     fully presents (and the tag chips inside the drawer's chip
+     slots take over). */
+  body[data-pullup="open"] .phone-tag-row {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms;
   }
 
   /* Phase D (#502): when no clip is loaded, #player-card carries
@@ -8191,6 +8495,89 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
      form below works: body sees player[hidden] → no padding. */
   body:has(#player-card[hidden]) {
     padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* Empty state hides the tag row too — without a playing clip
+     there's no "current sentence" to flag, so the chips would only
+     produce error toasts. (#515) */
+  body:has(#player-card[hidden]) .phone-tag-row {
+    display: none;
+  }
+
+  /* v225.tn55 (#533): first-tap hint above the tag row.
+     Discoverability fix — the tag chips read as decoration until
+     the user discovers they arm. The bubble sits above the tag
+     row pointing down, dismisses on ✕ tap OR on first successful
+     arm-and-apply. Same glass treatment as the tag row so it
+     feels like a paired affordance. */
+  .phone-tag-row-hint {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+    z-index: 41;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--glass, rgba(20, 20, 30, 0.88));
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    font-size: 13px;
+    line-height: 1.35;
+    animation: phone-tag-row-hint-in 280ms ease-out both;
+  }
+  .phone-tag-row-hint[hidden] {
+    display: none;
+  }
+  .phone-tag-row-hint::after {
+    content: "";
+    position: absolute;
+    bottom: -6px;
+    left: 28px;
+    width: 12px;
+    height: 12px;
+    background: inherit;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    transform: rotate(45deg);
+  }
+  .phone-tag-row-hint-icon {
+    flex: 0 0 auto;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .phone-tag-row-hint-text {
+    flex: 1 1 auto;
+  }
+  .phone-tag-row-hint-dismiss {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 0;
+    color: var(--fg-dim);
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 6px;
+  }
+  .phone-tag-row-hint-dismiss:hover {
+    background: var(--hover-soft);
+    color: var(--fg);
+  }
+  body:has(#player-card[hidden]) .phone-tag-row-hint,
+  body[data-pullup="open"] .phone-tag-row-hint {
+    display: none;
+  }
+  @keyframes phone-tag-row-hint-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
   /* ── Phase A.2 (#502 cont'd): kill the "white-card border" feel.
@@ -8226,6 +8613,434 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     margin: 0;
     box-shadow: none;
   }
+  /* v225.tn47 (#524): the four document controls (Clear / Import /
+     Edit text / Book view) now live in the ☰ menu and dispatch
+     click() on the original buttons. The original buttons must stay
+     in the render tree — display:none would prevent the Import
+     menu's centered-modal mode from rendering (position:fixed
+     children of display:none don't paint). height:0 + overflow:
+     hidden visually hides the row while keeping its descendants
+     in the layout tree, so position:fixed escapes cleanly. */
+  .card.card-text > .label-row {
+    height: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  /* v225.tn48 (#525): hide the desktop Generate / Download / Queue
+     silently rows. Replaced by .phone-generate-bar (fixed bottom)
+     for Generate + Queue silently, and a ↓ Download MP3 entry in
+     the ☰ menu. Keep the buttons in the DOM (the ☰ dispatch + the
+     bar's own click() target them) — visibility:hidden + height:0
+     keeps their tabindex etc. behaving without painting them. */
+  .actions.card-actions,
+  .actions-secondary {
+    height: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    visibility: hidden;
+  }
+
+  .phone-generate-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+  .phone-generate-bar[hidden] {
+    display: none;
+  }
+  .phone-generate-btn {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 16px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent-on, #fff);
+    background: var(--accent, #6c63ff);
+    border: 0;
+    border-radius: 12px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(108, 99, 255, 0.25);
+  }
+  .phone-generate-btn:active {
+    transform: translateY(1px);
+  }
+  .phone-generate-icon {
+    font-size: 13px;
+    line-height: 1;
+  }
+  .phone-generate-queue {
+    flex: 0 0 auto;
+    padding: 12px 6px;
+    background: transparent;
+    border: 0;
+    color: var(--accent, #6c63ff);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  /* When the Generate bar is up, give the body bottom padding so the
+     last bit of scrollable content (chapter pill / textarea) clears
+     the bar instead of hiding under it. The bar is ~64px tall plus
+     safe-area; 84px covers typical iOS bottom inset. */
+  body[data-phone-generate-bar="1"] {
+    padding-bottom: 84px;
+  }
+
+  /* v225.tn49 (#526): phone manual viewer — full-screen, swipeable
+     section sheets parsed from manual.html. Replaces the iframe-in-
+     dialog on phone where navigation was painful (no map, no jump,
+     no sticky context). Desktop keeps the iframe; this only paints
+     when JS injects #phone-manual-viewer. */
+  .phone-manual-viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg, #0f0f12);
+    color: var(--fg, #eee);
+  }
+  .phone-manual-viewer[hidden] {
+    display: none;
+  }
+  /* Lock body scroll while the viewer is open so the underlying app
+     doesn't move when the user swipes pages. */
+  body[data-phone-manual-open="1"] {
+    overflow: hidden;
+  }
+
+  .pmv-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+  }
+  .pmv-close,
+  .pmv-toc-btn {
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--fg);
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .pmv-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+  }
+  .pmv-section-num {
+    font-size: 11px;
+    color: var(--fg-dim, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .pmv-section-name {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pmv-pages {
+    flex: 1 1 auto;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .pmv-pages::-webkit-scrollbar {
+    display: none;
+  }
+  .pmv-page {
+    flex: 0 0 100%;
+    width: 100%;
+    height: 100%;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 18px 24px;
+    box-sizing: border-box;
+  }
+  .pmv-loading {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-dim, #888);
+    font-size: 14px;
+  }
+  .pmv-loading-error {
+    color: var(--danger, #ff7070);
+  }
+
+  /* Prose styling inside each section. The manual's own stylesheet
+     lives in manual.html and isn't inherited here (we're rendering
+     extracted nodes into our document), so we restate the basics. */
+  .pmv-page h2 {
+    font-size: 22px;
+    margin: 0 0 12px;
+    line-height: 1.25;
+  }
+  .pmv-page h3 {
+    font-size: 17px;
+    margin: 22px 0 8px;
+    line-height: 1.3;
+  }
+  .pmv-page h4 {
+    font-size: 14px;
+    margin: 16px 0 6px;
+    line-height: 1.3;
+    color: var(--fg-dim, #aaa);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .pmv-page p,
+  .pmv-page li {
+    font-size: 15px;
+    line-height: 1.55;
+    margin: 0 0 10px;
+  }
+  .pmv-page ul,
+  .pmv-page ol {
+    padding-left: 22px;
+    margin: 0 0 14px;
+  }
+  .pmv-page code {
+    font-size: 13px;
+    padding: 1px 5px;
+    background: var(--hover-soft, rgba(255, 255, 255, 0.06));
+    border-radius: 4px;
+  }
+  .pmv-page pre {
+    font-size: 12px;
+    padding: 10px;
+    background: var(--hover-soft, rgba(255, 255, 255, 0.06));
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  .pmv-page blockquote {
+    border-left: 3px solid var(--accent, #6c63ff);
+    margin: 12px 0;
+    padding: 6px 12px;
+    color: var(--fg-dim, #aaa);
+  }
+  .pmv-page img {
+    max-width: 100%;
+    height: auto;
+  }
+  .pmv-page a {
+    color: var(--accent, #6c63ff);
+    text-decoration: underline;
+  }
+  .pmv-page table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 10px 0;
+  }
+  .pmv-page th,
+  .pmv-page td {
+    border: 1px solid var(--border);
+    padding: 6px 8px;
+    text-align: left;
+  }
+
+  .pmv-footer {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+  }
+  .pmv-prev,
+  .pmv-next {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--fg);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .pmv-prev:disabled,
+  .pmv-next:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .pmv-dots {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 6px;
+  }
+  .pmv-dots::-webkit-scrollbar {
+    display: none;
+  }
+  .pmv-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    padding: 0;
+    background: var(--border-soft, rgba(255, 255, 255, 0.18));
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.18s, transform 0.18s;
+  }
+  .pmv-dot.active {
+    background: var(--accent, #6c63ff);
+    transform: scale(1.4);
+  }
+
+  /* TOC sheet — slides up from the bottom, full-height panel that
+     covers the viewer when open. The active section item highlights
+     so the user knows where they jumped from. */
+  .pmv-toc-sheet {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+  }
+  .pmv-toc-sheet[hidden] {
+    display: none;
+  }
+  .pmv-toc-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+  }
+  .pmv-toc-header h2 {
+    margin: 0;
+    font-size: 18px;
+  }
+  .pmv-toc-close {
+    width: 36px;
+    height: 36px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--fg);
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .pmv-toc-list {
+    flex: 1 1 auto;
+    list-style: none;
+    margin: 0;
+    padding: 8px 12px 16px;
+    overflow-y: auto;
+  }
+  .pmv-toc-list li {
+    margin: 0;
+  }
+  .pmv-toc-item {
+    width: 100%;
+    text-align: left;
+    padding: 14px 14px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
+    color: var(--fg);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .pmv-toc-item.active {
+    color: var(--accent, #6c63ff);
+    background: var(--accent-tint-soft, rgba(108, 99, 255, 0.08));
+    border-radius: 8px;
+  }
+
+  /* v225.tn45 (#522): Import dropdown becomes a centered modal on
+     phone. The default dropdown UX (absolutely positioned next to
+     the trigger) doesn't work well inside the pull-up drawer — the
+     menu would either get clipped by the drawer's scroll container
+     or land off-screen. Switching to a viewport-centered card
+     means the menu always lands somewhere reachable. JS closes the
+     pull-up when this fires so the user sees the modal land
+     cleanly instead of stacked over the drawer.
+
+     The dim "scrim" is a massive-spread box-shadow rather than a
+     separate DOM element. This sidesteps the stacking-context trap
+     from v225j (.app has z-index:1 so a body-level scrim paints
+     OVER everything inside .app). Box-shadow extends visually
+     outward from the menu without leaving its parent's stack. */
+  body[data-import-menu="open"] #import-menu {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%);
+    z-index: 90;
+    min-width: 86vw;
+    max-width: 360px;
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow:
+      0 0 0 100vmax rgba(0, 0, 0, 0.55),
+      0 12px 40px rgba(0, 0, 0, 0.6);
+  }
+  /* The Import ▾ trigger button inside the pull-up. Hide the
+     trigger's wrap from claiming layout space while the menu is in
+     modal mode (it would otherwise sit invisible behind the scrim
+     but still influence flow). */
+  body[data-import-menu="open"] .import-menu-wrap {
+    position: static;
+  }
 
   /* Reading view: no inner card chrome, no viewport-height cap.
      Modest internal padding so text doesn't kiss the edge. Slight
@@ -8238,6 +9053,53 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     max-height: none;
     min-height: 0;
     font-size: 17px;
+  }
+
+  /* v225.tn51 (#528): on phone, once a clip is loaded, lock the
+     whole-page scroll. The reading view's own internal scroll is
+     the ONLY scroll surface — keeps the audio view's auto-scroll
+     (current sentence in upper third) the dominant motion. The
+     empty space that used to sit between the reading view and the
+     bottom player bar is gone; readers can't scroll into dead air.
+
+     Implementation: lock body height + overflow; pin .card.card-text
+     to fixed-position between the top safe area and a reserved
+     bottom slot (96px covers the player bar with safe-area; tag row
+     is glass-translucent above and overlaps OK). The reading view
+     inside the card flexes to fill and scrolls internally.
+
+     Empty state (no clip loaded) keeps normal page scrolling so the
+     empty-state cards / textarea remain reachable. */
+  body:has(#player-card:not([hidden])) {
+    overflow: hidden;
+    height: 100dvh;
+    height: 100svh;
+  }
+  body:has(#player-card:not([hidden])) .card.card-text {
+    position: fixed;
+    top: calc(56px + env(safe-area-inset-top, 0px));
+    left: 0;
+    right: 0;
+    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    z-index: 1;
+    margin: 0;
+  }
+  body:has(#player-card:not([hidden])) #reading-view,
+  body:has(#player-card:not([hidden])) #text {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Empty-state cards / banners that sit above the text card in the
+     normal DOM are not relevant once a clip is loaded — push them
+     out of the locked pane. They render off-screen but stay in DOM. */
+  body:has(#player-card:not([hidden])) .empty-state-cards,
+  body:has(#player-card:not([hidden])) #empty-state-first-clip {
+    display: none;
   }
 
   /* v225m (#508): #bookmarks-list lives in the pull-up's Bookmarks
@@ -8267,18 +9129,18 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     max-height: 70vh;
     padding: 0 12px calc(96px + env(safe-area-inset-bottom));
     overflow-y: auto;
-    /* Solid card surface — the earlier color-mix(var(--surface)…)
-       referenced an undefined token and silently resolved to
-       transparent, which is why the reading text was bleeding
-       through. Use --bg-card directly (the same surface every
-       other card in the app uses). */
-    background: var(--bg-card);
-    /* Strong backdrop blur for whatever shows under the safe-area
-       padding strip on iPhones with the gesture bar. Not load-
-       bearing for legibility now that the background is opaque. */
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    /* v225t (#514): translucent glass surface. --glass landed as a
+       real token in #503 (was self-referential / undefined before).
+       The scrim sibling dims the reading view behind the drawer; the
+       glass + blur here softens it further so the section labels
+       and chips float over a Spotify-style frosted backdrop instead
+       of a flat dark slab. Chips inside already have solid
+       --bg-card-2 backgrounds so their text stays legible against
+       the blurred-and-dimmed underlayer. */
+    background: var(--glass);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border-top: 1px solid var(--border);
     border-radius: 18px 18px 0 0;
     box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.55);
     transform: translateY(100%);
@@ -8306,43 +9168,11 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     opacity: 0.55;
   }
 
-  /* v225m (#508): peek handle tab that sits ABOVE the bottom bar
-     when the drawer is closed. Always visible so the user can
-     discover the pull-up affordance; supports tap to toggle and
-     drag-up to open. JS injects the element at boot. */
-  .phone-pullup-tab {
-    position: fixed;
-    left: 50%;
-    transform: translateX(-50%);
-    bottom: calc(72px + env(safe-area-inset-bottom));
-    width: 72px;
-    height: 24px;
-    z-index: 42;          /* above the player bar (z 41) */
-    background: var(--bg-card);
-    border-radius: 12px 12px 0 0;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-bottom: 0;
-    cursor: grab;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    touch-action: none;   /* let JS handle pointer drag */
-  }
-  .phone-pullup-tab::before {
-    content: "";
-    width: 38px;
-    height: 4px;
-    border-radius: 999px;
-    background: var(--fg-dim);
-    opacity: 0.6;
-  }
-  /* When the drawer is open, hide the tab — the in-drawer grip
-     takes over as the close affordance. */
-  body[data-pullup="open"] .phone-pullup-tab {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 150ms;
-  }
+  /* v225s (#513): peek handle tab removed per user feedback. The
+     chevron ⌃ button on the bottom player bar still opens the
+     drawer; the in-drawer grip closes it. Keeping this comment so
+     a future reader doesn't re-add the tab without checking why
+     we took it out. */
   .phone-pullup-content {
     padding: 4px 0 16px;
   }
@@ -8469,7 +9299,9 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   #phone-pullup-scrim,
   #phone-menu,
   #phone-menu-scrim,
-  .phone-menu-btn {
+  .phone-menu-btn,
+  .phone-bookmark-btn,
+  #phone-tag-row {
     display: none !important;
   }
 }
@@ -8514,6 +9346,52 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   }
   .phone-menu-btn:hover {
     background: var(--bg-card-2);
+  }
+
+  /* v225.tn42 (#519): quick-access bookmark button at top-right.
+     Mirrors the ☰ menu button on the opposite side so the two are
+     reachable with the corresponding thumb during one-handed use.
+     Tap fires the existing #bookmark-add-btn handler (relocated
+     into the pull-up drawer in Phase B) so all wiring + sync
+     stays consistent — no second source of truth. Badge shows
+     the current bookmark count so the author can see whether
+     they've already marked this spot recently. */
+  .phone-bookmark-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    right: 12px;
+    z-index: 41;
+  }
+  .phone-bookmark-btn:hover {
+    background: var(--bg-card-2);
+  }
+  .phone-bookmark-btn:active {
+    transform: scale(0.92);
+  }
+  /* Brief flash to confirm the tap landed + the bookmark was saved. */
+  @keyframes _phoneBookmarkFlash {
+    0%   { box-shadow: 0 0 0 0 var(--accent); }
+    100% { box-shadow: 0 0 0 14px rgba(124, 156, 255, 0); }
+  }
+  .phone-bookmark-btn.flashed {
+    animation: _phoneBookmarkFlash 420ms ease-out;
+  }
+  /* Hide when no clip loaded — same gate as the tag row. */
+  body:has(#player-card[hidden]) .phone-bookmark-btn {
+    display: none;
   }
 
   /* Phase C: hide the legacy hero row entirely on phone. The brand
