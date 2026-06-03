@@ -2674,6 +2674,49 @@ dialog.manual-dialog:not([open]) {
   color: var(--fg-dim);
   line-height: 1.4;
 }
+/* v225ej (#626): small "Watch tutorial" link inside each empty-state
+   tile. Sits at the bottom in muted accent so it reads as a secondary
+   affordance — the primary action is still "click anywhere on the
+   tile to start." Click handler stopPropagation()s so the tile's
+   action doesn't fire. */
+/* v225ff (#648): full-width bottom row instead of a tiny inline link.
+ * Tester reported missing it and triggering the parent tile action on
+ * phone. Top border + tinted background make it read as a discrete
+ * secondary affordance; vertical padding lifts it to a 44px+ tap
+ * target on phone. The click handler in app.js still stopPropagation()s
+ * so the parent tile's data-empty-action doesn't fire when the user
+ * taps inside this row. */
+.empty-state-tutorial-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  /* Card padding is 14px 12px (see .empty-state-card above). Negative
+   * margins flush the row to the card's bottom-left/right edges so the
+   * border-top spans the full width and the tap zone fills the
+   * available real estate. */
+  margin: 12px -12px -14px;
+  padding: 14px 12px;
+  border-top: 1px solid var(--border-soft);
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.empty-state-tutorial-link:hover,
+.empty-state-tutorial-link:focus-visible {
+  background: var(--accent-tint);
+  color: var(--accent);
+  outline: none;
+}
+.empty-state-tutorial-link:active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
 
 /* v220c: arrow + hint below the cards, pointing at the textarea so
  * testers who looked at the cards still get told "or just paste/type
@@ -9674,6 +9717,26 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     -webkit-overflow-scrolling: touch;
     padding: 16px 18px 24px;
     box-sizing: border-box;
+    /* v225es (#636): guard against descendants that try to size
+       wider than the viewport (tutorial walkthroughs were doing
+       this). overflow-x: hidden clips, min-width: 0 lets it
+       actually shrink past its content's intrinsic minimum. */
+    overflow-x: hidden;
+    min-width: 0;
+  }
+  /* v225es (#636): the phone manual viewer adds .manual to
+     #pmv-pages so descendant selectors (.manual h2, .manual .wt
+     etc.) work the same way they do on the desktop manual page.
+     But .manual's OWN self-styles (max-width: 760px, padding:
+     24px 18px 80px, margin: 0 auto) were also landing on the
+     swipe container — and a max-width on a horizontally-scrolling
+     flex parent breaks the snap layout AND squeezes child pages
+     narrower than viewport. Neutralize those self-styles when
+     .manual lives on .pmv-pages; descendant rules still apply. */
+  .pmv-pages.manual {
+    max-width: none;
+    padding: 0;
+    margin: 0;
   }
   .pmv-loading {
     flex: 1 1 100%;
@@ -10418,6 +10481,83 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     display: none;
   }
 
+  /* v225fk (#653): Import icon. Same dimensions / hit zone as the
+   * bookmark button. Sits at right:60px when the bookmark button is
+   * visible (clip loaded) so they share the top-right strip, and
+   * flushes to right:12px when the bookmark button hides (no clip
+   * loaded — this is the "lonely header" state the tester reported).
+   * Always visible on phone so first-time users always have a path
+   * to start. */
+  .phone-import-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    right: 60px; /* default — bookmark is at right:12px when shown */
+    z-index: 41;
+  }
+  .phone-import-btn:hover {
+    background: var(--bg-card-2);
+  }
+  .phone-import-btn:active {
+    transform: scale(0.92);
+  }
+  /* No clip loaded → bookmark is hidden, Import takes the flush-right
+   * slot so the top-right doesn't look offset from the edge. */
+  body:has(#player-card[hidden]) .phone-import-btn {
+    right: 12px;
+  }
+
+  /* v225eb (#615): clip title between ☰ (left:52) and the 📚 button
+     (left edge at viewport - 196). Available space is tight on
+     phones: 320px viewport gives ~60px; 375px gives ~115px; 414px
+     gives ~154px. clamp() scales the font with viewport width so
+     narrow screens get smaller text instead of an ellipsis-after-
+     two-letters problem. Left-aligned so the truncation eats the
+     END of the title — readers recognize a title by its first
+     word, not its last. */
+  .phone-top-title {
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    left: 60px;     /* clears the 40px ☰ + 8px gap */
+    right: 200px;   /* clears 📚 (right:156) + its 40px width + 4px breath */
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    z-index: 40;    /* one below the buttons (41) so they always win taps */
+    pointer-events: none;
+    color: var(--fg);
+    /* 10px floor, 12px target, scales up to 13px on wider phones.
+       Calibrated against a "chapter_00_draft" (16 char) sample so
+       even iPhone SE renders the full word "chapter" before
+       truncating. */
+    font-size: clamp(10px, 3vw, 13px);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Hide when no clip loaded — same gate family as the other
+     clip-dependent top-bar elements. */
+  body:has(#player-card[hidden]) .phone-top-title {
+    display: none;
+  }
+
   /* v587/v588/v593: top-right icon cluster, right-to-left order:
        🔖  Bookmark  (right: 12px)  — quick marker
        📖  Bookview  (right: 60px)  — view toggle, clip-gated
@@ -10634,4 +10774,846 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   v225en (#631) + v225ep (#632): persistent sidebars at ≥1280px.
+   Two independent flags on <body>:
+     • data-multipane-library — left sidebar (always visible at
+       wide widths)
+     • data-multipane-author  — right sidebar (only when a clip is
+       loaded; rendered by _renderAuthorPane)
+   Each flag pushes the page content on its side via padding so
+   center content doesn't sit under the fixed sidebar.
+   ──────────────────────────────────────────────────────────────── */
+.desktop-library-pane,
+.desktop-author-pane {
+  display: none;
+}
+
+/* v225fd (#646): pane widths are now CSS variables so the resize
+   handles can drive them. Defaults match the v225en/v225eo originals.
+   --pane-min-width / --pane-max-width gate the drag bounds (also
+   enforced in JS to clamp the persisted value). */
+:root {
+  --pane-library-width: 280px;
+  --pane-author-width: 320px;
+  --pane-min-width: 200px;
+  --pane-max-width: 500px;
+}
+
+@media (min-width: 1280px) {
+  body[data-multipane-library="1"] { padding-left: var(--pane-library-width); }
+  body[data-multipane-author="1"]  { padding-right: var(--pane-author-width); }
+
+  /* ── Left: library sidebar ─────────────────────────────────── */
+  body[data-multipane-library="1"] .desktop-library-pane {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--pane-library-width);
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 30;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  body[data-multipane-library="1"] .desktop-library-pane .voice-browser-head {
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    padding: 14px 14px 8px;
+    border-bottom: 1px solid var(--border-soft);
+    z-index: 1;
+  }
+  body[data-multipane-library="1"] .desktop-library-pane .voice-browser-head h2 {
+    font-size: 14px;
+    margin: 0;
+  }
+  body[data-multipane-library="1"] .desktop-library-pane .voice-browser-head .library-head-actions {
+    gap: 8px;
+  }
+  body[data-multipane-library="1"] .desktop-library-pane #library-dialog-close {
+    display: none;
+  }
+  body[data-multipane-library="1"] .desktop-library-pane .library {
+    background: transparent;
+    box-shadow: none;
+    border: 0;
+    border-radius: 0;
+    padding: 8px 12px;
+    max-height: none;
+    overflow: visible;
+  }
+  body[data-multipane-library="1"] .desktop-library-pane #library-search {
+    margin-bottom: 8px;
+  }
+  body[data-multipane-library="1"] .desktop-library-pane .clip {
+    margin-bottom: 6px;
+  }
+  body[data-multipane-library="1"] #library-trigger {
+    display: none;
+  }
+  body[data-multipane-library="1"] .page-backdrop {
+    left: var(--pane-library-width);
+  }
+
+  /* ── Right: author summary pane ────────────────────────────── */
+  body[data-multipane-author="1"] .desktop-author-pane {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: var(--pane-author-width);
+    background: var(--bg-card);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 30;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  body[data-multipane-author="1"] .page-backdrop {
+    right: var(--pane-author-width);
+  }
+  /* When BOTH panes are open at the same time the page backdrop
+     spans only the center column. */
+  body[data-multipane-library="1"][data-multipane-author="1"] .page-backdrop {
+    left: var(--pane-library-width);
+    right: var(--pane-author-width);
+  }
+
+  /* v225ev: voice/library drawer + author pane collision.
+   *
+   * The voice and library drawers are non-modal `<dialog>` elements
+   * pinned to right:0 on desktop drawer mode (≥1024px). The author
+   * pane (#632) is `position: fixed; right: 0; width: 320px;
+   * z-index: 30` — it sits ON TOP of the drawer's right edge,
+   * clipping the voice card's right portion (the speaker picker,
+   * "Use" button, etc. — see the screenshot the user reported).
+   *
+   * Fix: when the author pane is on, shift the drawer's right edge
+   * inward by 320px so the drawer occupies the available space
+   * between the library sidebar (if present) and the author pane.
+   * Z-index bump puts the drawer above the panes so any future
+   * partial-overlap doesn't hide controls — belt and suspenders.
+   */
+  body[data-multipane-author="1"] .voice-dialog,
+  body[data-multipane-author="1"] .library-dialog {
+    right: var(--pane-author-width);
+    z-index: 40;
+  }
+
+  /* v225fe (#647): Voice now lives inside the author pane. Hide the
+   * trigger chip (mirrors the library-trigger hide rule above) and
+   * style the relocated voice contents so they fit the narrower
+   * pane column. */
+  body[data-multipane-author="1"] #voice-trigger {
+    display: none;
+  }
+  .desktop-author-pane .dap-voice-host {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+  }
+  /* The relocated voice-browser-head used to sit in a dialog with a
+   * Close button — useless inside the pane. Hide. The h2 stays as
+   * the section header. */
+  .desktop-author-pane .dap-voice-host .voice-browser-head {
+    padding: 14px 14px 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .desktop-author-pane .dap-voice-host .voice-browser-head h2 {
+    font-size: 14px;
+    margin: 0;
+  }
+  .desktop-author-pane .dap-voice-host #voice-dialog-close {
+    display: none;
+  }
+  /* Voice dialog body inside the pane — drop the dialog-only
+   * max-height + scroll and inherit the pane's scroll instead. */
+  .desktop-author-pane .dap-voice-host .voice-dialog-body {
+    padding: 10px 12px;
+    max-height: none;
+    overflow: visible;
+  }
+  .desktop-author-pane .dap-divider {
+    margin: 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  /* v225ez: fix the actual cause of horizontal overflow (#642).
+   *
+   * The root cause: .app's desktop max-width is
+   *   min(1700px, calc(100vw - 96px))
+   * computed off the FULL viewport. But the multi-pane layout adds
+   * `padding-left: var(--pane-library-width)` (library sidebar) and/or
+   * `padding-right: var(--pane-author-width)` (author pane) to body.
+   * That padding eats into body's content area, but .app's max-width
+   * doesn't know about it — so at wide widths .app extends past body's
+   * available content area, pushing horizontal scroll into pure dead
+   * space.
+   *
+   * Override the max-width to subtract the active pane's padding so
+   * .app actually fits in the center column. v225fd: switched to vars
+   * so resize keeps everything in lockstep.
+   */
+  body[data-multipane-library="1"] .app {
+    max-width: min(1700px, calc(100vw - 96px - var(--pane-library-width)));
+  }
+  body[data-multipane-author="1"] .app {
+    max-width: min(1700px, calc(100vw - 96px - var(--pane-author-width)));
+  }
+  body[data-multipane-library="1"][data-multipane-author="1"] .app {
+    max-width: min(1700px, calc(100vw - 96px - var(--pane-library-width) - var(--pane-author-width)));
+  }
+
+  /* v225fd: drag-to-resize handles on the inside edge of each pane.
+   *
+   * A 6px-wide vertical strip; transparent at rest so it doesn't
+   * compete with the pane border, accent-tinted on hover/drag so it
+   * reads as grabbable. body.pane-resizing locks user-select +
+   * cursor across the whole page during a drag so the cursor doesn't
+   * flicker between i-beam and ew-resize as the pointer crosses text.
+   */
+  .pane-resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: ew-resize;
+    z-index: 35;
+    background: transparent;
+    transition: background 120ms ease;
+    touch-action: none;
+  }
+  .pane-resize-handle:hover,
+  .pane-resize-handle.dragging {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  .pane-resize-handle-right { right: 0; }
+  .pane-resize-handle-left { left: 0; }
+  body.pane-resizing {
+    cursor: ew-resize !important;
+    user-select: none;
+  }
+  body.pane-resizing * {
+    cursor: ew-resize !important;
+  }
+}
+
+/* v225ez: belt-and-suspenders horizontal clip on html + body.
+ *
+ * Ungated from the multi-pane media query because the .app fix
+ * above only handles the multi-pane case; a long word in a clip
+ * title, a wide image, or a future widget could still trigger
+ * horizontal overflow at any width. `overflow-x: clip` blocks
+ * the scroll without establishing a containing block (preserves
+ * sticky positioning on manual TOC + reading view); the `hidden`
+ * preamble is a fallback for the rare browser without clip
+ * support. Phone vertical scroll behavior is unaffected — clip
+ * is horizontal only.
+ */
+html, body {
+  overflow-x: hidden;
+  overflow-x: clip;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   v225er (#635): landscape immersive mode.
+   On phones rotated to landscape the chrome (top bar, tag row,
+   player card, hero, mini-player) slides off-screen so the reading
+   view fills the viewport. Tap anywhere → chrome animates back,
+   3s of no further input → it slides off again. Same idiom as
+   Netflix / YouTube / Audible "now playing" fullscreen.
+   Detection: orientation: landscape AND max-height: 500px — that
+   pattern picks up phones in landscape (typically <500px CSS
+   height) but skips tablets in landscape (~768px+ height).
+   body[data-landscape-immersive] is the gate the matchMedia
+   listener flips; body[data-landscape-hidden] is the hide state
+   the timer toggles.
+   ───────────────────────────────────────────────────────────── */
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Smooth transitions on every chrome element so show/hide rides
+     a single 280ms eased animation. Apply transitions even when
+     visible so the FIRST tap-to-show after rotation eases in
+     instead of snapping. */
+  body[data-landscape-immersive="1"] .phone-menu-btn,
+  body[data-landscape-immersive="1"] .phone-top-title,
+  body[data-landscape-immersive="1"] .phone-library-btn,
+  body[data-landscape-immersive="1"] .phone-edit-btn,
+  body[data-landscape-immersive="1"] .phone-bookview-btn,
+  body[data-landscape-immersive="1"] .phone-bookmark-btn,
+  body[data-landscape-immersive="1"] .hero,
+  body[data-landscape-immersive="1"] #hero-controls-float,
+  body[data-landscape-immersive="1"] .mini-player,
+  body[data-landscape-immersive="1"] .phone-tag-row,
+  body[data-landscape-immersive="1"] .phone-pullup-toggle,
+  body[data-landscape-immersive="1"] .phone-pullup,
+  body[data-landscape-immersive="1"] #player-card {
+    transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+                opacity 280ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform, opacity;
+  }
+
+  /* Hidden state: top elements slide up off the top edge, bottom
+     elements slide down off the bottom edge. Opacity 0 + pointer-
+     events: none so they're truly inert (no accidental taps). */
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-menu-btn,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-top-title,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-library-btn,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-edit-btn,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-bookview-btn,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-bookmark-btn,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .mini-player,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] #hero-controls-float {
+    transform: translateY(-120%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .hero {
+    /* hero is in-flow so animate via clip-path / scale-y instead
+       of translate; otherwise content below jumps. Keep it simple:
+       just fade — height collapse would re-layout the reading
+       view on every show/hide and feel janky. */
+    opacity: 0;
+    pointer-events: none;
+  }
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-tag-row,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-pullup-toggle,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .phone-pullup,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] #player-card {
+    transform: translateY(120%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Subtle visual cue that taps wake chrome — give the reading view
+     a "this is tappable" cursor on phones with mouse plugged in.
+     No-op on touch devices but signals affordance on hover. */
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .card-text,
+  body[data-landscape-immersive="1"][data-landscape-hidden="1"] .reading-view {
+    cursor: pointer;
+  }
+}
+
+/* Author pane internals — applied any time the pane is visible. */
+.desktop-author-pane .dap-head {
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  z-index: 1;
+}
+.desktop-author-pane .dap-head h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--fg);
+  letter-spacing: -0.005em;
+}
+.desktop-author-pane .dap-body {
+  padding: 10px 12px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.desktop-author-pane .dap-empty {
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+  padding: 12px 8px;
+  background: var(--bg-card-2);
+  border-radius: 8px;
+}
+.desktop-author-pane .dap-section h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin: 0 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 700;
+}
+.desktop-author-pane .dap-count {
+  font-size: 10px;
+  color: var(--fg-dim);
+  background: var(--bg-card-2);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.desktop-author-pane .dap-flag-list,
+.desktop-author-pane .dap-bookmark-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.desktop-author-pane .dap-flag-item,
+.desktop-author-pane .dap-bookmark-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  transition: background 120ms;
+}
+.desktop-author-pane .dap-flag-item:hover,
+.desktop-author-pane .dap-bookmark-item:hover {
+  background: var(--hover-soft);
+}
+.desktop-author-pane .dap-flag-icon {
+  font-size: 14px;
+  line-height: 1.4;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card-2);
+}
+.desktop-author-pane .dap-flag-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.desktop-author-pane .dap-flag-where {
+  font-size: 10.5px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+.desktop-author-pane .dap-flag-quote,
+.desktop-author-pane .dap-flag-transcript {
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.desktop-author-pane .dap-flag-transcript {
+  font-style: italic;
+  color: var(--fg-dim);
+}
+.desktop-author-pane .dap-bookmark-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+.desktop-author-pane .dap-bookmark-note {
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.45;
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.desktop-author-pane .dap-bookmark-note:empty::before {
+  content: "(no note)";
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.desktop-author-pane .dap-notes-preview {
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.5;
+  padding: 8px 10px;
+  background: var(--bg-card-2);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  cursor: pointer;
+  max-height: 140px;
+  overflow: hidden;
+  position: relative;
+  transition: background 120ms;
+}
+.desktop-author-pane .dap-notes-preview:hover {
+  background: var(--hover-soft);
+}
+.desktop-author-pane .dap-notes-preview::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24px;
+  background: linear-gradient(to bottom, transparent, var(--bg-card-2));
+  pointer-events: none;
+}
+.desktop-author-pane .dap-notes-preview:hover::after {
+  background: linear-gradient(to bottom, transparent, var(--hover-soft));
+}
+
+/* v225et: command palette.
+ *
+ * Centered floating panel that opens on Cmd/Ctrl+K. Top-third of the
+ * viewport (translateY(-50%) at top: 18vh, not the geometric center —
+ * keeps the result list closer to the user's reading line). Glass fill
+ * to match the rest of the v596 family. Phone hides the trigger entirely
+ * because the ☰ menu + tag row already cover the same primary actions
+ * and phones don't have a keyboard to drive it.
+ */
+.cmdk-trigger {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+@media (max-width: 720px) {
+  .cmdk-trigger {
+    display: none;
+  }
+}
+
+.cmdk-dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  /* Pull above the geometric center so the result list lands in the
+   * upper-third reading zone, not the dead middle. */
+  max-width: min(640px, 92vw);
+  width: 100%;
+  margin: 18vh auto auto;
+}
+.cmdk-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg-page) 55%, transparent);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+}
+.cmdk-shell {
+  background: color-mix(in srgb, var(--bg-card-2) 92%, var(--accent-tint));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  max-height: 70dvh;
+}
+.cmdk-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-card) 80%, transparent);
+}
+.cmdk-input-icon {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-page);
+}
+.cmdk-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.cmdk-input::placeholder {
+  color: var(--text-muted);
+}
+.cmdk-close {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.cmdk-close:hover {
+  background: var(--hover-soft);
+  color: var(--text);
+}
+.cmdk-results {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 80px;
+  padding: 6px 0;
+}
+.cmdk-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 10px 16px 4px;
+}
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.3;
+  border-left: 3px solid transparent;
+  user-select: none;
+}
+.cmdk-item:hover {
+  background: var(--hover-soft);
+}
+.cmdk-item.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left-color: var(--accent);
+}
+.cmdk-item-icon {
+  font-size: 16px;
+  width: 22px;
+  text-align: center;
+  flex: 0 0 22px;
+  opacity: 0.85;
+}
+.cmdk-item-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmdk-item-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-page);
+}
+.cmdk-item.is-active .cmdk-item-hint {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.cmdk-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.cmdk-foot {
+  display: flex;
+  gap: 16px;
+  justify-content: flex-end;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-card) 60%, transparent);
+}
+.cmdk-foot kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-right: 3px;
+}
+
+/* v225eu: 3-way repeat chip.
+ *
+ * Default state ("off") is intentionally muted — the chip should
+ * blend in with the row until the user opts in. Once a mode is
+ * active, the accent color makes the chip pop and reminds the
+ * listener their queue isn't behaving the default way (important
+ * — otherwise they'd be confused when their clip restarts).
+ *
+ * Glyph swap (🔁 ↔ 🔂) is done in JS via .textContent in
+ * _paintRepeatBtn — the CSS only handles color/weight state.
+ */
+.repeat-btn {
+  opacity: 0.55;
+  font-weight: 500;
+}
+.repeat-btn[data-mode="one"],
+.repeat-btn[data-mode="all"] {
+  opacity: 1;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-weight: 700;
+}
+
+/* Active-card title-row badge. Sits at the far right of the title
+ * row alongside the voice name. Subtle but unmistakable — the glyph
+ * carries the meaning, and a soft accent background ties it to the
+ * chip in the player. Inherits font-size from the title row so it
+ * doesn't overpower the title text.
+ */
+.clip-title-top-repeat {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-size: 0.85em;
+  line-height: 1.3;
+  flex: 0 0 auto;
+}
+
+/* v225ew: Voice row in the desktop author pane.
+ *
+ * Identity surface — what voice is reading this clip. Tapping it opens
+ * the existing voice drawer (same handler as the 🎤 hero icon). The
+ * row is a full-width button with the voice name on the left, optional
+ * #speaker suffix, and a "Change…" affordance on the right. Hover
+ * raises the surface like other dap-* clickable rows.
+ */
+.desktop-author-pane .dap-voice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.desktop-author-pane .dap-voice-row:hover,
+.desktop-author-pane .dap-voice-row:focus-visible {
+  background: var(--hover-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  outline: none;
+}
+.desktop-author-pane .dap-voice-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.desktop-author-pane .dap-voice-speaker {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-page);
+}
+.desktop-author-pane .dap-voice-change {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  opacity: 0.9;
+}
+
+/* v225ey: per-card outdated banner.
+ *
+ * Mirrors the desktop git-outdated-banner visual treatment (accent
+ * tint background + accent border) but attaches to the bottom edge
+ * of an individual library card. Pushed past the rounded corners so
+ * it reads as a discrete strip glued to the card. Wraps to two rows
+ * on narrow card widths — message on top, buttons below — instead of
+ * truncating either side.
+ */
+.clip-outdated-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--accent-tint);
+  border-top: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-left: 3px solid var(--accent);
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.clip-outdated-msg {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--text);
+}
+.clip-outdated-msg strong {
+  font-weight: 700;
+  margin-right: 4px;
+}
+.clip-outdated-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.clip-outdated-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.clip-outdated-btn:hover {
+  background: var(--hover-soft);
+  color: var(--text);
+}
+.clip-outdated-btn.primary {
+  background: var(--accent);
+  color: var(--bg-page);
+  border-color: var(--accent);
+}
+.clip-outdated-btn.primary:hover {
+  filter: brightness(1.08);
+}
+.clip-outdated-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }

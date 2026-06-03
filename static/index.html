@@ -339,6 +339,81 @@
     </div>
 
     <main class="app">
+      <!-- v225en (#631): persistent library sidebar at ≥1280px. The
+           library content (head + card body) gets relocated here from
+           #library-dialog at wide viewports via a matchMedia listener.
+           At narrow widths it returns to the dialog. body[data-
+           multipane="library"] is set on relocation so CSS can push
+           .app right by 280px and hide the now-redundant 📚 hero
+           trigger. Empty by default; populated on first wide-viewport
+           init. -->
+      <aside id="desktop-library-pane" class="desktop-library-pane" aria-label="Library"></aside>
+
+      <!-- v225ep (#632): persistent author summary sidebar at ≥1280px
+           when a clip is loaded. Mirrors the phone pull-up Author
+           strip (#611) but renders the full lists, not just counts:
+           flags, voice notes, bookmarks, notes preview — each item
+           clickable to seek to its location. Populated by
+           _renderAuthorPane(); live-updates via the same hooks
+           that drive _updatePullupState. -->
+      <aside id="desktop-author-pane" class="desktop-author-pane" aria-label="Revision pane">
+        <!-- v225fd (#646): drag handle on the INSIDE edge (left) of the
+             pane. Pointerdown captures + drives --pane-author-width.
+             Double-click resets to default. JS gates by viewport. -->
+        <div
+          class="pane-resize-handle pane-resize-handle-left"
+          data-pane="author"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize author pane"
+          title="Drag to resize · double-click to reset"
+        ></div>
+        <!-- v225fe (#647): Voice section. Voice dialog contents
+             (.voice-browser-head + .voice-dialog-body) relocate here
+             at ≥1280px so voice is always reachable without occluding
+             the reading view. Empty by default; populated on first
+             wide-viewport init. On narrow viewports the contents
+             move BACK into #voice-dialog so the modal still works. -->
+        <div class="dap-voice-host"></div>
+        <!-- Divider visually separates the always-on Voice picker from
+             the clip-specific summary below. -->
+        <hr class="dap-divider" />
+        <div class="dap-head">
+          <h2>This clip</h2>
+        </div>
+        <div class="dap-body">
+          <div class="dap-empty" hidden>Load a clip to see flags, bookmarks, and notes here.</div>
+          <!-- v225ew: voice identity. Sits at the top — voice answers
+               "what is this clip" before flags/bookmarks/notes answer
+               "what's IN this clip". Tap the row to open the voice
+               drawer (same as the 🎤 hero icon).  -->
+          <section class="dap-section dap-section-voice" hidden>
+            <h3>Voice</h3>
+            <button
+              type="button"
+              class="dap-voice-row"
+              aria-label="Change voice"
+            >
+              <span class="dap-voice-name"></span>
+              <span class="dap-voice-speaker" hidden></span>
+              <span class="dap-voice-change">Change…</span>
+            </button>
+          </section>
+          <section class="dap-section dap-section-flags" hidden>
+            <h3>Flags <span class="dap-count" data-dap-count="flags"></span></h3>
+            <ol class="dap-flag-list"></ol>
+          </section>
+          <section class="dap-section dap-section-bookmarks" hidden>
+            <h3>Bookmarks <span class="dap-count" data-dap-count="bookmarks"></span></h3>
+            <ol class="dap-bookmark-list"></ol>
+          </section>
+          <section class="dap-section dap-section-notes" hidden>
+            <h3>Notes</h3>
+            <div class="dap-notes-preview"></div>
+          </section>
+        </div>
+      </aside>
+
       <!-- v195: dual chip strips. #hero-controls lives back inside
            .hero-row (v188 position) as a flex middle item, visible
            in the hero's empty horizontal slot when at the top of
@@ -451,6 +526,21 @@
               aria-label="Open the manual"
               title="Help &amp; manual"
             >?</a>
+            <!-- v225et: command palette trigger. Desktop-only — phone
+                 already has the ☰ menu + tag row for primary actions
+                 and lacks a keyboard. Shows the platform-correct
+                 modifier label (⌘K on Mac, Ctrl+K elsewhere); the
+                 label is replaced at boot by detectPlatform(). -->
+            <button
+              id="cmdk-trigger"
+              type="button"
+              class="hero-icon-btn cmdk-trigger"
+              aria-label="Open command palette"
+              title="Command palette (Ctrl+K)"
+            >
+              <span aria-hidden="true">⌘K</span>
+              <span class="hero-icon-label">Search</span>
+            </button>
             <button
               id="settings-btn"
               type="button"
@@ -1240,7 +1330,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225dy</span>
+            Narrative <span id="settings-version-tag">v225fk</span>
             <button
               type="button"
               id="settings-force-update"
@@ -1385,6 +1475,10 @@
               <span class="empty-state-desc">
                 Any blog post, Wikipedia page, news article.
               </span>
+              <!-- v225fc (#645): each tile points at its OWN tutorial
+                   in §10. Previously all four pointed at wt-first-listen
+                   which only covers the paste-text path. -->
+              <span class="empty-state-tutorial-link" data-tutorial="wt-paste-url" role="link" tabindex="0">↗ Watch tutorial</span>
             </button>
             <button
               class="empty-state-card"
@@ -1396,6 +1490,7 @@
               <span class="empty-state-desc">
                 PDF, EPUB, DOCX, TXT, MD — up to 25 MB.
               </span>
+              <span class="empty-state-tutorial-link" data-tutorial="wt-upload-file" role="link" tabindex="0">↗ Watch tutorial</span>
             </button>
             <button
               class="empty-state-card"
@@ -1407,6 +1502,7 @@
               <span class="empty-state-desc">
                 Pick chapters from a manuscript repo.
               </span>
+              <span class="empty-state-tutorial-link" data-tutorial="wt-browse-github" role="link" tabindex="0">↗ Watch tutorial</span>
             </button>
             <button
               class="empty-state-card"
@@ -1419,6 +1515,11 @@
                 Drops a short paragraph into the box so you can hear it
                 speak right away.
               </span>
+              <!-- Sample text → First listen tutorial. The sample tile
+                   IS the first-listen flow (drops Tom Sawyer text + tap
+                   Generate), so the existing tutorial is the right
+                   landing page. -->
+              <span class="empty-state-tutorial-link" data-tutorial="wt-first-listen" role="link" tabindex="0">↗ Watch tutorial</span>
             </button>
           </div>
           <p class="empty-state-or">↓ Or paste / type your own text into the box below</p>
@@ -2351,6 +2452,22 @@
             aria-label="Playback speed"
             title="Tap to cycle playback speed"
           >1×</button>
+          <!-- v225eu: 3-way repeat cycle.
+                 off       → audio ends advance to next clip (current default)
+                 loop-this → audio ends rewind + replay the same clip
+                 repeat-all → audio ends advance, but end-of-queue wraps
+                              back to the first clip in the active sort.
+               Mode persists in localStorage (device-scoped — not a clip
+               property). Visible in every UI mode because loop-on-end
+               is a basic listening affordance, not a power feature. -->
+          <button
+            id="repeat-btn"
+            type="button"
+            class="repeat-btn"
+            aria-label="Repeat — off"
+            title="Tap to cycle repeat: Off → Loop this clip → Repeat all"
+            data-mode="off"
+          >🔁</button>
           <!-- v138: quick-access notes scratchpad. Opens a lightweight
                dialog focused on the current clip's notes so the user
                can jot down a thought while listening without leaving
@@ -2698,6 +2815,58 @@
         </div>
       </div>
 
+      <!-- v225et: command palette. Centered floating panel, top-third
+           of viewport. Opens via Cmd/Ctrl+K (or the ⌘K hint in the
+           hero icon rail). Search input fuzzy-matches against a flat
+           list of commands assembled at open time:
+             - Library clips (jump to load)
+             - Actions (play/pause, skip, bookmark, save, generate,
+               re-narrate, sync now)
+             - Modes (Simple / Standard / Author)
+             - Navigation (Settings, Library, Voice, Manual, Tutorials,
+               What's new)
+             - Theme (Light / Dark / Auto)
+             - Tutorials (Run First Listen / Run Revise)
+           Keyboard-driven: ↑↓ to navigate, ↵ to execute, Esc to close.
+           Results render grouped by category but the cursor walks them
+           as a single linear list so arrow keys don't get confused
+           crossing group boundaries. -->
+      <dialog id="cmdk-dialog" class="cmdk-dialog" aria-label="Command palette">
+        <div class="cmdk-shell">
+          <div class="cmdk-input-row">
+            <span class="cmdk-input-icon" aria-hidden="true">⌘K</span>
+            <input
+              id="cmdk-input"
+              type="text"
+              class="cmdk-input"
+              placeholder="Type to search — clips, actions, settings…"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="Search commands"
+              aria-controls="cmdk-results"
+              aria-activedescendant=""
+            />
+            <button
+              type="button"
+              id="cmdk-close"
+              class="cmdk-close"
+              aria-label="Close"
+            >Esc</button>
+          </div>
+          <div
+            id="cmdk-results"
+            class="cmdk-results"
+            role="listbox"
+            aria-label="Commands"
+          ></div>
+          <div class="cmdk-foot">
+            <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+            <span><kbd>↵</kbd> select</span>
+            <span><kbd>Esc</kbd> close</span>
+          </div>
+        </div>
+      </dialog>
+
       <dialog id="shortcuts-dialog" class="shortcuts-dialog">
         <div class="voice-browser-head">
           <h2>Keyboard shortcuts</h2>
@@ -2742,6 +2911,11 @@
               <td>Edit dialog</td>
               <td><kbd>Enter</kbd> (in title)</td>
               <td>Save</td>
+            </tr>
+            <tr>
+              <td>Anywhere</td>
+              <td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>K</kbd></td>
+              <td>Open the command palette</td>
             </tr>
             <tr>
               <td>Anywhere</td>

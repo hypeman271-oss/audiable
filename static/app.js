@@ -55,6 +55,42 @@ function _dlog(category, message, data) {
   } catch {}
 }
 
+// v225eg (#624): cross-frame dlog bridge for the manual's walkthrough
+// engine (§10 Tutorials). The manual.html iframe wtlog() helper
+// postMessages diagnostic entries here; we re-emit them through the
+// main _dlog so the standard download-debug-log path includes them.
+// Also sweep any localStorage breadcrumbs the iframe parked there
+// (works even if postMessage was blocked, e.g. parsed-section phone
+// viewer where the script never gets a parent frame).
+try {
+  window.addEventListener("message", (e) => {
+    const m = e && e.data;
+    if (!m || m.type !== "tutorial-dlog" || !m.entry) return;
+    const entry = m.entry;
+    _dlog(
+      entry.category || "tutorial",
+      entry.message || "",
+      entry.data || undefined,
+    );
+  });
+  // Sweep breadcrumbs from previous opens.
+  const TUT_KEY = "narrative.tutorialLog";
+  const breadcrumbs = JSON.parse(localStorage.getItem(TUT_KEY) || "[]");
+  if (Array.isArray(breadcrumbs) && breadcrumbs.length) {
+    for (const entry of breadcrumbs) {
+      if (!entry) continue;
+      _dlog(
+        (entry.category || "tutorial") + ":crumb",
+        entry.message || "",
+        entry.data || undefined,
+      );
+    }
+    try { localStorage.removeItem(TUT_KEY); } catch {}
+  }
+} catch (e) {
+  console.warn("[tutorial-dlog bridge] setup failed:", e);
+}
+
 // ---- API key (X-Narrative-Key) -----------------------------------------
 // When the server is started with NARRATIVE_KEY set (typical for the public
 // tunnel), every /api/* request needs an X-Narrative-Key header that matches.
@@ -2067,19 +2103,27 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
   if (!dlg || !frame || !closeBtn) return;
 
   let loaded = false;
-  function openManualDialog() {
+  // v225ej (#626): accept an optional anchor so deep-links from the
+  // empty-state tutorial chips can jump straight to the right §10
+  // walkthrough. Three cases: (a) not loaded yet — bake the hash
+  // into the src so the browser does a native scroll-to-anchor on
+  // load; (b) loaded but no anchor — just reopen; (c) loaded with a
+  // new anchor — push it onto the iframe's location.hash, which
+  // triggers the in-iframe scroll without a full reload.
+  function openManualDialog(anchor) {
+    const hash = anchor ? "#" + anchor : "";
     if (!loaded) {
-      // Lazy-load the iframe content on first open. After that the
-      // user can re-open the dialog without paying the parse cost
-      // again — the iframe stays mounted, just hidden by the close.
-      frame.src = "/manual.html";
+      frame.src = "/manual.html" + hash;
       loaded = true;
+    } else if (anchor) {
+      try {
+        frame.contentWindow.location.hash = hash;
+      } catch (_) {
+        // Cross-origin shouldn't be possible (same /static), but
+        // fall back to setting src as a hard reload of the hash.
+        frame.src = "/manual.html" + hash;
+      }
     }
-    // v220l: back to showModal() — matches the Settings dialog
-    // which works fine. The v220j show() detour broke tap on the
-    // page. Modal contract is NOT what caused the post-close scroll
-    // lock; the iframe inside was. See closeManualDialog for the
-    // iframe-specific cleanup.
     if (!dlg.open) dlg.showModal();
   }
   function closeManualDialog() {
@@ -2158,6 +2202,574 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
   for (const a of settingsManualLinks) {
     a.addEventListener("click", _routeManualClick);
   }
+
+  // v225en (#631): multi-pane library sidebar at ≥1280px.
+  // Relocates the library's content (head + #library-card body)
+  // from #library-dialog into #desktop-library-pane when the
+  // viewport is wide enough, and back into the dialog when narrow.
+  // The contained IDs / handlers / renderLibrary plumbing don't
+  // care which parent currently owns the nodes — DOM ID lookups
+  // work regardless. The dialog itself stays in the DOM either
+  // way; on wide viewports it's just empty (and never opened
+  // because the trigger is hidden).
+  const _libDialog = document.getElementById("library-dialog");
+  const _libSidebar = document.getElementById("desktop-library-pane");
+  const _libMQ = window.matchMedia("(min-width: 1280px)");
+  function _applyLibraryLayout() {
+    if (!_libDialog || !_libSidebar) return;
+    const wide = _libMQ.matches;
+    const head = _libDialog.querySelector(".voice-browser-head");
+    const card = _libDialog.querySelector("#library-card");
+    const sidebarHead = _libSidebar.querySelector(".voice-browser-head");
+    const sidebarCard = _libSidebar.querySelector("#library-card");
+    if (wide) {
+      if (head) _libSidebar.appendChild(head);
+      if (card) _libSidebar.appendChild(card);
+      // v225ep (#632): switched to per-pane flags so library and
+      // author paddings stack independently.
+      document.body.dataset.multipaneLibrary = "1";
+      if (_libDialog.open) {
+        try { _libDialog.close(); } catch {}
+      }
+    } else {
+      if (sidebarHead) _libDialog.appendChild(sidebarHead);
+      if (sidebarCard) _libDialog.appendChild(sidebarCard);
+      delete document.body.dataset.multipaneLibrary;
+    }
+    // v225fe (#647): voice mirrors the library pattern — its dialog
+    // contents relocate into the top of the right pane on wide,
+    // return to the dialog on narrow.
+    _applyVoicePaneLayout(wide);
+    // v225ep (#632): author pane piggybacks on the same matchMedia
+    // listener so both panes stay in sync on resize.
+    if (typeof _applyAuthorPaneLayout === "function") {
+      _applyAuthorPaneLayout();
+    }
+  }
+
+  // v225fe (#647): voice relocation. The voice dialog has two
+  // children we care about — .voice-browser-head and .voice-dialog-body.
+  // On wide viewports both move into the .dap-voice-host container at
+  // the top of the author pane; on narrow viewports they move back
+  // into #voice-dialog so the modal still works. Idempotent — the
+  // appendChild calls are no-ops when the nodes are already where
+  // they should be.
+  const _voiceDialog = document.getElementById("voice-dialog");
+  const _voiceHost = document.querySelector(".dap-voice-host");
+  function _applyVoicePaneLayout(wide) {
+    if (!_voiceDialog || !_voiceHost) return;
+    const dialogHead = _voiceDialog.querySelector(".voice-browser-head");
+    const dialogBody = _voiceDialog.querySelector(".voice-dialog-body");
+    const hostHead = _voiceHost.querySelector(".voice-browser-head");
+    const hostBody = _voiceHost.querySelector(".voice-dialog-body");
+    if (wide) {
+      if (dialogHead) _voiceHost.appendChild(dialogHead);
+      if (dialogBody) _voiceHost.appendChild(dialogBody);
+      if (_voiceDialog.open) {
+        try { _voiceDialog.close(); } catch {}
+      }
+    } else {
+      if (hostHead) _voiceDialog.appendChild(hostHead);
+      if (hostBody) _voiceDialog.appendChild(hostBody);
+    }
+  }
+  // v225fd (#646): inject the library pane's drag handle. Author
+  // pane has its handle in static HTML; library is JS-populated so
+  // the handle is injected once at boot and stays for the life of
+  // the page. Idempotent — guards against duplicate insertion if
+  // _applyLibraryLayout fires repeatedly.
+  if (_libSidebar && !_libSidebar.querySelector(".pane-resize-handle")) {
+    const handle = document.createElement("div");
+    handle.className = "pane-resize-handle pane-resize-handle-right";
+    handle.dataset.pane = "library";
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("aria-label", "Resize library pane");
+    handle.title = "Drag to resize · double-click to reset";
+    _libSidebar.appendChild(handle);
+  }
+
+  _applyLibraryLayout();
+  if (typeof _libMQ.addEventListener === "function") {
+    _libMQ.addEventListener("change", _applyLibraryLayout);
+  } else if (typeof _libMQ.addListener === "function") {
+    _libMQ.addListener(_applyLibraryLayout);
+  }
+
+  // v225ej (#626): public helper so other surfaces (the empty-state
+  // tutorial chips, future tutor-buttons elsewhere) can deep-link
+  // into a specific manual section without knowing about the
+  // phone-vs-desktop fork. Same dispatch logic as _routeManualClick
+  // but takes an anchor directly instead of reading it from an <a>.
+  window.__narrativeOpenManual = function (anchor) {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      _openPhoneManualViewer(anchor);
+    } else {
+      openManualDialog(anchor);
+    }
+  };
+
+  // v225ej (#626): delegated capture-phase handler for the empty-
+  // state "Watch tutorial" chips. Capture phase so we get the click
+  // BEFORE the parent .empty-state-card button's bubble handler
+  // fires; stopPropagation then prevents the tile's own action from
+  // triggering (we want "watch tutorial," not "do the action").
+  document.addEventListener(
+    "click",
+    (e) => {
+      // v225fg (#649): broad dlog on EVERY click that lands on or
+      // near an empty-state card. Tester reports the tutorial link
+      // works on fresh reload but stops working after navigating
+      // away and back; capture-phase + stopPropagation should be
+      // bulletproof so this log will surface whatever's actually
+      // different.
+      const card = e.target.closest && e.target.closest(".empty-state-card");
+      const link = e.target.closest && e.target.closest(".empty-state-tutorial-link");
+      if (card || link) {
+        _dlog("tutorial:tap", "click on empty-state region", {
+          phase: e.eventPhase, // 1=capture, 2=target, 3=bubble
+          targetTag: e.target.tagName,
+          targetClass:
+            (e.target.className && typeof e.target.className === "string")
+              ? e.target.className.split(/\s+/).slice(0, 3).join(" ")
+              : "",
+          hasLink: !!link,
+          linkAnchor: link ? link.dataset.tutorial : null,
+          hasCard: !!card,
+          cardAction: card ? card.dataset.emptyAction : null,
+          // If the click hit the LINK, the parent .empty-state-card
+          // is the same DOM node as `card`. We log both so the
+          // closest() chain is unambiguous.
+          sameAncestry: link && card ? link.closest(".empty-state-card") === card : null,
+          // Pointer geometry for tap-vs-tap diagnosis. Phone testers
+          // sometimes report taps that "look" inside the link rect
+          // but actually land just outside.
+          clientX: Math.round(e.clientX),
+          clientY: Math.round(e.clientY),
+          linkRect: link
+            ? (() => {
+                const r = link.getBoundingClientRect();
+                return {
+                  l: Math.round(r.left),
+                  t: Math.round(r.top),
+                  r: Math.round(r.right),
+                  b: Math.round(r.bottom),
+                };
+              })()
+            : null,
+          stopped: false,
+        });
+      }
+      if (!link) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const anchor = link.dataset.tutorial || "tutorials";
+      _dlog("tutorial:entry", "empty-state link clicked — handler firing", {
+        anchor: anchor,
+        stopped: true,
+      });
+      try {
+        window.__narrativeOpenManual(anchor);
+      } catch (err) {
+        console.warn("manual open failed:", err);
+        _dlog("tutorial:entry", "openManual threw", { error: String(err) });
+      }
+    },
+    true,
+  );
+  // v225fg (#649): also instrument the BUBBLE phase. If our capture
+  // handler ran stopPropagation correctly, the bubble click should
+  // NOT see the link target. If we see a bubble-phase click hitting
+  // the card after the capture handler ran, something's wrong with
+  // the propagation chain.
+  document.addEventListener("click", (e) => {
+    const card = e.target.closest && e.target.closest(".empty-state-card");
+    if (!card) return;
+    _dlog("tutorial:bubble", "bubble click reached card", {
+      eventPhase: e.eventPhase,
+      targetClass:
+        (e.target.className && typeof e.target.className === "string")
+          ? e.target.className.split(/\s+/).slice(0, 3).join(" ")
+          : "",
+      cardAction: card.dataset.emptyAction,
+      defaultPrevented: e.defaultPrevented,
+      isTrusted: e.isTrusted,
+    });
+  });
+  // v225fg (#649): pointerdown + touchstart trace. If a touch handler
+  // somewhere is firing the action BEFORE the click event, the link
+  // capture handler never runs. Logging pointerdown/touchstart will
+  // show us if there's an earlier handler eating the gesture.
+  document.addEventListener("pointerdown", (e) => {
+    const link = e.target.closest && e.target.closest(".empty-state-tutorial-link");
+    const card = e.target.closest && e.target.closest(".empty-state-card");
+    if (!link && !card) return;
+    _dlog("tutorial:pointerdown", "pointerdown on empty-state", {
+      pointerType: e.pointerType,
+      hasLink: !!link,
+      hasCard: !!card,
+      targetClass:
+        (e.target.className && typeof e.target.className === "string")
+          ? e.target.className.split(/\s+/).slice(0, 3).join(" ")
+          : "",
+    });
+  }, true);
+  // Keyboard activation (role=link tabindex=0): Enter / Space fire
+  // a synthetic click; the same delegated handler picks them up.
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const link = e.target.closest(".empty-state-tutorial-link");
+      if (!link) return;
+      e.preventDefault();
+      e.stopPropagation();
+      link.click();
+    },
+    true,
+  );
+})();
+
+// v225ep (#632): desktop author summary pane — right sidebar at
+// ≥1280px when a clip is loaded. Renders flags / bookmarks / notes
+// for the current clip; each item is clickable to seek to its
+// location. Live-updates via the same hooks that drive
+// _updatePullupState (renderBookmarks + _applyAnnotationMarkers).
+function _renderAuthorPane() {
+  const pane = document.getElementById("desktop-author-pane");
+  if (!pane) return;
+  const empty = pane.querySelector(".dap-empty");
+  const voiceSection = pane.querySelector(".dap-section-voice");
+  const voiceRow = pane.querySelector(".dap-voice-row");
+  const voiceName = pane.querySelector(".dap-voice-name");
+  const voiceSpeaker = pane.querySelector(".dap-voice-speaker");
+  const flagSection = pane.querySelector(".dap-section-flags");
+  const flagList = pane.querySelector(".dap-flag-list");
+  const flagCount = pane.querySelector('[data-dap-count="flags"]');
+  const bmSection = pane.querySelector(".dap-section-bookmarks");
+  const bmList = pane.querySelector(".dap-bookmark-list");
+  const bmCount = pane.querySelector('[data-dap-count="bookmarks"]');
+  const notesSection = pane.querySelector(".dap-section-notes");
+  const notesPreview = pane.querySelector(".dap-notes-preview");
+
+  // No clip → show empty state, hide sections.
+  if (!_currentClipId) {
+    if (empty) empty.hidden = false;
+    if (voiceSection) voiceSection.hidden = true;
+    if (flagSection) flagSection.hidden = true;
+    if (bmSection) bmSection.hidden = true;
+    if (notesSection) notesSection.hidden = true;
+    return;
+  }
+  if (empty) empty.hidden = true;
+
+  getClip(_currentClipId)
+    .then((clip) => {
+      if (!clip) return;
+      // ── Voice ─────────────────────────────────────────────────
+      // v225ew: surface the clip's narrator identity in the pane so
+      // the user can both SEE it and CHANGE it without opening the
+      // (occluded-by-default) hero icon rail. Tapping anywhere on
+      // the row opens the voice drawer — same gesture as the 🎤
+      // icon, but reachable from inside the pane.
+      if (voiceSection && voiceRow && voiceName) {
+        const rawVoice = clip.voiceName || "";
+        if (rawVoice) {
+          voiceSection.hidden = false;
+          // Reuse the display helper so the name format matches the
+          // clip card title row + hero chip — "Alan (en_GB, medium)"
+          // → "Alan". Falls through "LibriTTS · high · spkr 7" too.
+          const shortVoice =
+            typeof _displayVoiceName === "function"
+              ? _displayVoiceName(rawVoice)
+              : rawVoice;
+          voiceName.textContent = shortVoice;
+          voiceName.title = rawVoice; // full name on hover
+          if (voiceSpeaker) {
+            if (typeof clip.speakerId === "number" && clip.speakerId > 0) {
+              voiceSpeaker.hidden = false;
+              voiceSpeaker.textContent = "#" + clip.speakerId;
+            } else {
+              voiceSpeaker.hidden = true;
+              voiceSpeaker.textContent = "";
+            }
+          }
+          // Wire the click once; subsequent _renderAuthorPane calls
+          // would attach duplicate listeners otherwise. Using onclick
+          // (vs addEventListener) is the same trick we use for the
+          // notes-preview row below — single handler, replace-on-set.
+          voiceRow.onclick = () => {
+            const trigger = document.getElementById("voice-trigger");
+            if (trigger) trigger.click();
+          };
+        } else {
+          voiceSection.hidden = true;
+        }
+      }
+
+      // ── Flags ─────────────────────────────────────────────────
+      const annos = Array.isArray(clip.annotations) ? clip.annotations : [];
+      const live = annos.filter((a) => a && !a.deletedAt && !a.tombstone);
+      const flagAnnos = live
+        .filter((a) => Number.isInteger(a.sentenceIndex))
+        .sort((a, b) => a.sentenceIndex - b.sentenceIndex);
+      if (flagList) flagList.innerHTML = "";
+      if (flagAnnos.length && flagSection && flagList) {
+        flagSection.hidden = false;
+        if (flagCount) flagCount.textContent = String(flagAnnos.length);
+        for (const a of flagAnnos) {
+          const item = document.createElement("li");
+          item.className = "dap-flag-item";
+          item.setAttribute("role", "button");
+          item.setAttribute("tabindex", "0");
+          item.dataset.sentenceIdx = String(a.sentenceIndex);
+          // Pick the first recognised tag for the icon; voice notes
+          // (audio attached) get the mic symbol.
+          const tagKey = Array.isArray(a.tags) ? a.tags.find((t) => t !== "voice") : null;
+          const tagMeta = (typeof ANNOTATE_TAGS !== "undefined" && tagKey)
+            ? ANNOTATE_TAGS[tagKey]
+            : null;
+          const icon = a.audio
+            ? "🎤"
+            : (tagMeta && tagMeta.icon) || "•";
+          const iconEl = document.createElement("span");
+          iconEl.className = "dap-flag-icon";
+          iconEl.textContent = icon;
+          if (tagMeta && tagMeta.color) iconEl.style.background = tagMeta.color;
+          const text = document.createElement("div");
+          text.className = "dap-flag-text";
+          const where = document.createElement("span");
+          where.className = "dap-flag-where";
+          where.textContent = "Sentence " + (a.sentenceIndex + 1);
+          const quote = document.createElement("span");
+          quote.className = "dap-flag-quote";
+          // Prefer the live span text (full sentence) over the
+          // fingerprint, same precedence the markdown export uses.
+          const liveSpan = Array.isArray(sentenceSpans) && sentenceSpans[a.sentenceIndex];
+          const sentText = (
+            (liveSpan && liveSpan.dataset && liveSpan.dataset.sentenceText) ||
+            a.sentenceText ||
+            a.sentenceFingerprint ||
+            ""
+          ).trim();
+          quote.textContent = sentText;
+          text.appendChild(where);
+          text.appendChild(quote);
+          if (a.transcript && a.transcript.trim()) {
+            const tr = document.createElement("span");
+            tr.className = "dap-flag-transcript";
+            tr.textContent = '"' + a.transcript.trim() + '"';
+            text.appendChild(tr);
+          }
+          item.appendChild(iconEl);
+          item.appendChild(text);
+          item.addEventListener("click", () => {
+            if (typeof seekToSentence === "function") {
+              seekToSentence(a.sentenceIndex);
+            }
+          });
+          item.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (typeof seekToSentence === "function") {
+                seekToSentence(a.sentenceIndex);
+              }
+            }
+          });
+          flagList.appendChild(item);
+        }
+      } else if (flagSection) {
+        flagSection.hidden = true;
+      }
+
+      // ── Bookmarks ─────────────────────────────────────────────
+      const bms = Array.isArray(clip.bookmarks) ? clip.bookmarks : [];
+      const sortedBms = bms.slice().sort((a, b) => (a.timeSec || 0) - (b.timeSec || 0));
+      if (bmList) bmList.innerHTML = "";
+      if (sortedBms.length && bmSection && bmList) {
+        bmSection.hidden = false;
+        if (bmCount) bmCount.textContent = String(sortedBms.length);
+        for (const bm of sortedBms) {
+          const item = document.createElement("li");
+          item.className = "dap-bookmark-item";
+          item.setAttribute("role", "button");
+          item.setAttribute("tabindex", "0");
+          item.dataset.timeSec = String(bm.timeSec || 0);
+          const time = document.createElement("span");
+          time.className = "dap-bookmark-time";
+          time.textContent = typeof formatTime === "function"
+            ? formatTime(bm.timeSec || 0)
+            : Math.floor((bm.timeSec || 0)) + "s";
+          const note = document.createElement("span");
+          note.className = "dap-bookmark-note";
+          note.textContent = (bm.note || "").trim();
+          item.appendChild(time);
+          item.appendChild(note);
+          item.addEventListener("click", () => {
+            if (typeof seekToTime === "function") {
+              seekToTime(bm.timeSec || 0);
+              try { playerEl.play(); } catch {}
+            }
+          });
+          item.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (typeof seekToTime === "function") {
+                seekToTime(bm.timeSec || 0);
+                try { playerEl.play(); } catch {}
+              }
+            }
+          });
+          bmList.appendChild(item);
+        }
+      } else if (bmSection) {
+        bmSection.hidden = true;
+      }
+
+      // ── Notes ─────────────────────────────────────────────────
+      const notes = (clip.notes || "").trim();
+      if (notes && notesSection && notesPreview) {
+        notesSection.hidden = false;
+        notesPreview.textContent = notes;
+        notesPreview.onclick = () => {
+          const notesChip = document.getElementById("notes-btn");
+          if (notesChip) notesChip.click();
+        };
+      } else if (notesSection) {
+        notesSection.hidden = true;
+      }
+    })
+    .catch((e) => {
+      console.warn("[author pane] render failed:", e);
+    });
+}
+
+// Layout helper: gate the author pane on viewport ≥1280px AND
+// clip loaded. Called from the library matchMedia listener (so the
+// two panes resize together) AND from loadClip/clearForNewClip
+// (so the clip-loaded gate updates without a viewport change).
+function _applyAuthorPaneLayout() {
+  const wide = window.matchMedia("(min-width: 1280px)").matches;
+  // v225fe (#647): pane is now ALWAYS on at ≥1280px because Voice
+  // lives in the top half — relevant whether or not a clip is
+  // loaded. The "This clip" sections below the voice picker still
+  // only populate when _currentClipId is set; _renderAuthorPane
+  // already handles the empty-state branch.
+  if (wide) {
+    document.body.dataset.multipaneAuthor = "1";
+    _renderAuthorPane();
+  } else {
+    delete document.body.dataset.multipaneAuthor;
+  }
+}
+
+// v225fd (#646): pane resize engine.
+//
+// Each .pane-resize-handle is bound to a pane (library | author).
+// Pointerdown captures the pointer, pointermove updates the matching
+// CSS variable directly on document.documentElement so the resize
+// is instant + paint-batched. Pointerup persists the final width to
+// localStorage. Double-click resets to the default.
+//
+// Width bounds are [200, 500]px — small enough that the library
+// sidebar can fit in narrow widescreens, wide enough to hold full
+// clip titles without truncation.
+//
+// On boot we read the persisted widths and apply them BEFORE any
+// paint that would show the pane (the panes are gated by the
+// matchMedia + clip-loaded data attrs, and the .app width math
+// reads the var dynamically, so applying on the documentElement is
+// the only place that matters).
+(() => {
+  const MIN = 200;
+  const MAX = 500;
+  const DEFAULTS = { library: 280, author: 320 };
+  const VARS = {
+    library: "--pane-library-width",
+    author: "--pane-author-width",
+  };
+  const KEY = (p) => `narrative.paneWidth.${p}`;
+
+  // Apply persisted widths at boot.
+  for (const p of ["library", "author"]) {
+    try {
+      const raw = parseInt(localStorage.getItem(KEY(p)) || "", 10);
+      if (raw >= MIN && raw <= MAX) {
+        document.documentElement.style.setProperty(VARS[p], raw + "px");
+      }
+    } catch {}
+  }
+
+  // Delegated pointerdown — single capture-phase listener picks up
+  // handles wherever they live (library sidebar is JS-injected, so
+  // a per-handle listener wouldn't catch it if attached before the
+  // handle was created).
+  let drag = null;
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      const handle = e.target.closest && e.target.closest(".pane-resize-handle");
+      if (!handle) return;
+      const pane = handle.dataset.pane;
+      if (!pane || !VARS[pane]) return;
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add("dragging");
+      document.body.classList.add("pane-resizing");
+      drag = { pane, handle, pointerId: e.pointerId };
+    },
+    true,
+  );
+
+  document.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    let w;
+    if (drag.pane === "library") {
+      // Library is fixed left:0 with right-edge handle; width is the
+      // pointer's distance from the viewport's left edge.
+      w = e.clientX;
+    } else {
+      // Author is fixed right:0 with left-edge handle; width is the
+      // pointer's distance from the viewport's right edge.
+      w = window.innerWidth - e.clientX;
+    }
+    w = Math.max(MIN, Math.min(MAX, Math.round(w)));
+    document.documentElement.style.setProperty(VARS[drag.pane], w + "px");
+  });
+
+  function endDrag(e) {
+    if (!drag) return;
+    if (e && e.pointerId !== drag.pointerId) return;
+    try {
+      drag.handle.releasePointerCapture(drag.pointerId);
+    } catch {}
+    drag.handle.classList.remove("dragging");
+    document.body.classList.remove("pane-resizing");
+    // Persist the final value
+    try {
+      const current = getComputedStyle(document.documentElement)
+        .getPropertyValue(VARS[drag.pane])
+        .trim();
+      const num = parseInt(current, 10);
+      if (num >= MIN && num <= MAX) {
+        localStorage.setItem(KEY(drag.pane), String(num));
+      }
+    } catch {}
+    drag = null;
+  }
+  document.addEventListener("pointerup", endDrag);
+  document.addEventListener("pointercancel", endDrag);
+
+  // Double-click resets to default.
+  document.addEventListener("dblclick", (e) => {
+    const handle = e.target.closest && e.target.closest(".pane-resize-handle");
+    if (!handle) return;
+    const pane = handle.dataset.pane;
+    if (!pane || !DEFAULTS[pane]) return;
+    e.preventDefault();
+    document.documentElement.style.setProperty(VARS[pane], DEFAULTS[pane] + "px");
+    try { localStorage.removeItem(KEY(pane)); } catch {}
+  });
 })();
 
 // v225.tn49 (#526): Phone manual viewer — swipeable section sheets.
@@ -2182,21 +2794,75 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
 let _phoneManualLoaded = false;
 let _phoneManualSections = [];
 
-function _openPhoneManualViewer() {
+// v225ej (#626): track a pending anchor to apply once the section
+// list is loaded. Set by _openPhoneManualViewer(anchor) when called
+// before _phoneManualLoaded; consumed by _loadPhoneManualContent at
+// the end of parse.
+let _phoneManualPendingAnchor = null;
+
+function _openPhoneManualViewer(anchor) {
   _ensurePhoneManualViewer();
   const viewer = document.getElementById("phone-manual-viewer");
   if (!viewer) return;
   viewer.hidden = false;
   document.body.dataset.phoneManualOpen = "1";
-  // Reset scroll to first section on each open so the user lands
-  // somewhere predictable. Defer to next frame so the show has
-  // committed before we measure.
-  requestAnimationFrame(() => {
-    const pages = viewer.querySelector(".pmv-pages");
-    if (pages) pages.scrollLeft = 0;
-  });
+  // v225fi (#651): only reset scroll to first section when opening
+  // WITHOUT a target anchor. Previously this requestAnimationFrame
+  // fired the next frame and overrode the smooth horizontal scroll
+  // initiated by _phoneManualGotoByAnchor below — first tap escaped
+  // because the !_phoneManualLoaded branch deferred via load callback,
+  // but every subsequent tap that hit the "already loaded" branch lost
+  // the race and landed at section 0 instead of the requested H3.
+  if (!anchor) {
+    requestAnimationFrame(() => {
+      const pages = viewer.querySelector(".pmv-pages");
+      if (pages) pages.scrollLeft = 0;
+    });
+  }
   if (!_phoneManualLoaded) {
+    // Stash the anchor so the post-load hook can find + jump to the
+    // matching section. Cleared after consumption.
+    if (anchor) _phoneManualPendingAnchor = anchor;
     _loadPhoneManualContent();
+  } else if (anchor) {
+    // Already loaded — find the section that contains this anchor
+    // (the anchor may be on an H3 inside a section, not the H2
+    // itself) and goto its index.
+    _phoneManualGotoByAnchor(anchor);
+  }
+}
+
+// v225ej (#626): map a content anchor (e.g. "wt-first-listen") to a
+// section index. The anchor may be a section H2's id OR an H3 inside
+// a section — in the latter case we walk up to the owning section.
+function _phoneManualGotoByAnchor(anchor) {
+  if (!anchor) return;
+  const viewer = document.getElementById("phone-manual-viewer");
+  if (!viewer) return;
+  // Direct H2 match first.
+  let idx = _phoneManualSections.findIndex((s) => s.id === anchor);
+  if (idx < 0) {
+    // Walk the live DOM: find the matching id, then trace back to
+    // the closest .pmv-page ancestor and read its data-idx.
+    const target = viewer.querySelector("#" + CSS.escape(anchor));
+    if (target) {
+      const page = target.closest(".pmv-page");
+      if (page) idx = parseInt(page.dataset.idx, 10);
+    }
+  }
+  if (idx >= 0) {
+    // v225fh (#650): pass the anchor through so an H3 inside the
+    // section gets vertically-scrolled into view after the horizontal
+    // section scroll. Without this, every tutorial link in §10 landed
+    // at the top of §10 (Tutorial 1) regardless of which tutorial the
+    // user asked for.
+    _phoneManualGoto(idx, anchor);
+    _dlog("tutorial:phone", "scrolled manual to anchor", {
+      anchor: anchor,
+      sectionIdx: idx,
+    });
+  } else {
+    _dlog("tutorial:phone", "anchor not found in manual", { anchor: anchor });
   }
 }
 
@@ -2279,9 +2945,54 @@ async function _loadPhoneManualContent() {
     if (!resp.ok) throw new Error("manual fetch " + resp.status);
     const html = await resp.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
+
+    // v225eo (#633): inject manual.html's inline <style> blocks into
+    // the parent document's <head> so the manual-specific CSS (the
+    // .wt-* walkthrough rules, .tip / .note / .warn callouts,
+    // .manual-demo mini-app framing) applies to the cloned content.
+    // v225es (#636): re-inject every open so manual.html style
+    // updates land without a full reload. The old gate-by-presence
+    // logic meant any user who'd opened the manual once was stuck
+    // with the stale CSS until they cleared cache.
+    document.head.querySelectorAll("style[data-manual-styles]").forEach(
+      (s) => s.remove(),
+    );
+    const styleNodes = doc.querySelectorAll("style");
+    styleNodes.forEach((s, idx) => {
+      const clone = document.createElement("style");
+      clone.textContent = s.textContent;
+      clone.setAttribute("data-manual-styles", String(idx));
+      document.head.appendChild(clone);
+    });
+    _dlog("manual:phone", "(re)injected manual styles into parent head", {
+      styleBlockCount: styleNodes.length,
+    });
+    // Add the .manual class to the pages container so .manual *
+    // selectors in the injected stylesheet match the cloned content.
+    // The manual page itself uses <article class="manual-content">
+    // inside <body> with .manual as the body class; the phone viewer
+    // has neither, so we mark the closest ancestor of the cloned
+    // sections so descendant selectors work the same way.
+    if (pages && !pages.classList.contains("manual")) {
+      pages.classList.add("manual");
+    }
     // Anchored H2s only — these are the 11 numbered sections. The
     // "Contents" H2 has no id and is skipped; we render our own TOC.
     const heads = Array.from(doc.querySelectorAll("h2[id]"));
+    // v225eg (#624): detect walkthrough markup. The phone manual viewer
+    // parses sections via DOMParser and clones them into a fresh DOM
+    // — the <script> at the end of manual.html that drives the
+    // walkthrough engine never executes. So the markup renders
+    // static (cursor frozen, no typing, no callout cycling) and the
+    // user sees "couldn't get the tutorial to start". Log it so the
+    // debug log makes the diagnosis obvious.
+    const wtNodes = doc.querySelectorAll(".wt[data-walkthrough]");
+    if (wtNodes.length) {
+      _dlog("tutorial:phone", "walkthrough markup found in phone viewer", {
+        count: wtNodes.length,
+        ids: Array.from(wtNodes).map((n) => n.dataset.walkthrough),
+      });
+    }
     _phoneManualSections = [];
     pages.innerHTML = "";
     tocList.innerHTML = "";
@@ -2350,6 +3061,48 @@ async function _loadPhoneManualContent() {
 
     _phoneManualLoaded = true;
     _phoneManualSetActive(0);
+
+    // v225ej (#626): if the open call passed an anchor (e.g. from an
+    // empty-state "Watch tutorial" link), jump there now that the
+    // section list is built.
+    if (_phoneManualPendingAnchor) {
+      const a = _phoneManualPendingAnchor;
+      _phoneManualPendingAnchor = null;
+      _phoneManualGotoByAnchor(a);
+    }
+
+    // v225eh (#625): boot the walkthrough engine against the phone
+    // viewer's freshly-stamped DOM. The engine is loaded as a top-
+    // level <script> in manual.html — that runs in the standalone /
+    // iframe cases but never executes here because we cloned the
+    // sections into a new DOM. Inject /tutorials.js on demand if it
+    // isn't already global, then call its public hook.
+    if (wtNodes.length) {
+      const bootWalkthroughs = () => {
+        try {
+          if (typeof window.__narrativeBootTutorialsIn === "function") {
+            _dlog("tutorial:phone", "booting walkthroughs in phone viewer", {
+              count: wtNodes.length,
+            });
+            window.__narrativeBootTutorialsIn(pages);
+          }
+        } catch (e) {
+          _dlog("tutorial:phone", "boot failed", { error: String(e) });
+        }
+      };
+      if (typeof window.__narrativeBootTutorialsIn === "function") {
+        bootWalkthroughs();
+      } else {
+        const s = document.createElement("script");
+        s.src = "/tutorials.js";
+        s.async = true;
+        s.onload = bootWalkthroughs;
+        s.onerror = () =>
+          _dlog("tutorial:phone", "failed to load /tutorials.js", {});
+        document.head.appendChild(s);
+        _dlog("tutorial:phone", "injecting /tutorials.js", {});
+      }
+    }
   } catch (err) {
     pages.innerHTML =
       '<div class="pmv-loading pmv-loading-error">' +
@@ -2379,14 +3132,51 @@ function _phoneManualSetActive(idx) {
   viewer.querySelector(".pmv-next").disabled = idx >= total - 1;
 }
 
-function _phoneManualGoto(idx) {
+function _phoneManualGoto(idx, anchor) {
   const viewer = document.getElementById("phone-manual-viewer");
   if (!viewer) return;
   const page = viewer.querySelector('.pmv-page[data-idx="' + idx + '"]');
   if (!page) return;
   page.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
-  // Also reset the section's own vertical scroll so the user
-  // lands at the top of the section, not wherever they last left it.
+  // v225fh (#650): if the caller passed an H3 anchor (e.g. wt-paste-url),
+  // scroll WITHIN the page to that element. Without this every tutorial
+  // link inside §10 landed at the top of §10 (Tutorial 1) regardless
+  // of which tutorial was requested.
+  //
+  // .pmv-page is the vertical scroll container for the section. The
+  // horizontal page snap happens at the parent .pmv-pages level, so
+  // these two scrolls are independent and can run concurrently.
+  // requestAnimationFrame defers the vertical scroll one frame so the
+  // horizontal scroll-into-view has at least started — without this,
+  // some browsers fight the simultaneous-scroll race and land on the
+  // wrong axis.
+  if (anchor) {
+    const target = page.querySelector("#" + CSS.escape(anchor));
+    if (target) {
+      requestAnimationFrame(() => {
+        const pageRect = page.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        // delta = target's current Y relative to page's content top.
+        // Subtract a 12px breathing margin so the H3 isn't crammed
+        // against the top edge.
+        const delta = targetRect.top - pageRect.top + page.scrollTop;
+        page.scrollTop = Math.max(0, delta - 12);
+        _dlog("tutorial:phone", "scrolled within section to H3", {
+          anchor: anchor,
+          scrollTop: page.scrollTop,
+        });
+      });
+      return;
+    }
+    // Anchor was given but not found inside the page — fall through to
+    // the default "top of section" behavior so the user at least sees
+    // the section instead of getting nothing.
+    _dlog("tutorial:phone", "H3 anchor not found in section page", {
+      anchor: anchor,
+      idx: idx,
+    });
+  }
+  // Default: top of section.
   page.scrollTop = 0;
 }
 
@@ -2490,6 +3280,482 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   shortcutsDialog.showModal();
 });
+
+// v225et: command palette. Opens on Cmd/Ctrl+K (or the ⌘K hint in the
+// hero icon rail). Builds a flat command list on each open so it
+// reflects current library state, current mode, etc. Items are
+// fuzzy-matched against the search input — simple subsequence match,
+// scored by tightness of the matched run, with category boost so that
+// typing "lib" surfaces "Library" before a clip that happens to have
+// "lib" in its title.
+(() => {
+  const dlg = document.getElementById("cmdk-dialog");
+  const trigger = document.getElementById("cmdk-trigger");
+  const input = document.getElementById("cmdk-input");
+  const results = document.getElementById("cmdk-results");
+  const closeBtn = document.getElementById("cmdk-close");
+  if (!dlg || !input || !results) return;
+
+  // Platform sniff for the trigger label. Match what the OS shows.
+  const IS_MAC = /Mac|iPhone|iPad/i.test(navigator.platform || "");
+  if (trigger) {
+    const label = IS_MAC ? "⌘K" : "Ctrl K";
+    const span = trigger.querySelector("span[aria-hidden]");
+    if (span) span.textContent = label;
+    trigger.title = `Command palette (${IS_MAC ? "⌘K" : "Ctrl+K"})`;
+  }
+
+  // Cursor index into the currently-rendered flat list. Updated by
+  // arrow keys and by hovering with the mouse.
+  let cursor = 0;
+  let currentItems = []; // {key, label, icon, group, hint, run}
+
+  // Action registry. Each entry returns a function we can fire. We
+  // resolve them at open time so handlers that don't exist yet (e.g.
+  // we haven't loaded a clip → no addBookmarkAtCurrentTime context)
+  // can still appear but show a hint instead.
+  function buildCommands() {
+    const out = [];
+
+    // --- Navigation ---
+    out.push({
+      group: "Navigation",
+      icon: "📚",
+      label: "Open library",
+      key: "nav:library",
+      run: () => {
+        const btn = document.getElementById("library-trigger");
+        if (btn) btn.click();
+      },
+    });
+    out.push({
+      group: "Navigation",
+      icon: "🎤",
+      label: "Choose voice",
+      key: "nav:voice",
+      run: () => {
+        const btn = document.getElementById("voice-trigger");
+        if (btn) btn.click();
+      },
+    });
+    out.push({
+      group: "Navigation",
+      icon: "⚙",
+      label: "Settings",
+      key: "nav:settings",
+      run: () => {
+        const btn = document.getElementById("settings-btn");
+        if (btn) btn.click();
+      },
+    });
+    out.push({
+      group: "Navigation",
+      icon: "?",
+      label: "Open manual (help)",
+      key: "nav:help",
+      run: () => {
+        if (typeof window.__narrativeOpenManual === "function") {
+          window.__narrativeOpenManual();
+        } else {
+          window.open("/manual.html", "_blank", "noopener");
+        }
+      },
+    });
+    out.push({
+      group: "Navigation",
+      icon: "🎓",
+      label: "Tutorials (manual §10)",
+      key: "nav:tutorials",
+      run: () => {
+        if (typeof window.__narrativeOpenManual === "function") {
+          window.__narrativeOpenManual("#tutorials");
+        } else {
+          window.open("/manual.html#tutorials", "_blank", "noopener");
+        }
+      },
+    });
+    out.push({
+      group: "Navigation",
+      icon: "✨",
+      label: "What's new",
+      key: "nav:whatsnew",
+      run: () => window.open("/whats-new.html", "_blank", "noopener"),
+    });
+    out.push({
+      group: "Navigation",
+      icon: "⌨",
+      label: "Keyboard shortcuts",
+      key: "nav:shortcuts",
+      run: () => {
+        const d = document.getElementById("shortcuts-dialog");
+        if (d) d.showModal();
+      },
+    });
+
+    // --- Actions (player). Only show if a clip is loaded — the
+    //     handlers will no-op otherwise but they'd clutter the empty
+    //     state with non-actionable entries. ---
+    const hasClip = !!(
+      window._currentClipId ||
+      (typeof audio !== "undefined" && audio && audio.src)
+    );
+    if (hasClip) {
+      out.push({
+        group: "Actions",
+        icon: "⏯",
+        label: "Play / pause",
+        hint: "Space",
+        key: "act:playpause",
+        run: () => {
+          const btn = document.getElementById("hero-play-btn");
+          if (btn) btn.click();
+        },
+      });
+      out.push({
+        group: "Actions",
+        icon: "↶",
+        label: "Skip back",
+        key: "act:back",
+        run: () => {
+          const btn = document.getElementById("skip-back-btn");
+          if (btn) btn.click();
+        },
+      });
+      out.push({
+        group: "Actions",
+        icon: "↷",
+        label: "Skip forward",
+        key: "act:fwd",
+        run: () => {
+          const btn = document.getElementById("skip-forward-btn");
+          if (btn) btn.click();
+        },
+      });
+      out.push({
+        group: "Actions",
+        icon: "🔖",
+        label: "Add bookmark here",
+        key: "act:bookmark",
+        run: () => {
+          if (typeof addBookmarkAtCurrentTime === "function") {
+            addBookmarkAtCurrentTime();
+          }
+        },
+      });
+    }
+    // Generate is always available — it's the most important action.
+    out.push({
+      group: "Actions",
+      icon: "▶",
+      label: "Generate audio",
+      hint: "Ctrl ↵",
+      key: "act:generate",
+      run: () => {
+        if (typeof generate === "function") generate();
+      },
+    });
+    out.push({
+      group: "Actions",
+      icon: "↻",
+      label: "Sync now",
+      key: "act:sync",
+      run: () => {
+        const btn = document.getElementById("sync-now-btn");
+        if (btn) btn.click();
+      },
+    });
+
+    // --- Modes ---
+    const cur = (typeof getUIMode === "function" && getUIMode()) || "simple";
+    [
+      ["simple", "Simple", "🟢"],
+      ["standard", "Standard", "🔵"],
+      ["author", "Author", "🟣"],
+    ].forEach(([id, label, icon]) => {
+      out.push({
+        group: "Mode",
+        icon,
+        label: `Mode: ${label}${cur === id ? " ✓" : ""}`,
+        key: `mode:${id}`,
+        run: () => {
+          if (typeof setUIMode === "function") setUIMode(id);
+          const radio = document.querySelector(
+            `.mode-picker input[name="ui-mode"][value="${id}"]`,
+          );
+          if (radio) radio.checked = true;
+          if (typeof updateCounts === "function") updateCounts();
+        },
+      });
+    });
+
+    // --- Theme ---
+    const curTheme =
+      (typeof getThemePref === "function" && getThemePref()) || "auto";
+    [
+      ["light", "Light", "☀"],
+      ["dark", "Dark", "🌙"],
+      ["auto", "Auto", "◐"],
+    ].forEach(([id, label, icon]) => {
+      out.push({
+        group: "Theme",
+        icon,
+        label: `Theme: ${label}${curTheme === id ? " ✓" : ""}`,
+        key: `theme:${id}`,
+        run: () => {
+          if (typeof setTheme === "function") setTheme(id);
+          const radio = document.querySelector(
+            `input[name="theme-pref"][value="${id}"]`,
+          );
+          if (radio) radio.checked = true;
+        },
+      });
+    });
+
+    // --- Tutorials ---
+    out.push({
+      group: "Tutorials",
+      icon: "▶",
+      label: "Run tutorial: First listen",
+      key: "tut:first",
+      run: () => {
+        if (typeof window.__narrativeOpenManual === "function") {
+          window.__narrativeOpenManual("#wt-first-listen");
+        }
+      },
+    });
+    out.push({
+      group: "Tutorials",
+      icon: "▶",
+      label: "Run tutorial: Revise as you listen",
+      key: "tut:revise",
+      run: () => {
+        if (typeof window.__narrativeOpenManual === "function") {
+          window.__narrativeOpenManual("#wt-revise-listen");
+        }
+      },
+    });
+
+    return out;
+  }
+
+  // Library clips are added separately — we fetch them async on open
+  // and append. They show up at the top when the query matches a title.
+  let cachedClips = [];
+  async function refreshClips() {
+    try {
+      if (typeof listClips === "function") {
+        cachedClips = await listClips();
+      }
+    } catch (err) {
+      cachedClips = [];
+    }
+  }
+
+  function buildClipCommands() {
+    return cachedClips.map((c) => ({
+      group: "Clips",
+      icon: "📄",
+      label: c.title || c.name || "Untitled clip",
+      key: `clip:${c.id}`,
+      hint: c.id === window._currentClipId ? "now" : "",
+      run: () => {
+        if (typeof loadClip === "function") loadClip(c.id);
+      },
+    }));
+  }
+
+  // Subsequence fuzzy match. Returns null on no match, or a score
+  // (lower = better). We score by the position of the first matched
+  // char (earlier = better) plus the spread of matches (tighter = better).
+  function fuzzyScore(needle, hay) {
+    if (!needle) return 0;
+    const n = needle.toLowerCase();
+    const h = hay.toLowerCase();
+    let i = 0;
+    let firstHit = -1;
+    let lastHit = -1;
+    let hits = 0;
+    for (let j = 0; j < h.length && i < n.length; j++) {
+      if (h[j] === n[i]) {
+        if (firstHit < 0) firstHit = j;
+        lastHit = j;
+        i++;
+        hits++;
+      }
+    }
+    if (i < n.length) return null; // not all chars matched
+    const spread = lastHit - firstHit;
+    return firstHit * 2 + spread;
+  }
+
+  function render(query) {
+    const q = (query || "").trim();
+    const all = [...buildClipCommands(), ...buildCommands()];
+
+    // Score + filter
+    let filtered;
+    if (!q) {
+      filtered = all;
+    } else {
+      filtered = [];
+      for (const item of all) {
+        const score = fuzzyScore(q, item.label);
+        if (score !== null) filtered.push({ ...item, _score: score });
+      }
+      filtered.sort((a, b) => a._score - b._score);
+    }
+
+    currentItems = filtered;
+    cursor = Math.min(cursor, Math.max(0, filtered.length - 1));
+
+    if (!filtered.length) {
+      results.innerHTML =
+        '<div class="cmdk-empty">No matching commands. Try “library”, “play”, “author”…</div>';
+      return;
+    }
+
+    // Group: preserve filtered order but insert headers when the
+    // group string changes. With a query active, sort ranking can
+    // mix groups — that's intentional; the headers still read.
+    const parts = [];
+    let lastGroup = null;
+    filtered.forEach((item, idx) => {
+      if (item.group !== lastGroup) {
+        parts.push(
+          `<div class="cmdk-group-label">${item.group}</div>`,
+        );
+        lastGroup = item.group;
+      }
+      const safeLabel = item.label
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      const hint = item.hint
+        ? `<span class="cmdk-item-hint">${item.hint}</span>`
+        : "";
+      parts.push(
+        `<div class="cmdk-item${idx === cursor ? " is-active" : ""}"` +
+          ` role="option" id="cmdk-item-${idx}" data-idx="${idx}">` +
+          `<span class="cmdk-item-icon" aria-hidden="true">${item.icon || ""}</span>` +
+          `<span class="cmdk-item-label">${safeLabel}</span>` +
+          hint +
+          `</div>`,
+      );
+    });
+    results.innerHTML = parts.join("");
+    input.setAttribute("aria-activedescendant", `cmdk-item-${cursor}`);
+
+    // Scroll active row into view so arrow-keying past the visible
+    // window still tracks.
+    const active = results.querySelector(".cmdk-item.is-active");
+    if (active) {
+      const r = active.getBoundingClientRect();
+      const c = results.getBoundingClientRect();
+      if (r.bottom > c.bottom || r.top < c.top) {
+        active.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+
+  function moveCursor(delta) {
+    if (!currentItems.length) return;
+    cursor = (cursor + delta + currentItems.length) % currentItems.length;
+    render(input.value);
+  }
+
+  function execute(idx) {
+    const item = currentItems[idx];
+    if (!item) return;
+    close();
+    try {
+      item.run();
+    } catch (err) {
+      console.error("cmdk: action failed", item.key, err);
+    }
+  }
+
+  function open() {
+    if (dlg.open) return;
+    cursor = 0;
+    input.value = "";
+    refreshClips().finally(() => render(""));
+    render("");
+    try {
+      dlg.showModal();
+    } catch (err) {
+      dlg.show();
+    }
+    // Defer focus until after showModal's internal autofocus settles
+    setTimeout(() => input.focus(), 0);
+  }
+
+  function close() {
+    if (dlg.open) dlg.close();
+  }
+
+  // Wire trigger button + close button
+  if (trigger) trigger.addEventListener("click", open);
+  if (closeBtn) closeBtn.addEventListener("click", close);
+
+  // Backdrop click closes (dialog click outside its content)
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg) close();
+  });
+
+  // Input handlers
+  input.addEventListener("input", () => {
+    cursor = 0;
+    render(input.value);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveCursor(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveCursor(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      execute(cursor);
+    } else if (e.key === "Escape") {
+      // Default dialog Esc handler will close, but jump out of the
+      // search box first so the user feels in control.
+      e.preventDefault();
+      close();
+    }
+  });
+
+  // Click-to-execute on result rows
+  results.addEventListener("click", (e) => {
+    const row = e.target.closest(".cmdk-item");
+    if (!row) return;
+    const idx = parseInt(row.dataset.idx || "-1", 10);
+    if (idx >= 0) execute(idx);
+  });
+  results.addEventListener("mousemove", (e) => {
+    const row = e.target.closest(".cmdk-item");
+    if (!row) return;
+    const idx = parseInt(row.dataset.idx || "-1", 10);
+    if (idx >= 0 && idx !== cursor) {
+      cursor = idx;
+      render(input.value);
+    }
+  });
+
+  // Global Cmd/Ctrl+K shortcut. Toggles open/closed so a second tap
+  // gets you out the way it got you in.
+  document.addEventListener("keydown", (e) => {
+    const isK = e.key === "k" || e.key === "K";
+    if (!isK) return;
+    if (!(e.metaKey || e.ctrlKey)) return;
+    // Don't fire if another modifier is also down — Cmd+Shift+K is a
+    // common browser shortcut we don't want to steal.
+    if (e.altKey) return;
+    e.preventDefault();
+    if (dlg.open) close();
+    else open();
+  });
+})();
 
 // GitHub PAT input — save on change, with a confirmation hint shown
 // underneath. Token-shape sanity check is loose: GitHub PATs start with
@@ -3255,6 +4521,121 @@ speedBtn.addEventListener("click", () => {
     "💡 Tap again to cycle: 1× → 1.25× → 1.5× → 1.75× → 2× → 0.75×."
   );
 });
+
+// ---- v225eu: 3-way repeat (Spotify model) --------------------------------
+// State:  "off"  → ended advances to next clip (current default)
+//         "one" → ended seeks to 0 and replays the same clip
+//         "all" → ended advances, but end-of-queue wraps to the first clip
+//
+// Persists in localStorage so the chip remembers between sessions.
+// Hooked into playerEl's "ended" handler further down the file; the loop /
+// wrap logic lives in `_repeatHandleEnded()` so the handler can call one
+// function and bail early.
+const REPEAT_STORAGE_KEY = "narrative.repeatMode";
+let _repeatMode = "off";
+try {
+  const raw = localStorage.getItem(REPEAT_STORAGE_KEY);
+  if (raw === "one" || raw === "all") _repeatMode = raw;
+} catch {}
+
+const repeatBtn = $("repeat-btn");
+function _paintRepeatBtn() {
+  if (!repeatBtn) return;
+  // Different glyph per mode so the icon itself carries meaning:
+  //   off → 🔁 dim   (queue-advance arrows, faded)
+  //   one → 🔂 accent (single-arrow loop)
+  //   all → 🔁 accent (two-arrow loop)
+  const glyph = _repeatMode === "one" ? "🔂" : "🔁";
+  repeatBtn.textContent = glyph;
+  repeatBtn.dataset.mode = _repeatMode;
+  repeatBtn.setAttribute(
+    "aria-label",
+    _repeatMode === "off"
+      ? "Repeat — off"
+      : _repeatMode === "one"
+      ? "Repeat — loop this clip"
+      : "Repeat — repeat all",
+  );
+}
+function _cycleRepeatMode() {
+  _repeatMode =
+    _repeatMode === "off" ? "one" : _repeatMode === "one" ? "all" : "off";
+  try { localStorage.setItem(REPEAT_STORAGE_KEY, _repeatMode); } catch {}
+  _paintRepeatBtn();
+  // Live status line so the user sees what just happened. Sleep / A↔B / Speed
+  // all surface their state the same way.
+  setStatus(
+    _repeatMode === "off"
+      ? "Repeat off."
+      : _repeatMode === "one"
+      ? "Looping this clip."
+      : "Repeating all clips.",
+  );
+  // Re-render the library so the active card's title-row badge reflects
+  // the new mode (badge appears for one|all, disappears for off). Light
+  // hint on the first cycle.
+  if (typeof renderLibrary === "function") renderLibrary();
+  _fireChipHint(
+    "narrative.hintSeen.repeat",
+    "💡 Tap again to cycle: Off → 🔂 Loop this → 🔁 Repeat all.",
+  );
+}
+if (repeatBtn) {
+  repeatBtn.addEventListener("click", _cycleRepeatMode);
+  _paintRepeatBtn();
+}
+
+// Called from the playerEl "ended" handler before auto-advance fires.
+// Returns true if it handled the end-of-clip (so the handler should bail);
+// returns false to let the default advance behavior run.
+async function _repeatHandleEnded(justEndedId) {
+  if (_repeatMode === "one") {
+    // Loop-this: jump to the start and play. Skip the markCurrentClipPlayed
+    // side-effect by NOT going through advance — the playhead is already
+    // about to be 0 so resume-position will overwrite itself.
+    try {
+      playerEl.currentTime = 0;
+      await playerEl.play();
+    } catch (err) {
+      // Autoplay restrictions might block silent restart on some browsers.
+      // No-op — user can tap Play.
+    }
+    setStatus("🔂 Looping this clip.");
+    return true;
+  }
+  if (_repeatMode === "all" && justEndedId) {
+    // Repeat-all: try normal next first. If queue is exhausted (last
+    // clip in the active sort), wrap to the first clip in the same sort.
+    const nextId = await nextClipId(justEndedId);
+    if (nextId) return false; // not last — let default advance run
+    // Wrap: load the first clip in the current sort. Reuse listClips +
+    // sortClips so the wrap honors the user's playMode (custom order,
+    // newest first, etc.).
+    try {
+      const clips = await listClips();
+      if (!clips.length) return false;
+      let first;
+      if (_playMode === "shuffle") {
+        const others = clips.filter((c) => c.id !== justEndedId);
+        first = (others.length ? others : clips)[
+          Math.floor(Math.random() * (others.length || clips.length))
+        ];
+      } else {
+        first = sortClips(clips, _playMode)[0];
+      }
+      if (first) {
+        setStatus("🔁 Wrapping to first…");
+        _cancelAutoAdvance();
+        _autoAdvanceTimer = setTimeout(() => {
+          _autoAdvanceTimer = null;
+          loadClip(first.id);
+        }, 3000);
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
 
 updateSpeedBtn();
 applyPlaybackRate();
@@ -4184,6 +5565,13 @@ async function renderBookmarks() {
   if (typeof _updatePullupState === "function") {
     try { _updatePullupState(); } catch (e) {
       console.warn("[pullup] state refresh after bookmark render failed:", e);
+    }
+  }
+  // v225ep (#632): keep the desktop author pane fresh too — same
+  // mutation funnel, same lifecycle, just a different surface.
+  if (typeof _renderAuthorPane === "function") {
+    try { _renderAuthorPane(); } catch (e) {
+      console.warn("[author pane] refresh after bookmark render failed:", e);
     }
   }
 }
@@ -10843,6 +12231,11 @@ function clearForNewClip() {
   _currentPlayingVoiceId = null;
   _lastProgressSaveAt = 0;
   saveTextBtn.hidden = true;
+  // v225ep (#632): clip just got cleared → author pane's gate flips
+  // off → CSS hides it via data-multipane-author drop.
+  if (typeof _applyAuthorPaneLayout === "function") {
+    try { _applyAuthorPaneLayout(); } catch {}
+  }
   // Fade out the cover backdrop — no clip = no atmosphere.
   _setBackgroundArt(null);
   // No clip → no re-narrate banner. Reset the dismiss tracker too so a
@@ -13167,6 +14560,12 @@ function _applyAnnotationMarkers(clip) {
   if (typeof _updatePullupState === "function") {
     try { _updatePullupState(); } catch (e) {
       console.warn("[pullup] state refresh after anno reconcile failed:", e);
+    }
+  }
+  // v225ep (#632): same funnel feeds the desktop author pane.
+  if (typeof _renderAuthorPane === "function") {
+    try { _renderAuthorPane(); } catch (e) {
+      console.warn("[author pane] refresh after anno reconcile failed:", e);
     }
   }
 }
@@ -16645,25 +18044,53 @@ function makeClipCard(clip) {
   //
   // v220q: pulses while the regen is in flight so the user knows it's
   // working. State lives in _renarratingClipIds; cleared by the
-  // v220al: per-card GitHub sync chip. Only rendered for outdated
-  // GitHub-sourced clips (the ones the ↻ title-badge already flags).
-  // Tap → refetch the latest text via _refetchAndQueueClipFromGithub,
-  // drop into the bg-queue with targetClipId set so the existing clip
-  // gets overwritten in place. The bulk "Re-narrate outdated" button
-  // at the top of the library still does the all-at-once flow.
-  let syncBtn = null;
+  // v225fb (#644): per-card ↻ syncBtn removed.
+  //
+  // Previously this chip was the "refetch from GitHub + re-narrate"
+  // affordance on outdated cards. v225ey added an outdated banner
+  // attached to the bottom of the same cards with a prominent
+  // "Refetch + re-narrate" button — same action, more discoverable
+  // copy. User reported the two icons (↻ sync chip + 🔄 re-narrate
+  // chip) read as the same action because both are circular arrows
+  // sitting next to each other in the row.
+  //
+  // Removing the chip makes the surface unambiguous:
+  //   - Banner button "Refetch + re-narrate" → pulls fresh text + re-narrates
+  //   - Row chip 🔄                          → re-narrates existing text
+  //
+  // The variable name is kept (as `null`) so the row-append code below
+  // doesn't need to change — it already handles null entries.
+  const syncBtn = null;
+
+  // v225ey: per-card outdated banner. The desktop banner only fires
+  // when an outdated clip is the currently-loaded one; testers asked
+  // for the same affordance attached to every outdated card in the
+  // library so they don't have to load each one to see it. Same
+  // handlers as the desktop banner: Refetch → _refetchAndQueueClipFromGithub
+  // (which queues a bg-sync that overwrites the clip in place,
+  // preserving bookmarks / annotations / highlights). Dismiss drops
+  // the clip from _outdatedClipIds — session-scoped, matches the
+  // desktop banner's dismiss semantics.
+  let outdatedFooter = null;
   if (isOutdated && clip.gitRef && clip.gitRef.repoUrl) {
-    syncBtn = document.createElement("button");
-    syncBtn.className = "clip-sync";
-    syncBtn.type = "button";
-    syncBtn.setAttribute(
-      "aria-label",
-      `Sync ${clip.title} from GitHub`
-    );
-    syncBtn.title = "Refetch from GitHub + queue for re-narrate";
-    // ↻ matches the title-badge glyph so the visual link is obvious.
-    syncBtn.textContent = "↻";
-    syncBtn.addEventListener("click", async (e) => {
+    outdatedFooter = document.createElement("div");
+    outdatedFooter.className = "clip-outdated-footer";
+    const msg = document.createElement("span");
+    msg.className = "clip-outdated-msg";
+    // Two-part copy mirrors the desktop banner: bold lead + soft tail
+    // so the eye lands on "Updated on GitHub" first.
+    const lead = document.createElement("strong");
+    lead.textContent = "Updated on GitHub.";
+    const tail = document.createTextNode(" Re-narrate with the latest commit?");
+    msg.appendChild(lead);
+    msg.appendChild(tail);
+    const actions = document.createElement("span");
+    actions.className = "clip-outdated-actions";
+    const refetchBtn = document.createElement("button");
+    refetchBtn.type = "button";
+    refetchBtn.className = "clip-outdated-btn primary";
+    refetchBtn.textContent = "Refetch + re-narrate";
+    refetchBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const token = getGithubToken();
       if (!token) {
@@ -16674,21 +18101,41 @@ function makeClipCard(clip) {
         setStatus("Pick a voice before syncing.", true);
         return;
       }
-      syncBtn.disabled = true;
+      refetchBtn.disabled = true;
       try {
         const ok = await _refetchAndQueueClipFromGithub(clip.id, token);
         if (ok) {
-          setStatus(`Queued ${clip.title} for re-narrate — watch the queue panel.`);
+          setStatus(
+            `Queued ${clip.title} for re-narrate — watch the queue panel.`,
+          );
         } else {
           setStatus(`Couldn't refetch ${clip.title} from GitHub.`, true);
-          syncBtn.disabled = false;
+          refetchBtn.disabled = false;
         }
       } catch (err) {
-        console.warn("[sync] per-card refetch failed:", err);
+        console.warn("[outdated-banner] per-card refetch failed:", err);
         setStatus(`Sync failed: ${err.message}`, true);
-        syncBtn.disabled = false;
+        refetchBtn.disabled = false;
       }
     });
+    const dismissBtn = document.createElement("button");
+    dismissBtn.type = "button";
+    dismissBtn.className = "clip-outdated-btn";
+    dismissBtn.textContent = "Dismiss";
+    dismissBtn.setAttribute("aria-label", "Dismiss");
+    dismissBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Session-only dismissal: drop from the outdated set + re-render
+      // so the card returns to its normal state (no ↻ badge, no sync
+      // chip, no banner). On next library reload the freshness check
+      // may re-flag it if the SHA still differs upstream.
+      _outdatedClipIds.delete(clip.id);
+      renderLibrary();
+    });
+    actions.appendChild(refetchBtn);
+    actions.appendChild(dismissBtn);
+    outdatedFooter.appendChild(msg);
+    outdatedFooter.appendChild(actions);
   }
 
   // v220az: per-card 🔄 chip. Reads from _bgSyncingClipIds (the bg-queue
@@ -16819,6 +18266,25 @@ function makeClipCard(clip) {
     voiceSpan.title = clip.voiceName; // full name still visible on hover
     titleTop.appendChild(voiceSpan);
   }
+  // v225eu: active-card repeat badge. The chip in the player is global —
+  // when it's on, the badge marks WHICH card the loop currently applies
+  // to (i.e. the one playing). Disappears for off, glyph matches the
+  // chip so the connection reads at a glance.
+  if (
+    clip.id === _currentClipId &&
+    typeof _repeatMode !== "undefined" &&
+    _repeatMode !== "off"
+  ) {
+    const badge = document.createElement("span");
+    badge.className = "clip-title-top-repeat";
+    badge.textContent = _repeatMode === "one" ? "🔂" : "🔁";
+    badge.title =
+      _repeatMode === "one"
+        ? "Looping this clip (tap the 🔂 chip in the player to cycle off)"
+        : "Repeating all clips";
+    badge.setAttribute("aria-label", badge.title);
+    titleTop.appendChild(badge);
+  }
   titleTop.addEventListener("click", (e) => {
     if (_libraryMultiSelect) {
       // Same toggle-selection behavior as tapping the body.
@@ -16867,6 +18333,10 @@ function makeClipCard(clip) {
   // meta line for. Full-width footer reads cleanly even on the
   // narrowest mobile breakpoint.
   if (lastSyncFooter) item.append(lastSyncFooter);
+  // v225ey: outdated banner is the absolute last child so it's the
+  // most prominent thing at the bottom edge — testers should see it
+  // on a quick scroll past the card.
+  if (outdatedFooter) item.append(outdatedFooter);
   return item;
 }
 
@@ -17884,6 +19354,19 @@ async function saveClipEdit() {
     // without requiring a reload of the clip.
     if (id === _currentClipId) {
       _setBackgroundArt(clip);
+      // v225eb (#615): refresh phone top-bar title if the user just
+      // renamed the currently-loaded clip. Pass the freshly mutated
+      // clip so we don't race the IDB read with the SaveClip write.
+      if (typeof _phonePaintTopTitle === "function") {
+        try { _phonePaintTopTitle(clip); } catch {}
+      }
+      // v225ep (#632): refresh desktop author pane in case the user
+      // edited Notes (the most likely Edit-dialog change that this
+      // pane surfaces). Also covers tag/title/cover changes that
+      // don't directly affect the pane but cost nothing to repaint.
+      if (typeof _renderAuthorPane === "function") {
+        try { _renderAuthorPane(); } catch {}
+      }
     }
     setStatus(`Updated "${newTitle}"`);
   } catch (e) {
@@ -18804,6 +20287,13 @@ async function loadClip(id, { autoPlay = true } = {}) {
   _cancelAutoAdvance();
   // A-B loop bounds belonged to whatever audio was loaded before.
   clearAbLoop();
+  // v225eb (#615): refresh the phone top-bar title for the new clip.
+  // Pass `clip` directly — _currentClipId isn't assigned until
+  // later in loadClip, so the no-arg form would read stale state
+  // (or null on first load) and paint an empty title.
+  if (typeof _phonePaintTopTitle === "function") {
+    try { _phonePaintTopTitle(clip); } catch {}
+  }
 
   // v220-AA: hydrate the per-sentence override map for this clip so
   // the reading view's long-press handler can read/write it. Empty
@@ -18851,6 +20341,13 @@ async function loadClip(id, { autoPlay = true } = {}) {
   // Bind the player to this clip so the throttled progress-saver knows which
   // library row to update as playback advances.
   _currentClipId = id;
+  // v225ep (#632): _currentClipId just changed, so the desktop
+  // author pane's clip-loaded gate now flips on. _applyAuthorPaneLayout
+  // both toggles the body data-attribute (CSS shows the pane) and
+  // calls _renderAuthorPane to populate it with this clip's data.
+  if (typeof _applyAuthorPaneLayout === "function") {
+    try { _applyAuthorPaneLayout(); } catch {}
+  }
   // Libby-style page backdrop — fade in the cover as a blurred wash.
   _setBackgroundArt(clip);
   // Listen-stats attributes by the clip's stored voice (not the picker,
@@ -21119,6 +22616,15 @@ function setupMediaSession() {
       return;
     }
 
+    // v225eu: repeat-mode intercept. Loop-this restarts the same clip
+    // and returns true; repeat-all + end-of-queue schedules a wrap to
+    // the first clip and returns true. Off / repeat-all + not-last
+    // returns false and falls through to default advance.
+    if (justEndedId && _chapterTotalCount <= 0) {
+      const handled = await _repeatHandleEnded(justEndedId);
+      if (handled) return;
+    }
+
     // Auto-advance to the next clip in the library according to _playMode.
     // Give the listener a 3-second breath between chapters so transitions
     // don't slam together — your ear needs a beat to register a chapter
@@ -22783,6 +24289,33 @@ function _phoneMenuToggle() {
   if (document.body.dataset.menu === "open") _phoneMenuClose();
   else _phoneMenuOpen();
 }
+// v225eb (#615): clip title in the phone top bar. Sits between
+// ☰ (left:52) and 📚 (right:196), truncated with ellipsis on
+// narrow viewports. Painted on boot + every clip load + every
+// rename. CSS hides the slot when no clip is loaded.
+//
+// Accepts an optional `clip` so callers that already have the
+// resolved clip in scope (loadClip, saveClipEdit) don't depend on
+// _currentClipId having been assigned yet. Bug seen in the
+// initial implementation: loadClip called this BEFORE setting
+// _currentClipId, so the function read the old/null value and
+// painted nothing. Without a clip arg, falls back to the getClip
+// path keyed on _currentClipId — used by boot.
+function _phonePaintTopTitle(clip) {
+  if (!_phoneMenuIsPhone()) return;
+  const el = document.querySelector(".phone-top-title");
+  if (!el) return;
+  const apply = (c) => {
+    if (!c) { el.textContent = ""; el.removeAttribute("title"); return; }
+    const t = (c.title || "").trim() || "Untitled clip";
+    el.textContent = t;
+    el.title = t; // tooltip for the truncated case
+  };
+  if (clip) { apply(clip); return; }
+  if (!_currentClipId) { apply(null); return; }
+  getClip(_currentClipId).then(apply).catch(() => apply(null));
+}
+
 function _phoneMenuBoot() {
   if (!_phoneMenuIsPhone()) return;
   const app = document.querySelector(".app");
@@ -22802,6 +24335,41 @@ function _phoneMenuBoot() {
       _phoneMenuToggle();
     });
     app.insertBefore(btn, app.firstChild);
+  }
+
+  // v225eb (#615): clip title between ☰ and the right cluster.
+  // Fixed-positioned via CSS (same family as ☰/📚/🔖). Injected
+  // empty; painted by _phonePaintTopTitle on every clip load.
+  if (!app.querySelector(".phone-top-title")) {
+    const ttl = document.createElement("div");
+    ttl.className = "phone-top-title";
+    ttl.setAttribute("aria-live", "polite");
+    app.appendChild(ttl);
+    _phonePaintTopTitle();
+  }
+
+  // v225fk (#653): quick-access Import icon at the top-right. Tester
+  // reported the empty header (☰ on the left + centered books emoji,
+  // nothing on the right) gave no signal about where to start. Import
+  // sits where the bookmark button lives when a clip is loaded
+  // (right:60px to clear the bookmark), and flushes right (right:12px)
+  // when no clip is loaded — the bookmark button is hidden in that
+  // state, so Import takes its slot. CSS handles both positions via
+  // a body:has() gate. Tap fires the existing #import-btn handler so
+  // the centered modal opens with no parallel state machine.
+  if (!app.querySelector(".phone-import-btn")) {
+    const imp = document.createElement("button");
+    imp.type = "button";
+    imp.className = "phone-import-btn";
+    imp.setAttribute("aria-label", "Import a manuscript");
+    imp.title = "Import a file, URL, or repo";
+    imp.textContent = "📥";
+    imp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = document.getElementById("import-btn");
+      if (target) target.click();
+    });
+    app.appendChild(imp);
   }
 
   // v225.tn42 (#519): quick-access bookmark button at top-right.
@@ -23130,6 +24698,125 @@ window.addEventListener("resize", () => {
   if (_phoneMenuIsPhone()) _phoneMenuBoot();
 });
 
+// v225er (#635): landscape immersive mode — auto-hide chrome on
+// phones rotated to landscape, tap-to-reveal, 3s of no input → hide
+// again. Same idiom video players use.
+//
+// State machine:
+//   landscape entered → set data-landscape-immersive=1, chrome
+//                       starts visible, start 3s timer
+//   timer fires       → set data-landscape-hidden=1 (CSS slides
+//                       chrome off-screen)
+//   tap anywhere      → clear data-landscape-hidden, restart timer
+//   landscape exited  → clear both attributes, kill timer
+//
+// Gates: while a modal dialog is open, while the bookmark editor or
+// annotate palette is up, while recording a voice note — those flows
+// need chrome reachable, so the auto-hide stalls until they close.
+const _LANDSCAPE_IMMERSIVE_DELAY_MS = 3000;
+const _landscapeImmersiveMQ = window.matchMedia(
+  "(orientation: landscape) and (max-height: 500px)"
+);
+let _landscapeImmersiveTimer = null;
+
+function _isLandscapeImmersiveBlocked() {
+  // Modal dialogs: settings, voice, library, characters, picker,
+  // bookmark editor (.bookmark-editor visible), TOC, etc.
+  const anyDialogOpen = !!document.querySelector("dialog[open]");
+  if (anyDialogOpen) return true;
+  // Phone manual viewer up
+  if (document.body.dataset.phoneManualOpen) return true;
+  // Pull-up drawer expanded
+  if (document.body.dataset.pullup === "open") return true;
+  // Phone menu sheet expanded
+  if (document.body.dataset.menu === "open") return true;
+  // Voice note actively recording
+  if (typeof _voiceIsRecording !== "undefined" && _voiceIsRecording) return true;
+  // Annotate palette visible
+  const palette = document.getElementById("annotate-palette");
+  if (palette && !palette.hidden) return true;
+  // Bookmark editor visible
+  const bmEditor = document.getElementById("bookmark-editor");
+  if (bmEditor && !bmEditor.hidden) return true;
+  // Inline edit in progress
+  if (typeof _inlineEditingIdx !== "undefined" && _inlineEditingIdx >= 0) return true;
+  return false;
+}
+
+function _hideLandscapeChrome() {
+  if (!_landscapeImmersiveMQ.matches) return;
+  if (_isLandscapeImmersiveBlocked()) {
+    // Modal / palette / recording in flight — try again after the
+    // standard delay so we re-evaluate once it clears.
+    _landscapeImmersiveTimer = setTimeout(
+      _hideLandscapeChrome,
+      _LANDSCAPE_IMMERSIVE_DELAY_MS,
+    );
+    return;
+  }
+  document.body.dataset.landscapeHidden = "1";
+  _landscapeImmersiveTimer = null;
+}
+
+function _showLandscapeChrome() {
+  delete document.body.dataset.landscapeHidden;
+  _resetLandscapeImmersiveTimer();
+}
+
+function _resetLandscapeImmersiveTimer() {
+  if (_landscapeImmersiveTimer) clearTimeout(_landscapeImmersiveTimer);
+  if (!_landscapeImmersiveMQ.matches) {
+    _landscapeImmersiveTimer = null;
+    return;
+  }
+  _landscapeImmersiveTimer = setTimeout(
+    _hideLandscapeChrome,
+    _LANDSCAPE_IMMERSIVE_DELAY_MS,
+  );
+}
+
+function _applyLandscapeImmersiveLayout() {
+  if (_landscapeImmersiveMQ.matches) {
+    document.body.dataset.landscapeImmersive = "1";
+    // Show chrome initially, start the auto-hide timer.
+    delete document.body.dataset.landscapeHidden;
+    _resetLandscapeImmersiveTimer();
+  } else {
+    // Back to portrait / desktop — always show chrome, kill timer.
+    delete document.body.dataset.landscapeImmersive;
+    delete document.body.dataset.landscapeHidden;
+    if (_landscapeImmersiveTimer) {
+      clearTimeout(_landscapeImmersiveTimer);
+      _landscapeImmersiveTimer = null;
+    }
+  }
+}
+
+// Wake chrome on any user input. pointerdown fires earliest in the
+// event sequence (before click) so the chrome shows up before the
+// user's tap on a button registers, meaning their tap can both wake
+// the chrome AND hit a now-visible target.
+//
+// Capture phase so this fires before per-element pointerdown
+// handlers that might stopPropagation. We don't stopPropagation
+// here — the user's tap still travels to whatever they hit.
+document.addEventListener(
+  "pointerdown",
+  () => {
+    if (!_landscapeImmersiveMQ.matches) return;
+    _showLandscapeChrome();
+  },
+  true,
+);
+
+// Respond to rotation + viewport change.
+if (typeof _landscapeImmersiveMQ.addEventListener === "function") {
+  _landscapeImmersiveMQ.addEventListener("change", _applyLandscapeImmersiveLayout);
+} else if (typeof _landscapeImmersiveMQ.addListener === "function") {
+  _landscapeImmersiveMQ.addListener(_applyLandscapeImmersiveLayout);
+}
+_applyLandscapeImmersiveLayout();
+
 // v225.mobile / Phase B (#503): pull-up controls drawer.
 //
 // On phone widths (≤767px) the Spotify-style bottom bar carries only
@@ -23158,38 +24845,28 @@ function _updatePullupState() {
   const listeningEl = document.querySelector('[data-state="listening"]');
   const authorEl = document.querySelector('[data-state="author"]');
 
-  // Playback: current speed + volume + skip interval.
-  // v591: match the chip notation ("1×" not "Speed 180") so the
-  // readout doesn't re-state what the chip already shows. Compute
-  // the multiplier from the rate input (default 180 wpm = 1×).
+  // Playback: raw wpm + volume. Skip interval was dropped — it's
+  // already on the chip itself ("15s ↻ 15s") so showing it here
+  // is duplicate. Rate format changed from "0.94×" multiplier to
+  // "170 wpm" — multiplier was confusing because the user adjusts
+  // the slider in wpm, not as a 1.0× baseline, and didn't see
+  // 170 → 0.94× as the same number. Raw wpm matches the slider
+  // value the user actually set.
   if (playbackEl && rateEl && volumeEl) {
     const rate = Number(rateEl.value) || 180;
-    const mult = (rate / 180).toFixed(2).replace(/\.?0+$/, "");
     const vol = volumeEl.value;
-    const skip = typeof _skipIntervalSec === "number" ? _skipIntervalSec : 15;
-    playbackEl.textContent = `${mult}× · ${vol}% · ${skip}s`;
+    playbackEl.textContent = `${rate} wpm · ${vol}%`;
   }
 
-  // Listening: A↔B markers when set, sleep countdown when active,
-  // otherwise the "nothing active" hint. Reading from the actual
-  // module state vars set by the existing handlers.
-  if (listeningEl) {
-    const parts = [];
-    if (typeof _abLoopA === "number" && _abLoopA > 0) {
-      parts.push(`A ${_formatClockTime ? _formatClockTime(_abLoopA) : _abLoopA.toFixed(0) + "s"}`);
-    }
-    if (typeof _abLoopB === "number" && _abLoopB > 0) {
-      parts.push(`B ${_formatClockTime ? _formatClockTime(_abLoopB) : _abLoopB.toFixed(0) + "s"}`);
-    }
-    if (typeof _sleepEndsAt === "number" && _sleepEndsAt > 0) {
-      const remainMs = _sleepEndsAt - Date.now();
-      if (remainMs > 0) {
-        const m = Math.ceil(remainMs / 60000);
-        parts.push(`Sleep ${m}m`);
-      }
-    }
-    listeningEl.textContent = parts.length ? parts.join(" · ") : "Idle";
-  }
+  // Listening: nothing useful to show here. Everything that fits
+  // ("how am I listening") is already on screen — mini-player at the
+  // bottom, A↔B / Sleep chip labels in the row above. The clip
+  // TITLE — which was the one remaining "what am I listening to"
+  // surface — moved to the phone top bar in v225eb (#615), where
+  // it's visible without opening the drawer. So the slot stays
+  // empty, the :empty CSS rule hides it cleanly, and the row
+  // collapses to just the chip strip.
+  if (listeningEl) listeningEl.textContent = "";
 
   // Author: annotation counts on the loaded clip. Skip silently if
   // no clip loaded — the state-strip is hidden via :empty.
@@ -23544,3 +25221,140 @@ if (settingsForceUpdate) {
     location.reload();
   });
 }
+
+// v225fa (#643): horizontal overflow detection.
+//
+// User reports being able to scroll right into dead space on desktop
+// despite v225ez's overflow-x: clip + .app width override. Instead of
+// guessing the cause, instrument it: when horizontal scroll happens
+// OR when the document's scrollWidth exceeds clientWidth, walk the
+// DOM and log every element whose own scrollWidth exceeds its
+// clientWidth (i.e., elements that are wider than their visible box
+// and therefore push the page's scrollWidth).
+//
+// One-shot per session — fires on the first horizontal scroll, then
+// disarms so the log doesn't fill with duplicates as the user keeps
+// scrolling. They can scroll into the dead space, send the debug
+// log, and we'll see the actual culprit.
+(() => {
+  let armed = true;
+  function _overflowSnapshot(trigger) {
+    if (!armed) return;
+    armed = false;
+    try {
+      const docEl = document.documentElement;
+      const body = document.body;
+      const baseline = {
+        trigger,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        docScrollWidth: docEl.scrollWidth,
+        docClientWidth: docEl.clientWidth,
+        docScrollLeft: docEl.scrollLeft,
+        bodyScrollWidth: body.scrollWidth,
+        bodyClientWidth: body.clientWidth,
+        bodyScrollLeft: body.scrollLeft,
+        dpr: window.devicePixelRatio,
+        multipane: {
+          library: body.dataset.multipaneLibrary || "0",
+          author: body.dataset.multipaneAuthor || "0",
+        },
+        appWidth: (() => {
+          const app = document.querySelector(".app");
+          if (!app) return null;
+          const r = app.getBoundingClientRect();
+          return { width: r.width, left: r.left, right: r.right };
+        })(),
+      };
+      _dlog("overflow-x", "snapshot", baseline);
+
+      // Walk the DOM. For each element, compare scrollWidth to clientWidth
+      // and also check whether the element's right edge extends past the
+      // viewport's right edge (which would push body's scrollWidth).
+      const offenders = [];
+      const viewportRight = window.innerWidth;
+      const all = document.querySelectorAll("*");
+      for (const el of all) {
+        if (offenders.length > 30) break; // cap so the dlog stays usable
+        let pushed = false;
+        const reasons = [];
+        if (el.scrollWidth > el.clientWidth + 1) {
+          reasons.push(
+            `scrollWidth=${el.scrollWidth} clientWidth=${el.clientWidth}`,
+          );
+          pushed = true;
+        }
+        const r = el.getBoundingClientRect();
+        if (r.right > viewportRight + 1 && r.width > 0) {
+          // Filter out fixed elements that legitimately use right:0 — they
+          // can have right edges AT the viewport (within 1px) but not push
+          // scroll. Anything substantially past the edge is suspicious.
+          const cs = getComputedStyle(el);
+          if (cs.position !== "fixed" || r.right > viewportRight + 4) {
+            reasons.push(
+              `right=${Math.round(r.right)} viewport=${viewportRight} pos=${cs.position}`,
+            );
+            pushed = true;
+          }
+        }
+        if (pushed) {
+          // Walk up to root to capture an identifier path. Short — the
+          // dlog can't carry huge strings well.
+          const idParts = [];
+          let cur = el;
+          while (cur && cur !== document.body && idParts.length < 4) {
+            const tag = cur.tagName ? cur.tagName.toLowerCase() : "?";
+            const id = cur.id ? `#${cur.id}` : "";
+            const cls = cur.className && typeof cur.className === "string"
+              ? "." + cur.className.split(/\s+/).slice(0, 2).join(".")
+              : "";
+            idParts.unshift(tag + id + cls);
+            cur = cur.parentElement;
+          }
+          offenders.push({
+            path: idParts.join(" > "),
+            reasons,
+            rect: {
+              width: Math.round(r.width),
+              left: Math.round(r.left),
+              right: Math.round(r.right),
+            },
+          });
+        }
+      }
+      _dlog("overflow-x", "offenders", {
+        count: offenders.length,
+        items: offenders,
+      });
+    } catch (e) {
+      _dlog("overflow-x", "snapshot failed", { error: String(e) });
+    }
+  }
+
+  // Re-arm helper exposed for manual re-trigger from devtools / chip taps.
+  window.__narrativeOverflowDebug = () => {
+    armed = true;
+    _overflowSnapshot("manual");
+  };
+
+  // Auto-fire on first horizontal scroll. The scroll event is on window
+  // for documentElement scrolls; both window scroll and body scroll cover
+  // it. Use {passive: true} so we don't interfere with smooth scrolling.
+  window.addEventListener(
+    "scroll",
+    () => {
+      const sl = document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+      if (sl > 0) _overflowSnapshot("scroll");
+    },
+    { passive: true, capture: true },
+  );
+  // Also auto-fire at boot if the document already overflows horizontally —
+  // this catches the case where the overflow exists before any scroll happens.
+  // Delay a tick to let layout settle.
+  setTimeout(() => {
+    const docEl = document.documentElement;
+    if (docEl.scrollWidth > docEl.clientWidth + 1) {
+      _overflowSnapshot("boot-overflow");
+    }
+  }, 500);
+})();

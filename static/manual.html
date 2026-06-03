@@ -8,6 +8,13 @@
     <title>Narrative — Manual</title>
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
     <link rel="stylesheet" href="/styles.css" />
+    <!-- v225eh (#625): walkthrough engine shared between this page
+         and the phone manual viewer (where the inline script in
+         manual.html doesn't run because the viewer parses sections
+         via DOMParser and clones them into a fresh DOM). Loading
+         the engine as an external script means both surfaces share
+         one source of truth. -->
+    <script defer src="/tutorials.js"></script>
     <script>
       // Same theme-boot block as the app. Light-mode users who land
       // here from the in-app Help link don't get a dark-flash.
@@ -219,6 +226,784 @@
           content: "↑ ";
         }
       }
+      /* ─────────────────────────────────────────────────────────────
+         Walkthrough mini-apps (§10). Auto-clicking demos that show
+         a flow end-to-end without requiring the user to actually run
+         it. Reuses the .manual-demo card framing but adds:
+           • .wt-stage         — the fake-UI surface where animation happens
+           • .wt-cursor        — animated cursor that points + clicks
+           • .wt-callout       — side annotation that explains each step
+           • .wt-mock-*        — mocked-up app primitives (textarea, buttons, player bar)
+         All animation is JS-driven (see <script> block at bottom of body)
+         so each walkthrough's step list reads as plain data.
+         ───────────────────────────────────────────────────────────── */
+      .manual .wt {
+        position: relative;
+        background: var(--bg-card);
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        padding: 0;
+        margin: 14px auto 20px;
+        overflow: hidden;
+        user-select: none;
+      }
+      .manual .wt-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: var(--bg-card-2);
+        border-bottom: 1px solid var(--border-soft);
+        font-size: 12.5px;
+      }
+      .manual .wt-head-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        background: var(--accent);
+        color: #fff;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        animation: wt-badge-pulse 2200ms ease-in-out infinite;
+      }
+      @keyframes wt-badge-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.55; }
+      }
+      .manual .wt-head-title { font-weight: 600; color: var(--fg); flex: 1; }
+      .manual .wt-head-step { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+      .manual .wt-head-restart {
+        all: unset;
+        cursor: pointer;
+        color: var(--fg-dim);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 14px;
+        line-height: 1;
+      }
+      .manual .wt-head-restart:hover { color: var(--fg); background: var(--hover-soft); }
+      .manual .wt-body {
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        gap: 0;
+        min-height: 280px;
+      }
+      .manual .wt-stage {
+        position: relative;
+        padding: 18px;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      .manual .wt-callout {
+        padding: 14px 14px 14px 18px;
+        border-left: 1px solid var(--border-soft);
+        font-size: 12.5px;
+        color: var(--fg-dim);
+        line-height: 1.5;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: var(--bg-card);
+      }
+      .manual .wt-callout-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+      .manual .wt-callout-text strong { color: var(--fg); font-weight: 600; }
+      @media (max-width: 600px) {
+        /* v225eq (#634): bound every walkthrough element to its parent
+           on phone. grid items + flex children have intrinsic min-
+           content widths that can push past their parent when text
+           doesn't have natural break points — that's why a single
+           long sentence in the mock textarea was forcing the whole
+           variant container wider than the viewport. min-width: 0 on
+           flex/grid children + max-width: 100% on every nested wrap +
+           overflow-wrap on text containers cleans it up. */
+        .manual .wt-body {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .manual .wt,
+        .manual .wt-body,
+        .manual .wt-stage,
+        .manual .wt-callout,
+        .manual .wt-mock-variant-desktop,
+        .manual .wt-mock-variant-phone {
+          min-width: 0;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        .manual .wt-callout {
+          border-left: 0;
+          border-top: 1px solid var(--border-soft);
+          padding: 12px 14px;
+        }
+        /* Phone variant: every row needs min-width:0 so flex
+           children (scrub bar, tag chips, text bodies) shrink
+           rather than expanding the parent. */
+        .manual .wt-mock-phone-topbar,
+        .manual .wt-mock-phone-body,
+        .manual .wt-mock-phone-tagrow,
+        .manual .wt-mock-phone-bottombar,
+        .manual .wt-mock-phone-reading {
+          min-width: 0;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        /* Player row: scrub must be allowed to shrink below its
+           natural size, otherwise it forces the parent wider than
+           viewport. */
+        .manual .wt-mock-player-phone {
+          min-width: 0;
+          width: 100%;
+        }
+        .manual .wt-mock-player-phone .wt-mock-scrub {
+          min-width: 0;
+          flex-shrink: 1;
+        }
+        /* Text containers wrap aggressively on phone — a single
+           long word (URL, hashtag, etc.) shouldn't push them open. */
+        .manual .wt-mock-sentence,
+        .manual .wt-mock-textarea,
+        .manual .wt-mock-textarea-phone,
+        .manual .wt-mock-transcript,
+        .manual .wt-mock-phone-topbar-title {
+          min-width: 0;
+          word-wrap: break-word;
+          overflow-wrap: break-word;
+        }
+      }
+      /* The animated cursor — a small dot with a halo. position:absolute
+         so we can translate it freely within the stage. Smooth ease
+         between steps (transition on transform); the .clicking class
+         pulses on click frames. */
+      .manual .wt-cursor {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 0 var(--accent);
+        transform: translate3d(-100px, -100px, 0);
+        transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+        pointer-events: none;
+        z-index: 10;
+        opacity: 0.85;
+      }
+      .manual .wt-cursor.clicking {
+        animation: wt-cursor-click 420ms ease-out;
+      }
+      @keyframes wt-cursor-click {
+        0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 60%, transparent); }
+        100% { box-shadow: 0 0 0 20px color-mix(in oklab, var(--accent) 0%, transparent); }
+      }
+      /* Mock UI primitives for the walkthrough stage. These look like
+         the real app's controls but are pure presentation — no JS
+         handlers, no real state. */
+      .manual .wt-mock-textarea {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-family: inherit;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--fg);
+        min-height: 80px;
+        margin-bottom: 12px;
+        white-space: pre-wrap;
+      }
+      .manual .wt-mock-textarea:empty::before {
+        content: "Paste your draft here…";
+        color: var(--fg-dim);
+      }
+      .manual .wt-mock-textarea.typing::after {
+        content: "▍";
+        color: var(--accent);
+        animation: wt-blink 800ms steps(2) infinite;
+      }
+      @keyframes wt-blink { 50% { opacity: 0; } }
+      .manual .wt-mock-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        background: var(--accent);
+        color: #fff;
+        border: 0;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: default;
+        transition: transform 120ms, box-shadow 120ms;
+      }
+      .manual .wt-mock-btn.pressed {
+        transform: scale(0.94);
+        box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent) 30%, black);
+      }
+      .manual .wt-mock-status {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: var(--accent-tint);
+        border-radius: 6px;
+        font-size: 12.5px;
+        color: var(--fg);
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 280ms, transform 280ms;
+      }
+      .manual .wt-mock-status.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-player {
+        margin-top: 14px;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        opacity: 0;
+        transform: translateY(6px);
+        transition: opacity 320ms, transform 320ms;
+      }
+      .manual .wt-mock-player.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-play-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        border: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        cursor: default;
+        flex-shrink: 0;
+      }
+      .manual .wt-mock-scrub {
+        flex: 1;
+        height: 4px;
+        background: var(--border-soft);
+        border-radius: 2px;
+        position: relative;
+      }
+      .manual .wt-mock-scrub-fill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 0%;
+        background: var(--accent);
+        border-radius: 2px;
+        transition: width 2200ms linear;
+      }
+      .manual .wt-mock-scrub-thumb {
+        position: absolute;
+        top: 50%;
+        left: 0;
+        width: 12px;
+        height: 12px;
+        background: var(--accent);
+        border: 2px solid var(--bg-card);
+        border-radius: 999px;
+        transform: translate(-50%, -50%);
+        transition: left 2200ms linear;
+      }
+      .manual .wt-mock-time {
+        font-size: 12px;
+        color: var(--fg-dim);
+        font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+      }
+
+      /* ─── Revise walkthrough mock UI ─────────────────────────────
+         A miniature reading-view stage: top bar, three sentences,
+         tag row at bottom. Sentences carry .playing / .selected
+         states; flags + transcripts ride on .shown for fade-in. */
+      .manual .wt-mock-topbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 4px 12px;
+        border-bottom: 1px solid var(--border-soft);
+        margin-bottom: 14px;
+      }
+      .manual .wt-mock-topbar-btn {
+        font-size: 16px;
+        color: var(--fg);
+        line-height: 1;
+        padding: 0 4px;
+      }
+      .manual .wt-mock-topbar-title {
+        flex: 1;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--fg);
+        letter-spacing: -0.01em;
+      }
+      .manual .wt-mock-reading {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 0 4px;
+      }
+      .manual .wt-mock-sentence {
+        position: relative;
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--fg);
+        border: 1.5px dashed transparent;
+        transition: background 240ms, border-color 240ms, color 240ms;
+      }
+      .manual .wt-mock-sentence.playing {
+        background: var(--accent-tint);
+        color: var(--fg);
+        font-weight: 500;
+      }
+      .manual .wt-mock-sentence.selected {
+        border-color: var(--accent);
+      }
+      .manual .wt-mock-flag {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        background: color-mix(in oklab, #e25c5c 32%, transparent);
+        font-size: 11px;
+        margin-left: 6px;
+        opacity: 0;
+        transform: scale(0.6);
+        transition: opacity 280ms, transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+        vertical-align: middle;
+      }
+      .manual .wt-mock-flag.shown {
+        opacity: 1;
+        transform: scale(1);
+      }
+      .manual .wt-mock-transcript {
+        margin-top: 4px;
+        padding: 6px 10px;
+        background: var(--bg-card-2);
+        border-left: 2px solid var(--accent);
+        border-radius: 4px;
+        font-size: 11.5px;
+        color: var(--fg-dim);
+        font-style: italic;
+        opacity: 0;
+        max-height: 0;
+        overflow: hidden;
+        transition: opacity 320ms, max-height 320ms, padding 320ms;
+        padding-top: 0;
+        padding-bottom: 0;
+      }
+      .manual .wt-mock-transcript.shown {
+        opacity: 1;
+        max-height: 80px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+      }
+      .manual .wt-mock-tag-row {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        padding: 12px 4px 4px;
+        margin-top: 12px;
+        border-top: 1px solid var(--border-soft);
+      }
+      .manual .wt-mock-tag {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-soft);
+        font-size: 16px;
+        line-height: 1;
+        transition: transform 120ms, box-shadow 120ms, background 120ms;
+      }
+      .manual .wt-mock-tag.pressed {
+        transform: scale(0.9);
+        background: var(--accent-tint);
+      }
+      /* v225em (#629): viewport-conditional mock variants. Phone
+         hidden by default (desktop is the larger audience); flips
+         on narrow viewports. The walkthrough engine ALSO removes
+         the off-viewport variant from the DOM at boot so the
+         cursor positioning math doesn't include hidden elements.
+         CSS handles the initial paint; JS handles the runtime. */
+      .manual .wt-mock-variant-phone {
+        display: none;
+      }
+      @media (max-width: 600px) {
+        .manual .wt-mock-variant-desktop { display: none; }
+        .manual .wt-mock-variant-phone { display: block; }
+      }
+      /* Phone-shell mock — top bar / body / bottom bar arranged
+         vertically to mirror the real phone shell. Positioned so
+         the cursor (absolute inside .wt-stage) can land on any
+         element with the same coordinate math the desktop variant
+         uses. */
+      .manual .wt-mock-variant-phone {
+        position: relative;
+        background: var(--bg-card);
+        border: 1px solid var(--border-soft);
+        border-radius: 14px;
+        overflow: hidden;
+        min-height: 320px;
+        display: flex;
+        flex-direction: column;
+      }
+      @media (min-width: 601px) {
+        /* Desktop preview of the phone variant (forced via override)
+           cap width so it looks phone-ish rather than stretching. */
+        .manual .wt-mock-variant-phone { max-width: 320px; margin: 0 auto; }
+      }
+      .manual .wt-mock-phone-topbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        background: var(--bg);
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .manual .wt-mock-phone-topbar-btn {
+        font-size: 16px;
+        color: var(--fg);
+        line-height: 1;
+      }
+      .manual .wt-mock-phone-topbar-title {
+        flex: 1;
+        text-align: center;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--fg);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .manual .wt-mock-phone-body {
+        flex: 1;
+        padding: 14px;
+        background: var(--bg-card-2);
+        overflow: hidden;
+      }
+      .manual .wt-mock-phone-reading {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 12.5px;
+        line-height: 1.5;
+        background: var(--bg);
+      }
+      .manual .wt-mock-phone-tagrow {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        padding: 8px 10px;
+        background: var(--accent-tint);
+        border-top: 1px solid var(--border-soft);
+      }
+      .manual .wt-mock-phone-bottombar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: var(--bg);
+        border-top: 1px solid var(--border-soft);
+        position: relative;
+      }
+      .manual .wt-mock-phone-playerbar {
+        justify-content: space-between;
+      }
+      /* Phone Generate button — full-width pill matches the real
+         phone Generate bar's chunky tap target. */
+      .manual .wt-mock-btn-phone {
+        flex: 1;
+        padding: 10px 14px;
+        font-size: 13px;
+        border-radius: 999px;
+      }
+      .manual .wt-mock-textarea-phone {
+        background: var(--bg-card);
+        border-radius: 8px;
+        min-height: 100px;
+        font-size: 12.5px;
+      }
+      /* Phone player bar: skip chips + play button + scrub.
+         Mirrors the layout of the real player bar. The Generate
+         button and player bar share the bottom-bar slot — engine's
+         showplayer step hides Generate and reveals Player. */
+      .manual .wt-mock-player-phone {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 0;
+        padding: 0;
+        background: transparent;
+        border: 0;
+      }
+      .manual .wt-mock-player-phone.shown {
+        /* override base wt-mock-player slide-up; phone version
+           replaces Generate in place. */
+        transform: none;
+      }
+      /* When player is shown, the Generate button slides out. We
+         flip them via class swaps in the engine; the existing
+         wt-mock-btn.shown / wt-mock-player.shown CSS doesn't quite
+         fit the phone "swap" model, so add a phone-specific rule
+         that hides Generate once Player is shown. The engine's
+         showplayer action will add a .player-shown class to the
+         bottombar. */
+      .manual .wt-mock-phone-bottombar.player-shown .wt-mock-btn-phone {
+        display: none;
+      }
+      .manual .wt-mock-phone-bottombar:not(.player-shown) .wt-mock-player-phone {
+        display: none;
+      }
+      .manual .wt-mock-skip-chip {
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--fg-dim);
+        padding: 4px 8px;
+        background: var(--bg-card-2);
+        border-radius: 999px;
+        flex-shrink: 0;
+      }
+      /* Phone status sits just above the bottom bar — small toast
+         that fades in when synth is running. */
+      .manual .wt-mock-status-phone {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        bottom: 62px;
+        margin: 0;
+      }
+
+      .manual .wt-mock-tag-mic.recording {
+        background: color-mix(in oklab, #e25c5c 22%, transparent);
+        border-color: #e25c5c;
+        animation: wt-mic-pulse 1200ms ease-in-out infinite;
+      }
+      @keyframes wt-mic-pulse {
+        0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #e25c5c 40%, transparent); }
+        50%      { box-shadow: 0 0 0 8px color-mix(in oklab, #e25c5c 0%, transparent); }
+      }
+
+      /* v225fc (#645): Import-flow walkthroughs (Tutorials 3-5).
+         Shared mock shell — a vertical stack with an Import button at
+         top, a dropdown that fades in, the source's specific input
+         row, the result area, and a faux Generate button at the
+         bottom. Same animation engine drives all three. */
+      .manual .wt-mock-import {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        min-height: 320px;
+        position: relative;
+      }
+      .manual .wt-mock-imp-btn {
+        align-self: flex-start;
+        padding: 6px 14px;
+        background: var(--bg-card-2);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: default;
+        transition: transform 120ms, background 120ms;
+      }
+      .manual .wt-mock-imp-btn.pressed {
+        transform: scale(0.94);
+        background: var(--accent-tint);
+      }
+      .manual .wt-mock-imp-menu {
+        background: var(--bg-card-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 6px 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 240ms, transform 240ms;
+        pointer-events: none;
+      }
+      .manual .wt-mock-imp-menu.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-imp-item {
+        padding: 7px 14px;
+        font-size: 13px;
+        color: var(--fg);
+      }
+      .manual .wt-mock-imp-item.highlighted {
+        background: var(--accent-tint);
+        font-weight: 600;
+      }
+      .manual .wt-mock-imp-urlrow {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+      }
+      .manual .wt-mock-imp-input {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 12px;
+        background: var(--bg-card-2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 12px;
+        color: var(--fg);
+        min-height: 18px;
+        position: relative;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .manual .wt-mock-imp-input:empty::before {
+        content: "Paste here…";
+        color: var(--fg-dim);
+        opacity: 0.6;
+      }
+      .manual .wt-mock-imp-input.typing::after {
+        content: "▎";
+        margin-left: 1px;
+        color: var(--accent);
+        animation: wt-blink 800ms steps(2) infinite;
+      }
+      .manual .wt-mock-imp-go {
+        padding: 6px 14px;
+        background: var(--accent);
+        color: #fff;
+        border: 0;
+        border-radius: 6px;
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: default;
+        transition: transform 120ms;
+      }
+      .manual .wt-mock-imp-go.pressed {
+        transform: scale(0.94);
+      }
+      .manual .wt-mock-imp-file-picker,
+      .manual .wt-mock-imp-tree {
+        background: var(--bg-card-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-imp-file-picker.shown,
+      .manual .wt-mock-imp-tree.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-imp-file-row,
+      .manual .wt-mock-imp-tree-row {
+        padding: 5px 10px;
+        font-size: 12.5px;
+        color: var(--fg);
+        border-radius: 4px;
+      }
+      .manual .wt-mock-imp-file-row.selected,
+      .manual .wt-mock-imp-tree-row.selected {
+        background: var(--accent-tint);
+        font-weight: 600;
+      }
+      .manual .wt-mock-imp-tree-row.indent {
+        padding-left: 24px;
+      }
+      .manual .wt-mock-imp-extracting {
+        padding: 8px 12px;
+        background: var(--accent-tint);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--fg);
+        font-style: italic;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-imp-extracting.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-imp-result {
+        background: var(--bg-card-2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px;
+        min-height: 50px;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--fg);
+        opacity: 0.4;
+        transition: opacity 240ms;
+      }
+      .manual .wt-mock-imp-result.shown {
+        opacity: 1;
+      }
+      .manual .wt-mock-imp-result:empty::before {
+        content: "Extracted text will appear here";
+        color: var(--fg-dim);
+        font-style: italic;
+        opacity: 0.7;
+      }
+      .manual .wt-mock-imp-generate {
+        align-self: stretch;
+        padding: 9px;
+        background: var(--accent);
+        color: #fff;
+        border: 0;
+        border-radius: 999px;
+        font-size: 13.5px;
+        font-weight: 700;
+        cursor: default;
+        opacity: 0.6;
+      }
+      @keyframes wt-blink {
+        50% { opacity: 0; }
+      }
+
       .manual .note,
       .manual .tip,
       .manual .warn {
@@ -463,6 +1248,15 @@
           <li><a href="#library">The library</a></li>
           <li><a href="#settings">Settings &amp; modes</a></li>
           <li><a href="#phone">Listening on your phone</a></li>
+          <li><a href="#tutorials">Tutorials</a>
+            <ul>
+              <li><a href="#wt-first-listen">First listen</a></li>
+              <li><a href="#wt-revise-listen">Revise as you listen</a></li>
+              <li><a href="#wt-paste-url">Paste an article URL</a></li>
+              <li><a href="#wt-upload-file">Upload a file</a></li>
+              <li><a href="#wt-browse-github">Browse a GitHub repo</a></li>
+            </ul>
+          </li>
           <li><a href="#shortcuts">Reference</a>
             <ul>
               <li><a href="#gestures">Gestures</a></li>
@@ -601,14 +1395,42 @@
         text-listen-status flow.
       </p>
       <div class="tip">
-        <strong>Desktop drawer behavior.</strong> At ≥1024px viewports,
-        Voice and Library slide in as right-side drawers (text content
+        <strong>Desktop drawer behavior (1024–1279px).</strong> Voice
+        and Library slide in as right-side drawers (text content
         shifts left, drawers don't cover it). When you open BOTH at
         once, they stack: the most recently clicked one is "active"
         and gets the full content area; the other shows its content
         below filling the remaining space. The one not at the top has
         an accent border + <code>↑</code> chevron on its header —
         tap it to swap which drawer is on top.
+      </div>
+
+      <div class="tip">
+        <strong>Desktop multi-pane layout (≥1280px).</strong> At wide
+        viewports the side panels stop being drawers and become
+        permanent columns. The <strong>Library</strong> sits on the
+        left as a 280px sidebar — every clip card, search, sort,
+        filter — always visible. The right pane is 320px wide and
+        carries two stacked sections: <strong>Voice</strong> on top
+        (full picker + speed/volume/speaker controls) and
+        <strong>This clip</strong> on the bottom (live counts of
+        flags, bookmarks, notes for the loaded clip, each item
+        clickable to seek). The 🎤 and 📚 trigger icons hide because
+        their content is already on screen.
+        <span style="display:block;margin-top:6px;">
+          <strong>Resize.</strong> Drag the thin strip on the inside
+          edge of either pane to widen or narrow it (bounds 200–500px).
+          Double-click the handle to reset to default. Width persists
+          per device. The center column reflows automatically — no
+          horizontal scroll.
+        </span>
+        <span style="display:block;margin-top:6px;">
+          <strong>⌘K / Ctrl+K.</strong> A small ⌘K chip in the hero
+          icon rail opens the command palette — search across every
+          clip + every action + every setting and execute with a
+          single keystroke. Spotlight-style: type a few letters, ↑↓
+          to navigate, ↵ to execute, Esc to close.
+        </span>
       </div>
 
       <!-- ============================================================= -->
@@ -1452,6 +2274,45 @@
         without cluttering the library.
       </div>
 
+      <h4>Export notes (.md)</h4>
+      <p>
+        Settings → <strong>Export notes</strong> (also in the ☰ menu
+        on phone) downloads a Markdown file for the currently-loaded
+        clip with everything you've captured during revision:
+      </p>
+      <ul>
+        <li>
+          <strong>Title + version stamp</strong> at the top, so when
+          you paste the file into Scrivener or send it to an editor,
+          they know which Narrative build produced it.
+        </li>
+        <li>
+          <strong>Notes</strong> — the free-form scratchpad above,
+          rendered verbatim.
+        </li>
+        <li>
+          <strong>Bookmarks</strong> — sorted by timestamp.
+          <code>**0:14** — Check this out.</code> One line per
+          bookmark; bookmarks without a note still get the
+          timestamp.
+        </li>
+        <li>
+          <strong>Annotations</strong> — sorted by sentence index.
+          Each gets a heading <code>### Sentence 96 · ~5:45</code>,
+          then the flag tag (❤ <strong>Love</strong> /
+          ✂ <strong>Cut</strong> / etc.) on the next line, then the
+          full sentence quoted with <code>&gt;</code>, then the
+          voice-note transcript if any. The tag-above-quote order
+          makes a long revision list easy to skim — you see what
+          kind of note it is before you read the sentence.
+        </li>
+      </ul>
+      <p>
+        Filename includes the Narrative build version so multiple
+        exports of the same clip don't collide:
+        <code>chapter-00-draft-notes-2026-06-03.md</code>.
+      </p>
+
       <h3>📝 + 🔖 in practice — the author editing workflow</h3>
       <p>
         Bookmarks and Notes coexist because they serve different
@@ -1513,6 +2374,43 @@
         tooltip carries the full breakdown ("Speed 1.5× · 3h 24m →
         2h 16m at this speed"), useful when planning whether you'll
         finish a chapter before your stop.
+      </p>
+
+      <h3>🔁 Repeat</h3>
+      <p>
+        Three-way cycle that controls what happens when a clip ends —
+        the same Spotify pattern, sized to a writer-revision workflow.
+        Tap to advance:
+      </p>
+      <table>
+        <tr><th>State</th><th>Glyph</th><th>On clip-end</th></tr>
+        <tr>
+          <td>Off (default)</td>
+          <td>🔁 muted</td>
+          <td>Auto-advance to the next clip in your library (current
+              sort).</td>
+        </tr>
+        <tr>
+          <td>Loop this</td>
+          <td>🔂 accent</td>
+          <td>Seek to 0 and replay the same clip. Great for revising
+              one chapter — leave it on while you reread, listening
+              through as many times as you need.</td>
+        </tr>
+        <tr>
+          <td>Repeat all</td>
+          <td>🔁 accent</td>
+          <td>Auto-advance through the queue; when the queue ends,
+              wraps back to the first clip in the active sort.
+              Shuffle wraps to a random other clip.</td>
+        </tr>
+      </table>
+      <p>
+        Mode persists in localStorage so it survives reloads. When
+        the mode is on, a small pill (<strong>🔂</strong> or
+        <strong>🔁</strong>) appears at the right edge of the
+        currently-playing card's title row, so a quick glance at the
+        library tells you which clip the loop is acting on.
       </p>
 
       <!-- ============================================================= -->
@@ -1764,6 +2662,64 @@
         <tr><td><strong>✎ Edit</strong></td><td>Opens a dialog to rename, set a one-line <em>Note</em> (acts as a card subtitle), write longer free-form <em>Notes</em> (a multi-line scratchpad for chapter-level reflection), set tags (comma-separated, e.g. <em>"draft, fiction, needs revision"</em> — up to 12), and upload a cover image. Cover + notes both come through Export / Import zips along with audio + manifest. For <strong>GitHub-sourced clips</strong> the dialog also surfaces a <em>"From GitHub: chapters/ch03.md @ <code>a1b2c3d</code>"</em> meta line — short SHA in an accent pill (hover for the full hash) so you can confirm the clip matches the commit you just pushed without alt-tabbing to GitHub. For clips generated v219 and later, the dialog also shows a <strong>Voice provenance</strong> block with the license + attribution string the clip was generated under (see below).</td></tr>
         <tr><td><strong>×</strong></td><td>Delete. No confirm — gone immediately.</td></tr>
       </table>
+
+      <h4>Card visual states</h4>
+      <p>
+        Cards carry their state in their border and background so you
+        can see the library's status at a glance — what you're
+        listening to, what's out of sync, what's mid-synth. Two
+        colour families: <strong>blue</strong> (the player workflow —
+        the clip you're listening to) and <strong>amber</strong> (the
+        sync workflow — anything currently or potentially being
+        rewritten).
+      </p>
+      <table>
+        <tr><th>State</th><th>How it looks</th><th>What it means</th></tr>
+        <tr>
+          <td><strong>Current</strong></td>
+          <td>Blue accent ring on the left edge + ▶ play indicator on the swatch.</td>
+          <td>This is the clip the player is currently loaded on.</td>
+        </tr>
+        <tr>
+          <td><strong>Outdated</strong></td>
+          <td>5px amber stripe on the left edge + amber wash across the card + ↻ badge in the title row + an attached <strong>"Updated on GitHub. Re-narrate with the latest commit?"</strong> banner glued to the card's bottom edge with <strong>Refetch + re-narrate</strong> and <strong>Dismiss</strong> buttons.</td>
+          <td>
+            GitHub-sourced clip whose source file changed since last
+            sync. Tap <strong>Refetch + re-narrate</strong> on the
+            banner to pull the new text + re-narrate in place
+            (bookmarks, annotations, highlights all preserved), or
+            use the global <strong>Re-narrate outdated</strong>
+            button to refresh every outdated clip in one batch.
+            <strong>Dismiss</strong> hides the banner for this
+            session — the freshness check may re-flag it next time.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Syncing now</strong></td>
+          <td>Amber border + soft pulse + a sliding amber comet along the bottom edge.</td>
+          <td>
+            This card is the active background-queue job. The
+            comet slides L→R as the synth progresses (one
+            traversal ≈ one sentence). Per-sentence counter in
+            the badge.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Syncing queued</strong></td>
+          <td>Muted amber border, no pulse, no comet.</td>
+          <td>
+            Waiting its turn behind other cards in the background
+            queue. <em>"Queued — N ahead"</em> badge shows
+            position.
+          </td>
+        </tr>
+      </table>
+      <div class="tip">
+        Blue = playback. Amber = sync. Both can apply to the same
+        card if you're listening to a clip while a re-narrate is
+        queued for it — you'll see the blue accent on the left edge
+        AND the amber border around the whole card.
+      </div>
 
       <h3>Cover art &amp; page backdrop</h3>
       <p>
@@ -2291,23 +3247,80 @@ She set both hands flat on the table.</pre>
         section below is just a map of where each control sits.
       </p>
 
+      <div class="tip">
+        <strong>Landscape immersive mode.</strong> Rotate your phone
+        sideways and after 3 seconds of no input every piece of chrome
+        slides off screen — the top bar, the tag row, the bottom
+        player — leaving the reading text to fill the whole landscape
+        viewport. <strong>Tap anywhere</strong> to bring everything
+        back. Stay still again and it auto-hides after another 3
+        seconds. The auto-hide is gated: while you're recording a
+        voice note, inside a modal, or actively interacting with the
+        tag row / bookmark editor / palette, the chrome stays put so
+        the gesture you're in the middle of doesn't get rugged.
+      </div>
+
       <h3>Phone layout — where everything lives</h3>
 
       <h4>Top edge</h4>
+      <p>
+        Left edge: <strong>☰</strong> menu. Centre: the title of the
+        clip you're currently listening to. Right edge: four quick-
+        access icons that mirror Spotify's "always-on" rail —
+        Library, Edit text, Book view, Bookmark. Anything that
+        isn't here lives in the ☰ menu.
+      </p>
       <table>
         <tr><th>Control</th><th>What it does</th></tr>
         <tr>
           <td><strong>☰</strong> (top-left)</td>
           <td>
-            Menu sheet — Library · Import · New clip · Edit text ·
-            Book view / Audio view · Download MP3 · Settings · Help.
-            All "what document am I on" actions.
+            Menu sheet — Import · New clip · Download MP3 · Export
+            notes (.md) · Settings · Help. All "what document am I
+            on" actions that don't already have a top-bar icon.
           </td>
         </tr>
         <tr>
-          <td><strong>🔖</strong> (top-right)</td>
+          <td><strong>Clip title</strong> (centred between ☰ and the right cluster)</td>
           <td>
-            Bookmark current time, then opens a centered editor card
+            The title of the clip that's currently loaded. Updates
+            when you load a new clip or rename one in Edit. Truncates
+            with an ellipsis on narrow phones — the start of the
+            title stays visible so you can recognise it at a glance.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>📚</strong> (right cluster, leftmost)</td>
+          <td>
+            Library — opens the Library dialog. Promoted out of the
+            ☰ menu because finding the next clip is the most-
+            frequent navigation in revision work.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>✎</strong> (right cluster)</td>
+          <td>
+            Smart edit. With a sentence selected, opens the inline
+            sentence editor (type the new line, the audio re-
+            synthesises automatically on close). With no selection,
+            shows a quick hint: <em>"Tap a sentence first to edit
+            it."</em> Tap ✎ again while editing to commit-or-cancel:
+            if you changed the text, the new version saves and re-
+            synthesises; if you didn't, the editor closes cleanly.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>📖</strong> (right cluster)</td>
+          <td>
+            Toggle between Audio view (scrollable transcript) and
+            Book view (paginated, IA-aesthetic, page-flip animation).
+            Same data, two display modes.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>🔖</strong> (top-right, rightmost)</td>
+          <td>
+            Bookmark current time, then opens a centred editor card
             with a note field. Tap Done to save, Cancel to discard
             (the bookmark itself saves either way).
           </td>
@@ -2355,23 +3368,50 @@ She set both hands flat on the table.</pre>
         translucent so the reading view stays partly visible behind
         it.
       </p>
+      <p>
+        Each section has chips on the left (controls) and a small
+        <em>live readout strip</em> on the right that tells you the
+        current value at a glance — no need to tap the chip just to
+        check what's set.
+      </p>
       <table>
-        <tr><th>Section</th><th>Contents</th></tr>
+        <tr>
+          <th>Section</th>
+          <th>Chips</th>
+          <th>Live readout</th>
+        </tr>
         <tr>
           <td><strong>Playback</strong></td>
           <td>Voice · Speed · Skip interval</td>
+          <td>
+            <code>170 wpm · 100%</code> — current reading speed and
+            volume. Skip interval lives on its own chip ("15s ↻
+            15s") so it isn't repeated here.
+          </td>
         </tr>
         <tr>
           <td><strong>Listening</strong></td>
           <td>A↔B loop · Sleep timer</td>
+          <td>
+            <code>A 2:30 · B 5:00</code> when A↔B is set;
+            <code>Sleep 12m</code> when the timer is running;
+            <code>Idle</code> when nothing exotic is active. Play /
+            pause / elapsed already show on the player bar, so they
+            aren't duplicated here.
+          </td>
         </tr>
         <tr>
           <td><strong>Author</strong></td>
           <td>Per-clip notes (📝)</td>
+          <td>
+            <code>3 flags · 1 voice note · 4 bookmarks</code> —
+            counts update live as you add or delete. Tells you at a
+            glance how much revision work is sitting on this clip.
+          </td>
         </tr>
         <tr>
           <td><strong>Bookmarks</strong></td>
-          <td>
+          <td colspan="2">
             All bookmarks for this clip. Tap a time to seek; tap a
             note to open the editor card; tap × to delete.
           </td>
@@ -2564,7 +3604,7 @@ She set both hands flat on the table.</pre>
           (⚙) → flip <strong>Sync library across devices</strong> to
           On. Repeat all six steps on every other device of yours
           using the <em>same</em> key. Same key on multiple devices
-          → same library; see Walkthrough 6 in §11 for the full
+          → same library; see Walkthrough 6 in §12 for the full
           two-device flow.
         </li>
       </ol>
@@ -2646,7 +3686,362 @@ She set both hands flat on the table.</pre>
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="shortcuts">10. Reference</h2>
+      <h2 id="tutorials">10. Tutorials</h2>
+      <p>
+        Animated walk-throughs of the most common flows. Each one is a
+        mocked-up little app that auto-plays the gesture sequence with
+        side notes explaining each step. Watch once, then go run the
+        real thing — the controls and copy match the production UI
+        exactly.
+      </p>
+      <p>
+        Tap the ↻ button in the corner to restart a walk-through any
+        time; off-screen walk-throughs pause automatically so they
+        don't burn cycles while you're reading something else.
+      </p>
+
+      <h3 id="wt-first-listen">Tutorial 1 — First listen</h3>
+      <p>
+        The shortest possible path from a blank page to audio in your
+        ears: paste text, tap Generate, listen.
+      </p>
+      <div class="tip" style="margin-bottom: 0;">
+        <strong>↓ Just watch.</strong> The block below is an auto-
+        playing demo — buttons aren't real, no taps needed. The
+        right column tells you what each step is doing.
+        <span style="display: block; margin-top: 6px; font-size: 11.5px; color: var(--fg-dim);">
+          Sample text: Mark Twain, <em>The Adventures of Tom Sawyer</em>,
+          Chapter 2 (public domain via Project Gutenberg).
+        </span>
+      </div>
+      <div class="wt" data-walkthrough="first-listen" aria-label="First listen walkthrough">
+        <div class="wt-head">
+          <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
+          <span class="wt-head-title">First listen</span>
+          <span class="wt-head-step">Step 1 of 6</span>
+          <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
+        </div>
+        <div class="wt-body">
+          <div class="wt-stage">
+            <!-- v225em (#629): desktop variant. The walkthrough engine
+                 strips the off-viewport variant at boot, so only one
+                 set of data-wt targets is live at a time. Both
+                 variants use the same attribute names so the step
+                 definitions in tutorials.js don't need to know which
+                 surface they're driving. -->
+            <div class="wt-mock-variant wt-mock-variant-desktop">
+              <div class="wt-mock-textarea" data-wt="textarea"></div>
+              <button class="wt-mock-btn" data-wt="generate">▶ Generate audio</button>
+              <div class="wt-mock-status" data-wt="status"></div>
+              <div class="wt-mock-player" data-wt="player">
+                <button class="wt-mock-play-btn" data-wt="play">▶</button>
+                <div class="wt-mock-scrub">
+                  <div class="wt-mock-scrub-fill" data-wt="scrub-fill"></div>
+                  <div class="wt-mock-scrub-thumb" data-wt="scrub-thumb"></div>
+                </div>
+                <span class="wt-mock-time" data-wt="time">0:00 / 2:34</span>
+              </div>
+            </div>
+            <!-- Phone variant: top ☰ bar, textarea body, bottom bar
+                 that starts as Generate then swaps to Player. -->
+            <div class="wt-mock-variant wt-mock-variant-phone">
+              <div class="wt-mock-phone-topbar">
+                <span class="wt-mock-phone-topbar-btn" aria-hidden="true">☰</span>
+                <span class="wt-mock-phone-topbar-title"></span>
+                <span class="wt-mock-phone-topbar-btn" aria-hidden="true">🔖</span>
+              </div>
+              <div class="wt-mock-phone-body">
+                <div class="wt-mock-textarea wt-mock-textarea-phone" data-wt="textarea"></div>
+              </div>
+              <div class="wt-mock-phone-bottombar">
+                <button class="wt-mock-btn wt-mock-btn-phone" data-wt="generate">▶ Generate audio</button>
+                <div class="wt-mock-player wt-mock-player-phone" data-wt="player">
+                  <span class="wt-mock-skip-chip" aria-hidden="true">↻ 5s</span>
+                  <button class="wt-mock-play-btn" data-wt="play">▶</button>
+                  <div class="wt-mock-scrub">
+                    <div class="wt-mock-scrub-fill" data-wt="scrub-fill"></div>
+                    <div class="wt-mock-scrub-thumb" data-wt="scrub-thumb"></div>
+                  </div>
+                  <span class="wt-mock-skip-chip" aria-hidden="true">5s ↺</span>
+                </div>
+              </div>
+              <div class="wt-mock-status wt-mock-status-phone" data-wt="status"></div>
+            </div>
+            <div class="wt-cursor" data-wt="cursor"></div>
+          </div>
+          <div class="wt-callout">
+            <span class="wt-callout-num">1</span>
+            <div class="wt-callout-text">Paste or type your draft into the editor.</div>
+          </div>
+        </div>
+      </div>
+      <p>
+        That's the whole loop. From here, everything else in Narrative
+        builds on top: bookmarks save moments, annotations flag
+        sentences, Edit text fixes typos.
+      </p>
+
+      <h3 id="wt-revise-listen">Tutorial 2 — Revise as you listen</h3>
+      <p>
+        The author's loop: you're listening to your draft, you hear
+        something that needs fixing, you flag the sentence + leave a
+        voice note, then export the whole revision pass as Markdown.
+      </p>
+      <div class="tip" style="margin-bottom: 0;">
+        <strong>↓ Just watch.</strong> Auto-playing demo. The right
+        column tells you what each step is doing.
+        <span style="display: block; margin-top: 6px; font-size: 11.5px; color: var(--fg-dim);">
+          Sample sentences: Mark Twain, <em>The Adventures of Tom Sawyer</em>,
+          Chapter 2 — the whitewash scene (public domain).
+        </span>
+      </div>
+      <div class="wt" data-walkthrough="revise-listen" aria-label="Revise as you listen walkthrough">
+        <div class="wt-head">
+          <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
+          <span class="wt-head-title">Revise as you listen</span>
+          <span class="wt-head-step">Step 1 of 7</span>
+          <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
+        </div>
+        <div class="wt-body">
+          <div class="wt-stage">
+            <!-- v225em (#629): desktop variant — top bar above
+                 reading view above tag row. -->
+            <div class="wt-mock-variant wt-mock-variant-desktop">
+              <div class="wt-mock-topbar">
+                <span class="wt-mock-topbar-btn" data-wt="menu-btn" aria-hidden="true">☰</span>
+                <span class="wt-mock-topbar-title">chapter_00_draft</span>
+                <span class="wt-mock-topbar-btn" data-wt="bookmark-btn" aria-hidden="true">🔖</span>
+              </div>
+              <div class="wt-mock-reading">
+                <!-- v225el (#628): public-domain Mark Twain Tom Sawyer
+                     Chapter 2, matching the canonical sample URL. -->
+                <div class="wt-mock-sentence" data-wt="sent-1">
+                  Tom appeared on the sidewalk with a bucket of whitewash and a long-handled brush.
+                  <span class="wt-mock-flag" data-wt="flag-1" aria-hidden="true">❤</span>
+                </div>
+                <div class="wt-mock-sentence" data-wt="sent-2">
+                  He surveyed the fence, and all gladness left him and a deep melancholy settled down upon his spirit.
+                  <div class="wt-mock-transcript" data-wt="transcript-2">
+                    "Cut second clause — feels overwrought"
+                  </div>
+                </div>
+                <div class="wt-mock-sentence" data-wt="sent-3">
+                  Thirty yards of board fence nine feet high.
+                </div>
+              </div>
+              <div class="wt-mock-tag-row">
+                <span class="wt-mock-tag" data-wt="tag-cut" aria-hidden="true">✂</span>
+                <span class="wt-mock-tag" data-wt="tag-fact" aria-hidden="true">✓</span>
+                <span class="wt-mock-tag" data-wt="tag-love" aria-hidden="true">❤</span>
+                <span class="wt-mock-tag" data-wt="tag-weak" aria-hidden="true">⚠</span>
+                <span class="wt-mock-tag wt-mock-tag-mic" data-wt="tag-mic" aria-hidden="true">🎤</span>
+              </div>
+            </div>
+            <!-- Phone variant: top bar with full right cluster,
+                 reading view fills middle, tag row pinned above
+                 player bar at the bottom. -->
+            <div class="wt-mock-variant wt-mock-variant-phone">
+              <div class="wt-mock-phone-topbar">
+                <span class="wt-mock-phone-topbar-btn" data-wt="menu-btn" aria-hidden="true">☰</span>
+                <span class="wt-mock-phone-topbar-title">chapter_00_draft</span>
+                <span class="wt-mock-phone-topbar-btn" data-wt="bookmark-btn" aria-hidden="true">🔖</span>
+              </div>
+              <div class="wt-mock-phone-body wt-mock-phone-reading">
+                <div class="wt-mock-sentence" data-wt="sent-1">
+                  Tom appeared on the sidewalk with a bucket of whitewash and a long-handled brush.
+                  <span class="wt-mock-flag" data-wt="flag-1" aria-hidden="true">❤</span>
+                </div>
+                <div class="wt-mock-sentence" data-wt="sent-2">
+                  He surveyed the fence, and all gladness left him and a deep melancholy settled.
+                  <div class="wt-mock-transcript" data-wt="transcript-2">
+                    "Cut second clause — overwrought"
+                  </div>
+                </div>
+                <div class="wt-mock-sentence" data-wt="sent-3">
+                  Thirty yards of board fence nine feet high.
+                </div>
+              </div>
+              <div class="wt-mock-phone-tagrow">
+                <span class="wt-mock-tag" data-wt="tag-cut" aria-hidden="true">✂</span>
+                <span class="wt-mock-tag" data-wt="tag-fact" aria-hidden="true">✓</span>
+                <span class="wt-mock-tag" data-wt="tag-love" aria-hidden="true">❤</span>
+                <span class="wt-mock-tag" data-wt="tag-weak" aria-hidden="true">⚠</span>
+                <span class="wt-mock-tag wt-mock-tag-mic" data-wt="tag-mic" aria-hidden="true">🎤</span>
+              </div>
+              <div class="wt-mock-phone-bottombar wt-mock-phone-playerbar">
+                <span class="wt-mock-skip-chip" aria-hidden="true">↻ 5s</span>
+                <button class="wt-mock-play-btn">▶</button>
+                <span class="wt-mock-skip-chip" aria-hidden="true">5s ↺</span>
+              </div>
+            </div>
+            <div class="wt-cursor" data-wt="cursor"></div>
+          </div>
+          <div class="wt-callout">
+            <span class="wt-callout-num">1</span>
+            <div class="wt-callout-text">Sentences highlight as they're read aloud.</div>
+          </div>
+        </div>
+      </div>
+      <p>
+        Repeat that loop across a chapter. When the listen-through is
+        done, your Markdown export is a per-sentence punch-list ready
+        for the next revision pass — every flag, voice-note transcript,
+        and bookmark in one file, organised by sentence index.
+      </p>
+
+      <!-- v225fc (#645): Tutorials 3-5 are the Import path walk-throughs,
+           one per empty-state tile (Paste URL / Upload file / GitHub).
+           Slimmer than tutorials 1-2 — single mock surface, focused on
+           the dropdown→source→editor path. Same engine. -->
+
+      <h3 id="wt-paste-url">Tutorial 3 — Paste an article URL</h3>
+      <p>
+        Bring any web article into Narrative by URL. The fetch + extraction
+        path strips ads and nav, leaving just the prose.
+      </p>
+      <div class="tip" style="margin-bottom: 0;">
+        <strong>↓ Just watch.</strong> Auto-playing demo. The right
+        column tells you what each step is doing.
+        <span style="display: block; margin-top: 6px; font-size: 11.5px; color: var(--fg-dim);">
+          Sample URL: <em>The Adventures of Tom Sawyer</em>, Chapter 2
+          (Project Gutenberg, public domain).
+        </span>
+      </div>
+      <div class="wt" data-walkthrough="paste-url" aria-label="Paste a URL walkthrough">
+        <div class="wt-head">
+          <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
+          <span class="wt-head-title">Paste a URL</span>
+          <span class="wt-head-step">Step 1 of 5</span>
+          <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
+        </div>
+        <div class="wt-body">
+          <div class="wt-stage">
+            <div class="wt-mock-import">
+              <button class="wt-mock-imp-btn" data-wt="import-btn">📥 Import ▾</button>
+              <div class="wt-mock-imp-menu" data-wt="import-menu">
+                <div class="wt-mock-imp-item highlighted">🌐 Paste URL</div>
+                <div class="wt-mock-imp-item">📄 Upload file</div>
+                <div class="wt-mock-imp-item">📚 GitHub repo</div>
+                <div class="wt-mock-imp-item">📓 Obsidian vault</div>
+              </div>
+              <div class="wt-mock-imp-urlrow">
+                <div class="wt-mock-imp-input" data-wt="url-input"></div>
+                <button class="wt-mock-imp-go" data-wt="fetch-btn">Fetch</button>
+              </div>
+              <div class="wt-mock-imp-result" data-wt="result"></div>
+              <button class="wt-mock-imp-generate">▶ Generate audio</button>
+            </div>
+            <div class="wt-cursor" data-wt="cursor"></div>
+          </div>
+          <div class="wt-callout">
+            <span class="wt-callout-num">1</span>
+            <div class="wt-callout-text">Tap Import.</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 id="wt-upload-file">Tutorial 4 — Upload a file</h3>
+      <p>
+        Pull manuscripts in from PDF, EPUB, DOCX, TXT, or Markdown. The
+        server-side extractor handles layout cleanup — page numbers,
+        running headers, mid-paragraph page breaks.
+      </p>
+      <div class="tip" style="margin-bottom: 0;">
+        <strong>↓ Just watch.</strong> Auto-playing demo. The right
+        column tells you what each step is doing.
+      </div>
+      <div class="wt" data-walkthrough="upload-file" aria-label="Upload a file walkthrough">
+        <div class="wt-head">
+          <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
+          <span class="wt-head-title">Upload a file</span>
+          <span class="wt-head-step">Step 1 of 5</span>
+          <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
+        </div>
+        <div class="wt-body">
+          <div class="wt-stage">
+            <div class="wt-mock-import">
+              <button class="wt-mock-imp-btn" data-wt="import-btn">📥 Import ▾</button>
+              <div class="wt-mock-imp-menu" data-wt="import-menu">
+                <div class="wt-mock-imp-item">🌐 Paste URL</div>
+                <div class="wt-mock-imp-item highlighted">📄 Upload file</div>
+                <div class="wt-mock-imp-item">📚 GitHub repo</div>
+                <div class="wt-mock-imp-item">📓 Obsidian vault</div>
+              </div>
+              <div class="wt-mock-imp-file-picker" data-wt="file-picker">
+                <span class="wt-mock-imp-file-row selected">📄 chapter_01_draft.pdf</span>
+                <span class="wt-mock-imp-file-row">📄 chapter_02_draft.pdf</span>
+                <span class="wt-mock-imp-file-row">📄 outline.docx</span>
+              </div>
+              <div class="wt-mock-imp-extracting" data-wt="extracting">
+                Extracting text · stripping running headers · cleaning page breaks…
+              </div>
+              <div class="wt-mock-imp-result" data-wt="result"></div>
+              <button class="wt-mock-imp-generate">▶ Generate audio</button>
+            </div>
+            <div class="wt-cursor" data-wt="cursor"></div>
+          </div>
+          <div class="wt-callout">
+            <span class="wt-callout-num">1</span>
+            <div class="wt-callout-text">Tap Import.</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 id="wt-browse-github">Tutorial 5 — Browse a GitHub repo</h3>
+      <p>
+        Connect a manuscript repo once, then pick chapters from a file
+        tree. Narrative stores the commit SHA on each clip so it can
+        flag "this chapter has been updated" when you push a new draft.
+      </p>
+      <div class="tip" style="margin-bottom: 0;">
+        <strong>↓ Just watch.</strong> Auto-playing demo. The right
+        column tells you what each step is doing.
+        <span style="display: block; margin-top: 6px; font-size: 11.5px; color: var(--fg-dim);">
+          First-time setup: Settings → GitHub → sign in or paste a
+          personal access token. See §8 for details.
+        </span>
+      </div>
+      <div class="wt" data-walkthrough="browse-github" aria-label="Browse a GitHub repo walkthrough">
+        <div class="wt-head">
+          <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
+          <span class="wt-head-title">Browse GitHub</span>
+          <span class="wt-head-step">Step 1 of 5</span>
+          <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
+        </div>
+        <div class="wt-body">
+          <div class="wt-stage">
+            <div class="wt-mock-import">
+              <button class="wt-mock-imp-btn" data-wt="import-btn">📥 Import ▾</button>
+              <div class="wt-mock-imp-menu" data-wt="import-menu">
+                <div class="wt-mock-imp-item">🌐 Paste URL</div>
+                <div class="wt-mock-imp-item">📄 Upload file</div>
+                <div class="wt-mock-imp-item highlighted">📚 GitHub repo</div>
+                <div class="wt-mock-imp-item">📓 Obsidian vault</div>
+              </div>
+              <div class="wt-mock-imp-urlrow">
+                <div class="wt-mock-imp-input" data-wt="repo-input"></div>
+                <button class="wt-mock-imp-go">Browse</button>
+              </div>
+              <div class="wt-mock-imp-tree" data-wt="tree">
+                <span class="wt-mock-imp-tree-row">📁 chapters</span>
+                <span class="wt-mock-imp-tree-row indent selected">📄 chapter_01_draft.md</span>
+                <span class="wt-mock-imp-tree-row indent">📄 chapter_02_draft.md</span>
+                <span class="wt-mock-imp-tree-row">📁 notes</span>
+              </div>
+              <div class="wt-mock-imp-result" data-wt="result"></div>
+              <button class="wt-mock-imp-generate">▶ Generate audio</button>
+            </div>
+            <div class="wt-cursor" data-wt="cursor"></div>
+          </div>
+          <div class="wt-callout">
+            <span class="wt-callout-num">1</span>
+            <div class="wt-callout-text">Tap Import.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================= -->
+      <h2 id="shortcuts">11. Reference</h2>
 
       <h3 id="gestures">Gestures</h3>
       <p>
@@ -2858,8 +4253,32 @@ She set both hands flat on the table.</pre>
         <tr><td>URL input</td><td><span class="kbd">Enter</span> / <span class="kbd">Esc</span></td><td>Fetch / Cancel</td></tr>
         <tr><td>Bookmark note</td><td><span class="kbd">Enter</span> / <span class="kbd">Esc</span></td><td>Save / Revert</td></tr>
         <tr><td>Edit-clip title</td><td><span class="kbd">Enter</span></td><td>Save</td></tr>
+        <tr><td>Anywhere</td><td><span class="kbd">Ctrl</span> / <span class="kbd">⌘</span> + <span class="kbd">K</span></td><td>Open the command palette</td></tr>
         <tr><td>Anywhere (outside an input)</td><td><span class="kbd">?</span></td><td>Open the keyboard shortcuts overlay</td></tr>
       </table>
+
+      <h3>Command palette (<span class="kbd">⌘K</span> / <span class="kbd">Ctrl+K</span>)</h3>
+      <p>
+        Spotlight-style fuzzy search across every clip, action, and
+        setting. Open from anywhere with the hotkey, or from the small
+        <strong>⌘K</strong> chip in the hero icon rail. Type a few
+        letters, navigate with <span class="kbd">↑</span> /
+        <span class="kbd">↓</span>, fire with <span class="kbd">↵</span>,
+        close with <span class="kbd">Esc</span>.
+      </p>
+      <p>What's searchable:</p>
+      <ul>
+        <li><strong>Clips</strong> — every entry in your library; selecting one loads it.</li>
+        <li><strong>Actions</strong> — Play/pause, Skip back/forward, Add bookmark, Generate audio, Sync now (player actions only when a clip is loaded).</li>
+        <li><strong>Modes</strong> — Simple / Standard / Author (✓ on the active one).</li>
+        <li><strong>Navigation</strong> — Library, Voice, Settings, Manual, Tutorials, What's new, Keyboard shortcuts.</li>
+        <li><strong>Theme</strong> — Light / Dark / Auto.</li>
+        <li><strong>Tutorials</strong> — direct jumps to First listen and Revise as you listen.</li>
+      </ul>
+      <p>
+        The chip is desktop-only — phones use the ☰ menu and tag row
+        for the same surfaces.
+      </p>
       <div class="tip">
         The full shortcuts list also lives in a dialog you can open
         with <span class="kbd">?</span> from anywhere, or via
@@ -2928,7 +4347,7 @@ She set both hands flat on the table.</pre>
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="walkthroughs">11. Tester walkthroughs</h2>
+      <h2 id="walkthroughs">12. Tester walkthroughs</h2>
       <p>
         Six numbered end-to-end runs. Each starts from a clean
         page load (or the closest a state-bearing app can get to
@@ -3478,5 +4897,6 @@ She set both hands flat on the table.</pre>
       </article>
       </div>
     </main>
+
   </body>
 </html>
