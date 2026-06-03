@@ -42,6 +42,21 @@ ENV ESPEAK_DATA_PATH=/usr/lib/x86_64-linux-gnu/espeak-ng-data
 ENV PHONEMIZER_ESPEAK_LIBRARY=/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1
 ENV PHONEMIZER_ESPEAK_PATH=/usr/bin/espeak-ng
 
+# v582 (#446): cap threading libraries to 1 thread. Fly's
+# shared-cpu-1x is effectively half a physical core; numpy, MKL,
+# OpenBLAS, and OpenMP would otherwise spin up worker threads that
+# fight over our one CPU and add scheduling overhead with zero
+# parallelism gain. tts/kokoro_engine.py pairs this with explicit
+# intra/inter-op = 1 on the ONNX SessionOptions. When the Fly
+# machine is bumped to shared-cpu-2x (or higher), match these to
+# the new core count via fly secrets — but lower is usually right
+# for single-CPU containers regardless.
+ENV OMP_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV NUMEXPR_NUM_THREADS=1
+ENV VECLIB_MAXIMUM_THREADS=1
+
 WORKDIR /app
 
 # Install Python deps first so the layer caches when only app code changes.
@@ -50,12 +65,16 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # App code + static assets.
-# v197: github_oauth.py was added in v180 but the Dockerfile was never
-# updated to copy it — local dev hid the bug because every .py at the
-# project root is importable, but in the container only the explicit
-# COPY list lands. Without it, `import github_oauth` at server.py:24
-# raised ModuleNotFoundError and the machine boot-looped.
-COPY server.py extract.py github_oauth.py library_db.py library_api.py admin_api.py transcribe.py ./
+#
+# v581: glob all root-level .py instead of listing each one. The
+# explicit list bit us three times — v197 (github_oauth.py),
+# v220at (kokoro bundle), v225ca (synth_jobs.py). Each new module
+# at the project root that server.py imports caused boot-loop in
+# the container with ModuleNotFoundError, while local dev kept
+# working because Python imports every sibling file. The glob
+# auto-includes new modules; .dockerignore excludes .venv/ and
+# Python build artifacts so nothing else sneaks in.
+COPY *.py ./
 COPY tts/ ./tts/
 COPY static/ ./static/
 COPY scripts/ ./scripts/

@@ -463,7 +463,11 @@
           <li><a href="#library">The library</a></li>
           <li><a href="#settings">Settings &amp; modes</a></li>
           <li><a href="#phone">Listening on your phone</a></li>
-          <li><a href="#shortcuts">Shortcuts &amp; tips</a></li>
+          <li><a href="#shortcuts">Reference</a>
+            <ul>
+              <li><a href="#gestures">Gestures</a></li>
+            </ul>
+          </li>
           <li><a href="#walkthroughs">Tester walkthroughs</a>
             <ul>
               <li><a href="#send-feedback">Sending feedback after a walkthrough</a></li>
@@ -1519,8 +1523,45 @@
         clickable sentence spans. The active sentence is highlighted;
         played sentences fade slightly so you can see your progress.
       </p>
+      <p>
+        Sentence taps follow a <strong>tap-then-confirm</strong>
+        model — the first tap selects a sentence (visible dashed
+        ring) without moving the playhead, the second tap commits.
+        That way you can tap a recently-passed sentence to mark or
+        annotate it without yanking the narrator back to it.
+      </p>
+      <table>
+        <tr><th>You tap…</th><th>What happens</th></tr>
+        <tr>
+          <td>An idle sentence (1st time)</td>
+          <td>Dashed ring appears. <em>No seek.</em> No playback change.</td>
+        </tr>
+        <tr>
+          <td>The same selected sentence (2nd time)</td>
+          <td>Seek there + play.</td>
+        </tr>
+        <tr>
+          <td>The currently-playing sentence</td>
+          <td>Pause.</td>
+        </tr>
+        <tr>
+          <td>The currently-paused sentence (the one with the active highlight)</td>
+          <td>Resume — no seek.</td>
+        </tr>
+        <tr>
+          <td>A different idle sentence (while one is already selected)</td>
+          <td>The ring moves to the new sentence.</td>
+        </tr>
+        <tr>
+          <td>Outside any sentence (paragraph gaps, padding, image area)</td>
+          <td>Clears the pending selection.</td>
+        </tr>
+        <tr>
+          <td>Press <span class="kbd">Esc</span> (desktop)</td>
+          <td>Clears the pending selection.</td>
+        </tr>
+      </table>
       <ul>
-        <li><strong>Tap a sentence</strong> to seek there and keep playing.</li>
         <li>The active sentence stays in view inside the reading-view box (the box has its own internal scroll, so it never yanks the rest of the page around).</li>
         <li>Tap <strong>Edit text</strong> in the text-card header to go back to the textarea for edits.</li>
       </ul>
@@ -1529,6 +1570,14 @@
         sentences — useful when you missed context, not just a word.
         The on-screen <strong>↶ 5s</strong> is for the
         missed-a-word case.
+      </div>
+      <div class="tip">
+        <strong>Selecting first also arms an annotation target.</strong>
+        With a sentence selected (dashed ring), tap a flag in the
+        bottom tag row and the annotation lands on that sentence —
+        no need to first arm the tag and then aim. The
+        arm-then-tap flow (tap tag → tap sentence) still works too;
+        both orderings produce the same annotation.
       </div>
 
       <!-- ============================================================= -->
@@ -2290,8 +2339,11 @@ She set both hands flat on the table.</pre>
           <td>Standard + Author mode only.</td>
           <td>
             Annotation tags (🐛 💭 ❓ ⭐ etc.) + 🎤 voice button.
-            Tap a tag → tap a sentence to flag it. Tap or hold 🎤
-            to record a voice note on the current sentence.
+            Two ways to flag: tap a tag, then tap a sentence
+            (arm-then-tap); or tap a sentence to select it, then
+            tap a tag (sentence-first). Tap or hold 🎤 to record
+            a voice note on the current sentence. One annotation
+            per sentence — re-tagging swaps the icon in place.
           </td>
         </tr>
       </table>
@@ -2330,8 +2382,42 @@ She set both hands flat on the table.</pre>
       <table>
         <tr><th>Gesture</th><th>What happens</th></tr>
         <tr>
-          <td>Tap a sentence</td>
-          <td>Seek to that sentence.</td>
+          <td>Tap an idle sentence (1st time)</td>
+          <td>
+            Selects it — dashed ring appears. <em>No seek, no
+            playback change.</em>
+          </td>
+        </tr>
+        <tr>
+          <td>Tap the same selected sentence again</td>
+          <td>Seek there + play.</td>
+        </tr>
+        <tr>
+          <td>Tap the currently-playing sentence</td>
+          <td>Pause.</td>
+        </tr>
+        <tr>
+          <td>Tap the currently-paused sentence</td>
+          <td>Resume (no seek).</td>
+        </tr>
+        <tr>
+          <td>Tap a sentence (selects it) → tap a tag chip</td>
+          <td>
+            Flag the selected sentence with that tag. The sentence-
+            first flow is the inverse of arm-then-tap; both work.
+          </td>
+        </tr>
+        <tr>
+          <td>Tap a tag chip (arms it) → tap a sentence</td>
+          <td>Flag that sentence. Existing arm-then-tap flow.</td>
+        </tr>
+        <tr>
+          <td>Tap an already-flagged sentence with a new tag</td>
+          <td>
+            <strong>Replaces</strong> the existing tag in place — a
+            sentence carries at most one annotation. Voice note
+            (if any) and transcript are preserved.
+          </td>
         </tr>
         <tr>
           <td>Tap a flag chip (the colored icon on annotated sentences)</td>
@@ -2342,14 +2428,12 @@ She set both hands flat on the table.</pre>
           <td>Action sheet → Remove flag.</td>
         </tr>
         <tr>
-          <td>Tap a tag in the bottom tag row, then tap a sentence</td>
-          <td>Flag the sentence with that tag.</td>
-        </tr>
-        <tr>
           <td>Hold 🎤, speak, release</td>
           <td>
             Record a voice note on the current sentence. Tap-toggle
-            also works (tap to start, tap again to stop).
+            also works (tap to start, tap again to stop). If the
+            sentence already has an annotation, this <strong>replaces</strong>
+            the recording — same one-per-sentence rule.
           </td>
         </tr>
         <tr>
@@ -2562,7 +2646,209 @@ She set both hands flat on the table.</pre>
       </div>
 
       <!-- ============================================================= -->
-      <h2 id="shortcuts">10. Shortcuts &amp; tips</h2>
+      <h2 id="shortcuts">10. Reference</h2>
+
+      <h3 id="gestures">Gestures</h3>
+      <p>
+        Full inventory of taps, drags, and presses across every
+        surface. Most of these also live in the contextual section
+        they belong to (e.g. §5 Reading view); this is the one-stop
+        lookup.
+      </p>
+
+      <h4>Reading-view sentences</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr>
+          <td>Tap idle sentence (1st time)</td>
+          <td>Select — dashed ring. No seek.</td>
+        </tr>
+        <tr>
+          <td>Tap selected sentence (2nd time)</td>
+          <td>Seek + play from there.</td>
+        </tr>
+        <tr>
+          <td>Tap currently-playing sentence</td>
+          <td>Pause.</td>
+        </tr>
+        <tr>
+          <td>Tap currently-paused active sentence</td>
+          <td>Resume — no seek.</td>
+        </tr>
+        <tr>
+          <td>Tap a different sentence while one is selected</td>
+          <td>Ring moves to the new sentence.</td>
+        </tr>
+        <tr>
+          <td>Tap outside any sentence in the reading view</td>
+          <td>
+            Clears the pending selection. "Outside" is anywhere
+            inside the reading view that isn't a sentence — the
+            paragraph gaps, padding, image edges. Tapping a
+            different sentence still moves the ring rather than
+            clearing.
+          </td>
+        </tr>
+        <tr>
+          <td>Press <span class="kbd">Esc</span> (desktop)</td>
+          <td>Clears the pending selection. No-op when no input field is focused and nothing is selected.</td>
+        </tr>
+        <tr>
+          <td>Tap sentence (selects) → tap tag chip</td>
+          <td>Annotation lands on the selected sentence.</td>
+        </tr>
+        <tr>
+          <td>Tap tag chip (arms it) → tap sentence</td>
+          <td>Annotation lands. Same result as above, different ordering.</td>
+        </tr>
+        <tr>
+          <td>Long-press a sentence (desktop, annotate mode)</td>
+          <td>Opens the annotate palette.</td>
+        </tr>
+        <tr>
+          <td>Right-click a sentence (desktop, annotate mode)</td>
+          <td>Same as long-press → palette.</td>
+        </tr>
+        <tr>
+          <td>Press-and-drag across sentences (Author mode only)</td>
+          <td>Multi-select for character voice assignment.</td>
+        </tr>
+      </table>
+
+      <h4>Flag chips (inline on annotated sentences)</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr><td>Tap</td><td>Seek to that flag's sentence.</td></tr>
+        <tr><td>Long-press</td><td>Action sheet → Remove flag.</td></tr>
+      </table>
+
+      <h4>Voice-note row buttons</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr><td>Tap ▶</td><td>Play the recording.</td></tr>
+        <tr>
+          <td>Tap ↻ (only when transcript is missing)</td>
+          <td>Re-run server-side Whisper transcription.</td>
+        </tr>
+        <tr><td>Tap ✕</td><td>Action sheet → tombstone delete.</td></tr>
+      </table>
+
+      <h4>Phone bottom tag row</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr>
+          <td>Tap a tag chip</td>
+          <td>Arms the tag — or applies directly if a sentence is selected.</td>
+        </tr>
+        <tr>
+          <td>Tap the same armed chip again</td>
+          <td>Cancels the arm.</td>
+        </tr>
+        <tr>
+          <td>Tap 🎤</td>
+          <td>Start recording (tap-toggle mode).</td>
+        </tr>
+        <tr>
+          <td>Tap 🎤 again</td>
+          <td>Stop recording.</td>
+        </tr>
+        <tr>
+          <td>Press-and-hold 🎤</td>
+          <td>Record while held — release to stop.</td>
+        </tr>
+      </table>
+
+      <h4>Player bar</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr><td>Tap ▶ / ⏸</td><td>Play / pause.</td></tr>
+        <tr><td>Tap ↶ skip-back</td><td>-5s (or current skip interval).</td></tr>
+        <tr><td>Double-tap ↶ skip-back</td><td>-30s (the Audible "back to context" gesture).</td></tr>
+        <tr><td>Tap ↷ skip-forward</td><td>+5s.</td></tr>
+        <tr><td>Drag scrub thumb</td><td>Seek to time.</td></tr>
+        <tr><td>Tap mini-player (when scrolled past hero)</td><td>Expand to Now Playing.</td></tr>
+      </table>
+
+      <h4>Library cards</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr><td>Tap card body</td><td>Load that clip.</td></tr>
+        <tr><td>Tap ▶ swatch on the active clip</td><td>Toggle play / pause.</td></tr>
+        <tr><td>Tap 🔄</td><td>Re-narrate in background.</td></tr>
+        <tr><td>Tap ×</td><td>Delete clip.</td></tr>
+        <tr><td>Drag the handle (Custom sort only)</td><td>Reorder.</td></tr>
+      </table>
+
+      <h4>Pull-up drawer (phone)</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr><td>Tap the chevron above the player</td><td>Open the drawer.</td></tr>
+        <tr><td>Pull up from the chevron</td><td>Open via gesture.</td></tr>
+        <tr><td>Tap outside the drawer</td><td>Close.</td></tr>
+        <tr><td>Pull down on the drawer</td><td>Close via gesture.</td></tr>
+      </table>
+
+      <h4>Bookmarks</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr><td>Tap 🔖 (top-right on phone, hero on desktop)</td><td>Add bookmark at current time → editor opens.</td></tr>
+        <tr><td>Tap a bookmark row in the drawer</td><td>Seek to that time.</td></tr>
+        <tr><td>Tap a bookmark note in the drawer</td><td>Open the editor.</td></tr>
+        <tr><td>Tap × on a bookmark</td><td>Delete.</td></tr>
+        <tr><td>Tap a bookmark mark in the book-view ribbon</td><td>Jump to that page.</td></tr>
+      </table>
+
+      <h4>Book view</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr>
+          <td>Tap a sentence</td>
+          <td>
+            Seek there. <em>Note:</em> book view stays single-tap —
+            the two-tap-then-confirm model applies only to reading
+            view.
+          </td>
+        </tr>
+        <tr><td>Tap the page edges</td><td>Page turn.</td></tr>
+        <tr><td>Swipe horizontally (phone, touch only)</td><td>Page turn.</td></tr>
+        <tr><td>Tap the page number</td><td>Open the page-jump input.</td></tr>
+      </table>
+
+      <h4>Top bar (phone)</h4>
+      <table>
+        <tr><th>Gesture</th><th>Result</th></tr>
+        <tr><td>Tap ☰ (top-left)</td><td>Open the menu sheet.</td></tr>
+        <tr><td>Tap 📚 (top-right)</td><td>Open the library.</td></tr>
+        <tr>
+          <td>Tap ✎ (top-right, after a clip is loaded)</td>
+          <td>
+            Edit text. If a sentence is currently selected, the
+            sentence becomes editable inline — type, then tap
+            outside (or press Enter) to commit. Otherwise the full
+            text card opens for a longer edit.
+          </td>
+        </tr>
+        <tr>
+          <td>Tap 📖 (top-right, after a clip is loaded)</td>
+          <td>
+            Switch to book view (paginated). The icon flips to 📜
+            while you're in book view — tap to come back to the
+            scrolling reading view.
+          </td>
+        </tr>
+        <tr><td>Tap 🔖 (top-right, after a clip is loaded)</td><td>Add bookmark at current time.</td></tr>
+      </table>
+      <p style="opacity: 0.7; font-size: 0.85em;">
+        <em>Settings, Help, and other menu items live inside the
+        ☰ sheet — see §9.</em>
+      </p>
+
+      <div class="tip">
+        <strong>Two-tap reading-view sentences are deliberate.</strong>
+        The first tap lets you mark a recently-passed sentence —
+        e.g. to annotate it — without yanking the narrator back to
+        it. Tap the same sentence again to commit the seek.
+      </div>
 
       <h3>Keyboard</h3>
       <table>

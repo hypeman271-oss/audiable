@@ -1240,7 +1240,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225ca</span>
+            Narrative <span id="settings-version-tag">v225df</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2412,33 +2412,22 @@
       <div id="phone-menu-scrim" class="phone-menu-scrim" aria-hidden="true"></div>
       <div id="phone-menu" class="phone-menu" aria-hidden="true">
         <div class="phone-menu-content">
-          <button class="phone-menu-item" data-action="library" type="button">
-            <span class="phone-menu-icon" aria-hidden="true">📚</span>
-            <span>Library</span>
-          </button>
+          <!-- v587/v588/v593: author-frequency layout. Library, Book
+               view, and Edit text are now top-bar icons next to 🔖
+               (always-on access without opening the menu). Import
+               stays here as the single high-frequency revision-
+               adjacent action that doesn't need a top-bar slot.
+               Casual-reader and rare actions sit below the first
+               divider; config below the second. -->
           <button class="phone-menu-item" data-action="import" type="button">
             <span class="phone-menu-icon" aria-hidden="true">↑</span>
             <span>Import</span>
           </button>
+          <div class="phone-menu-divider"></div>
           <button class="phone-menu-item" data-action="new" type="button">
             <span class="phone-menu-icon" aria-hidden="true">✚</span>
-            <span>New clip</span>
+            <span>Start over</span>
           </button>
-          <!-- v225.tn47 (#524): Edit text + Book view consolidated
-               into ☰ from the (removed) pull-up Document section.
-               Live data-action ids match the triggers map in JS. -->
-          <button class="phone-menu-item" data-action="edit" type="button">
-            <span class="phone-menu-icon" aria-hidden="true">✏</span>
-            <span>Edit text</span>
-          </button>
-          <button class="phone-menu-item" data-action="bookview" type="button">
-            <span class="phone-menu-icon" aria-hidden="true">📖</span>
-            <span>Book view / Audio view</span>
-          </button>
-          <!-- v225.tn48 (#525): Download MP3 — moved here from the
-               text card's secondary actions row. Only useful AFTER
-               audio is generated; the ☰ family of "what document"
-               actions is the right home. -->
           <button class="phone-menu-item" data-action="download" type="button">
             <span class="phone-menu-icon" aria-hidden="true">↓</span>
             <span>Download MP3</span>

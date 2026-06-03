@@ -22,7 +22,10 @@ near zero; subsequent synths reuse the cached `Kokoro` instance.
 from __future__ import annotations
 
 import io
+import os
+import sys
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -118,7 +121,18 @@ def list_voices():
 
 def _load_engine():
     """Lazy-load the Kokoro ONNX runtime. Heavy (200-300 MB resident);
-    keep cached for the lifetime of the process."""
+    keep cached for the lifetime of the process.
+
+    v582 (#446): pin ONNX intra/inter-op threads to 1. On Fly's
+    shared-cpu-1x we have ~half a physical core; the default
+    "use all detected cores" causes ONNX Runtime to create worker
+    threads that fight over the single CPU we actually have,
+    adding scheduling overhead with no parallelism gain. Pinning
+    to 1 removes that contention. Pairs with the OMP/OpenBLAS/MKL
+    env vars set in the Dockerfile (those affect numpy + the
+    espeak-ng phonemizer path, which kokoro_onnx calls before
+    ONNX inference for every sentence).
+    """
     global _engine
     if _engine is not None:
         return _engine
@@ -130,9 +144,41 @@ def _load_engine():
         )
     # Imported lazily so missing kokoro-onnx (e.g. local dev without the
     # package) doesn't break the whole tts module at import time.
+    import onnxruntime as ort
     from kokoro_onnx import Kokoro
 
-    _engine = Kokoro(str(MODEL_PATH), str(VOICES_PATH))
+    n_threads = max(1, int(os.environ.get("NARRATIVE_ONNX_THREADS", "1")))
+
+    # kokoro-onnx 0.4.9 doesn't expose a session_options kwarg, so the
+    # only way to constrain ONNX Runtime's thread pools is to patch the
+    # InferenceSession constructor before kokoro_onnx instantiates it.
+    # The patch is temporary — we restore the original immediately
+    # after Kokoro() so we don't affect any other engine that loads an
+    # ONNX session later (e.g. faster-whisper). OMP_NUM_THREADS=1
+    # (set in the Dockerfile) already constrains intra-op parallelism
+    # because ORT's CPU EP uses OpenMP under the hood, but the
+    # inter-op thread pool ignores that env var.
+    _orig_session = ort.InferenceSession
+
+    def _patched_session(*args, **kwargs):
+        if "sess_options" not in kwargs and "session_options" not in kwargs:
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = n_threads
+            opts.inter_op_num_threads = 1
+            kwargs["sess_options"] = opts
+        return _orig_session(*args, **kwargs)
+
+    ort.InferenceSession = _patched_session
+    try:
+        _engine = Kokoro(str(MODEL_PATH), str(VOICES_PATH))
+    finally:
+        ort.InferenceSession = _orig_session
+
+    print(
+        f"[kokoro] engine loaded: intra_op_threads={n_threads}, "
+        f"inter_op_threads=1 (via InferenceSession patch)",
+        file=sys.stderr, flush=True,
+    )
     return _engine
 
 
@@ -216,14 +262,38 @@ def synthesize_iter(
     offsets_ms: list[int] = []
     cumulative_frames = 0
     sample_rate = 0
+    # v582 (#446): per-chapter timing so we can compare before/after
+    # the ONNX thread pin + future hardware bumps. RTF = real-time
+    # factor; <1.0 means synth is slower than playback (problematic
+    # for any chapter the user wants to start listening to mid-synth).
+    chapter_start_ts = time.monotonic()
+    synth_only_seconds = 0.0
 
     for i, sentence in enumerate(sentences):
         try:
+            sentence_start_ts = time.monotonic()
             with _synth_lock:
                 samples, sr = engine.create(
                     sentence, voice=suffix, speed=speed, lang=lang
                 )
+            sentence_synth_seconds = time.monotonic() - sentence_start_ts
+            synth_only_seconds += sentence_synth_seconds
             data, frames, sr2 = _samples_to_wav_bytes(samples, sr)
+            # Per-sentence: synth time + produced audio seconds + RTF.
+            # Audio duration here is the OUTPUT not the input — that's
+            # what matters for whether playback can keep up with synth.
+            audio_seconds = frames / (sr2 or 24000)
+            sent_rtf = (
+                audio_seconds / sentence_synth_seconds
+                if sentence_synth_seconds > 0 else 0.0
+            )
+            print(
+                f"[kokoro] sentence {i+1}/{total}: "
+                f"synth={sentence_synth_seconds*1000:.0f}ms, "
+                f"audio={audio_seconds*1000:.0f}ms, "
+                f"rtf={sent_rtf:.2f}x",
+                file=sys.stderr, flush=True,
+            )
         except Exception as exc:
             # Mirror the piper_engine resilience pattern: a single bad
             # sentence shouldn't abort the whole chapter. Log it and
@@ -252,6 +322,27 @@ def synthesize_iter(
             "offset_ms": offset_ms,
             "wav_b64": base64.b64encode(data).decode(),
         }
+
+    # v582 (#446): chapter summary so we can see RTF over a whole synth
+    # job at a glance. Wall = total time including the SSE-yield gap +
+    # base64 + numpy work; synth-only is just engine.create wall time.
+    chapter_wall_seconds = time.monotonic() - chapter_start_ts
+    audio_total_seconds = cumulative_frames / (sample_rate or 24000)
+    wall_rtf = (
+        audio_total_seconds / chapter_wall_seconds
+        if chapter_wall_seconds > 0 else 0.0
+    )
+    synth_rtf = (
+        audio_total_seconds / synth_only_seconds
+        if synth_only_seconds > 0 else 0.0
+    )
+    print(
+        f"[kokoro] CHAPTER DONE: sentences={total}, "
+        f"audio={audio_total_seconds:.1f}s, "
+        f"wall={chapter_wall_seconds:.1f}s (rtf={wall_rtf:.2f}x), "
+        f"synth-only={synth_only_seconds:.1f}s (rtf={synth_rtf:.2f}x)",
+        file=sys.stderr, flush=True,
+    )
 
     yield {
         "type": "result",

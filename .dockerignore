@@ -9,6 +9,13 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
+# Local virtualenv — never ship dev dependencies into the image.
+# Belt-and-suspenders with the Dockerfile's `COPY *.py ./` glob:
+# the glob is depth-1 only (won't recurse into .venv/), but if a
+# future COPY ever does `COPY . .` this guard catches it.
+.venv/
+venv/
+
 # Git
 .git/
 .gitignore

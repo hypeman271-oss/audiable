@@ -657,6 +657,34 @@ dialog[open]::backdrop {
   background: var(--scrim);
 }
 
+/* v590: phone-only translucent glass treatment for the Library dialog.
+   Matches the pull-up drawer / ☰ menu visual family — same
+   --accent-tint fill, same blur(8px), same lighter scrim. The
+   inner .card.library normally has var(--bg-card) (solid), which
+   would defeat the glass; we transparent-out the inner background
+   on phone so the dialog surface shows through.
+
+   Phone-only (≤767px) because desktop and tablet keep the existing
+   centered modal / right-side drawer treatments — those are already
+   on-brand for those form factors. */
+@media (max-width: 767px) {
+  .library-dialog {
+    background: var(--accent-tint);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .library-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+  /* The inner content card otherwise paints a solid --bg-card over
+     the translucent dialog. Transparent here lets the glass show. */
+  .library-dialog .card.library {
+    background: transparent;
+  }
+}
+
 /* ---------- Right-side drawer mode (v115) ----------
    At ≥1024px (desktop + landscape tablet), voice + library become
    right-side drawers instead of center modals. The text content stays
@@ -3237,6 +3265,44 @@ body[data-ui-mode="author"]
 .reading-view .sentence.active {
   color: var(--fg);
   background-color: var(--accent-tint-3);
+}
+
+/* v583: "Selected, awaiting confirm" visual for the tap-then-confirm
+   sentence behavior. Uses a dotted outline rather than a solid box so
+   it's clearly distinct from the active-sentence background tint
+   (which means "audio is playing here"). The outset means the ring
+   sits OUTSIDE the text rect rather than nudging surrounding
+   sentences, which would shift the reading flow on tap. */
+.reading-view .sentence.selected {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* v592: inline single-sentence edit. Solid accent ring (different
+   from .selected's dashed ring) signals "this is now editable text,
+   not a target to click." Override the OS text-selection block
+   that the reading view normally has — the user needs to be able
+   to select and type. caret-color makes the cursor visible against
+   the tinted background. */
+.reading-view .sentence.editing {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+  background: var(--accent-tint);
+  caret-color: var(--accent);
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+/* While the save round-trip is in flight, dim the sentence + show
+   it's no longer editable. Once the server returns, the .editing-
+   saving class drops along with .editing and the sentence reverts
+   to its normal render. */
+.reading-view .sentence.editing-saving {
+  opacity: 0.6;
+  cursor: progress;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 .reading-view .sentence.played {
@@ -7554,12 +7620,17 @@ button:disabled {
      offline / install banners. */
   min-width: 200px;
   padding: 6px;
-  background: color-mix(in srgb, var(--bg-card) 86%, transparent);
+  /* v596: on-brand translucent glass. Was the bg-card 86% mix —
+     read as a darker card floating over the page. Now matches the
+     pull-up drawer / ☰ menu / library family: accent-tint fill +
+     blur(8px), same recipe as #576/#577 so the chrome reads as
+     one translucent stack. */
+  background: var(--accent-tint);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   /* Keep buttons distinct so a tap can't land on the *border*
      between them and resolve as neither. */
   gap: 4px;
@@ -7674,6 +7745,7 @@ button:disabled {
   cursor: wait;
   opacity: 0.55;
 }
+
 
 /* v223.tn21 (#491): inline tag-icon chip on annotated sentences.
    One small colored pill per non-voice tag — tells the reader what
@@ -9006,9 +9078,14 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: var(--glass);
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    /* v596i: floor — zero fill, pure blur. Bar has no color of
+       its own; whatever the reading-view paints behind it gets
+       softened by 8px of blur and shows through directly. Only
+       the border-top hairline and the box-shadow under it
+       define the bar's edges. */
+    background: transparent;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border-top: 1px solid var(--border);
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.25);
     /* v225.tn56 (#539): suppress OS text-selection on long-press of
@@ -9146,6 +9223,33 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     opacity: 0;
     pointer-events: none;
     transition: opacity 150ms;
+  }
+
+  /* v595: "wake up the strips" — when a sentence is selected the
+     two armed surfaces (the ✎ Edit button up top, the flag chips
+     down bottom) light up with the same accent as the sentence's
+     dashed ring. The chrome → sentence visual link makes "which
+     surfaces will act on this selection" answer itself without
+     a tooltip or hint. Clears when selection clears.
+
+     Tag row tints its glass and gains a subtle accent top edge
+     (the existing border-top swaps to a brighter accent border).
+     ✎ takes the same accent-tint fill the pull-up + ☰ menu use,
+     and its top safe-area border so it reads as "lit" against
+     the other two top-bar icons that stay transparent. */
+  /* v596g: base is now var(--accent-tint) (8%) matching drawer.
+     Wake-up needs to clear that floor — 22% accent keeps the
+     "armed" cue clearly distinct. ✎ matches so the two surfaces
+     wake in lockstep. */
+  body[data-sentence-selected="1"] .phone-tag-row {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-top-color: var(--accent);
+    transition: background 150ms, border-color 150ms;
+  }
+  body[data-sentence-selected="1"] .phone-edit-btn {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    transition: background 150ms, box-shadow 150ms;
   }
 
   /* Phase D (#502): when no clip is loaded, #player-card carries
@@ -9762,7 +9866,14 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     top: calc(56px + env(safe-area-inset-top, 0px));
     left: 0;
     right: 0;
-    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    /* v596j: was bottom: calc(96px + safe-area), which left a 96px
+       empty cream strip below the reading view where the bars sit.
+       The tag row's transparent backdrop-filter could only blur
+       that empty cream — hence "not transparent at all" no matter
+       what fill we tried. Drop to 0 so the reading view extends
+       all the way to the viewport bottom; the bars float over it
+       and the backdrop-filter samples the real scrolling text. */
+    bottom: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -9775,6 +9886,10 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    /* v596j: bottom padding inside the scroll surface so the last
+       sentence can still scroll above the bars. 64px player +
+       52px tag row + 24px breathing room + safe-area. */
+    padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px));
   }
   /* Empty-state cards / banners that sit above the text card in the
      normal DOM are not relevant once a clip is loaded — push them
@@ -9949,15 +10064,31 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     gap: 6px;
     min-width: 0;     /* let it shrink so the state column survives */
   }
+  /* v591: state-strip legibility pass. The 11px + --fg-muted text
+     reads on a SOLID surface but disappears against the translucent
+     drawer — the reading view text bleeding through behind it
+     dominates the contrast. User reported the drawer felt empty
+     even though the state strip was wired up.
+     Fix: bigger (12.5px), stronger color (--fg at 0.85), and a
+     subtle accent-tinted pill background so the text sits ON the
+     glass instead of through it. Right-aligned single line is
+     preserved. */
   .phone-pullup-state {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--fg-muted, #b8b8c0);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--fg);
+    opacity: 0.85;
     text-align: right;
     white-space: nowrap;
     line-height: 1.35;
-    /* When empty, collapse so the layout doesn't lurch. */
     min-width: 0;
+    /* Pill that nests against the glass without competing with chips. */
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--accent-tint);
+    border: 1px solid var(--border);
+    /* Don't compete with chip-row height — let the row align center. */
+    align-self: center;
   }
   .phone-pullup-state:empty {
     display: none;
@@ -10083,6 +10214,9 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   #phone-menu-scrim,
   .phone-menu-btn,
   .phone-bookmark-btn,
+  .phone-library-btn,
+  .phone-bookview-btn,
+  .phone-edit-btn,
   #phone-tag-row {
     display: none !important;
   }
@@ -10173,6 +10307,118 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   }
   /* Hide when no clip loaded — same gate as the tag row. */
   body:has(#player-card[hidden]) .phone-bookmark-btn {
+    display: none;
+  }
+
+  /* v587/v588/v593: top-right icon cluster, right-to-left order:
+       🔖  Bookmark  (right: 12px)  — quick marker
+       📖  Bookview  (right: 60px)  — view toggle, clip-gated
+       ✎  Edit      (right: 108px) — edit text, clip-gated
+       📚  Library   (right: 156px) — global nav, always visible
+     Each is a 40px circle; 8px gap between them.
+
+     v587: Library button. No clip-loaded gate (finding a clip IS
+     the point). */
+  .phone-library-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    right: 156px;
+    z-index: 41;
+  }
+  .phone-library-btn:hover {
+    background: var(--bg-card-2);
+  }
+  .phone-library-btn:active {
+    transform: scale(0.92);
+  }
+  .phone-library-btn.flashed {
+    animation: _phoneBookmarkFlash 420ms ease-out;
+  }
+
+  /* v588: Book-view toggle. Gated on clip-loaded — book view needs
+     text. State-aware icon (📖 in audio, 📜 in book) managed by
+     JS via a MutationObserver on the hidden #book-view-toggle. */
+  .phone-bookview-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    right: 60px;
+    z-index: 41;
+  }
+  .phone-bookview-btn:hover {
+    background: var(--bg-card-2);
+  }
+  .phone-bookview-btn:active {
+    transform: scale(0.92);
+  }
+  .phone-bookview-btn.flashed {
+    animation: _phoneBookmarkFlash 420ms ease-out;
+  }
+  /* Hide when no clip loaded — book view requires text. */
+  body:has(#player-card[hidden]) .phone-bookview-btn {
+    display: none;
+  }
+
+  /* v593: ✎ Edit text button. Same 40px circle as the rest of the
+     right cluster. Sits at right:108px between 📚 (right:156px) and
+     📖 (right:60px). Dispatches click() on the hidden #edit-text
+     button so all inline-edit + legacy exit-to-textarea logic
+     stays single-sourced. Clip-loaded gate: editing needs text. */
+  .phone-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    right: 108px;
+    z-index: 41;
+  }
+  .phone-edit-btn:hover {
+    background: var(--bg-card-2);
+  }
+  .phone-edit-btn:active {
+    transform: scale(0.92);
+  }
+  .phone-edit-btn.flashed {
+    animation: _phoneBookmarkFlash 420ms ease-out;
+  }
+  /* Hide when no clip loaded — editing requires text. */
+  body:has(#player-card[hidden]) .phone-edit-btn {
     display: none;
   }
 

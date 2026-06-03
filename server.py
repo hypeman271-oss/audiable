@@ -15,7 +15,7 @@ import socket
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -693,6 +693,146 @@ def synthesize(req: SynthesizeRequest):
             "Access-Control-Expose-Headers": "X-Narrative-Sentences",
         },
     )
+
+
+# v592 / #584: inline single-sentence splice. Re-synthesize one sentence
+# in the same voice as the rest of the clip, then PCM-decode-splice it
+# into the existing MP3. Stateless: caller uploads the existing audio
+# + the offsets table + the new text. Returns a new MP3 + a shifted
+# offsets table. See tts/splice.py for the rationale.
+#
+# Multipart form (no JSON body — FastAPI doesn't mix UploadFile with a
+# pydantic JSON body cleanly). Fields:
+#   audio:           file (MP3 bytes of the existing clip)
+#   params:          JSON string with all the rest
+# `params` schema (validated below):
+#   {
+#     "voice_id": "kokoro:..." | "piper:..." | "...",
+#     "speaker_id": int | null,
+#     "rate": int | null,
+#     "index": int,                # which sentence to replace
+#     "text": str,                 # new sentence text
+#     "sentence_offsets_ms": [int] # current offset table (len == sentence count)
+#   }
+@app.post("/api/synthesize/splice")
+async def synthesize_splice(
+    audio: UploadFile = File(...),
+    params: str = Form(...),
+):
+    import json as _json
+    from tts import splice as _splice
+
+    if not audio.filename:
+        raise HTTPException(status_code=400, detail="no audio file")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="empty audio file")
+    if len(audio_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"audio too large ({len(audio_bytes)} bytes, max {MAX_UPLOAD_BYTES})",
+        )
+
+    try:
+        p = _json.loads(params)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"params not valid JSON: {e}")
+    if not isinstance(p, dict):
+        raise HTTPException(status_code=400, detail="params must be a JSON object")
+
+    text = (p.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is empty")
+    if len(text) > 50_000:
+        raise HTTPException(status_code=400, detail="text too long for a single sentence")
+    voice_id = p.get("voice_id")
+    speaker_id = p.get("speaker_id")
+    rate = p.get("rate")
+
+    index = p.get("index")
+    if not isinstance(index, int):
+        raise HTTPException(status_code=400, detail="index must be an integer")
+    offsets = p.get("sentence_offsets_ms")
+    if (not isinstance(offsets, list)
+            or not offsets
+            or not all(isinstance(o, int) for o in offsets)):
+        raise HTTPException(
+            status_code=400,
+            detail="sentence_offsets_ms must be a non-empty list of ints",
+        )
+    if index < 0 or index >= len(offsets):
+        raise HTTPException(
+            status_code=400,
+            detail=f"index {index} out of range [0, {len(offsets)})",
+        )
+
+    # Synthesize the replacement sentence as WAV. Same voice/speaker/rate
+    # as the original keeps the seam as close to imperceptible as possible
+    # — Kokoro / Piper are deterministic given the same inputs, so two
+    # neighbouring sentences sound consistent.
+    try:
+        result = tts.synthesize(
+            text=text,
+            voice_id=voice_id,
+            rate=rate,
+            volume=None,
+            speaker_id=speaker_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result.wav:
+        raise HTTPException(
+            status_code=500,
+            detail="replacement-sentence synthesis produced no audio",
+        )
+
+    # Splice — CPU-bound (ffmpeg subprocess); offload to thread pool so
+    # the event loop stays responsive while a long MP3 re-encodes.
+    import asyncio
+    loop = asyncio.get_running_loop()
+    try:
+        new_mp3, new_offsets = await loop.run_in_executor(
+            None,
+            _splice.splice_sentence,
+            audio_bytes,
+            offsets,
+            index,
+            result.wav,
+        )
+    except _splice.SpliceError as e:
+        raise HTTPException(status_code=422, detail=f"splice failed: {e}")
+    except Exception as e:
+        # Surface ffmpeg/missing-binary failures with a useful message
+        # instead of a bare 500.
+        import traceback as _tb
+        print("[synthesize/splice] unexpected failure:", file=sys.stderr, flush=True)
+        _tb.print_exc()
+        raise HTTPException(status_code=500, detail=f"splice failed: {e}")
+
+    # Optionally persist via the library-db audio cache. Same hook the
+    # full-synth endpoints use — if the user has synced this clip, the
+    # spliced MP3 is the new authoritative audio, so caching here means
+    # /api/library/audio/{sha} can serve it immediately.
+    audio_sha = None
+    try:
+        if library_db.is_enabled():
+            audio_sha = library_db.store_audio(new_mp3)
+    except Exception as e:
+        print(
+            f"[synthesize/splice] audio persist failed: {e}",
+            file=sys.stderr, flush=True,
+        )
+
+    offsets_json = _json.dumps(new_offsets, separators=(",", ":"))
+    headers = {
+        "Content-Disposition": 'attachment; filename="narrative-spliced.mp3"',
+        "X-Narrative-Sentences": offsets_json,
+        "Access-Control-Expose-Headers":
+            "X-Narrative-Sentences,X-Narrative-Audio-Sha256",
+    }
+    if audio_sha:
+        headers["X-Narrative-Audio-Sha256"] = audio_sha
+    return Response(content=new_mp3, media_type="audio/mpeg", headers=headers)
 
 
 @app.post("/api/synthesize/stream")

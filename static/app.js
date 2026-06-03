@@ -430,6 +430,45 @@ let sentenceOffsetsSec = [];
 let sentenceSpans = [];
 let activeSentenceIdx = -1;
 
+// v583 (#583): "Tap-then-confirm" selection state for reading-view
+// sentence taps. The tap doesn't immediately move the playhead —
+// it first marks the sentence as selected (visible ring), and a
+// second tap on the same sentence seeks + plays from there. When
+// the active sentence (the one currently playing or paused at) is
+// tapped, the tap acts as a play/pause toggle instead.
+//
+// This exists so users listening to narration can tap a recently-
+// past sentence to annotate it WITHOUT yanking the playhead and
+// interrupting their listening flow. The tag-armed flow (capture-
+// phase handler in the annotate listener) still applies in one
+// tap because the intent is already declared by the armed tag.
+let _selectedSentenceIdx = -1;
+
+function _paintSelectedSentence(nextIdx) {
+  if (_selectedSentenceIdx === nextIdx) return;
+  if (_selectedSentenceIdx >= 0 && sentenceSpans[_selectedSentenceIdx]) {
+    sentenceSpans[_selectedSentenceIdx].classList.remove("selected");
+  }
+  _selectedSentenceIdx = nextIdx;
+  if (nextIdx >= 0 && sentenceSpans[nextIdx]) {
+    sentenceSpans[nextIdx].classList.add("selected");
+  }
+  // v595: "wake up the strips" — flip a body data-attr so the phone
+  // tag row and the ✎ Edit button can light up in CSS while a
+  // sentence is selected. Same accent as the sentence ring, so the
+  // visual link between "the ring on the sentence" and "the chrome
+  // that acts on it" is automatic.
+  if (nextIdx >= 0) {
+    document.body.dataset.sentenceSelected = "1";
+  } else {
+    delete document.body.dataset.sentenceSelected;
+  }
+}
+
+function _clearSelectedSentence() {
+  _paintSelectedSentence(-1);
+}
+
 // AbortController for the in-flight synthesis request (null when idle).
 let _synthController = null;
 
@@ -10507,14 +10546,55 @@ function enterReadingView(text, images, highlights) {
     span.dataset.sentenceText = s;
     span.dataset.originalContent = span.innerHTML;
     span.addEventListener("click", () => {
-      // v189: clicking a sentence reads as "engage here" — drop
-      // any pinned scroll state so the auto-scroll resumes from
-      // this point. Mirrors the book view's sentence-click behavior.
+      // v583: tap-then-confirm state machine. The previous "tap = seek
+      // + play" was too eager — users listening to narration who tapped
+      // a recently-past sentence (to annotate it) would yank the
+      // playhead and interrupt their listening. The new contract:
+      //
+      //   tap currently-playing sentence    → pause
+      //   tap currently-paused sentence     → resume (no seek)
+      //   tap other sentence (1st time)     → select (visual ring)
+      //   tap other sentence (2nd time)     → seek + play
+      //   tap different idle sentence       → replace selection
+      //
+      // Tag-armed flow is unaffected: the capture-phase annotate
+      // listener at the reading-view root already runs first and
+      // stops propagation when a tag is armed, so armed-tap-apply
+      // stays one-tap.
+      //
+      // v592: while a sentence is in inline-edit mode, clicks inside
+      // it should move the text caret, not seek the audio. Bail
+      // early so the contenteditable handles the click natively.
+      if (typeof _inlineEditingIdx === "number" && _inlineEditingIdx === i) {
+        return;
+      }
       _readingViewUserScrolled = false;
-      // seekToSentence handles both streaming (jump into the per-sentence
-      // queue) and post-swap (move the playhead in the combined WAV).
-      seekToSentence(i);
-      if (playerEl.paused) playerEl.play().catch(() => {});
+
+      if (i === activeSentenceIdx) {
+        // This is the sentence the audio is currently at. Toggle
+        // play/pause without moving the playhead.
+        if (playerEl.paused) {
+          playerEl.play().catch(() => {});
+        } else {
+          playerEl.pause();
+        }
+        _clearSelectedSentence();
+        return;
+      }
+
+      if (i === _selectedSentenceIdx) {
+        // Second tap on a previously-selected non-current sentence.
+        // Commit the seek and start playing from there.
+        _clearSelectedSentence();
+        seekToSentence(i);
+        if (playerEl.paused) playerEl.play().catch(() => {});
+        return;
+      }
+
+      // First tap on an idle sentence — select only. No seek, no
+      // play state change. The visible ring tells the user that a
+      // second tap on the same sentence will jump there.
+      _paintSelectedSentence(i);
     });
     // v220-AA: long-press / right-click opens the per-sentence voice
     // assignment dialog. Wired here so every sentence in the reading
@@ -10538,6 +10618,11 @@ function enterReadingView(text, images, highlights) {
   // bucket for malformed indexes) — render them at the bottom.
   flushImagesAt(sentences.length);
   activeSentenceIdx = -1;
+  // v583: a fresh reading-view build means new sentence spans, so
+  // the cached _selectedSentenceIdx points at a stale element. Reset
+  // here rather than across every reset call site — this is the
+  // single chokepoint where sentenceSpans is rebuilt.
+  _selectedSentenceIdx = -1;
   // v189: new clip → fresh start. Clear any pinned scroll state
   // from a previous reading-view session so the auto-scroll
   // resumes correctly for the new content.
@@ -10805,7 +10890,37 @@ if (readingView) {
       _readingViewUpdateReturnBtn();
     }
   });
+  // v586: tap outside any sentence in the reading view clears a
+  // pending selection. The container click listener fires on the
+  // bubble phase, AFTER the span's own click handler — so when a
+  // span IS tapped, _selectedSentenceIdx is already updated by the
+  // time we run, and closest(".sentence") matches the bubbled
+  // target, so we don't clear. When the user taps in the paragraph
+  // gaps, padding, or trailing-image area (anywhere inside the
+  // reading view that isn't a sentence), closest is null and we
+  // clear. Inline flag chips stopPropagation themselves so they
+  // never reach this. Voice-note buttons (▶ ↻ ✕) live inside the
+  // sentence span, so closest still finds the .sentence ancestor.
+  readingView.addEventListener("click", (e) => {
+    if (_selectedSentenceIdx < 0) return;
+    if (e.target.closest && e.target.closest(".sentence")) return;
+    _clearSelectedSentence();
+  });
 }
+
+// v586: Esc clears pending sentence selection on desktop. Guarded
+// against form-field focus so users can still Esc-out-of search
+// boxes, the bookmark editor, etc. Doesn't preventDefault — other
+// Esc handlers (dialog close, palette dismiss) should still run if
+// nothing was selected, and run alongside ours if something was.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (_selectedSentenceIdx < 0) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
+            || t.isContentEditable)) return;
+  _clearSelectedSentence();
+});
 if (readingViewReturnBtn) {
   readingViewReturnBtn.addEventListener("click", () => {
     const activeSpan = sentenceSpans[activeSentenceIdx];
@@ -11071,7 +11186,360 @@ function highlightCurrentSentence() {
   _paintActiveWord(now);
 }
 
-editTextBtn.addEventListener("click", exitReadingView);
+// v592 / #537 Phase 2: inline single-sentence edit.
+//
+// Repurposes Edit text. If a sentence is selected (the v583 dashed
+// ring), opens an in-place editor on THAT sentence. Otherwise falls
+// back to legacy exitReadingView() (the full textarea) for power
+// users who want to rewrite the whole chapter.
+//
+// Save flow: posts to a /api/synth/sentence/replace endpoint that
+// re-synths the one sentence and splices the new audio into the
+// combined MP3 server-side (#584 — endpoint not built yet, this
+// phase uses a stub so we can validate the UX before sinking
+// hours into ffmpeg + PCM math).
+let _inlineEditingIdx = -1;
+let _inlineEditOriginalText = "";
+
+function _onEditTextClick() {
+  if (
+    typeof _selectedSentenceIdx === "number" &&
+    _selectedSentenceIdx >= 0 &&
+    sentenceSpans[_selectedSentenceIdx]
+  ) {
+    _enterInlineEdit(_selectedSentenceIdx);
+    return;
+  }
+  // Legacy fall-through: open the full textarea editor.
+  exitReadingView();
+}
+
+function _enterInlineEdit(idx) {
+  const span = sentenceSpans[idx];
+  if (!span) return;
+  if (_inlineEditingIdx === idx) return; // already editing this one
+
+  // Cancel any other in-progress edit before starting a new one.
+  if (_inlineEditingIdx >= 0) _cancelInlineEdit();
+
+  // Pause playback so the narrator doesn't move on while typing.
+  if (playerEl && !playerEl.paused) {
+    try { playerEl.pause(); } catch {}
+  }
+  // If annotate-mode is armed, disarm it — we don't want a stray
+  // chip tap to fire an annotation save during text editing.
+  if (typeof _setAnnotateMode === "function") {
+    try { _setAnnotateMode(false); } catch {}
+  }
+  // Clear the dashed-ring selection visual — the editing outline
+  // replaces it as the "this is the current target" cue.
+  if (typeof _clearSelectedSentence === "function") {
+    _clearSelectedSentence();
+  }
+
+  _inlineEditingIdx = idx;
+  _inlineEditOriginalText =
+    span.dataset.sentenceText || span.textContent || "";
+
+  span.classList.add("editing");
+  // plaintext-only blocks rich-text paste + line breaks — we want
+  // the user to edit prose, not a mini-document.
+  span.setAttribute("contenteditable", "plaintext-only");
+  // Replace any rendered child markup (active-word highlights,
+  // attribution color spans, etc.) with the raw sentence text so
+  // the contenteditable shows clean prose.
+  span.textContent = _inlineEditOriginalText;
+  span.focus();
+
+  // Move caret to end of the line so the user can start typing
+  // immediately after their last word.
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch {}
+
+  const onKey = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      _commitInlineEdit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      _cancelInlineEdit();
+    }
+  };
+  // Defer the outside-tap listener so the click that ENTERED edit
+  // mode doesn't immediately exit it.
+  const onOutside = (e) => {
+    if (_inlineEditingIdx < 0) return;
+    const editingSpan = sentenceSpans[_inlineEditingIdx];
+    if (editingSpan && editingSpan.contains(e.target)) return;
+    _commitInlineEdit();
+  };
+  span.addEventListener("keydown", onKey);
+  span._editKeyHandler = onKey;
+  setTimeout(() => {
+    document.addEventListener("click", onOutside, true);
+    span._editOutsideHandler = onOutside;
+  }, 100);
+
+  setStatus("Editing sentence — Enter to save, Esc to cancel.");
+}
+
+async function _commitInlineEdit() {
+  if (_inlineEditingIdx < 0) return;
+  const idx = _inlineEditingIdx;
+  const span = sentenceSpans[idx];
+  if (!span) { _exitInlineEdit(); return; }
+
+  const newText = (span.textContent || "").trim();
+
+  if (!newText) {
+    // Empty after edit — treat as cancel rather than save-empty.
+    _cancelInlineEdit();
+    return;
+  }
+  if (newText === _inlineEditOriginalText) {
+    // No change — just exit silently.
+    _exitInlineEdit();
+    return;
+  }
+  // Multi-sentence guard: if the user typed a sentence-ending
+  // punct followed by whitespace + capital, we'd have to split
+  // and resynth N sentences. v1 enforces single-sentence edits;
+  // the user can re-narrate the whole clip for bigger changes.
+  if (/[.!?]\s+[A-Z]/.test(newText)) {
+    setStatus("Inline edit handles one sentence at a time.", true);
+    span.focus();
+    return;
+  }
+  if (!_currentClipId) {
+    setStatus("No clip loaded — can't splice audio.", true);
+    _cancelInlineEdit();
+    return;
+  }
+
+  // Mark the span as in-flight so the user sees something happening.
+  span.classList.add("editing-saving");
+  setStatus("Re-synthesizing edited sentence…");
+
+  try {
+    // v592 Phase 2 (#585): real splice via /api/synthesize/splice.
+    // POST a multipart form: the existing MP3 + a params JSON with
+    // voice config + the offset table + new sentence text + index.
+    // Server re-synths the one sentence in the matching voice, runs
+    // a ffmpeg PCM-domain splice, returns the new MP3 plus an
+    // updated offset table (sentences after idx shift by Δ where
+    // Δ = new sentence duration − old sentence duration).
+    const clip = await getClip(_currentClipId);
+    if (!clip || !clip.blob) {
+      throw new Error("clip has no audio to splice");
+    }
+    const offsets = Array.isArray(clip.sentenceOffsetsSec)
+      ? clip.sentenceOffsetsSec
+      : sentenceOffsetsSec;
+    if (!offsets || !offsets.length || idx >= offsets.length) {
+      throw new Error(`sentence index ${idx} out of range`);
+    }
+    const offsetsMs = offsets.map((s) => Math.round(s * 1000));
+
+    const params = {
+      voice_id: clip.voiceId || voiceEl.value || null,
+      speaker_id:
+        typeof clip.speakerId === "number" ? clip.speakerId : null,
+      rate: typeof clip.rate === "number" ? clip.rate : null,
+      index: idx,
+      text: newText,
+      sentence_offsets_ms: offsetsMs,
+    };
+
+    const fd = new FormData();
+    fd.append(
+      "audio",
+      new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }),
+    );
+    fd.append("params", JSON.stringify(params));
+
+    const res = await fetch("/api/synthesize/splice", {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const j = await res.json();
+        if (j && j.detail) detail = j.detail;
+      } catch {}
+      throw new Error(`splice failed (${res.status}): ${detail}`);
+    }
+    const newBlob = await res.blob();
+    if (!newBlob || newBlob.size === 0) {
+      throw new Error("splice returned empty audio");
+    }
+    const newOffsetsHeader = res.headers.get("X-Narrative-Sentences");
+    const newOffsetsMs = newOffsetsHeader ? JSON.parse(newOffsetsHeader) : null;
+    if (!Array.isArray(newOffsetsMs) || newOffsetsMs.length !== offsets.length) {
+      throw new Error("splice returned malformed offsets");
+    }
+    const newSha = res.headers.get("X-Narrative-Audio-Sha256") || null;
+    const newOffsetsSec = newOffsetsMs.map((ms) => ms / 1000);
+
+    // Compute the playhead/bookmark shift before mutating clip state.
+    // Δ is the duration change of the edited sentence; everything
+    // strictly after the old sentence end shifts by Δ.
+    const oldStartSec = offsets[idx];
+    const oldEndSec =
+      idx + 1 < offsets.length ? offsets[idx + 1] : null;
+    const newStartSec = newOffsetsSec[idx];
+    const newEndSec =
+      idx + 1 < newOffsetsSec.length ? newOffsetsSec[idx + 1] : null;
+    const deltaSec =
+      oldEndSec != null && newEndSec != null
+        ? (newEndSec - oldEndSec)
+        : 0;
+
+    // Reconstruct clip.text. Walk the existing spans to find the
+    // char offset of sentence idx in the source text, then splice
+    // newText in place of _inlineEditOriginalText at that exact
+    // position. This preserves paragraph breaks + other whitespace
+    // around the edit, which a naive sentences.join(" ") would lose.
+    let newClipText = clip.text || "";
+    {
+      let cursor = 0;
+      for (let i = 0; i < idx; i++) {
+        const s = sentenceSpans[i] && sentenceSpans[i].dataset.sentenceText;
+        if (!s) continue;
+        const found = newClipText.indexOf(s, cursor);
+        if (found < 0) { cursor = -1; break; }
+        cursor = found + s.length;
+      }
+      if (cursor >= 0) {
+        const oldStart = newClipText.indexOf(_inlineEditOriginalText, cursor);
+        if (oldStart >= 0) {
+          newClipText =
+            newClipText.slice(0, oldStart) +
+            newText +
+            newClipText.slice(oldStart + _inlineEditOriginalText.length);
+        }
+      }
+    }
+
+    // Swap the audio in the player without disrupting the listening
+    // session. Capture playhead first so we can restore it after the
+    // src reload (which resets currentTime to 0).
+    const wasPlaying = !playerEl.paused && !playerEl.ended;
+    const oldPlayhead = playerEl.currentTime || 0;
+    let newPlayhead = oldPlayhead;
+    if (oldEndSec != null && oldPlayhead >= oldEndSec) {
+      // After the edit: shift by Δ.
+      newPlayhead = Math.max(0, oldPlayhead + deltaSec);
+    } else if (oldPlayhead >= oldStartSec) {
+      // Inside the edited sentence: pin to the new sentence start
+      // so the user hears the replacement immediately.
+      newPlayhead = newStartSec;
+    }
+    // else: before the edit, unchanged.
+
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlob = newBlob;
+    lastBlobUrl = URL.createObjectURL(newBlob);
+    sentenceOffsetsSec = newOffsetsSec.slice();
+    playerEl.src = lastBlobUrl;
+    // Wait for the player to know its new duration before seeking +
+    // optionally resuming. loadedmetadata fires fast for MP3.
+    await new Promise((resolve) => {
+      const onMeta = () => {
+        playerEl.removeEventListener("loadedmetadata", onMeta);
+        resolve();
+      };
+      playerEl.addEventListener("loadedmetadata", onMeta);
+      // Safety net in case the event already fired or never does.
+      setTimeout(resolve, 1500);
+    });
+    try { playerEl.currentTime = newPlayhead; } catch {}
+    if (wasPlaying) {
+      playerEl.play().catch(() => {});
+    }
+
+    // Persist to IDB + push via sync pipeline. Bookmarks get shifted
+    // too so they keep pointing at the right spot in the new audio.
+    await _mutateClipAtomic(_currentClipId, (c) => {
+      c.blob = newBlob;
+      c.sentenceOffsetsSec = newOffsetsSec.slice();
+      c.text = newClipText;
+      c.durationSec = isFinite(playerEl.duration)
+        ? playerEl.duration
+        : (c.durationSec || 0);
+      if (newSha) c.audioSha256 = newSha;
+      if (Array.isArray(c.bookmarks) && c.bookmarks.length) {
+        c.bookmarks = c.bookmarks.map((bm) => {
+          if (typeof bm.time !== "number") return bm;
+          if (oldEndSec != null && bm.time >= oldEndSec) {
+            return { ...bm, time: Math.max(0, bm.time + deltaSec) };
+          }
+          if (bm.time >= oldStartSec) {
+            return { ...bm, time: newStartSec };
+          }
+          return bm;
+        });
+      }
+    });
+
+    // Reflect the new text on the span itself so future reads (e.g.
+    // re-render of attribution, char count, save-text) see the
+    // edited content. sentenceText is the raw form; originalContent
+    // is the HTML scaffold the attribution paint restores to.
+    span.dataset.sentenceText = newText;
+    span.textContent = newText;
+    span.dataset.originalContent = span.innerHTML;
+
+    _exitInlineEdit();
+    setStatus("Audio updated.");
+  } catch (e) {
+    console.warn("[inline-edit] save failed:", e);
+    setStatus(`Edit failed — ${e.message || e}`, true);
+    span.classList.remove("editing-saving");
+  }
+}
+
+function _cancelInlineEdit() {
+  if (_inlineEditingIdx < 0) return;
+  const span = sentenceSpans[_inlineEditingIdx];
+  if (span) {
+    // Restore the original text — the contenteditable change is
+    // local until commit, so we just rewrite back.
+    span.textContent = _inlineEditOriginalText;
+  }
+  _exitInlineEdit();
+  setStatus("Cancelled.");
+}
+
+function _exitInlineEdit() {
+  if (_inlineEditingIdx < 0) return;
+  const span = sentenceSpans[_inlineEditingIdx];
+  if (span) {
+    span.removeAttribute("contenteditable");
+    span.classList.remove("editing");
+    span.classList.remove("editing-saving");
+    if (span._editKeyHandler) {
+      span.removeEventListener("keydown", span._editKeyHandler);
+      delete span._editKeyHandler;
+    }
+    if (span._editOutsideHandler) {
+      document.removeEventListener(
+        "click", span._editOutsideHandler, true,
+      );
+      delete span._editOutsideHandler;
+    }
+  }
+  _inlineEditingIdx = -1;
+  _inlineEditOriginalText = "";
+}
+
+editTextBtn.addEventListener("click", _onEditTextClick);
 
 // ---- Book view (M1) ----------------------------------------------------
 // v185 (M1): a paginated two-page spread companion to the reading
@@ -11563,7 +12031,50 @@ async function _addAnnotation(clipId, anno) {
     const annotations = Array.isArray(clip.annotations)
       ? clip.annotations.slice()
       : [];
-    annotations.push(anno);
+
+    // v585: one annotation per sentence (hard limit). If a live
+    // (non-tombstoned) annotation already exists on this
+    // sentenceIndex, REPLACE its tag-bearing fields rather than
+    // pushing a second record. We preserve:
+    //   - id (so the row's stable identity survives — deletes,
+    //     server-side merges, and chip click handlers all key off
+    //     this id)
+    //   - any voice-note audio + transcript on the existing
+    //     annotation that the incoming record doesn't bring
+    //     itself. A user retagging a sentence shouldn't lose the
+    //     voice recording attached to it.
+    //
+    // Net behavior:
+    //   tag → sentence with no anno   → push (new annotation)
+    //   tag → sentence with an anno   → swap tags in place
+    //   voice → sentence with anno    → replace tags + audio + transcript
+    //   voice → sentence with no anno → push (new voice annotation)
+    //
+    // The {...existing, ...incoming, id: existing.id} order means
+    // every incoming field that's PRESENT wins, but absent fields
+    // (e.g. tag-only inputs don't include `audio`) fall through to
+    // existing. That's the preserve-voice-note-on-retag semantic.
+    let merged = false;
+    if (anno && typeof anno.sentenceIndex === "number") {
+      const existingIdx = annotations.findIndex(
+        (a) =>
+          a &&
+          a.sentenceIndex === anno.sentenceIndex &&
+          !a.deletedAt,
+      );
+      if (existingIdx >= 0) {
+        const existing = annotations[existingIdx];
+        annotations[existingIdx] = {
+          ...existing,
+          ...anno,
+          id: existing.id,
+        };
+        merged = true;
+      }
+    }
+    if (!merged) {
+      annotations.push(anno);
+    }
     clip.annotations = annotations;
     clip.updatedAt = new Date().toISOString();
     await idbReq(store.put(clip));
@@ -12275,7 +12786,8 @@ function _applyAnnotationMarkers(clip) {
       // quiet audio, and network blips silently drop the transcribe
       // call. Show a small ↻ button next to ▶ so the user can retry
       // server-side Whisper on demand. Removed once a transcript
-      // lands.
+      // lands. (v585 Phase 2 tried replacing this with an always-
+      // present ✎ Edit dialog — reverted per user feedback.)
       let existingRetry = span.querySelector(".annotate-voice-retry");
       const needsTranscribe = voiceAnno.audio
         && voiceAnno.audio.base64
@@ -12288,9 +12800,6 @@ function _applyAnnotationMarkers(clip) {
           retry.textContent = "↻";
           retry.title = "Transcribe this voice note via server";
           retry.dataset.annoId = voiceAnno.id;
-          // Capture clipId at injection time. The reading view is
-          // bound to _currentClipId; if the user navigates away mid-
-          // request, the result still writes to the correct clip.
           const capturedClipId = _currentClipId;
           const capturedAnno = voiceAnno;
           retry.addEventListener("click", async (e) => {
@@ -12306,11 +12815,6 @@ function _applyAnnotationMarkers(clip) {
                 capturedAnno.audio.base64,
                 capturedAnno.audio.mime || "audio/webm",
               );
-              // _voiceTryServerTranscribe injects the transcript
-              // inline when it succeeds. If the block is now there
-              // we know it worked — remove ourselves. If not,
-              // Whisper returned empty again (truly silent audio);
-              // restore the button so the user knows + can retry.
               if (span.querySelector(".annotate-voice-transcript")) {
                 retry.remove();
               } else {
@@ -12323,7 +12827,6 @@ function _applyAnnotationMarkers(clip) {
               retry.textContent = "↻";
             }
           });
-          // Insert right after the ▶ button (or at head if no button).
           const btn = span.querySelector(".annotate-voice-play");
           if (btn) btn.insertAdjacentElement("afterend", retry);
           else span.insertBefore(retry, span.firstChild);
@@ -12331,6 +12834,10 @@ function _applyAnnotationMarkers(clip) {
       } else if (existingRetry) {
         existingRetry.remove();
       }
+      // Sweep any v585 Phase 2 ✎ button left in the DOM from the
+      // brief shipped version. Defensive against caches.
+      const stalEdit = span.querySelector(".annotate-voice-edit");
+      if (stalEdit) stalEdit.remove();
       // v223.tn26 (#498): × delete button next to ▶. Tap fires the
       // action sheet → tombstone. Sibling to ▶ + ↻ so all three
       // controls stack inline at the head of the sentence.
@@ -15966,7 +16473,12 @@ function makeClipCard(clip) {
       }
       return;
     }
-    loadClip(clip.id);
+    // v589: on phone, load silently. Author feedback: card taps were
+    // starting playback unexpectedly. The bottom-bar play button is
+    // right there — user decides when to start. Desktop keeps the
+    // tap-loads-and-plays behavior since the click is more deliberate.
+    const _isPhone = window.matchMedia("(max-width: 767px)").matches;
+    loadClip(clip.id, { autoPlay: !_isPhone });
   });
 
   // Reset-to-start ↺ — shown only for clips that actually have a resume
@@ -16183,7 +16695,9 @@ function makeClipCard(clip) {
       _updateMultiSelectCounts();
       renderLibrary();
     } else {
-      loadClip(clip.id);
+      // v589: same gate as the card-body click. Phone loads silently.
+      const _isPhone = window.matchMedia("(max-width: 767px)").matches;
+      loadClip(clip.id, { autoPlay: !_isPhone });
     }
   });
 
@@ -17914,7 +18428,14 @@ librarySelectDeleteBtn.addEventListener("click", async () => {
   _exitMultiSelect();
 });
 
-async function loadClip(id) {
+// v589: { autoPlay } opt added. Defaults to true so every existing
+// caller (chapter-queue auto-advance, bookmark-jump cross-clip, etc.)
+// keeps its current behavior. The library-card click on phone passes
+// `autoPlay: false` so tapping a card silently loads — the user then
+// hits the bottom-bar play button when ready. Author feedback: card
+// taps were starting playback unexpectedly, especially when the
+// previous clip was mid-paragraph and the new clip jumped to it.
+async function loadClip(id, { autoPlay = true } = {}) {
   const clip = await getClip(id);
   if (!clip) return;
 
@@ -18041,7 +18562,10 @@ async function loadClip(id) {
       ? `Resuming · ${clip.title} · ${formatTime(resumeAt)}`
       : `Loaded · ${clip.title}`
   );
-  playerEl.play().catch(() => {});
+  // v589: only auto-play when the caller asks for it. The library-
+  // card click on phone passes autoPlay:false so the user sees the
+  // loaded clip and decides whether to start.
+  if (autoPlay) playerEl.play().catch(() => {});
   // Re-render so the ▶ indicator moves to this clip + the new clip's
   // bookmarks list appears under the player.
   renderLibrary();
@@ -21544,10 +22068,36 @@ function _phoneTagRowArm(tagKey) {
     tagKey,
     currentClip: _currentClipId,
     armed: _phoneTagRowArmedTag,
+    selectedSentence: _selectedSentenceIdx,
   });
   if (!_currentClipId) {
     setStatus("Load a clip first to flag a sentence.", true);
     _dlog("tag-row-arm", "no clip — bailing");
+    return;
+  }
+  // v584: complement to v583's tap-then-confirm selection. If a
+  // sentence is currently selected (dashed ring from a previous
+  // tap), applying a tag goes directly — no need to arm-then-tap
+  // again. This is the inverse of the existing arm-then-tap flow
+  // and gives the user two equally valid orderings:
+  //   tag chip → sentence    (existing)
+  //   sentence → tag chip    (NEW)
+  // Playback is NOT paused for this path — the user already
+  // controlled their listening state via the prior sentence tap
+  // (or via the player buttons), so we don't override it.
+  if (
+    typeof _selectedSentenceIdx === "number" &&
+    _selectedSentenceIdx >= 0 &&
+    sentenceSpans[_selectedSentenceIdx]
+  ) {
+    const idx = _selectedSentenceIdx;
+    const text = sentenceSpans[idx].textContent || "";
+    _phoneTagRowArmedTag = tagKey; // satisfy apply func's read
+    _clearSelectedSentence();
+    _phoneTagRowApplyArmedToSentence(idx, text);
+    // apply calls _phoneTagRowDisarm internally → armed state
+    // resets to null, chip-armed class clears, _wasPlaying gate
+    // ensures no spurious resume.
     return;
   }
   // Tapping the same chip again → cancel.
@@ -21955,6 +22505,116 @@ function _phoneMenuBoot() {
     app.appendChild(bm);
   }
 
+  // v587: 📚 Library button at top-right, left of the bookmark icon.
+  // Moved out of the ☰ menu — Library is the most-used menu item
+  // for revising authors, and always-on access (without opening
+  // the menu) saves a tap on every navigation. Mirrors the
+  // existing bookmark button's positioning + flash pattern; tap
+  // dispatches click on the hidden hero #library-trigger so the
+  // dialog, badge count, and any future hero-rail behavior stay
+  // single-sourced. Visible whenever the phone shell is — no
+  // "needs a clip" gate, because finding a clip IS the point.
+  if (!app.querySelector(".phone-library-btn")) {
+    const lib = document.createElement("button");
+    lib.type = "button";
+    lib.className = "phone-library-btn";
+    lib.setAttribute("aria-label", "Open library");
+    lib.title = "Library";
+    lib.textContent = "📚";
+    lib.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const trigger = document.getElementById("library-trigger");
+      if (trigger) trigger.click();
+      lib.classList.remove("flashed");
+      void lib.offsetWidth;
+      lib.classList.add("flashed");
+    });
+    app.appendChild(lib);
+  }
+
+  // v593: ✎ Edit text button. Sits between 📚 and 📖 — close enough
+  // to thumb for frequent revising but not stealing 🔖's rightmost
+  // slot. Dispatches click on the hidden #edit-text button so all
+  // the v592 inline-edit + legacy exit-to-textarea logic stays
+  // single-sourced. Clip-loaded gate: edit needs text in the view.
+  if (!app.querySelector(".phone-edit-btn")) {
+    const ed = document.createElement("button");
+    ed.type = "button";
+    ed.className = "phone-edit-btn";
+    ed.setAttribute("aria-label", "Edit text");
+    ed.title = "Edit selected sentence (or full text)";
+    ed.textContent = "✎";
+    ed.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const trigger = document.getElementById("edit-text");
+      if (trigger) trigger.click();
+      ed.classList.remove("flashed");
+      void ed.offsetWidth;
+      ed.classList.add("flashed");
+    });
+    app.appendChild(ed);
+  }
+
+  // v588: 📖 / 📜 View-toggle button. Sits between 📚 and 🔖. State-
+  // aware: shows 📖 when the reader is in audio view (tap → switch
+  // to book), shows 📜 when in book view (tap → switch back). The
+  // existing #book-view-toggle hero button (line ~11201) already
+  // owns the entry/exit functions and updates its OWN textContent
+  // on state change; we mirror that state by reading its
+  // textContent post-click. Initial state is set from the same
+  // signal. Tap dispatches to that hidden button so all the
+  // wiring (enterBookView/exitBookView/scroll restoration/etc)
+  // stays single-sourced. Gated on clip-loaded — book view
+  // requires text loaded; the menu item was already gated this
+  // way too.
+  if (!app.querySelector(".phone-bookview-btn")) {
+    const view = document.createElement("button");
+    view.type = "button";
+    view.className = "phone-bookview-btn";
+    view.setAttribute("aria-label", "Switch view");
+    view.title = "Switch view";
+    // Read initial state from the hidden hero toggle. Its textContent
+    // is "📖 Book view" when in audio mode, "▶ Audio view" when in
+    // book mode (set by lines 14273 / 14601). We mirror just the
+    // icon: 📖 in audio, 📜 in book.
+    const _phoneBookviewSync = () => {
+      const t = document.getElementById("book-view-toggle");
+      if (!t) return;
+      const inBook = (t.textContent || "").includes("Audio view");
+      view.textContent = inBook ? "📜" : "📖";
+      view.setAttribute(
+        "aria-label",
+        inBook ? "Switch to audio view" : "Switch to book view",
+      );
+      view.title = inBook ? "Audio view" : "Book view";
+    };
+    _phoneBookviewSync();
+    // Sync after the toggle target's text changes (i.e. after any
+    // tap, ours or another path). MutationObserver watches the
+    // characterData inside the button.
+    const t = document.getElementById("book-view-toggle");
+    if (t && !t.dataset.phoneBookviewObserved) {
+      t.dataset.phoneBookviewObserved = "1";
+      const obs = new MutationObserver(_phoneBookviewSync);
+      obs.observe(t, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+    }
+    view.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const trigger = document.getElementById("book-view-toggle");
+      if (trigger) trigger.click();
+      view.classList.remove("flashed");
+      void view.offsetWidth;
+      view.classList.add("flashed");
+      // The observer above will fire when the trigger's textContent
+      // flips. No manual re-sync needed here.
+    });
+    app.appendChild(view);
+  }
+
   // v225.tn48 (#525): Generate audio bar — fixed bottom CTA on
   // phone when text is loaded but no audio exists yet. Replaces
   // the desktop-style Generate / Download / Queue silently row,
@@ -22045,10 +22705,12 @@ function _phoneMenuBoot() {
       library: "library-trigger",
       import: "import-btn",
       new: "clear-btn",
-      // v225.tn47 (#524): Edit text + Book view consolidated into
-      // ☰ from the (removed) pull-up Document section. Same
-      // dispatch pattern as the rest — menu close, then click()
-      // the original button.
+      // v225.tn47 (#524) → v593: Edit text + Book view were
+      // consolidated into ☰ then promoted again to top-bar icons
+      // (.phone-edit-btn, .phone-bookview-btn). Trigger entries
+      // retained as fallbacks in case the dispatch is ever
+      // re-pointed at the menu — harmless if the menu item is
+      // absent.
       edit: "edit-text",
       bookview: "book-view-toggle",
       // v225.tn48 (#525): Download MP3 dispatch.
@@ -22135,11 +22797,15 @@ function _updatePullupState() {
   const authorEl = document.querySelector('[data-state="author"]');
 
   // Playback: current speed + volume + skip interval.
+  // v591: match the chip notation ("1×" not "Speed 180") so the
+  // readout doesn't re-state what the chip already shows. Compute
+  // the multiplier from the rate input (default 180 wpm = 1×).
   if (playbackEl && rateEl && volumeEl) {
-    const speed = rateEl.value;
+    const rate = Number(rateEl.value) || 180;
+    const mult = (rate / 180).toFixed(2).replace(/\.?0+$/, "");
     const vol = volumeEl.value;
     const skip = typeof _skipIntervalSec === "number" ? _skipIntervalSec : 15;
-    playbackEl.textContent = `Speed ${speed} · Vol ${vol}% · Skip ${skip}s`;
+    playbackEl.textContent = `${mult}× · ${vol}% · ${skip}s`;
   }
 
   // Listening: A↔B markers when set, sleep countdown when active,
