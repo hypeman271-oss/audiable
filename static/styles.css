@@ -80,6 +80,18 @@
      reading view. Tuned to read as "warning" without competing with the
      accent karaoke highlight. */
   --long-sentence-tint: rgba(255, 200, 60, 0.12);
+
+  /* v225ds: "working" color for in-flight states (syncing, queued,
+     re-narrating in bg-queue). Distinct from --accent so a clip
+     that's actively syncing doesn't share its paint with the
+     currently-playing clip — they were visually identical and the
+     user kept reading the play indicator as another sync target.
+     Amber/orange because it's the convention for "in progress" in
+     most UI vocab and reads as clearly NOT the brand color. */
+  --working: #f5a524;
+  --working-strong: #d97706;
+  --working-tint: rgba(245, 165, 36, 0.18);
+  --working-tint-2: rgba(245, 165, 36, 0.28);
 }
 
 /* Light theme — cream / warm-white surfaces with deep navy text. Tuned
@@ -119,6 +131,16 @@
   --danger-border: rgba(195, 58, 46, 0.35);
   --accent-border-dashed: rgba(72, 88, 217, 0.4);
   --long-sentence-tint: rgba(220, 130, 20, 0.16);
+
+  /* v225ds: "working" color override for light theme. The dark-theme
+     #f5a524 reads as washed-out yellow on cream; the deeper amber
+     #b45309 holds contrast against the page bg the way --accent
+     (#4858d9 deep blue) does. Tint stays warm-orange so the
+     translucent variants still read as a single color family. */
+  --working: #b45309;
+  --working-strong: #92400e;
+  --working-tint: rgba(180, 83, 9, 0.12);
+  --working-tint-2: rgba(180, 83, 9, 0.20);
 }
 
 * {
@@ -5698,14 +5720,37 @@ button:disabled {
 }
 
 /* Outdated badge for GitHub-sourced clips whose upstream SHA has moved
-   since they were last synthesized. The left-border accent makes it
-   readable in the small library cards without taking layout space. */
+   since they were last synthesized.
+
+   v225du: bumped from a 3px accent stripe to a 5px amber stripe + a
+   soft amber wash across the whole card body. Two reasons: (1) the
+   3px stripe was so subtle the user couldn't spot outdated cards
+   under a scan — they only registered at close inspection. (2) the
+   original blue accent collided with .clip.current's blue treatment,
+   so when a card was both currently-playing AND outdated it looked
+   like one big blue thing. Amber moves outdated into the "sync
+   workflow" color family (matching syncing-now and syncing-queued),
+   so the eye reads all sync-related states as one group distinct
+   from the player workflow.
+
+   The wash is implemented as a stacked background-image so it
+   composites ON TOP of the existing Libby cover-derived tint
+   (the second gradient). Two gradients in one background means
+   both colors show — the Libby hint at the leading edge plus the
+   amber wash across the whole card. */
 .clip.outdated {
-  border-left: 3px solid var(--accent);
+  border-left: 5px solid var(--working);
+  background-image:
+    linear-gradient(var(--working-tint), var(--working-tint)),
+    linear-gradient(
+      100deg,
+      var(--clip-accent-tint, transparent) 0%,
+      transparent 55%
+    );
 }
 .clip.outdated .clip-title-top-text::after {
   content: " ↻";
-  color: var(--accent);
+  color: var(--working);
   font-weight: 700;
   font-size: 0.9em;
 }
@@ -5927,17 +5972,69 @@ button:disabled {
  *   .clip-sync-status.active → bright accent
  *   .clip-last-synced      → quiet "Last synced 5 min ago" beneath tags
  */
+/* v225ds: syncing states wear --working (amber) instead of --accent
+   (blue). Previously a card that was actively syncing looked
+   visually identical to the currently-playing card (.clip.current)
+   — both got the full accent border + ring. Users read the pair as
+   "two cards in matching state" and assumed both were being synced.
+   Amber separates the in-flight state into its own color family so
+   the eye reads syncing vs playing vs outdated as three distinct
+   things.
+
+   v225dt: progress bar along the bottom edge. The amber border is
+   passive — it says "this card is in some kind of sync state" but
+   not "work is happening right now." A sliding bar gives the
+   geometry of motion: pixels are moving, therefore progress is
+   moving. Indeterminate (a comet-shaped highlight that loops L→R)
+   because the bg-queue doesn't expose a per-clip 0-100 progress in
+   the library render path; if we wire that later we swap to a
+   determinate fill. The bar is anchored to the card's bottom edge
+   and clipped by the card's border-radius (the parent already has
+   overflow:hidden). */
 .clip.syncing-now {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent) inset;
+  position: relative;
+  border-color: var(--working);
+  box-shadow: 0 0 0 1px var(--working) inset;
   animation: clipSyncingPulse 2.2s ease-in-out infinite;
 }
+.clip.syncing-now::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--working) 50%,
+    transparent 100%
+  );
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  background-position: -40% 0;
+  animation: clipSyncingProgress 1.6s linear infinite;
+  pointer-events: none;
+}
+@keyframes clipSyncingProgress {
+  from { background-position: -40% 0; }
+  to   { background-position: 140% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clip.syncing-now::after {
+    animation: none;
+    /* Static amber strip so the state is still readable for users
+       who've turned animations off. */
+    background: var(--working);
+    opacity: 0.6;
+  }
+}
 .clip.syncing-queued {
-  border-color: var(--accent-tint-2, var(--accent-tint));
+  border-color: var(--working-tint-2, var(--working-tint));
 }
 @keyframes clipSyncingPulse {
-  0%, 100% { box-shadow: 0 0 0 1px var(--accent) inset; }
-  50%      { box-shadow: 0 0 0 2px var(--accent) inset; }
+  0%, 100% { box-shadow: 0 0 0 1px var(--working) inset; }
+  50%      { box-shadow: 0 0 0 2px var(--working) inset; }
 }
 @media (prefers-reduced-motion: reduce) {
   .clip.syncing-now { animation: none; }
@@ -5947,7 +6044,7 @@ button:disabled {
   margin-top: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: var(--accent-tint);
+  background: var(--working-tint);
   color: var(--fg-dim);
   font-size: 11.5px;
   font-weight: 600;
@@ -5955,7 +6052,7 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 .clip-sync-status.active {
-  background: var(--accent);
+  background: var(--working);
   color: var(--on-accent);
 }
 /* v221.tn9: full-width footer strip across the card's bottom edge.
@@ -9269,6 +9366,17 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
      there's no "current sentence" to flag, so the chips would only
      produce error toasts. (#515) */
   body:has(#player-card[hidden]) .phone-tag-row {
+    display: none;
+  }
+
+  /* v225dg: hide the tag row + its first-tap hint in book view.
+     Book view is reading-focused (paginated, looks like a printed
+     book) — the annotation chip strip is an audio-revision
+     affordance that has its home in the audio view. One tap on
+     📖 (which becomes 📜 in book view) swaps back. Keeps 📚 / ✎ /
+     🔖 in the top bar so global nav + bookmarking still work. */
+  body:has(#book-view:not([hidden])) .phone-tag-row,
+  body:has(#book-view:not([hidden])) .phone-tag-row-hint {
     display: none;
   }
 

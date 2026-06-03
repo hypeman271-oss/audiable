@@ -2929,9 +2929,31 @@ const debugLogCopy = $("debug-log-copy");
 const debugLogDownload = $("debug-log-download");
 const debugLogClear = $("debug-log-clear");
 
+function _currentAppVersion() {
+  // v225dm: pull the live SW cache name (same as the Settings stamp)
+  // so the log header is always truth-aligned. Falls back to "unknown"
+  // if the stamp hasn't run yet (very early boot) or DOM isn't ready.
+  try {
+    const el = document.getElementById("settings-version-tag");
+    const v = el && el.textContent && el.textContent.trim();
+    return v || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function _formatDebugLogForDisplay() {
+  // v225dm: header line first so triage knows which build the user
+  // was on when the log was captured. Previous debug-log files were
+  // silent about version — every "still not working" report needed
+  // a Settings screenshot to confirm cache state. Always emit the
+  // header, even when the log itself is empty.
+  const header =
+    `# Narrative ${_currentAppVersion()} · ` +
+    `captured ${new Date().toISOString()}\n` +
+    `# ${_debugLog.length} entries\n#\n`;
   if (_debugLog.length === 0) {
-    return "(empty — no entries yet. Try a GitHub import or background queue to populate.)";
+    return header + "(empty — no entries yet. Try a GitHub import or background queue to populate.)";
   }
   const lines = [];
   for (const e of _debugLog) {
@@ -3013,8 +3035,11 @@ if (debugLogDownload) {
     const a = document.createElement("a");
     // Local stamp without leaking seconds-precision: YYYY-MM-DDTHH-MM.
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:.]/g, "-");
+    // v225dm: bake the build version into the filename so triaging
+    // is unambiguous before even opening the file.
+    const ver = _currentAppVersion().replace(/[^a-zA-Z0-9]/g, "");
     a.href = url;
-    a.download = `narrative-debug-${stamp}.txt`;
+    a.download = `narrative-debug-${ver}-${stamp}.txt`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -4146,6 +4171,20 @@ async function renderBookmarks() {
 
     row.append(timeBtn, noteInput, delBtn);
     bookmarksList.appendChild(row);
+  }
+
+  // v225dy (#611): keep the pull-up Author summary ("N flags · N
+  // bookmarks") fresh. Without this, the count was a snapshot at
+  // drawer-open time — deleting a bookmark while the drawer was open
+  // left the strip showing the old number until reopen.
+  // renderBookmarks is the single funnel for every bookmark
+  // mutation (add via 🔖 button, delete via × in row, tap-to-remove
+  // on book-view ribbon, cross-device absorb), so wiring it here
+  // covers every path in one place.
+  if (typeof _updatePullupState === "function") {
+    try { _updatePullupState(); } catch (e) {
+      console.warn("[pullup] state refresh after bookmark render failed:", e);
+    }
   }
 }
 
@@ -11202,19 +11241,85 @@ let _inlineEditingIdx = -1;
 let _inlineEditOriginalText = "";
 
 function _onEditTextClick() {
+  // v225dk: instrument every branch so the next debug log shows
+  // exactly what happened on ✎ tap — entry vs cancel vs full-edit
+  // fallback. The 06-03 13:21 log captured zero inline-edit
+  // activity, so we can't tell whether the user actually entered
+  // edit mode or which branch failed. dlog fixes that blindness.
+  if (typeof _dlog === "function") {
+    _dlog("inline-edit", "_onEditTextClick fired", {
+      editingIdx: _inlineEditingIdx,
+      selectedIdx: _selectedSentenceIdx,
+      hasSpan:
+        typeof _selectedSentenceIdx === "number" &&
+        _selectedSentenceIdx >= 0 &&
+        !!sentenceSpans[_selectedSentenceIdx],
+    });
+  }
+  // v225dq: Smart ✎ — open/close confirmed working, so we can layer
+  // the save behavior back on safely. While editing, tap ✎ to:
+  //   • text unchanged → just close (cancel, restores original)
+  //   • text changed   → save (splice + commit the new audio)
+  // Change detection compares the live textContent against the
+  // snapshot taken at entry. The user no longer needs to remember
+  // "did I edit or not" — the button does the right thing both ways.
+  if (typeof _inlineEditingIdx === "number" && _inlineEditingIdx >= 0) {
+    const editingSpan = sentenceSpans[_inlineEditingIdx];
+    const currentText = editingSpan
+      ? (editingSpan.textContent || "").trim()
+      : "";
+    const changed =
+      currentText.length > 0 && currentText !== _inlineEditOriginalText;
+    if (typeof _dlog === "function") {
+      _dlog("inline-edit", "branch: toggle-while-editing", {
+        changed,
+        currentLen: currentText.length,
+        originalLen: _inlineEditOriginalText.length,
+      });
+    }
+    if (changed) {
+      _commitInlineEdit();
+    } else {
+      _cancelInlineEdit();
+    }
+    return;
+  }
   if (
     typeof _selectedSentenceIdx === "number" &&
     _selectedSentenceIdx >= 0 &&
     sentenceSpans[_selectedSentenceIdx]
   ) {
+    if (typeof _dlog === "function") {
+      _dlog("inline-edit", "branch: enter-inline", {
+        idx: _selectedSentenceIdx,
+      });
+    }
     _enterInlineEdit(_selectedSentenceIdx);
     return;
   }
-  // Legacy fall-through: open the full textarea editor.
-  exitReadingView();
+  // v225dp: edit mode requires a selected sentence — period. No
+  // silent fall-through to the full-text editor on any device.
+  // Phone learned this lesson first (v225do); applying the same
+  // rule on desktop keeps the model consistent: ✎ is "edit the
+  // selected sentence." If nothing is selected, the user gets an
+  // explicit instruction instead of a confusing surprise. Users
+  // who want to edit the whole clip text still have the Clear +
+  // re-paste path; we can wire a dedicated full-text-edit button
+  // later if anyone asks for it back.
+  if (typeof _dlog === "function") {
+    _dlog("inline-edit", "branch: hint-no-selection");
+  }
+  setStatus("Select a sentence first, then tap ✎ to edit it.", true);
 }
 
 function _enterInlineEdit(idx) {
+  if (typeof _dlog === "function") {
+    _dlog("inline-edit", "_enterInlineEdit called", {
+      idx,
+      currentEditingIdx: _inlineEditingIdx,
+      hasSpan: !!sentenceSpans[idx],
+    });
+  }
   const span = sentenceSpans[idx];
   if (!span) return;
   if (_inlineEditingIdx === idx) return; // already editing this one
@@ -11271,22 +11376,26 @@ function _enterInlineEdit(idx) {
       _cancelInlineEdit();
     }
   };
-  // Defer the outside-tap listener so the click that ENTERED edit
-  // mode doesn't immediately exit it.
-  const onOutside = (e) => {
-    if (_inlineEditingIdx < 0) return;
-    const editingSpan = sentenceSpans[_inlineEditingIdx];
-    if (editingSpan && editingSpan.contains(e.target)) return;
-    _commitInlineEdit();
-  };
+  // v225dl: outside-tap-commits is gone. ✎ in the top bar is the
+  // single explicit save gesture (commit-if-changed). The previous
+  // document-level capture-phase click handler raced with the ✎
+  // button's own click — even after the v225dj guard, users reported
+  // it still felt wonky. Removing the auto-commit makes the model
+  // strictly intentional: type, then tap ✎ to save (or Enter on
+  // desktop / Esc to cancel).
   span.addEventListener("keydown", onKey);
   span._editKeyHandler = onKey;
-  setTimeout(() => {
-    document.addEventListener("click", onOutside, true);
-    span._editOutsideHandler = onOutside;
-  }, 100);
 
-  setStatus("Editing sentence — Enter to save, Esc to cancel.");
+  // v225dq: phone copy reflects Smart ✎ — same button saves if
+  // you typed, closes if you didn't. "When done" covers both
+  // without needing two separate sentences.
+  const _isPhone = window.matchMedia &&
+    window.matchMedia("(max-width: 767px)").matches;
+  setStatus(
+    _isPhone
+      ? "Editing sentence — tap ✎ when done."
+      : "Editing sentence — Enter to save, Esc to cancel."
+  );
 }
 
 async function _commitInlineEdit() {
@@ -11500,12 +11609,24 @@ async function _commitInlineEdit() {
     setStatus("Audio updated.");
   } catch (e) {
     console.warn("[inline-edit] save failed:", e);
-    setStatus(`Edit failed — ${e.message || e}`, true);
+    setStatus(`Edit failed — ${e.message || e}. Tap ✎ to retry.`, true);
     span.classList.remove("editing-saving");
+    // v225dh: also exit edit mode on failure so the user isn't
+    // stranded with a contenteditable sentence and no escape. The
+    // original text is restored so the reading view matches the
+    // (unchanged) audio. They can re-select the sentence and tap
+    // ✎ to try again. Without this, a failed splice left the
+    // user permanently stuck per the 2026-06-03 debug log.
+    _cancelInlineEdit();
   }
 }
 
 function _cancelInlineEdit() {
+  if (typeof _dlog === "function") {
+    _dlog("inline-edit", "_cancelInlineEdit called", {
+      editingIdx: _inlineEditingIdx,
+    });
+  }
   if (_inlineEditingIdx < 0) return;
   const span = sentenceSpans[_inlineEditingIdx];
   if (span) {
@@ -11518,6 +11639,11 @@ function _cancelInlineEdit() {
 }
 
 function _exitInlineEdit() {
+  if (typeof _dlog === "function") {
+    _dlog("inline-edit", "_exitInlineEdit called", {
+      editingIdx: _inlineEditingIdx,
+    });
+  }
   if (_inlineEditingIdx < 0) return;
   const span = sentenceSpans[_inlineEditingIdx];
   if (span) {
@@ -13031,6 +13157,16 @@ function _applyAnnotationMarkers(clip) {
       if (!hasVisibleMarker) {
         span.dataset.hasAnnotation = "true";
       }
+    }
+  }
+
+  // v225dy (#611): keep the pull-up Author summary ("N flags · N
+  // bookmarks") fresh after every annotation mutation. This is the
+  // single reconcile funnel for add / remove / tombstone / live-paint,
+  // so wiring it here catches every path without per-callsite plumbing.
+  if (typeof _updatePullupState === "function") {
+    try { _updatePullupState(); } catch (e) {
+      console.warn("[pullup] state refresh after anno reconcile failed:", e);
     }
   }
 }
@@ -17856,6 +17992,230 @@ notesBtn.addEventListener("click", () => {
   }
   openNotesDialog(_currentClipId);
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// v225dr: Markdown export — current clip's notes + bookmarks + annotations.
+// Author-facing format, deliberately readable: pastes cleanly into
+// Scrivener, Obsidian, an editor's inbox, or a notes-only GitHub
+// commit (Phase 2 round-trip, not built yet — see task #538).
+// ────────────────────────────────────────────────────────────────────────
+
+function _msToClockMd(sec) {
+  // Bookmarks store time in seconds; annotations use sentence offsets
+  // that we lift from sentenceOffsetsSec when present. Format as
+  // m:ss (or h:mm:ss for clips >1h). Bare-bones — author readability
+  // beats precision past whole seconds for revision notes.
+  if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return "?";
+  const total = Math.floor(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function _slugifyForFilename(s) {
+  return (s || "untitled")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")    // strip accents
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "untitled";
+}
+
+function _mdEscape(s) {
+  // Keep the prose readable — only escape characters that would
+  // actively break Markdown rendering in a way the author wouldn't
+  // expect. We do NOT escape underscores or asterisks inside the
+  // sentence quote; that would mangle italics the author wrote on
+  // purpose. Backticks would create code spans, so neutralize those.
+  return String(s == null ? "" : s).replace(/`/g, "\\`");
+}
+
+function _buildClipNotesMarkdown(clip) {
+  const title = (clip.title || "Untitled").trim();
+  const v = (typeof _currentAppVersion === "function")
+    ? _currentAppVersion() : "?";
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const durStr = (typeof clip.durationSec === "number" && clip.durationSec > 0)
+    ? _msToClockMd(clip.durationSec) + " audio"
+    : "";
+
+  const lines = [];
+  lines.push(`# ${title}`);
+  lines.push("");
+  lines.push(
+    `*Exported from Narrative ${v} · ${dateStr}` +
+    (durStr ? ` · ${durStr}` : "") +
+    "*"
+  );
+  lines.push("");
+
+  // ─ Notes ─────────────────────────────────────────────────────────
+  const freeNotes = (clip.notes || "").trim();
+  if (freeNotes) {
+    lines.push("## Notes");
+    lines.push("");
+    lines.push(freeNotes);
+    lines.push("");
+  }
+
+  // ─ Bookmarks ─────────────────────────────────────────────────────
+  // v225dv: bookmarks store the time under `timeSec`, not `time`. The
+  // initial export read the wrong field and every row rendered as
+  // "**?** — <note>". Confirmed via clip.bookmarks schema at
+  // addBookmarkAtCurrentTime (line ~3838).
+  const bms = Array.isArray(clip.bookmarks)
+    ? clip.bookmarks
+        .slice()
+        .sort((a, b) => (a.timeSec || 0) - (b.timeSec || 0))
+    : [];
+  if (bms.length) {
+    lines.push("## Bookmarks");
+    lines.push("");
+    for (const bm of bms) {
+      const ts = _msToClockMd(bm.timeSec);
+      const note = (bm.note || "").trim();
+      lines.push(
+        note
+          ? `- **${ts}** — ${_mdEscape(note)}`
+          : `- **${ts}**`
+      );
+    }
+    lines.push("");
+  }
+
+  // ─ Annotations ───────────────────────────────────────────────────
+  // Drop tombstoned rows; sort by sentence index so the export
+  // matches reading order, not flag-order.
+  const annoAll = Array.isArray(clip.annotations) ? clip.annotations : [];
+  const annos = annoAll
+    .filter((a) => a && !a.deletedAt)
+    .sort((a, b) => (a.sentenceIndex || 0) - (b.sentenceIndex || 0));
+
+  if (annos.length) {
+    lines.push("## Annotations");
+    lines.push("");
+    // ANNOTATE_TAGS is defined ~line 12097 — same icon+label mapping
+    // the UI uses, so the export matches what the author sees.
+    const tagInfo = (typeof ANNOTATE_TAGS !== "undefined" && ANNOTATE_TAGS)
+      ? ANNOTATE_TAGS
+      : {};
+    const offsetsSec = Array.isArray(clip.sentenceOffsetsSec)
+      ? clip.sentenceOffsetsSec : [];
+    for (const a of annos) {
+      const idx = (typeof a.sentenceIndex === "number") ? a.sentenceIndex : -1;
+      const tsec = (idx >= 0 && idx < offsetsSec.length) ? offsetsSec[idx] : null;
+      const ts = (tsec != null) ? ` · ~${_msToClockMd(tsec)}` : "";
+      lines.push(`### Sentence ${idx + 1}${ts}`);
+      // v225dx: tag line moved ABOVE the sentence quote. Reading
+      // flow: heading → what kind of note this is → what sentence
+      // it's on → optional voice-note transcript. Easier to scan a
+      // long revision list — "what's the flag?" answers in the
+      // first line under each heading.
+      //
+      // v225dv: annotations store the flag(s) under `tags` (an
+      // array), not `tag` singular. Confirmed via the addAnnotation
+      // callers at lines 12681, 13542, 22433 which all push
+      // `tags: [tagKey]`. Voice-note annotations carry
+      // `tags: ["voice"]` so we map that to a friendly label.
+      const tagsArr = Array.isArray(a.tags)
+        ? a.tags
+        : (a.tag ? [a.tag] : []);   // backwards-compat for any
+                                    // pre-tags-array stored rows
+      const tagLines = [];
+      for (const t of tagsArr) {
+        const meta = t && tagInfo[t];
+        if (meta) {
+          tagLines.push(`${meta.icon} **${meta.label}**`);
+        } else if (t === "voice") {
+          tagLines.push("🎤 **Voice note**");
+        } else if (t) {
+          tagLines.push(`**${_mdEscape(t)}**`);
+        }
+      }
+      if (tagLines.length) {
+        lines.push(tagLines.join("  ·  "));
+        lines.push("");
+      }
+      // v225dw: prefer the FULL sentence text over the 60-char
+      // fingerprint. The fingerprint is a hash-ish prefix used by
+      // the reanchor-on-re-narrate path, not the human-readable
+      // form. When the clip being exported is the currently-loaded
+      // one (always true in v1 since the button only acts on
+      // _currentClipId), each sentenceSpans entry carries the raw
+      // sentence text in its dataset — that's our preferred
+      // source. Fingerprint stays as a fallback.
+      const liveSpan =
+        clip.id === _currentClipId &&
+        Array.isArray(sentenceSpans) &&
+        sentenceSpans[idx];
+      const sentText = (
+        (liveSpan && liveSpan.dataset && liveSpan.dataset.sentenceText) ||
+        a.sentenceText ||
+        a.sentenceFingerprint ||
+        ""
+      ).trim();
+      if (sentText) {
+        lines.push(`> ${_mdEscape(sentText)}`);
+        lines.push("");
+      }
+      const transcript = (a.transcript || "").trim();
+      if (transcript) {
+        lines.push(`> ${_mdEscape(transcript)} *(voice note)*`);
+        lines.push("");
+      }
+    }
+  }
+
+  // Empty-state — only the header, nothing else. Better than a stray
+  // dangling title with no content underneath.
+  if (!freeNotes && !bms.length && !annos.length) {
+    lines.push("*No notes, bookmarks, or annotations on this clip yet.*");
+    lines.push("");
+  }
+
+  // Strip trailing blank line so the file ends with the last real
+  // line + a single newline.
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines.join("\n") + "\n";
+}
+
+const exportNotesBtn = document.getElementById("export-notes-btn");
+async function _exportClipNotes() {
+  if (!_currentClipId) {
+    setStatus("Load a clip first to export its notes.", true);
+    return;
+  }
+  let clip;
+  try {
+    clip = await getClip(_currentClipId);
+  } catch (e) {
+    setStatus(`Couldn't read clip — ${e.message || e}`, true);
+    return;
+  }
+  if (!clip) {
+    setStatus("Clip not found.", true);
+    return;
+  }
+  const md = _buildClipNotesMarkdown(clip);
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const slug = _slugifyForFilename(clip.title);
+  const date = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `${slug}-notes-${date}.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus("Notes exported.");
+}
+if (exportNotesBtn) {
+  exportNotesBtn.addEventListener("click", _exportClipNotes);
+}
 notesDialogClose.addEventListener("click", () => notesDialog.close());
 notesDialog.addEventListener("close", async () => {
   await _commitNotes();
@@ -22715,6 +23075,8 @@ function _phoneMenuBoot() {
       bookview: "book-view-toggle",
       // v225.tn48 (#525): Download MP3 dispatch.
       download: "download",
+      // v225dr: export notes dispatch — same id as the new chip.
+      "export-notes": "export-notes-btn",
       settings: "settings-btn",
       help: "help-btn",
     };

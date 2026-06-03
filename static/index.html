@@ -1240,7 +1240,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225df</span>
+            Narrative <span id="settings-version-tag">v225dy</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2362,6 +2362,17 @@
             aria-label="Open clip notes"
             title="Open notes for this clip"
           >📝 Notes</button>
+          <!-- v225dr: export the current clip's notes + bookmarks +
+               annotations as a Markdown file. Author-facing — bundles
+               revision context into a doc you can paste into Scrivener,
+               share with an editor, or push back to a notes repo. -->
+          <button
+            id="export-notes-btn"
+            type="button"
+            class="notes-btn advanced-only"
+            aria-label="Export notes for this clip"
+            title="Export bookmarks + notes + annotations as a Markdown file"
+          >📤 Export notes</button>
         </div>
         <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
       </section>
@@ -2431,6 +2442,10 @@
           <button class="phone-menu-item" data-action="download" type="button">
             <span class="phone-menu-icon" aria-hidden="true">↓</span>
             <span>Download MP3</span>
+          </button>
+          <button class="phone-menu-item" data-action="export-notes" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">📤</span>
+            <span>Export notes (.md)</span>
           </button>
           <div class="phone-menu-divider"></div>
           <button class="phone-menu-item" data-action="settings" type="button">
