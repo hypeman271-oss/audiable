@@ -8870,7 +8870,8 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   margin: 8px auto;
 }
 
-.book-page-body[data-drop-cap]::first-letter {
+.book-page-body[data-drop-cap]::first-letter,
+.book-view-page-body[data-drop-cap]::first-letter {
   font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   font-size: 3.2em;
   font-weight: 700;
@@ -8967,17 +8968,27 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
    * dominating the spread's visual weight. The Close (×) button
    * (also in this nav row) becomes always-reachable too. */
   position: sticky;
-  /* v225g29 (#727): nav pill pushed further down to make more vertical
-   * room for the spread above. Was 12px. */
-  bottom: 0;
+  /* v225v3.8 (#741): nav pill moved to the TOP of the book view (the
+   * "header" position) — used to live at bottom (sticky + bottom: 0).
+   * order: -1 floats it above the spread in the flex column without
+   * having to reorder the HTML. */
+  top: 0;
+  order: -1;
   z-index: 5;
   padding: 10px 14px;
+  /* v225v3.7 (#741): auto-hide animation. JS adds .auto-hidden after
+   * 2.5s of inactivity, removes on any pointer movement or click in
+   * the book view. Matches Kindle / Apple Books / Kobo immersive
+   * reading pattern. The space stays reserved in layout (sticky) so
+   * the page doesn't jump as the pill fades. */
+  transition: opacity 0.28s ease, transform 0.28s ease;
+  opacity: 1;
   background: rgba(20, 16, 12, 0.72);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   backdrop-filter: blur(14px) saturate(140%);
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  margin: 8px auto 0;
+  margin: 0 auto 8px;
   width: fit-content;
   max-width: 96%;
   flex-wrap: wrap;
@@ -8985,6 +8996,40 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
 [data-theme="light"] .book-view-nav {
   background: rgba(245, 235, 215, 0.85);
   border-color: rgba(120, 90, 60, 0.18);
+}
+/* v225v3.7 (#741): auto-hide state. Pointer events off so a hidden
+ * nav doesn't intercept clicks meant for the page underneath. Slight
+ * downward shift on hide for a more "ducking out of the way" feel. */
+.book-view-nav.auto-hidden {
+  opacity: 0;
+  /* v225v3.8: pill lives at top now — slide UP to hide. */
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+/* v225v3.9 (#741): host slot inside .hero-row. Takes the middle
+ * flex grow so the pill ends up between the title block and the
+ * icon rail (the gap circled in user feedback). When the pill is
+ * inside this slot, we strip its sticky / order / max-width / margin
+ * styling — those existed for the in-book-view placement, but in
+ * the header it just wants to be a normal flex child. */
+.book-view-nav-slot {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: center;
+  align-items: center;
+  min-width: 0;
+}
+.book-view-nav-slot[hidden] { display: none; }
+.book-view-nav-slot .book-view-nav {
+  position: static;
+  top: auto;
+  order: initial;
+  margin: 0;
+  max-width: 100%;
+  /* Header context is always visible — make sure no leftover
+   * auto-hide class can fade it. */
+  opacity: 1;
+  transform: none;
 }
 .book-view-nav-btn {
   background: transparent;
@@ -9306,8 +9351,41 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   }
   /* Drop cap: keep distinct but mute the saturation so colour
      printers don't blow out the accent. */
-  body[data-book-printing] .book-page-body[data-drop-cap]::first-letter {
+  body[data-book-printing] .book-page-body[data-drop-cap]::first-letter,
+  body[data-book-printing] .book-view-page-body[data-drop-cap]::first-letter {
     color: #333 !important;
+  }
+  /* v225v3.10 (Phase 2): V3 print rules. V3 keeps the same DOM but
+   * uses a flex row + translateX for spread navigation. For print we
+   * disable the transform so pages stack vertically, then mirror the
+   * V1 page rules so each .book-view-page becomes its own sheet. */
+  body[data-book-printing] .book-view-spread.v3 {
+    display: block !important;
+  }
+  body[data-book-printing] .book-view-page-row {
+    transform: none !important;
+    display: block !important;
+    width: auto !important;
+  }
+  body[data-book-printing] .book-view-page {
+    page-break-after: always;
+    break-after: page;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    background: white !important;
+    color: black !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 7.5in;
+    box-shadow: none !important;
+    display: block !important;
+  }
+  body[data-book-printing] .book-view-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  body[data-book-printing] .book-view-page-body {
+    color: black !important;
   }
   /* Sentences lose their interactive affordances in print. */
   body[data-book-printing] .sentence {
@@ -9575,13 +9653,14 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
  * padding to 120px gives ~100px of breathing room between the
  * spread's bottom edge and the floating nav, mirroring the gap above
  * the spread. Phone keeps its own values from the @media block. */
+/* v225v3.7 (#741): match bottom margin with the top breathing room.
+ * Spread reserves an extra 80px (was 200, now 280) so it ends higher
+ * up, leaving room for a visible gap between its bottom edge and the
+ * sticky nav pill. v225v3.8: pill moved to top, so bottom padding
+ * returns to base and the spread reclaims the vertical space the
+ * bottom pill used to occupy. */
 .book-view-spread {
-  max-height: calc(100vh - 200px);
-}
-/* Extra cushion inside the book view so the nav floats over empty
- * background rather than touching the spread's bottom edge. */
-.book-view {
-  padding-bottom: 140px;
+  max-height: calc(100vh - 160px);
 }
 
 /* Mobile: single page, no spread. */

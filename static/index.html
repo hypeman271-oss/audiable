@@ -483,6 +483,14 @@
             <!-- Skip ±, 🔖 Bookmark, Sleep, A↔B, Speed, 📝 Notes
                  chips moved here at app boot from .player-actions. -->
           </div>
+          <!-- v225v3.9 (#741): host slot for the book-view nav pill
+               (×, ‹, page indicator, ›, Print, Contents). When book
+               view opens on desktop, JS relocates #book-view-nav
+               into this slot so the pill lives in the header rather
+               than at the top of the book pane. On phone the book
+               view is a fullscreen takeover that covers the header,
+               so the pill stays inside #book-view there. -->
+          <div id="book-view-nav-slot" class="book-view-nav-slot" hidden></div>
           <!-- v173: first-clip onboarding tour banner. Lives INSIDE the
                hero row so it occupies the empty horizontal space
                between the title block and the icon rail — impossible
@@ -1424,7 +1432,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v3.5</span>
+            Narrative <span id="settings-version-tag">v225v3.10</span>
             <button
               type="button"
               id="settings-force-update"
@@ -1745,7 +1753,7 @@
              into a single-page layout via media query. -->
         <div id="book-view" class="book-view" hidden>
           <div id="book-view-spread" class="book-view-spread" aria-live="polite"></div>
-          <div class="book-view-nav">
+          <div id="book-view-nav" class="book-view-nav">
             <!-- v225g3 (#692): explicit Close button so phone users
                  can exit the full-screen book-view takeover (the hero
                  #book-view-toggle is hidden behind the takeover). Also

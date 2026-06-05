@@ -2783,6 +2783,58 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
     // Re-run both layouts so data attrs + reopen pills repaint.
     if (typeof _applyLibraryLayout === "function") _applyLibraryLayout();
     if (typeof _applyAuthorPaneLayout === "function") _applyAuthorPaneLayout();
+    // v225v3.6 (#740): also re-paginate the book view if it's open.
+    // Closing or reopening a panel changes the spread's available
+    // width — same as a drag — so pages need to renumber. Mirrors
+    // the panel-drag pointerup hook (v225v3.2 / v3.3) but fires from
+    // the explicit hide/show toggle path.
+    try {
+      const _bv = typeof bookView !== "undefined" ? bookView : null;
+      const _bvs = typeof bookViewSpread !== "undefined" ? bookViewSpread : null;
+      if (_bv && !_bv.hidden && _bvs) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (typeof _bookViewV3Enabled === "function"
+                && _bookViewV3Enabled()
+                && _bvs.classList.contains("v3")
+                && typeof _bookViewV3Setup === "function"
+                && typeof _bookViewSource !== "undefined") {
+              const anchor = _bookViewV3State && _bookViewV3State.anchorSentenceIdx;
+              if (typeof _dlog === "function") {
+                _dlog("book-v3", "pane-toggle-repaginate", {
+                  spreadW: _bvs.clientWidth,
+                  spreadH: _bvs.clientHeight,
+                  pane: name, hidden,
+                });
+              }
+              _bookViewV3Setup(_bookViewSource);
+              if (anchor !== null && anchor !== undefined
+                  && typeof _bookViewV3GotoSentenceIdx === "function") {
+                _bookViewV3GotoSentenceIdx(anchor);
+              } else if (typeof _bookViewV3GotoSpread === "function") {
+                _bookViewV3GotoSpread(0);
+              }
+            } else if (!_bvs.classList.contains("v3")
+                && !_bvs.classList.contains("v2")
+                && typeof _bookViewRepaginate === "function") {
+              if (typeof _dlog === "function") {
+                _dlog("book-v1", "pane-toggle-repaginate", {
+                  spreadW: _bvs.clientWidth,
+                  spreadH: _bvs.clientHeight,
+                  pane: name, hidden,
+                });
+              }
+              try { _bookViewRepaginate(); } catch (e) {
+                if (typeof _dlog === "function") {
+                  _dlog("book-v1", "pane-toggle-repaginate-err",
+                    { msg: String(e) });
+                }
+              }
+            }
+          });
+        });
+      }
+    } catch {}
   }
   // Exposed so command palette + Settings can drive them.
   window._paneIsHidden = _paneIsHidden;
@@ -17181,6 +17233,11 @@ function _bookViewUpdateNav() {
 // the spread back. Centralized so a future fourth manual-nav path
 // (keyboard shortcuts overlay, gestures, etc.) just calls this.
 function _bookViewNavigateManual(targetSpread) {
+  // v225v3.7 (#741): page flip reveals the nav + restarts auto-hide
+  // countdown so user always sees the new "Spread X of Y" after a flip.
+  if (typeof _bookViewShowNav === "function") {
+    try { _bookViewShowNav(); } catch {}
+  }
   // v225v3.0 (#734): V3 branch — page-row translateX navigation.
   if (_bookViewV3Enabled()) {
     _bookViewV3GotoSpread(targetSpread);
@@ -17648,15 +17705,26 @@ const _bookViewV3State = {
 };
 
 function _bookViewV3Enabled() {
+  // v225v3.10 (Phase 2): V3 is now the DEFAULT book-view paginator.
+  // ?bookviewv3=0 is the kill switch (persists in localStorage so the
+  // fallback survives page reload). ?bookviewv3=1 re-enables for users
+  // who explicitly opted out previously.
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.get("bookviewv3") === "1") {
       localStorage.setItem("bookViewV3", "true");
       return true;
     }
-    return localStorage.getItem("bookViewV3") === "true";
+    if (params.get("bookviewv3") === "0") {
+      localStorage.setItem("bookViewV3", "false");
+      return false;
+    }
+    const stored = localStorage.getItem("bookViewV3");
+    if (stored === "false") return false;
+    // Default true.
+    return true;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -17703,6 +17771,26 @@ function _bookViewV3Setup(source) {
   spread.appendChild(pageRow);
 
   let pageCount = 0;
+  // v225v3.10 (Phase 2): text-page index, separate from `pageCount`
+  // which includes cover + image pages. _bookSentenceToPage[] indexes
+  // by this so TOC / bookmark lookups display "page N" of text
+  // content (matching V1's convention).
+  let textPageIdx = -1;
+  // Reset the shared sentence → text-page map; the bookmark ribbon
+  // helper, find-jump, and TOC all read from this.
+  _bookSentenceToPage = [];
+
+  // Helper: finalize a text page by appending the page-number footer
+  // (matches V1's `.book-page-footer` class so existing CSS applies)
+  // and stamping the text-page idx for the post-setup ribbon pass.
+  const closeTextPage = (pageObj, tIdx) => {
+    if (!pageObj || tIdx < 0) return;
+    const footer = document.createElement("div");
+    footer.className = "book-page-footer";
+    footer.textContent = String(tIdx + 1);
+    pageObj.page.appendChild(footer);
+    pageObj.page.dataset.textPageIdx = String(tIdx);
+  };
 
   // Cover image as first page (if present).
   if (source.cover) {
@@ -17722,14 +17810,22 @@ function _bookViewV3Setup(source) {
   // Start the first text page.
   let cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
   pageCount++;
+  textPageIdx = 0;
   let hasContent = false;
+  // v225v3.10: drop cap on first text page (clip opens here even
+  // when no chapters detected — single-clip fallback, mirrors V1
+  // line 17073).
+  cur.body.dataset.dropCap = "true";
 
   // Helper: insert an image page, swapping the current empty page for
   // an image page and starting a fresh text page after.
   const pushImage = (src, alt) => {
     if (hasContent) {
+      // Close the populated text page first (footer + stamp).
+      closeTextPage(cur, textPageIdx);
       cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
       pageCount++;
+      textPageIdx++;
       hasContent = false;
     }
     // cur is now empty — replace with image page.
@@ -17737,7 +17833,10 @@ function _bookViewV3Setup(source) {
     pageCount--;
     _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt);
     pageCount++;
-    // Start a fresh text page for following content.
+    // Start a fresh text page for following content. textPageIdx
+    // stays where it is — we replaced the empty text page with an
+    // image page, and the new text page takes over that index (no
+    // numbering gap).
     cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
     pageCount++;
     hasContent = false;
@@ -17762,6 +17861,7 @@ function _bookViewV3Setup(source) {
     span.textContent = sentences[i] + " ";
     cur.body.appendChild(span);
     hasContent = true;
+    _bookSentenceToPage[i] = textPageIdx;
 
     // Overflow check.
     if (cur.body.scrollHeight > cur.body.clientHeight + 1) {
@@ -17785,11 +17885,23 @@ function _bookViewV3Setup(source) {
         hasContent = true;
         continue;
       }
-      // Otherwise, start a new page with this sentence.
+      // Otherwise, close the current page (footer) and start a new
+      // page with this sentence.
+      closeTextPage(cur, textPageIdx);
       cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
       pageCount++;
+      textPageIdx++;
+      // v225v3.10: chapter-aware drop cap. The paginator places a
+      // page break right before a chapter-start sentence, so when
+      // that sentence opens a new page it's always the body's first
+      // node — ::first-letter targets it correctly.
+      if (typeof _bookViewIsChapterStart === "function"
+          && _bookViewIsChapterStart(i)) {
+        cur.body.dataset.dropCap = "true";
+      }
       cur.body.appendChild(span);
       hasContent = true;
+      _bookSentenceToPage[i] = textPageIdx;
     }
   }
 
@@ -17814,10 +17926,44 @@ function _bookViewV3Setup(source) {
     }
   }
 
-  // Remove trailing empty page if present.
-  if (!hasContent && pageCount > 1) {
+  // v225v3.10: close the last text page (footer + dataset stamp) OR
+  // remove a trailing empty if pushImage left us with one.
+  if (hasContent) {
+    closeTextPage(cur, textPageIdx);
+  } else if (pageCount > 1) {
     pageRow.removeChild(cur.page);
     pageCount--;
+  }
+
+  // v225v3.10 (Phase 2): bookmark-ribbon pass. After all pages exist,
+  // attach a tap-to-remove ribbon to any text page that contains a
+  // bookmarked sentence (resolved via timeSec → sentence → page in
+  // _bookViewBookmarkedPageSet, which reads _bookSentenceToPage
+  // populated above). Matches V1 lines 17030-17043.
+  const bmSet = (typeof _bookViewBookmarkedPageSet === "function")
+    ? _bookViewBookmarkedPageSet() : new Set();
+  if (bmSet.size) {
+    for (const pageEl of pageRow.children) {
+      const tIdxStr = pageEl.dataset && pageEl.dataset.textPageIdx;
+      if (!tIdxStr) continue;
+      const tIdx = parseInt(tIdxStr, 10);
+      if (bmSet.has(tIdx)) {
+        const ribbon = document.createElement("button");
+        ribbon.type = "button";
+        ribbon.className = "book-page-bookmark";
+        ribbon.setAttribute("aria-label", "Remove bookmark from this page");
+        ribbon.title = "Tap to remove bookmark";
+        const _pageIdxForHandler = tIdx;
+        ribbon.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          if (typeof _deleteBookmarksOnBookViewPage === "function") {
+            _deleteBookmarksOnBookViewPage(_pageIdxForHandler);
+          }
+        });
+        pageEl.appendChild(ribbon);
+      }
+    }
   }
 
   // Fix the page row's width so flex layout has explicit dimensions.
@@ -17837,6 +17983,8 @@ function _bookViewV3Setup(source) {
       spreadWidth, pageWidth, pageHeight, pagesPerSpread,
       pageCount, spreadCount: _bookViewV3State.spreadCount,
       sentenceCount: sentences.length,
+      textPages: textPageIdx + 1,
+      bookmarkedPages: bmSet.size,
     });
   }
 
@@ -18030,6 +18178,129 @@ async function _enterBookViewV3() {
 // don't trigger — that preserves click-to-seek and text selection.
 // Distance threshold 80px keeps accidental drags from paging.
 // Time threshold 800ms keeps slow scroll-and-rest from triggering.
+// =====================================================================
+// v225v3.7 (#741): Book view nav auto-hide (Kindle / Apple Books pattern)
+// =====================================================================
+//
+// After 2.5s of no pointer activity in the book view, the floating
+// nav pill fades out. Any pointer movement or tap within the book
+// view brings it back + restarts the 2.5s countdown. Page-flip via
+// button click or _bookViewNavigateManual also triggers a show.
+// Layout doesn't change — only opacity + a small translateY for the
+// "ducks out of the way" feel. Find bar / page-jump input cancel the
+// hide timer while active so the user isn't fighting the timer
+// during interaction.
+const _BOOK_NAV_HIDE_DELAY_MS = 2500;
+let _bookViewNavHideTimer = null;
+let _bookViewNavEl = null;
+
+function _bookViewGetNav() {
+  if (_bookViewNavEl && document.contains(_bookViewNavEl)) {
+    return _bookViewNavEl;
+  }
+  _bookViewNavEl = document.getElementById("book-view-nav");
+  return _bookViewNavEl;
+}
+
+function _bookViewShowNav() {
+  const nav = _bookViewGetNav();
+  if (!nav) {
+    try { _dlog("book-nav", "show — no nav el", {}); } catch {}
+    return;
+  }
+  nav.classList.remove("auto-hidden");
+  if (_bookViewNavHideTimer) {
+    clearTimeout(_bookViewNavHideTimer);
+    _bookViewNavHideTimer = null;
+  }
+  // v225v3.9: when the pill is mounted in the header slot, it lives
+  // in the main app chrome — never auto-hide it there. Auto-hide
+  // only applies when the nav is parented inside #book-view (phone
+  // takeover path).
+  if (nav.closest && nav.closest(".book-view-nav-slot")) return;
+  _bookViewNavHideTimer = setTimeout(() => {
+    _bookViewNavHideTimer = null;
+    // Don't hide if the user is currently in the page-jump input or
+    // the find bar — those expect persistent nav visibility.
+    if (typeof _bookViewIndicatorEditing !== "undefined"
+        && _bookViewIndicatorEditing) {
+      try { _dlog("book-nav", "hide-skip — indicator editing", {}); } catch {}
+      return;
+    }
+    if (typeof bookViewFind !== "undefined" && bookViewFind
+        && !bookViewFind.hidden) {
+      try { _dlog("book-nav", "hide-skip — find open", {}); } catch {}
+      return;
+    }
+    nav.classList.add("auto-hidden");
+    try { _dlog("book-nav", "hidden", {}); } catch {}
+  }, _BOOK_NAV_HIDE_DELAY_MS);
+}
+
+// v225v3.9 (#741): pill-in-header relocation. On desktop we move the
+// nav element out of #book-view and into the hero header slot so the
+// pill renders inline with the brand / icons row. On phone (where
+// the book view is a fullscreen takeover that covers the header)
+// the nav stays parented to #book-view at the top.
+function _bookViewMountNavInHeader() {
+  const nav = _bookViewGetNav();
+  const slot = document.getElementById("book-view-nav-slot");
+  if (!nav || !slot) return;
+  if (nav.parentElement === slot) {
+    slot.hidden = false;
+    return;
+  }
+  slot.appendChild(nav);
+  slot.hidden = false;
+  try { _dlog("book-nav", "mounted in header", {}); } catch {}
+}
+function _bookViewMountNavInBookView() {
+  const nav = _bookViewGetNav();
+  const slot = document.getElementById("book-view-nav-slot");
+  const bv = (typeof bookView !== "undefined" && bookView)
+    ? bookView
+    : document.getElementById("book-view");
+  if (slot) slot.hidden = true;
+  if (!nav || !bv) return;
+  if (nav.parentElement === bv) return;
+  bv.appendChild(nav);
+  try { _dlog("book-nav", "mounted in book-view", {}); } catch {}
+}
+
+function _bookViewWireNavAutoHide() {
+  const bv = (typeof bookView !== "undefined" && bookView)
+    ? bookView
+    : document.getElementById("book-view");
+  const nav = _bookViewGetNav();
+  try { _dlog("book-nav", "wire", { hasBookView: !!bv, hasNav: !!nav }); } catch {}
+  if (!bv) return;
+  // Show on any pointer movement / interaction. passive: true so we
+  // don't compete with the swipe handler.
+  bv.addEventListener("pointermove", _bookViewShowNav, { passive: true });
+  bv.addEventListener("pointerdown", _bookViewShowNav, { passive: true });
+  // Keep the nav alive while the user is hovering / interacting with
+  // it directly — wouldn't want it to hide mid-click.
+  if (nav) {
+    nav.addEventListener("pointerenter", () => {
+      if (_bookViewNavHideTimer) {
+        clearTimeout(_bookViewNavHideTimer);
+        _bookViewNavHideTimer = null;
+      }
+      nav.classList.remove("auto-hidden");
+    });
+    nav.addEventListener("pointerleave", _bookViewShowNav);
+    // Keyboard focus on any nav button also keeps visible (Tab nav).
+    nav.addEventListener("focusin", () => {
+      if (_bookViewNavHideTimer) {
+        clearTimeout(_bookViewNavHideTimer);
+        _bookViewNavHideTimer = null;
+      }
+      nav.classList.remove("auto-hidden");
+    });
+    nav.addEventListener("focusout", _bookViewShowNav);
+  }
+}
+
 function _bookViewWireSwipe() {
   if (!bookViewSpread) return;
   let startX = 0;
@@ -18220,6 +18491,34 @@ async function enterBookView() {
   if (!_bookViewSource || !_bookViewSource.sentences.length) {
     setStatus("Generate or load a clip first.", true);
     return;
+  }
+  // v225v3.7 (#741): wire auto-hide listeners ONCE on first open
+  // (idempotent — re-binding the same handler on same element with
+  // addEventListener is a no-op for duplicate identical references,
+  // but we guard with a flag to avoid stacking timers on repeated
+  // re-entries). Then trigger an initial show so the user sees the
+  // controls when the view first appears, fading after 2.5s.
+  if (!window.__bookViewNavAutoHideWired) {
+    window.__bookViewNavAutoHideWired = true;
+    if (typeof _bookViewWireNavAutoHide === "function") {
+      try { _bookViewWireNavAutoHide(); } catch {}
+    }
+  }
+  // v225v3.9 (#741): on desktop relocate the nav pill into the hero
+  // header slot. On phone keep it inside the book view (fullscreen
+  // takeover covers the header). Breakpoint mirrors the @media
+  // (max-width: 720px) phone gate elsewhere.
+  if (window.innerWidth > 720) {
+    if (typeof _bookViewMountNavInHeader === "function") {
+      try { _bookViewMountNavInHeader(); } catch {}
+    }
+  } else {
+    if (typeof _bookViewMountNavInBookView === "function") {
+      try { _bookViewMountNavInBookView(); } catch {}
+    }
+  }
+  if (typeof _bookViewShowNav === "function") {
+    try { _bookViewShowNav(); } catch {}
   }
   // v225v3.0 (#734): Book View V3 branch — word-processor pagination.
   // Takes priority over V2 and V1.
@@ -18498,6 +18797,29 @@ function _bookViewPrintBook() {
     setStatus("Load a clip first.", true);
     return;
   }
+  // v225v3.10 (Phase 2): V3 print path. V3 already has all pages in
+  // the .book-view-page-row; we just disable the translateX so they
+  // stack visually for the print preview. CSS (body[data-book-
+  // printing] .book-view-page-row) handles the actual layout
+  // override. On afterprint we restore by snapping back to the
+  // saved spread index — no DOM rebuild needed.
+  if (typeof _bookViewV3Enabled === "function" && _bookViewV3Enabled()
+      && _bookViewV3State && _bookViewV3State.pageCount > 0) {
+    const savedSpreadV3 = _bookViewV3State.spreadIdx || 0;
+    document.body.dataset.bookPrinting = "true";
+    const cleanupV3 = () => {
+      window.removeEventListener("afterprint", cleanupV3);
+      delete document.body.dataset.bookPrinting;
+      if (typeof _bookViewV3GotoSpread === "function") {
+        _bookViewV3GotoSpread(savedSpreadV3);
+      }
+    };
+    window.addEventListener("afterprint", cleanupV3);
+    requestAnimationFrame(() => {
+      window.print();
+    });
+    return;
+  }
   if (!_bookViewPages.length) {
     setStatus("Open the book view first to paginate.", true);
     return;
@@ -18699,6 +19021,23 @@ function exitBookView(opts = {}) {
   _bookSentenceSpans = [];
   if (bookViewSpread) bookViewSpread.innerHTML = "";
   if (bookViewToggle) bookViewToggle.textContent = "📖 Book view";
+  // v225v3.7 (#741): clean up auto-hide state so next open starts
+  // fresh with nav visible (avoids stale hide-timer firing on next
+  // enter, and avoids the nav being already in auto-hidden state
+  // when the user reopens).
+  if (typeof _bookViewNavHideTimer !== "undefined" && _bookViewNavHideTimer) {
+    clearTimeout(_bookViewNavHideTimer);
+    _bookViewNavHideTimer = null;
+  }
+  const _navOnExit = (typeof _bookViewGetNav === "function") ? _bookViewGetNav() : null;
+  if (_navOnExit) _navOnExit.classList.remove("auto-hidden");
+  // v225v3.9 (#741): if the nav was relocated to the header slot,
+  // move it back inside #book-view + hide the slot. Keeps the DOM
+  // consistent for the next enter (avoids stale parenting if the
+  // viewport changed between open and close).
+  if (typeof _bookViewMountNavInBookView === "function") {
+    try { _bookViewMountNavInBookView(); } catch {}
+  }
   // v206 (M4.4): hide Contents until the next book view open.
   if (bookViewTocBtn) bookViewTocBtn.hidden = true;
   // v208 (M6.3): close the find bar so re-entering book view starts fresh.
