@@ -141,6 +141,44 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v3.17</span>
+          <span class="release-tagline">Guided overlay tour — first launch walks new users through the UI; "Author features tour" surfaces the deep-end tools</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Overlay tour engine.</strong> A Shepherd-style
+            guided tour over the live UI. A dimmed backdrop, an
+            accent-ringed spotlight that cuts a hole over the
+            highlighted control, and a tooltip that auto-flips to
+            top/bottom/left/right so it never clips the viewport. Use
+            ← / → / Enter to advance, Esc to skip. Targets that
+            don't exist on the current viewport (e.g. a desktop-only
+            icon when you're on phone) are skipped gracefully.
+          </li>
+          <li>
+            <strong>First-tour auto-fires on first launch.</strong> If
+            your library is empty and you haven't seen it before, the
+            six-step welcome tour pops ~1.5 seconds after the app
+            loads. Walks through the Voice picker, textarea, Generate,
+            Library, and Help. Completing or skipping saves a per-device
+            flag so you don't get the tour twice. Replay anytime from
+            <strong>Settings → Take the tour →</strong>.
+          </li>
+          <li>
+            <strong>"Author features tour" surfaces the deep end.</strong>
+            Opt-in only (Settings → <strong>Author features tour →</strong>).
+            Seven steps covering Mode picker, 🔖 Bookmark while
+            listening, ✎ inline-edit a sentence, the cross-clip
+            bookmark timeline, and ⌘K command palette. Designed for
+            users who've used the basics and want to know what unlocks
+            when you switch into Author mode.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v3.13</span>
           <span class="release-tagline">Book view V3 becomes default + nav pill in the header + Queue silently graduates to a real button</span>
         </div>
