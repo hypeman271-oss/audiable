@@ -141,6 +141,27 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v3.22</span>
+          <span class="release-tagline">StPageFlip corner-curl dropped — V3's translateX slide is the page transition</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Page transitions stay as the V3 slide.</strong> The
+            short-lived StPageFlip corner-curl integration (behind
+            <code>?stpageflip=1</code> in v3.19) has been removed
+            entirely — bundle deleted, helpers deleted, mount /
+            destroy / pf.flip() routing all torn out. Reason:
+            corner-curl on touch fought the existing swipe handler and
+            the 44 KB asset cost was hard to justify for a flourish.
+            Future flip animations, if any, will probably be a small
+            CSS-only treatment rather than a full library.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v3.17</span>
           <span class="release-tagline">Guided overlay tour — first launch walks new users through the UI; "Author features tour" surfaces the deep-end tools</span>
         </div>

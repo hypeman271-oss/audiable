@@ -17949,6 +17949,12 @@ function _bookViewV3Enabled() {
   }
 }
 
+// v225v3.21 (#359): StPageFlip corner-curl integration removed.
+// Decision: V3's translateX slide is the keeper. The bundle, helpers,
+// and pf.flip() routing have all been deleted. See whats-new.html for
+// the rationale. _bookViewV3State.pages cache (set in setup) stays
+// because nav helpers benefit from it even without StPageFlip.
+
 function _bookViewV3CreatePage(pageRow, pageWidth, pageHeight) {
   const page = document.createElement("div");
   page.className = "book-view-page";
@@ -18190,6 +18196,10 @@ function _bookViewV3Setup(source) {
   // Fix the page row's width so flex layout has explicit dimensions.
   pageRow.style.width = (pageCount * pageWidth) + "px";
 
+  // Cache the page array so nav helpers don't have to query the DOM
+  // on every spread change.
+  _bookViewV3State.pages = Array.from(pageRow.children);
+
   // Compute spread state.
   _bookViewV3State.pageCount = pageCount;
   _bookViewV3State.pagesPerSpread = pagesPerSpread;
@@ -18215,11 +18225,13 @@ function _bookViewV3Setup(source) {
 }
 
 function _bookViewV3GotoSpread(n) {
+  const total = _bookViewV3State.spreadCount;
+  const target = Math.max(0, Math.min(n, total - 1));
+
+  // translateX slide between spreads.
   const spread = bookViewSpread;
   const pageRow = spread.querySelector(".book-view-page-row");
   if (!pageRow) return;
-  const total = _bookViewV3State.spreadCount;
-  const target = Math.max(0, Math.min(n, total - 1));
   _bookViewV3State.spreadIdx = target;
   _bookViewCurrentSpread = target;
   pageRow.style.transform =
@@ -18231,10 +18243,15 @@ function _bookViewV3GotoSpread(n) {
 }
 
 function _bookViewV3FirstSentenceIdxAtSpread(spreadIdx) {
-  const spread = bookViewSpread;
-  const pageRow = spread.querySelector(".book-view-page-row");
-  if (!pageRow) return null;
-  const pages = pageRow.children;
+  // Prefer cached pages array; fall back to DOM query if setup hasn't
+  // populated it yet.
+  let pages = _bookViewV3State && _bookViewV3State.pages;
+  if (!pages || !pages.length) {
+    const spread = bookViewSpread;
+    const pageRow = spread && spread.querySelector(".book-view-page-row");
+    if (!pageRow) return null;
+    pages = pageRow.children;
+  }
   const firstPageIdx = spreadIdx * _bookViewV3State.pagesPerSpread;
   if (firstPageIdx >= pages.length) return null;
   for (let k = firstPageIdx;
@@ -18250,17 +18267,28 @@ function _bookViewV3FirstSentenceIdxAtSpread(spreadIdx) {
 }
 
 function _bookViewV3PageOfSentence(sentenceIdx) {
-  const spread = bookViewSpread;
-  const pageRow = spread.querySelector(".book-view-page-row");
-  if (!pageRow) return 0;
-  const span = pageRow.querySelector(`.sentence[data-idx="${sentenceIdx}"]`);
-  if (!span) return 0;
-  let el = span;
+  // Prefer cached pages array; fall back to DOM query if setup hasn't
+  // populated it yet.
+  let pages = _bookViewV3State && _bookViewV3State.pages;
+  if (!pages || !pages.length) {
+    const spread = bookViewSpread;
+    const pageRow = spread && spread.querySelector(".book-view-page-row");
+    if (!pageRow) return 0;
+    pages = Array.from(pageRow.children);
+  }
+  // Find the page containing the target sentence by walking up from
+  // the span.
+  let targetSpan = null;
+  for (let i = 0; i < pages.length; i++) {
+    const s = pages[i].querySelector(`.sentence[data-idx="${sentenceIdx}"]`);
+    if (s) { targetSpan = s; break; }
+  }
+  if (!targetSpan) return 0;
+  let el = targetSpan;
   while (el && !(el.classList && el.classList.contains("book-view-page"))) {
     el = el.parentElement;
   }
   if (!el) return 0;
-  const pages = pageRow.children;
   for (let i = 0; i < pages.length; i++) {
     if (pages[i] === el) return i;
   }
@@ -18269,14 +18297,17 @@ function _bookViewV3PageOfSentence(sentenceIdx) {
 
 function _bookViewV3GotoSentenceIdx(sentenceIdx) {
   const pageIdx = _bookViewV3PageOfSentence(sentenceIdx);
-  const spreadIdx = Math.floor(pageIdx / _bookViewV3State.pagesPerSpread);
-  // Bypass GotoSpread's anchor re-capture so the anchor sentence stays
-  // stable across subsequent resizes.
+  const ppr = _bookViewV3State.pagesPerSpread;
+  const spreadIdx = Math.floor(pageIdx / ppr);
+  const total = _bookViewV3State.spreadCount;
+  const target = Math.max(0, Math.min(spreadIdx, total - 1));
+
+
+  // Original translateX path. Bypasses GotoSpread's anchor re-capture
+  // so the anchor sentence stays stable across subsequent resizes.
   const spread = bookViewSpread;
   const pageRow = spread.querySelector(".book-view-page-row");
   if (!pageRow) return;
-  const total = _bookViewV3State.spreadCount;
-  const target = Math.max(0, Math.min(spreadIdx, total - 1));
   _bookViewV3State.spreadIdx = target;
   _bookViewCurrentSpread = target;
   pageRow.style.transform =
