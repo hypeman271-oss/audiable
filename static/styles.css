@@ -11787,6 +11787,32 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     animation: _phoneBookmarkFlash 420ms ease-out;
   }
 
+  /* v225v3.49 (#783): slower repeating pulse used by the overlay tour
+     when it programmatically opens the library/voice dialog. The
+     regular .flashed (420ms once) was too fast for users to register
+     "the tour just tapped this icon" — they only saw the dialog
+     appear. .tour-pulse repeats 2x at 700ms each, so the icon
+     visibly bounces before the dialog opens. Applied to any phone
+     icon that the tour clicks. */
+  @keyframes _tourPulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 var(--accent);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow: 0 0 0 14px rgba(124, 156, 255, 0);
+      transform: scale(1.08);
+    }
+  }
+  .phone-library-btn.tour-pulse,
+  .phone-import-btn.tour-pulse,
+  .phone-help-btn.tour-pulse,
+  .phone-menu-btn.tour-pulse,
+  .phone-bookmark-btn.tour-pulse,
+  .phone-edit-btn.tour-pulse {
+    animation: _tourPulse 700ms ease-out 2;
+  }
+
   /* v588: Book-view toggle. Gated on clip-loaded — book view needs
      text. State-aware icon (📖 in audio, 📜 in book) managed by
      JS via a MutationObserver on the hidden #book-view-toggle. */

@@ -134,8 +134,24 @@
       try {
         target = document.querySelector(step.target);
       } catch (_) {}
-      if (!target) {
-        _log("target-missing", { step: _idx, sel: step.target });
+      // v225v3.45 (#779): also treat hidden / zero-sized targets like
+      // missing ones. The previous check only caught null returns,
+      // but querySelector can return an element that lives inside a
+      // display:none ancestor (e.g. #voice-trigger inside .hero on
+      // phone). getBoundingClientRect on those returns 0x0 at (0,0),
+      // which painted invisible 12x12 spotlights at top-left and
+      // floated tooltips with no anchor. Skip them the same way.
+      const targetVisible =
+        target &&
+        (target.offsetWidth > 0 ||
+          target.offsetHeight > 0 ||
+          target.getClientRects().length > 0);
+      if (!target || !targetVisible) {
+        _log("target-missing", {
+          step: _idx,
+          sel: step.target,
+          reason: !target ? "null" : "zero-size",
+        });
         // Skip this step entirely on first render (don't advance on
         // resize handlers — they shouldn't restart progress).
         if (!positionOnly) {
@@ -172,10 +188,18 @@
   function _positionSpotlight(target) {
     if (!_els) return;
     if (!target) {
+      // v225v3.48 (#782): centered step — hide spotlight, let backdrop
+      // alone provide the scrim. Backdrop is fully opaque.
       _els.spotlight.style.display = "none";
+      _els.backdrop.style.opacity = "1";
       return;
     }
+    // v225v3.48 (#782): targeted step — show spotlight + cutout, HIDE
+    // backdrop. Otherwise both layers contribute 0.55 black and the
+    // viewport renders ~80% dim instead of 55%. The spotlight's
+    // box-shadow already provides the scrim around the target.
     _els.spotlight.style.display = "block";
+    _els.backdrop.style.opacity = "0";
     const r = target.getBoundingClientRect();
     const pad = 6;
     _els.spotlight.style.left = r.left - pad + "px";
@@ -262,6 +286,24 @@
       // Center in viewport for "welcome" / "done" steps.
       tip.style.left = (vw - tr.width) / 2 + "px";
       tip.style.top = (vh - tr.height) / 2 + "px";
+      return;
+    }
+
+    // v225v3.47 (#781): "viewport-top" / "viewport-bottom" anchor the
+    // tooltip to a fixed slot on screen regardless of target position.
+    // The spotlight still tracks the target. Used when the target
+    // lives inside a non-modal dialog at the bottom half of the
+    // viewport (Library / Voice tour steps): the bottom half is busy
+    // with dialog contents, the top half is empty space — that's
+    // where the tooltip should sit.
+    if (pref === "viewport-top") {
+      tip.style.left = (vw - tr.width) / 2 + "px";
+      tip.style.top = margin + "px";
+      return;
+    }
+    if (pref === "viewport-bottom") {
+      tip.style.left = (vw - tr.width) / 2 + "px";
+      tip.style.top = vh - tr.height - margin + "px";
       return;
     }
 
@@ -388,5 +430,16 @@
     }
   }
 
-  window.OverlayTour = { start, end, next, prev, hasSeen };
+  // v225v3.46 (#780): expose active state so other surfaces can adapt.
+  // Currently used by _openAsDrawerOrModal in app.js: when the tour is
+  // running and asks to open the library/voice dialog mid-step, the
+  // app uses .show() (non-modal) instead of .showModal() so the
+  // dialog stays IN the normal stacking context. Otherwise <dialog>
+  // would promote to the browser's top layer and obscure the tour
+  // overlay (z-index 9000) completely.
+  function isActive() {
+    return _active;
+  }
+
+  window.OverlayTour = { start, end, next, prev, hasSeen, isActive };
 })();

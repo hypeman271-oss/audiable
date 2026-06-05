@@ -2167,7 +2167,22 @@ function _openAsDrawerOrModal(dialog) {
     // covers the viewport with a backdrop — stacking would be a mess.
     if (dialog !== voiceDialog && voiceDialog.open) voiceDialog.close();
     if (dialog !== libraryDialog && libraryDialog.open) libraryDialog.close();
-    dialog.showModal();
+    // v225v3.46 (#780): if the tour is running, open non-modal so the
+    // dialog stays in the normal stacking context. showModal() would
+    // promote the <dialog> to the browser's top layer, which renders
+    // above EVERY other z-index in the document including the tour
+    // overlay at 9000+, hiding the tour's tooltip + spotlight. With
+    // .show() the dialog respects normal z-index and the tour layers
+    // over it correctly.
+    if (
+      typeof window.OverlayTour !== "undefined" &&
+      window.OverlayTour.isActive &&
+      window.OverlayTour.isActive()
+    ) {
+      dialog.show();
+    } else {
+      dialog.showModal();
+    }
   }
 }
 
@@ -5239,6 +5254,141 @@ if (settingsResetHintsLink) {
 function _buildFirstTour() {
   const isPhone = window.matchMedia &&
     window.matchMedia("(max-width: 767px)").matches;
+  // v225v3.45 (#779): phone branch uses phone-shell selectors instead
+  // of the desktop hero buttons (which are display:none on phone via
+  // .hero, so their bounding rects were 0×0 and the spotlight/tooltip
+  // floated unanchored). Phone tour skips Voice + Generate steps
+  // because both targets are inside collapsed drawers / hidden when
+  // empty — they surface naturally after the user imports content,
+  // and forcing a drawer open mid-tour was confusing in early
+  // prototypes. Desktop tour is unchanged.
+  if (isPhone) {
+    return {
+      id: "first-tour",
+      steps: [
+        {
+          target: null,
+          title: "Welcome to Narrative",
+          body: "Quick tour of the main controls. Use ← / → or the buttons below; Esc to skip anytime.",
+        },
+        {
+          target: ".phone-menu-btn",
+          title: "Menu lives here",
+          body: "Tap ☰ for Start over, Download MP3, Open as ebook, Export notes, and Settings.",
+          position: "bottom",
+        },
+        {
+          target: ".phone-import-btn",
+          title: "Import a manuscript",
+          body: "Tap 📥 to paste a URL, upload EPUB/PDF/DOCX/Markdown, or pull chapters from GitHub, Scrivener, or Obsidian.",
+          position: "bottom",
+        },
+        // v225v3.46 (#780): Library + Voice steps open their dialog so
+        // the user sees the actual contents during the tour. Spotlight
+        // dynamically picks the first item if any (returning user) or
+        // the dialog header (first-time user with empty list). Engine
+        // re-reads step.target after before() so mutating this.target
+        // works. `function ()` not arrow so `this` binds to the step.
+        // Non-modal open is wired through _openAsDrawerOrModal via the
+        // OverlayTour.isActive() check.
+        {
+          target: "#library-label",
+          title: "Your library",
+          body: "Every clip you make lands here. Tap 📚 in the top bar — drag to reorder, 🔄 to re-narrate, swipe a card to delete.",
+          // v225v3.47 (#781): pin the tooltip to the TOP of the viewport
+          // so it doesn't cover the library dialog content below. The
+          // spotlight still tracks the actual target (first clip or
+          // dialog header).
+          position: "viewport-top",
+          before: async function () {
+            try {
+              renderLibrary();
+            } catch (_) {}
+            const trigger = document.querySelector(".phone-library-btn");
+            if (trigger && !libraryDialog.open) {
+              // v225v3.49 (#783): pulse the icon visibly BEFORE the
+              // dialog opens so the user can register that the tour
+              // tapped 📚. Two 700ms pulses = ~1.4s of visible bounce,
+              // then we click, then wait for dialog open animation.
+              trigger.classList.add("tour-pulse");
+              await new Promise((r) => setTimeout(r, 1200));
+              trigger.classList.remove("tour-pulse");
+              trigger.click();
+            }
+            // Wait for the dialog open animation + render to settle.
+            await new Promise((r) => setTimeout(r, 220));
+            const firstClip = document.querySelector(
+              "#library-list > *:not([hidden])"
+            );
+            this.target = firstClip
+              ? "#library-list > *:not([hidden]):first-child"
+              : "#library-label";
+          },
+          after: async function () {
+            try {
+              if (libraryDialog && libraryDialog.open) libraryDialog.close();
+            } catch (_) {}
+          },
+        },
+        {
+          target: "#voice-dialog .voice-browser-head h2",
+          title: "Pick your narrator",
+          body: "Browse voices, install more, set per-character voices. Commercial filter is on by default so every voice you pick is safe to publish.",
+          // v225v3.47 (#781): pin to viewport top so the voice picker
+          // dialog below is visible without the tooltip covering it.
+          position: "viewport-top",
+          before: async function () {
+            // v225v3.49 (#783): no visible pulse here because the phone
+            // top bar has no voice icon — voice lives in the pull-up
+            // drawer, and the desktop #voice-trigger is display:none
+            // under .hero on phone. The dialog opening IS the visual
+            // cue. (Library above does get a pulse via .phone-library-
+            // btn since that icon IS in the phone top bar.)
+            const trigger = document.getElementById("voice-trigger");
+            if (trigger && !voiceDialog.open) trigger.click();
+            await new Promise((r) => setTimeout(r, 220));
+            // The voice picker is the <select id="voice"> — the
+            // user's actual choice mechanism. If it has voices, point
+            // at it. Otherwise fall back to the dialog header so the
+            // step still has something visible to anchor.
+            const sel = document.getElementById("voice");
+            this.target =
+              sel && sel.options && sel.options.length > 0
+                ? "#voice"
+                : "#voice-dialog .voice-browser-head h2";
+          },
+          after: async function () {
+            try {
+              if (voiceDialog && voiceDialog.open) voiceDialog.close();
+            } catch (_) {}
+          },
+        },
+        {
+          target: ".phone-help-btn",
+          title: "Help + tutorials",
+          body: "Tap ? for the full manual — walkthroughs, format guides, troubleshooting. Replay this tour from Settings → Take the tour.",
+          position: "bottom",
+        },
+      ],
+      onEnd: ({ skipped }) => {
+        // v225v3.46 (#780): belt-and-suspenders — make sure neither
+        // dialog is left open if the user skips mid-tour. The per-step
+        // after: hooks normally handle this, but Esc / Skip skips them
+        // for the current step.
+        try {
+          if (libraryDialog && libraryDialog.open) libraryDialog.close();
+        } catch (_) {}
+        try {
+          if (voiceDialog && voiceDialog.open) voiceDialog.close();
+        } catch (_) {}
+        setStatus(
+          skipped
+            ? "Tour skipped — you can replay it from Settings."
+            : "Tour complete — happy listening."
+        );
+      },
+    };
+  }
   return {
     id: "first-tour",
     steps: [
@@ -5250,9 +5400,7 @@ function _buildFirstTour() {
       {
         target: "#voice-trigger",
         title: "Pick your narrator",
-        body: isPhone
-          ? "Open the bottom drawer to see the 🎤 voice picker. Tap to browse voices and try samples — Commercial filter is on by default."
-          : "Tap 🎤 to browse voices and try samples. The Commercial filter is on by default so every voice you pick is safe to publish.",
+        body: "Tap 🎤 to browse voices and try samples. The Commercial filter is on by default so every voice you pick is safe to publish.",
         position: "bottom",
       },
       {
