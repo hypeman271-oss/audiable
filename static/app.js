@@ -7189,18 +7189,9 @@ if (_openAsEbookBtn) {
   });
 }
 
-// v225g1 (#690): "📖 Read as ebook" action in the import-preview head.
-// Same call as the Generate-row button; sits where the user just saw
-// the detected cover + chapter art so the action feels immediate.
-const _importPreviewEbookBtn = document.getElementById("import-preview-ebook");
-if (_importPreviewEbookBtn) {
-  _importPreviewEbookBtn.addEventListener("click", () => {
-    _openAsEbook().catch((e) => {
-      console.error("[ebook] _openAsEbook (preview) failed:", e);
-      setStatus("Couldn't open as ebook — see console.", true);
-    });
-  });
-}
+// v225v3.11: the "📖 Read as ebook" button inside the import-preview
+// head (v225g1 #690) was removed. The empty-state tile + ☰-menu entry
+// remain as the ebook-mode entry points.
 
 // voice_id → num_speakers, populated from /api/voices. Used by onVoiceChange
 // to decide whether to surface the speaker picker. SAPI voices and most
@@ -19082,8 +19073,7 @@ function exitBookView(opts = {}) {
       if (typeof editTextBtn !== "undefined" && editTextBtn) editTextBtn.hidden = true;
       if (typeof saveTextBtn !== "undefined" && saveTextBtn) saveTextBtn.hidden = true;
       if (typeof bookViewToggle !== "undefined" && bookViewToggle) bookViewToggle.hidden = true;
-      // Re-paint the import preview chrome (thumbnails, Read as ebook
-      // button, etc).
+      // Re-paint the import preview chrome (thumbnails, head row).
       if (typeof _paintImportPreview === "function") _paintImportPreview();
       // Refresh the phone Generate / Ebook bar at the bottom.
       if (typeof window._syncPhoneGenerateBar === "function") {

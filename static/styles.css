@@ -4339,14 +4339,28 @@ body[data-offline="true"] .import-dropdown-item {
    plus the draggable list of pending jobs. The currently-
    synthesizing job is locked at the top (no drag handle, no
    remove). Pending jobs get ⋮⋮ to reorder and × to drop. */
-.actions-secondary {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: -2px;
-  margin-bottom: 6px;
-}
+/* v225v3.12: Queue silently promoted from text link to real outlined
+ * button — matches the Open as ebook treatment.
+ * v225v3.13: now lives in the .actions grid as the 4th item, sitting
+ * next to Download in row 2 col 2 — .actions-secondary wrapper retired. */
 #queue-silently {
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+#queue-silently:hover:not(:disabled) {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+#queue-silently:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .bg-queue-panel {
   margin-top: 8px;
@@ -10695,16 +10709,23 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     font-size: 13px;
     line-height: 1;
   }
+  /* v225v3.12: Queue silently styled as a real outlined button on
+   * phone too — matches .phone-generate-ebook border/radius so the
+   * three controls (Generate / Ebook / Queue) read as a coherent row. */
   .phone-generate-queue {
     flex: 0 0 auto;
-    padding: 12px 6px;
+    padding: 12px 12px;
     background: transparent;
-    border: 0;
+    border: 1px solid var(--accent, #6c63ff);
+    border-radius: 12px;
     color: var(--accent, #6c63ff);
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
+  }
+  .phone-generate-queue:active {
+    transform: translateY(1px);
   }
   /* v225g4 (#693): "📖 Ebook" button on the phone Generate bar — sits
    * between the primary Generate button and the "Queue silently" link.

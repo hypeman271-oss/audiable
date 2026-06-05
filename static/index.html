@@ -1432,7 +1432,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v3.10</span>
+            Narrative <span id="settings-version-tag">v225v3.13</span>
             <button
               type="button"
               id="settings-force-update"
@@ -1708,16 +1708,9 @@
           <div class="import-preview-head">
             <span class="import-preview-title">Detected in this import</span>
             <span class="import-preview-hint">Will land on the saved clip — Clear above to discard</span>
-            <!-- v225g1 (#690): "📖 Read as ebook" action right inside the
-                 preview head. Saves the imported text + detected images
-                 to the library as an ebook (no audio) and drops into
-                 book view. Same call as the empty-state tile. -->
-            <button
-              type="button"
-              id="import-preview-ebook"
-              class="import-preview-ebook"
-              title="Save as a no-audio library clip and open book view"
-            >📖 Read as ebook</button>
+            <!-- v225v3.11: the per-preview "📖 Read as ebook" button used
+                 to live here (v225g1 #690). Removed — the empty-state
+                 tile + ☰-menu entry are the canonical ways in. -->
           </div>
           <div id="import-preview-thumbs" class="import-preview-thumbs"></div>
         </div>
@@ -2490,12 +2483,11 @@
           title="Save the generated MP3 to your device."
           aria-label="Save the generated MP3 to your device"
         >Download</button>
-      </div>
-      <!-- v162: "Queue silently" — adds the current textarea text to
-           the background queue and clears the textarea so you can
-           paste the next thing. Drops you into a build-up workflow:
-           queue a bunch, drag to reorder, walk away. -->
-      <div class="actions-secondary">
+        <!-- v162 / v225v3.13: "Queue silently" — adds the current textarea
+             text to the background queue and clears the textarea so you
+             can paste the next thing. Lives in the same grid slot as
+             the other actions (4th item → row 2 col 2 next to Download)
+             so it reads as a peer secondary action, not a footnote. -->
         <button
           id="queue-silently"
           type="button"
