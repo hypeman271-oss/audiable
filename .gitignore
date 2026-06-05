@@ -15,3 +15,15 @@ node_modules/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# pip cache + PyInstaller build/dist — never commit these (multi-GB).
+# Tracked accidentally in earlier commits; removed via `git rm -r --cached`.
+.pip-cache/
+.pyinstaller-build/
+.pyinstaller-dist/
+
+# Generic Python/PyInstaller artifacts (belt-and-suspenders).
+build/
+dist/
+*.spec
+*.egg-info/
