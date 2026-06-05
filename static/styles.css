@@ -12863,3 +12863,110 @@ html, body {
   opacity: 0.6;
   cursor: wait;
 }
+
+
+/* v225v3.16 (#622): overlay tour engine. Shepherd-style guided tour
+ * over the live app DOM. Engine lives in overlay-tour.js. Visual
+ * pieces: dim backdrop, accent-ringed spotlight that cuts a hole in
+ * the dim via box-shadow trick, tooltip with step counter + Skip /
+ * Back / Next actions. z-index well above all dialogs (9000+). */
+.overlay-tour-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 9000;
+}
+.overlay-tour-spotlight {
+  position: fixed;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow:
+    0 0 0 4px var(--accent),
+    0 0 0 9999px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  z-index: 9001;
+  transition:
+    left 0.25s ease,
+    top 0.25s ease,
+    width 0.25s ease,
+    height 0.25s ease;
+}
+.overlay-tour-tooltip {
+  position: fixed;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  padding: 16px 18px;
+  width: min(320px, 92vw);
+  z-index: 9002;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg);
+  transition: left 0.25s ease, top 0.25s ease;
+}
+.overlay-tour-counter {
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.overlay-tour-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.overlay-tour-body {
+  margin: 0 0 14px;
+  color: var(--fg-dim);
+}
+.overlay-tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.overlay-tour-spacer {
+  flex: 1 1 auto;
+}
+.overlay-tour-skip {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 0;
+  text-decoration: underline;
+}
+.overlay-tour-skip:hover {
+  color: var(--fg);
+}
+.overlay-tour-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.overlay-tour-back:hover {
+  background: var(--accent-tint);
+}
+.overlay-tour-next {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--on-accent, white);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 6px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.overlay-tour-next:hover {
+  filter: brightness(1.1);
+}

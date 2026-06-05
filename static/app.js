@@ -5081,6 +5081,197 @@ if (settingsResetHintsLink) {
   });
 }
 
+// v225v3.16 (#622) + v225v3.17 (#623): tour content + Settings entries.
+// Two tours so far:
+//   - first-tour: basic onboarding (auto-triggered on first launch
+//     when library is empty + the seen flag is unset)
+//   - author-tour: deeper dive into the Author-tier features. Manual
+//     trigger only (Settings link).
+// Tours are device-aware via the helper below. Targets that don't
+// exist on the current viewport are skipped silently by the engine.
+function _buildFirstTour() {
+  const isPhone = window.matchMedia &&
+    window.matchMedia("(max-width: 767px)").matches;
+  return {
+    id: "first-tour",
+    steps: [
+      {
+        target: null,
+        title: "Welcome to Narrative",
+        body: "Quick tour of the main controls. Use ← / → or the buttons below; Esc to skip anytime.",
+      },
+      {
+        target: "#voice-trigger",
+        title: "Pick your narrator",
+        body: isPhone
+          ? "Open the bottom drawer to see the 🎤 voice picker. Tap to browse voices and try samples — Commercial filter is on by default."
+          : "Tap 🎤 to browse voices and try samples. The Commercial filter is on by default so every voice you pick is safe to publish.",
+        position: "bottom",
+      },
+      {
+        target: "#text",
+        title: "Paste, type, or import",
+        body: "Drop a chapter, an article, or a single sentence into the box. The 📥 Import menu also handles EPUB, PDF, DOCX, Markdown, GitHub, Scrivener, Obsidian, and URLs.",
+        position: "top",
+      },
+      {
+        target: "#generate",
+        title: "Generate the audio",
+        body: "Synthesize a clip with the current voice. It streams sentence-by-sentence so you can start listening before the whole file is done.",
+        position: "top",
+      },
+      {
+        target: "#library-trigger",
+        title: "Your library",
+        body: "Every clip you make lands here. Tap to load, drag to reorder, and the 🔄 Re-narrate chip swaps voices without retyping anything.",
+        position: "bottom",
+      },
+      {
+        target: "#help-btn",
+        title: "Help + tutorials",
+        body: "Open the full manual any time — interactive walkthroughs, format guides, troubleshooting. Replay this tour from Settings → Take the tour.",
+        position: "bottom",
+      },
+    ],
+    onEnd: ({ skipped }) => {
+      setStatus(
+        skipped
+          ? "Tour skipped — you can replay it from Settings."
+          : "Tour complete — happy listening."
+      );
+    },
+  };
+}
+
+function _buildAuthorTour() {
+  return {
+    id: "author-tour",
+    steps: [
+      {
+        target: null,
+        title: "Author tools — the deep end",
+        body: "Tour of the features that turn Narrative from 'play my text' into a revision tool: edit, bookmark, annotate, export.",
+      },
+      {
+        target: "#settings-btn",
+        title: "Pick your mode",
+        body: "Settings → Mode controls what's visible. Simple hides power tools; Standard surfaces revision features; Author unlocks per-sentence voice and character tools; Advanced shows everything.",
+        position: "bottom",
+      },
+      {
+        target: "#bookmark-add-btn",
+        title: "🔖 Bookmark while you listen",
+        body: "Drop a bookmark at the current playhead — or tap a sentence first and the bookmark anchors there. Edit the title in a centered floating editor.",
+        position: "left",
+      },
+      {
+        target: "#edit-text-toggle-btn",
+        title: "✎ Inline-edit a sentence",
+        body: "Tap a sentence then ✎ to edit it in place. Save and only that sentence re-narrates — the rest of the clip stays untouched.",
+        position: "left",
+      },
+      {
+        target: "#bookmark-timeline-btn",
+        title: "🔖 Cross-clip bookmark timeline",
+        body: "Every bookmark you ever made, sorted by time across your library. Tap one to jump straight there.",
+        position: "bottom",
+      },
+      {
+        target: "#cmdk-trigger",
+        title: "⌘K command palette",
+        body: "Ctrl/⌘+K from anywhere. Run any action, jump to any clip, find any bookmark or annotation — keyboard-first.",
+        position: "bottom",
+      },
+      {
+        target: null,
+        title: "That's the basics",
+        body: "Open Settings → Replay onboarding tips to bring back the per-feature first-tap hints. The manual's §10 has interactive walkthroughs for every workflow.",
+      },
+    ],
+    onEnd: ({ skipped }) => {
+      setStatus(
+        skipped
+          ? "Author tour skipped."
+          : "Author tour complete — see Settings → Replay onboarding tips for per-feature hints."
+      );
+    },
+  };
+}
+
+function _launchTour(builder) {
+  if (!window.OverlayTour) {
+    setStatus("Tour engine not loaded — try Force update.", true);
+    return;
+  }
+  try {
+    const dlg = document.getElementById("settings-dialog");
+    if (dlg && typeof dlg.close === "function") dlg.close();
+  } catch {}
+  setTimeout(() => {
+    window.OverlayTour.start(builder());
+  }, 120);
+}
+
+const settingsTakeTourLink = $("settings-take-tour-link");
+if (settingsTakeTourLink) {
+  settingsTakeTourLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    _launchTour(_buildFirstTour);
+  });
+}
+
+const settingsAuthorTourLink = $("settings-author-tour-link");
+if (settingsAuthorTourLink) {
+  settingsAuthorTourLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    _launchTour(_buildAuthorTour);
+  });
+}
+
+// v225v3.17 (#623): auto-fire first-tour on initial launch. Gates:
+//   - User hasn't seen / skipped this tour before (OverlayTour.hasSeen)
+//   - Library is empty (don't bug returning users who just cleared)
+//   - No clip currently loaded (avoid landing-from-shared-link case)
+//   - Engine is loaded
+// Runs after a short delay so the DOM, library count, and Settings
+// dialog state have all settled.
+function _maybeAutoStartFirstTour() {
+  try {
+    if (!window.OverlayTour) return;
+    if (window.OverlayTour.hasSeen && window.OverlayTour.hasSeen("first-tour")) return;
+    // Library check: _libraryClips is the in-memory cache populated
+    // by renderLibrary; bail if it has anything OR if the count badge
+    // says > 0 (covers boot-before-cache-populated).
+    const badge = document.getElementById("library-trigger-count");
+    const countText = badge && badge.textContent && badge.textContent.trim();
+    const countN = parseInt(countText || "0", 10);
+    if (countN > 0) return;
+    if (typeof _currentClipId !== "undefined" && _currentClipId) return;
+    // Defer until next frame so render passes finish, then a little
+    // more to let any splash / banner animations resolve.
+    setTimeout(() => {
+      // Re-check the gates right before firing — guards against the
+      // user starting work in the gap (paste, click, etc.).
+      if (window.OverlayTour.hasSeen("first-tour")) return;
+      const badge2 = document.getElementById("library-trigger-count");
+      const countText2 = badge2 && badge2.textContent && badge2.textContent.trim();
+      const countN2 = parseInt(countText2 || "0", 10);
+      if (countN2 > 0) return;
+      if (typeof _currentClipId !== "undefined" && _currentClipId) return;
+      _launchTour(_buildFirstTour);
+    }, 1500);
+  } catch (e) {
+    console.warn("[tour] auto-start failed", e);
+  }
+}
+// Schedule once after the DOM is interactive (we're already loaded
+// late in the body so this fires almost immediately).
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", _maybeAutoStartFirstTour);
+} else {
+  _maybeAutoStartFirstTour();
+}
+
 // ---- Debug log viewer --------------------------------------------------
 // v177: surfaces the _debugLog ring buffer in a modal so the user can
 // copy/download it when reporting "chapter X keeps failing" issues.

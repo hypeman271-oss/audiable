@@ -2,13 +2,14 @@
 // and works offline. API calls always go to the network (the TTS backend
 // can't run on the client).
 
-const CACHE = "narrative-shell-v225v3.15";
+const CACHE = "narrative-shell-v225v3.17";
 const SHELL = [
   "/",
   "/index.html",
   "/styles.css",
   "/app.js",
   "/tutorials.js",
+  "/overlay-tour.js",
   "/manual.html",
   "/whats-new.html",
   "/landing.html",

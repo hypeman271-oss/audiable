@@ -1056,6 +1056,25 @@
             class="settings-help-link"
             aria-label="Replay onboarding tips and first-tap hints"
           >Replay onboarding tips →</a>
+          <!-- v225v3.16 (#622): "Take the tour" launches the overlay
+               tour engine with a guided walkthrough of the live UI.
+               Sits next to Replay onboarding tips since it's the same
+               meta-onboarding bucket.
+               v225v3.17 (#623): split into two tours — first-tour for
+               basic onboarding and author-tour for the Author tier
+               features (gates via _bodyMode === "author" check in JS). -->
+          <a
+            id="settings-take-tour-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="Open a guided tour of the main UI"
+          >Take the tour →</a>
+          <a
+            id="settings-author-tour-link"
+            href="#"
+            class="settings-help-link"
+            aria-label="Open a guided tour of Author-tier features"
+          >Author features tour →</a>
           <!-- v177: in-app debug log viewer. Surfaces the _debugLog
                ring buffer in a modal with Copy / Download / Clear
                buttons. Most useful when chasing "chapter X keeps
@@ -1432,7 +1451,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v3.15</span>
+            Narrative <span id="settings-version-tag">v225v3.17</span>
             <button
               type="button"
               id="settings-force-update"
@@ -3819,5 +3838,9 @@
     </main>
 
     <script src="/app.js"></script>
+    <!-- v225v3.16 (#622): overlay tour engine. Exposes window.OverlayTour
+         for any caller (Settings "Take the tour", future product-led
+         tours, etc.). Loaded after app.js so it can reuse window._dlog. -->
+    <script src="/overlay-tour.js"></script>
   </body>
 </html>
