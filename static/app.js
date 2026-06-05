@@ -19716,6 +19716,49 @@ function exitBookView(opts = {}) {
     }
   }
   if (!opts.skipReadingView) {
+    // v225v3.57 (#790): on phone, closing an ebook clip's book view
+    // shouldn't drop the user in reading view. For ebook clips, the
+    // reading view is the cover acknowledgments + stacked inline
+    // images with no scroll path to the story body — the user
+    // called this the "can't read" state. Phone has no two-column
+    // alternate layout for reading view either, so it's just dead-
+    // end content. Drop to the empty/library surface instead;
+    // re-tapping the clip from ☰ Library will re-enter book view
+    // (via the v3.56 auto-enter path in loadClip).
+    //
+    // Desktop keeps the old behavior — its reading view is a useful
+    // two-column surface and desktop users opted into book view
+    // explicitly via the toggle.
+    const _phoneNow = window.matchMedia &&
+      window.matchMedia("(max-width: 767px)").matches;
+    if (_phoneNow && _currentClipKind === "ebook") {
+      try {
+        _currentClipId = null;
+        if (typeof _setCurrentClipKind === "function") {
+          _setCurrentClipKind(null);
+        }
+        readingView.hidden = true;
+        // Restore the empty-state chrome: textarea visible, edit/save
+        // buttons hidden, book view toggle hidden. Mirrors the
+        // _ebookPreviewSnapshot restore path so the post-close state
+        // is consistent with "no clip loaded."
+        if (textEl) textEl.hidden = false;
+        if (typeof editTextBtn !== "undefined" && editTextBtn) editTextBtn.hidden = true;
+        if (typeof saveTextBtn !== "undefined" && saveTextBtn) saveTextBtn.hidden = true;
+        if (typeof bookViewToggle !== "undefined" && bookViewToggle) bookViewToggle.hidden = true;
+        if (typeof window._syncPhoneGenerateBar === "function") {
+          try { window._syncPhoneGenerateBar(); } catch {}
+        }
+        if (typeof _dlog === "function") {
+          _dlog("ebook:exit", "phone ebook close → empty state", {});
+        }
+        return;
+      } catch (e) {
+        console.warn("[ebook] phone-exit cleanup failed:", e);
+        // Fall through to the normal readingView.hidden = false below
+        // so the user isn't stuck on a black screen if anything threw.
+      }
+    }
     readingView.hidden = false;
   }
 }
@@ -24646,6 +24689,51 @@ async function loadClip(id, { autoPlay = true } = {}) {
   if (_isEbookClip) {
     downloadBtn.disabled = true;
     setStatus(`📖 Loaded · ${clip.title || "(untitled)"} (ebook — no audio)`);
+    // v225v3.56 (#789): when an ebook clip lands on phone, drop into
+    // book view automatically. The post-import path (_openAsEbook)
+    // does this explicitly, but a synced ebook clip arriving via
+    // library tap / loadClip went only as far as reading view —
+    // user saw only the cover acknowledgments page + images and
+    // couldn't find the actual story without knowing about the
+    // book-view affordance. Phone-only because desktop users have
+    // an explicit "open as ebook" affordance and may prefer to see
+    // the scrolling preview first. Guard with hidden check so we
+    // don't re-enter when the user is already inside book view.
+    try {
+      if (typeof _dlog === "function") {
+        _dlog("ebook:load", "loaded ebook clip", {
+          id: clip.id,
+          title: (clip.title || "").slice(0, 60),
+          textLen: (clip.text || "").length,
+          imagesCount: Array.isArray(clip.images) ? clip.images.length : 0,
+          hasCover: !!clip.cover,
+          coverType: typeof clip.cover,
+        });
+      }
+    } catch {}
+    const _phoneNow = window.matchMedia &&
+      window.matchMedia("(max-width: 767px)").matches;
+    if (_phoneNow && typeof enterBookView === "function") {
+      const bv = document.getElementById("book-view");
+      if (bv && bv.hidden) {
+        try {
+          await enterBookView();
+          if (typeof _dlog === "function") {
+            _dlog("ebook:load", "auto-entered book view (phone)", {
+              id: clip.id,
+            });
+          }
+        } catch (e) {
+          console.error("[ebook] auto-enter book view failed:", e);
+          if (typeof _dlog === "function") {
+            _dlog("ebook:load", "auto-enter book view threw", {
+              id: clip.id,
+              error: String(e && e.message || e),
+            });
+          }
+        }
+      }
+    }
   } else {
     const resumeAt = Number(clip.progressSec) || 0;
     if (resumeAt > 1) {
