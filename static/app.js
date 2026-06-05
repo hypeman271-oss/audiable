@@ -28444,9 +28444,24 @@ function _phoneMenuIsPhone() {
 }
 function _phoneMenuOpen() {
   document.body.dataset.menu = "open";
+  // v225v3.51 (#784): flip the button to ✕ + update aria so the user
+  // has a clear close affordance. CSS bumps z-index above the menu so
+  // it stays tappable.
+  const btn = document.querySelector(".phone-menu-btn");
+  if (btn) {
+    btn.textContent = "✕";
+    btn.setAttribute("aria-label", "Close menu");
+    btn.title = "Close menu";
+  }
 }
 function _phoneMenuClose() {
   if (document.body.dataset.menu) delete document.body.dataset.menu;
+  const btn = document.querySelector(".phone-menu-btn");
+  if (btn) {
+    btn.textContent = "☰";
+    btn.setAttribute("aria-label", "Open menu");
+    btn.title = "Menu";
+  }
 }
 function _phoneMenuToggle() {
   if (document.body.dataset.menu === "open") _phoneMenuClose();

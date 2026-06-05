@@ -11327,7 +11327,11 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
      The pull-up sits ABOVE the player bar in z-index so the
      player bar is still visible (and tappable for play/scrub)
      while the drawer is open. */
-  #phone-pullup {
+  /* v225v3.50 (#778): tag-scoped per the #744 audit recommendation.
+     Matches the v3.43 fix-A pattern (div#book-view) — defense against
+     a future cloning path forgetting to id-prefix and inheriting this
+     fixed-position translucent surface as a runaway overlay. */
+  div#phone-pullup {
     display: block;             /* override `hidden` attribute on phone */
     position: fixed;
     left: 0;
@@ -11358,7 +11362,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
     pointer-events: none;
   }
-  body[data-pullup="open"] #phone-pullup {
+  body[data-pullup="open"] div#phone-pullup {
     transform: translateY(0);
     pointer-events: auto;
   }
@@ -11609,7 +11613,11 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     position: fixed;
     top: calc(8px + env(safe-area-inset-top));
     left: 12px;
-    z-index: 41;
+    /* v225v3.51 (#784): z-index 44 keeps the ☰ button visible + tappable
+       ABOVE the menu sheet (z 43) so the user can always tap it again
+       to close. Was z 41 — buried by the menu on open, so the only
+       dismiss path was the subtle 18%-opacity scrim. */
+    z-index: 44;
   }
   .phone-menu-btn:hover {
     background: var(--bg-card-2);
@@ -11906,7 +11914,10 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   /* Sheet container — slides down from top. Closed by default
      via translateY(-100%). body[data-menu="open"] flips translateY
      to 0 and the scrim opacity to 1 in lockstep. */
-  #phone-menu {
+  /* v225v3.50 (#778): tag-scoped per the #744 audit recommendation.
+     Same pattern as #phone-pullup above and the v3.43 div#book-view
+     fix — defense against future id-collision paths. */
+  div#phone-menu {
     display: block;
     position: fixed;
     left: 12px;
@@ -11933,7 +11944,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
       opacity 220ms cubic-bezier(0.32, 0.72, 0, 1);
     pointer-events: none;
   }
-  body[data-menu="open"] #phone-menu {
+  body[data-menu="open"] div#phone-menu {
     transform: translateY(0);
     opacity: 1;
     pointer-events: auto;
