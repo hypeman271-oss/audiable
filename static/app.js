@@ -5295,28 +5295,33 @@ function _buildFirstTour() {
           target: "#library-label",
           title: "Your library",
           body: "Every clip you make lands here. Tap 📚 in the top bar — drag to reorder, 🔄 to re-narrate, swipe a card to delete.",
-          // v225v3.47 (#781): pin the tooltip to the TOP of the viewport
-          // so it doesn't cover the library dialog content below. The
-          // spotlight still tracks the actual target (first clip or
-          // dialog header).
-          position: "viewport-top",
+          // v225v3.70 (#801): position "top" — card sits ABOVE the
+          // spotlighted element (so above the library dialog content
+          // on phone, where the dialog renders as a bottom-anchored
+          // drawer). v3.69 used "bottom" which placed the card just
+          // below the spotlighted clip, eating dialog content; "top"
+          // puts the card in the empty upper viewport space with the
+          // spotlight + dialog content below it.
+          // _openAsDrawerOrModal opens the dialog NON-modal during
+          // the tour so the spotlight at z 9001 stays above it.
+          position: "top",
           before: async function () {
             try {
               renderLibrary();
             } catch (_) {}
             const trigger = document.querySelector(".phone-library-btn");
             if (trigger && !libraryDialog.open) {
-              // v225v3.49 (#783): pulse the icon visibly BEFORE the
-              // dialog opens so the user can register that the tour
-              // tapped 📚. Two 700ms pulses = ~1.4s of visible bounce,
-              // then we click, then wait for dialog open animation.
               trigger.classList.add("tour-pulse");
               await new Promise((r) => setTimeout(r, 1200));
               trigger.classList.remove("tour-pulse");
               trigger.click();
             }
-            // Wait for the dialog open animation + render to settle.
+            // Wait for dialog open + render to settle.
             await new Promise((r) => setTimeout(r, 220));
+            // Prefer the first library item (Continue listening or
+            // first audio clip) as the spotlight anchor. Falls back to
+            // the dialog header so the step still has something
+            // visible when the library is empty.
             const firstClip = document.querySelector(
               "#library-list > *:not([hidden])"
             );
@@ -5333,24 +5338,30 @@ function _buildFirstTour() {
         {
           target: "#voice-dialog .voice-browser-head h2",
           title: "Pick your narrator",
-          body: "Browse voices, install more, set per-character voices. Commercial filter is on by default so every voice you pick is safe to publish.",
-          // v225v3.47 (#781): pin to viewport top so the voice picker
-          // dialog below is visible without the tooltip covering it.
-          position: "viewport-top",
+          body: "Tap 🎤 in the top bar to browse voices, install more, or set per-character voices. Commercial filter is on by default so every voice you pick is safe to publish.",
+          // v225v3.70 (#801): position "top" — same pattern as the
+          // library step above. Card sits in the empty upper
+          // viewport area with the spotlighted voice picker + the
+          // dialog content visible below.
+          position: "top",
           before: async function () {
-            // v225v3.49 (#783): no visible pulse here because the phone
-            // top bar has no voice icon — voice lives in the pull-up
-            // drawer, and the desktop #voice-trigger is display:none
-            // under .hero on phone. The dialog opening IS the visual
-            // cue. (Library above does get a pulse via .phone-library-
-            // btn since that icon IS in the phone top bar.)
-            const trigger = document.getElementById("voice-trigger");
-            if (trigger && !voiceDialog.open) trigger.click();
+            const trigger = document.querySelector(".phone-voice-btn");
+            if (trigger && !voiceDialog.open) {
+              trigger.classList.add("tour-pulse");
+              await new Promise((r) => setTimeout(r, 1200));
+              trigger.classList.remove("tour-pulse");
+              trigger.click();
+            } else if (!voiceDialog.open) {
+              // Fallback: hidden hero #voice-trigger (shouldn't be
+              // reachable on phone after v3.60 but keeps the step
+              // working in any layout that doesn't have phone-voice-btn).
+              const fallback = document.getElementById("voice-trigger");
+              if (fallback) fallback.click();
+            }
             await new Promise((r) => setTimeout(r, 220));
-            // The voice picker is the <select id="voice"> — the
-            // user's actual choice mechanism. If it has voices, point
-            // at it. Otherwise fall back to the dialog header so the
-            // step still has something visible to anchor.
+            // Prefer the voice picker <select> — the actual control
+            // the user interacts with. Falls back to the dialog
+            // header when the select isn't populated yet.
             const sel = document.getElementById("voice");
             this.target =
               sel && sel.options && sel.options.length > 0
@@ -20265,9 +20276,32 @@ function _blobToBase64(blob) {
   });
 }
 
+// v225v3.62 (#788): _syncPushClip returns a result so callers can
+// distinguish success from "we console.warn'd into the void."
+// Shape:
+//   { ok: true }                          — server accepted (HTTP 2xx)
+//   { ok: true, conflict: true }          — HTTP 409; server's row was
+//                                           newer, we absorbed it.
+//                                           Not a failure — the receiver
+//                                           caught up. Stamping success
+//                                           flags is appropriate.
+//   { ok: false, status: N, error: "..." } — HTTP 4xx/5xx (≠ 409). The
+//                                            push did NOT land.
+//   { ok: false, status: 0, error: "network: ..." } — fetch threw
+//   { ok: false, status: 0, error: "skipped:..." }  — guard rail
+//
+// Batch callers (_syncPushAll, _syncBackfillKind, _syncMigrate) must
+// check result.ok and gate any "stamp success" steps on every push
+// returning ok:true. Existing-clip fire-and-forget callers (saveClip,
+// deleteClipById) can ignore the return value but get a dlog entry on
+// failure so the next schema mismatch is visible without code-spelunking.
 async function _syncPushClip(clip) {
-  if (!_syncIsEnabled()) return;
-  if (!clip || !clip.id) return;
+  if (!_syncIsEnabled()) {
+    return { ok: false, status: 0, error: "skipped:sync-off" };
+  }
+  if (!clip || !clip.id) {
+    return { ok: false, status: 0, error: "skipped:no-id" };
+  }
 
   const payload = {
     id: clip.id,
@@ -20338,11 +20372,36 @@ async function _syncPushClip(clip) {
       setStatus(
         "Library was updated on another device; using the latest.",
       );
-    } else if (!res.ok) {
-      console.warn(`[sync] push failed: HTTP ${res.status}`);
+      return { ok: true, conflict: true };
     }
+    if (!res.ok) {
+      // v225v3.62 (#788): pull the response body for the error
+      // message so the dlog records WHY (Pydantic validation,
+      // tenant mismatch, etc.) — invaluable when the next schema
+      // change quietly breaks something.
+      let errBody = "";
+      try { errBody = (await res.text()).slice(0, 240); } catch {}
+      console.warn(`[sync] push failed: HTTP ${res.status}`, errBody);
+      if (typeof _dlog === "function") {
+        _dlog("sync", "push failed", {
+          clipId: clip.id,
+          status: res.status,
+          body: errBody,
+        });
+      }
+      return { ok: false, status: res.status, error: errBody || `HTTP ${res.status}` };
+    }
+    return { ok: true };
   } catch (e) {
+    const msg = String(e && e.message || e);
     console.warn("[sync] push network error:", e);
+    if (typeof _dlog === "function") {
+      _dlog("sync", "push network error", {
+        clipId: clip.id,
+        error: msg,
+      });
+    }
+    return { ok: false, status: 0, error: `network: ${msg}` };
   }
 }
 
@@ -20553,15 +20612,23 @@ async function _syncPushAll() {
     const total = clips.length;
     let pushed = 0;
     let failed = 0;
+    // v225v3.62 (#788): _syncPushClip now returns {ok, ...} instead of
+    // silently swallowing 4xx/5xx as console.warn. The original code
+    // here wrapped the call in try/catch and counted failures via the
+    // throw — but _syncPushClip never threw, so `failed` stayed at 0
+    // even when every PUT returned 422 (the v3.53 backfill bug).
+    // Check result.ok directly; the try/catch is defense in depth for
+    // a truly unexpected throw (e.g. listClips changing shape).
     for (const clip of clips) {
       _syncStatusText = `Pushing ${pushed + 1}/${total}…`;
       _updateSyncStatusLine();
       try {
-        await _syncPushClip(clip);
-        pushed++;
+        const result = await _syncPushClip(clip);
+        if (result && result.ok) pushed++;
+        else failed++;
       } catch (e) {
         failed++;
-        console.warn("[sync] push failed for clip", clip.id, e);
+        console.warn("[sync] push threw unexpectedly for clip", clip.id, e);
       }
     }
     // v225fz8 (#674): push every locally-saved preset too. The user
@@ -20719,18 +20786,38 @@ async function _syncBackfillKind() {
   try {
     const clips = await listClips();
     const ebookish = (clips || []).filter((c) => c && c.kind);
+    // v225v3.62 (#788): track per-clip success so we only stamp the
+    // localStorage flag when every push actually landed. Before #788,
+    // _syncPushClip silently swallowed 4xx/5xx and this loop's
+    // try/catch never fired — the flag got stamped even when every
+    // PUT returned 422 (the v3.53 bug). Now we count ok vs failed
+    // explicitly; if anything failed, leave the flag missing so the
+    // backfill runs again next boot (after the user / a deploy fixes
+    // whatever was wrong).
+    let pushed = 0;
+    let failed = 0;
     for (const c of ebookish) {
       try {
-        await _syncPushClip(c);
+        const result = await _syncPushClip(c);
+        if (result && result.ok) pushed++;
+        else failed++;
       } catch (e) {
-        console.warn("[sync] kind backfill push failed for", c.id, e);
+        failed++;
+        console.warn("[sync] kind backfill threw unexpectedly for", c.id, e);
       }
     }
-    try {
-      localStorage.setItem(SYNC_KIND_BACKFILL_KEY, new Date().toISOString());
-    } catch {}
+    if (failed === 0) {
+      try {
+        localStorage.setItem(SYNC_KIND_BACKFILL_KEY, new Date().toISOString());
+      } catch {}
+    }
     if (typeof _dlog === "function") {
-      _dlog("sync", "kind-backfill complete", { pushed: ebookish.length });
+      _dlog("sync", "kind-backfill complete", {
+        total: ebookish.length,
+        pushed,
+        failed,
+        stamped: failed === 0,
+      });
     }
   } catch (e) {
     console.warn("[sync] kind backfill scan failed", e);

@@ -1471,7 +1471,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v3.61</span>
+            Narrative <span id="settings-version-tag">v225v3.70</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2798,17 +2798,17 @@
             <span class="phone-menu-icon" aria-hidden="true">↓</span>
             <span>Download MP3</span>
           </button>
-          <!-- v225g2 (#691): phone parity for ebook mode. The Generate-
-               row "📖 Open as ebook" button next to Generate is hidden
-               on phone (.actions.card-actions is visibility:hidden per
-               v225.tn48), so phone users with text but no fresh import
-               had no entry point. Dispatch click() to the same hidden
-               hero button — the empty-state tile and import-preview
-               chip remain the in-flow phone entries. -->
-          <button class="phone-menu-item" data-action="open-as-ebook" type="button">
-            <span class="phone-menu-icon" aria-hidden="true">📖</span>
-            <span>Open as ebook</span>
-          </button>
+          <!-- v225g2 (#691): "📖 Open as ebook" used to live here as the
+               phone parity entry point for ebook mode (Generate-row
+               actions are visibility:hidden on phone per v225.tn48).
+               v225v3.67 (#798): removed — the 📖 Ebook button on the
+               phone Generate bar (#693, v225g4) plus the empty-state
+               tile and import-preview chip cover every in-flow path
+               for opening text as an ebook. Keeping it in the ☰ menu
+               duplicated the affordance without adding reach. The
+               data-action="open-as-ebook" handler in app.js's
+               triggers map is kept harmless — it's a no-op when the
+               menu item is absent from the DOM. -->
           <button class="phone-menu-item" data-action="export-notes" type="button">
             <span class="phone-menu-icon" aria-hidden="true">📤</span>
             <span>Export notes (.md)</span>

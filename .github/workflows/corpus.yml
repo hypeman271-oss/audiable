@@ -1,0 +1,76 @@
+# Nightly corpus regression — extract-only, Phase 1.
+#
+# Hits narrative-alpha.fly.dev /api/extract endpoints with a curated
+# set of public-domain URLs + downloadable EPUBs. Catches the class
+# of bug the freeread.de import surfaced (silent empty extract →
+# downstream breakage).
+#
+# Schedule: daily at 11:00 UTC (≈6 AM ET, ≈3 AM PT — runs before
+# the user's morning, results land in their inbox).
+#
+# Also triggers manually via the "Run workflow" button in the
+# Actions tab — useful right after deploying a change to extract.py.
+#
+# Secrets required (set in repo Settings → Secrets and variables → Actions):
+#   NARRATIVE_KEY   admin bearer token with extract access
+#                   (same one your browser uses against the live app).
+
+name: Extract corpus regression
+
+on:
+  schedule:
+    # 11:00 UTC daily. Adjust if you want it earlier/later in your
+    # local time. Cron expression: minute hour day month weekday.
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    # Manual trigger from the Actions tab. No inputs.
+
+# A failed run is a real regression — keep history visible.
+# Cancel-in-progress is OK; if two runs queue, the newer wins.
+concurrency:
+  group: corpus-regression
+  cancel-in-progress: true
+
+jobs:
+  run:
+    name: Run corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install runner deps
+        run: |
+          python -m pip install --upgrade pip
+          # The runner uses only requests + stdlib; no full server
+          # deps needed because we hit the live API, not local code.
+          pip install requests
+
+      - name: Run corpus
+        env:
+          NARRATIVE_KEY: ${{ secrets.NARRATIVE_KEY }}
+          NARRATIVE_BASE: https://narrative-alpha.fly.dev
+        run: |
+          python tests/corpus/runner.py
+
+      - name: Upload results
+        # Run even if the corpus failed so we can triage from
+        # whichever artifact comes back. `if: always()` instead of
+        # the default (skip on previous step failure).
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-results-${{ github.run_number }}
+          path: |
+            tests/corpus/results.json
+            tests/corpus/failures.json
+          if-no-files-found: ignore
+          retention-days: 30

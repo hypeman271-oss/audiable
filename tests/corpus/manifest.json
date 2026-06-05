@@ -1,0 +1,77 @@
+{
+  "cases": [
+    {
+      "id": "gutenberg-tom-sawyer-html",
+      "kind": "url",
+      "source": "Project Gutenberg",
+      "url": "https://www.gutenberg.org/files/74/74-h/74-h.htm",
+      "min_chars": 380000,
+      "min_sentences": 3000,
+      "notes": "Tom Sawyer single-file HTML. Used in tutorials so known-good."
+    },
+    {
+      "id": "gutenberg-pride-prejudice-html",
+      "kind": "url",
+      "source": "Project Gutenberg",
+      "url": "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm",
+      "min_chars": 600000,
+      "min_sentences": 4500
+    },
+    {
+      "id": "wikisource-pride-ch1",
+      "kind": "url",
+      "source": "Wikisource",
+      "url": "https://en.wikisource.org/wiki/Pride_and_Prejudice/Chapter_1",
+      "min_chars": 6000,
+      "min_sentences": 40,
+      "notes": "Single chapter, exercises Wikisource's stripped HTML."
+    },
+    {
+      "id": "wikisource-frankenstein-ch1",
+      "kind": "url",
+      "source": "Wikisource",
+      "url": "https://en.wikisource.org/wiki/Frankenstein_(1818)/Letter_1",
+      "min_chars": 4000,
+      "min_sentences": 25
+    },
+    {
+      "id": "rgl-freeread-de",
+      "kind": "url",
+      "source": "Roy Glashan's Library",
+      "url": "https://freeread.de/@RGLibrary/Unknown/Unknown.html",
+      "min_chars": 1000,
+      "min_sentences": 5,
+      "notes": "REGRESSION CASE: this URL broke import for the user. Numbers are placeholder — bump after we confirm what 'correct' looks like."
+    },
+    {
+      "id": "standard-ebooks-aesops-fables-epub",
+      "kind": "file",
+      "format": "epub",
+      "source": "Standard Ebooks",
+      "download_url": "https://standardebooks.org/ebooks/aesop/fables/v-s-vernon-jones/downloads/aesop_fables_v-s-vernon-jones.epub",
+      "min_chars": 150000,
+      "min_sentences": 1200,
+      "notes": "Standard Ebooks uses semantic HTML — cleanest EPUB structure."
+    },
+    {
+      "id": "gutenberg-alice-wonderland-epub",
+      "kind": "file",
+      "format": "epub",
+      "source": "Project Gutenberg",
+      "download_url": "https://www.gutenberg.org/ebooks/11.epub3.images",
+      "min_chars": 130000,
+      "min_sentences": 1100,
+      "notes": "Gutenberg EPUB3 with inline images — exercises image extraction."
+    },
+    {
+      "id": "gutenberg-dracula-epub",
+      "kind": "file",
+      "format": "epub",
+      "source": "Project Gutenberg",
+      "download_url": "https://www.gutenberg.org/ebooks/345.epub3.images",
+      "min_chars": 800000,
+      "min_sentences": 6000,
+      "notes": "Long novel, stress test for memory + sentence splitter."
+    }
+  ]
+}
