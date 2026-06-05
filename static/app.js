@@ -12535,11 +12535,29 @@ async function _bgRunWorker() {
     if (!success && _silentChapterQueue) {
       _dlog("bg-queue", `RETRY ${_bgCurrent.title} after 1.5s`, {
         chars: (_bgCurrent.text || "").length,
+        priorCursor: _bgSynthSentence,
       });
       console.warn(
         `[bg queue] retrying "${_bgCurrent.title}" after 1.5s…`
       );
-      await new Promise((r) => setTimeout(r, 1500));
+      // v225v3.61 (#794): reset the sentence cursor before the retry.
+      // _bgSynthSentence is the from=N value the resumable wrapper
+      // passes when opening the /api/synth/jobs/{id}/stream. It's
+      // meaningful ONLY within a single server-side job; across a
+      // bg-queue retry we get a BRAND NEW job (POST /api/synth/jobs
+      // returns a fresh id), and the new job's worker re-synthesizes
+      // from sentence 0. If we leave the cursor at the failed
+      // attempt's value (e.g. 197), the client's stream subscribe
+      // filters out events 0..N-1 — which the new worker hasn't
+      // produced yet — and the user sees no progress until the new
+      // server reaches the prior cursor (minutes to hours).
+      // Resetting to 0 lets the new job stream progress events
+      // immediately. The previous attempt's partial audio is lost,
+      // which is acceptable: it lived in the old job's memory buffer
+      // and the wrapper's reconnect loop already gave up on it
+      // before throwing through to here.
+      _bgSynthSentence = 0;
+      _bgSynthTotal = 0;
       if (_silentChapterQueue) success = await _bgTrySynth(_bgCurrent);
     }
     if (success) {
