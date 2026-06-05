@@ -141,20 +141,72 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v3.13</span>
+          <span class="release-tagline">Book view V3 becomes default + nav pill in the header + Queue silently graduates to a real button</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Book view V3 is now the default paginator.</strong>
+            The word-processor-style renderer that's been behind a
+            feature flag since v225v3.0 now ships as the default for
+            every clip. Drop caps, page numbers, chapter mini-TOC,
+            bookmarks (with the tap-to-remove ribbon), Ctrl+F find,
+            print, and theme variants all carry over. Same DOM, same
+            sentence anchors — your bookmarks and notes land on the
+            same page they always did. If anything looks off, append
+            <code>?bookviewv3=0</code> to the URL to fall back to V1
+            (kept as a kill switch).
+          </li>
+          <li>
+            <strong>Nav pill moved into the header on desktop.</strong>
+            The page-flip / Print / Contents controls used to float at
+            the bottom of the book view. They now live in the
+            Narrative header strip, in the empty space between the
+            title and the icon rail — closer to where your eyes
+            already are, and out of the spread itself so the page
+            looks more like a real book.
+          </li>
+          <li>
+            <strong>Auto-hide nav on phone book view.</strong> Matches
+            Kindle / Apple Books — the nav fades after ~2.5 seconds of
+            inactivity and slides back in on any touch or page-flip.
+            The Find bar and page-jump editor keep it pinned while
+            you're using them.
+          </li>
+          <li>
+            <strong>Queue silently is now a real button.</strong> The
+            small text link below the Generate / Download row graduated
+            to a proper outlined button sitting next to Download — same
+            grid, same weight as the other secondary actions, so it
+            reads as a peer rather than a footnote. Phone gets the same
+            treatment on the bottom Generate bar.
+          </li>
+          <li>
+            <strong>"Read as ebook" button removed from the import
+            preview head.</strong> The empty-state tile and ☰-menu
+            entry remain as the two canonical ways into ebook mode;
+            the third button inside the "Detected in this import"
+            preview turned out to be redundant.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225g1</span>
           <span class="release-tagline">📖 Read as ebook — open imports in book view without generating audio</span>
         </div>
         <ul>
           <li>
-            <strong>Three new entry points that skip Generate.</strong>
+            <strong>Two entry points that skip Generate.</strong>
             (1) A <strong>📖 Open as ebook</strong> button right next to
             the Generate button, enabled whenever there's text in the
-            box. (2) A <strong>📖 Read as ebook</strong> link inside the
-            "Detected in this import" preview card — tap it the moment
-            the cover and chapter art look right. (3) A <strong>📖 Read
-            as ebook</strong> tile on the empty-state for first-time
-            users: pick an EPUB/PDF and drop straight into book view,
-            no thinking about voice or audio at all.
+            box. (2) A <strong>📖 Read as ebook</strong> tile on the
+            empty-state for first-time users: pick an EPUB/PDF and
+            drop straight into book view, no thinking about voice or
+            audio at all. (Phone exposes the same action via the ☰
+            menu's <strong>Ebook</strong> entry.)
           </li>
           <li>
             <strong>Saves like a normal clip — minus the audio.</strong>

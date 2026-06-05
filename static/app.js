@@ -918,6 +918,45 @@ let _selectedSentenceIdx = -1;
 
 function _paintSelectedSentence(nextIdx) {
   if (_selectedSentenceIdx === nextIdx) return;
+  // v225v3.15: if a different sentence is currently in inline-edit
+  // mode and the user is moving selection elsewhere, auto-close that
+  // edit first — Smart ✎ semantics: commit if the text changed,
+  // exit silently if it didn't. Prevents the "two sentences active
+  // at once" state (solid edit-ring + dashed selection-ring). This
+  // is the single choke point for selection changes (tap, drag, and
+  // _clearSelectedSentence all route through here), so guarding here
+  // covers every entry path.
+  if (typeof _inlineEditingIdx === "number"
+      && _inlineEditingIdx >= 0
+      && _inlineEditingIdx !== nextIdx) {
+    try {
+      const editingSpan = sentenceSpans[_inlineEditingIdx];
+      const currentText = editingSpan
+        ? (editingSpan.textContent || "").trim()
+        : "";
+      const changed = currentText.length > 0
+        && currentText !== _inlineEditOriginalText;
+      if (typeof _dlog === "function") {
+        _dlog("inline-edit", "auto-close-on-reselect", {
+          editingIdx: _inlineEditingIdx,
+          nextIdx,
+          changed,
+        });
+      }
+      if (changed) {
+        // Fire-and-forget — the new selection should paint without
+        // waiting on the server splice round-trip.
+        _commitInlineEdit();
+      } else {
+        _exitInlineEdit();
+      }
+    } catch (e) {
+      // Worst case: leave the edit state stuck. The ✎ button is
+      // still an explicit save/cancel gesture so the user has a
+      // recovery path.
+      try { _dlog("inline-edit", "auto-close error", { msg: String(e) }); } catch {}
+    }
+  }
   if (_selectedSentenceIdx >= 0 && sentenceSpans[_selectedSentenceIdx]) {
     sentenceSpans[_selectedSentenceIdx].classList.remove("selected");
   }
