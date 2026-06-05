@@ -1471,7 +1471,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v3.57</span>
+            Narrative <span id="settings-version-tag">v225v3.60</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2433,7 +2433,47 @@
              living inside the library dialog meant the user only saw
              it if they happened to open the library after their first
              save. See the new #first-clip-tour above #player-card. -->
-        <div id="library-list" class="library-list"></div>
+        <!-- v225v3.59 (#791): tab pair to switch between 🎧 Audio and
+             📖 Ebooks libraries. Click flips with a horizontal slide;
+             phone also supports a swipe gesture on the panel viewport.
+             Default kind persists in localStorage. -->
+        <div class="library-tabs" role="tablist" aria-label="Library kind">
+          <button type="button"
+                  id="lib-tab-audio"
+                  class="lib-tab is-active"
+                  role="tab"
+                  aria-selected="true"
+                  aria-controls="lib-panel-audio">
+            🎧 Audio <span class="lib-tab-count" id="lib-tab-count-audio">0</span>
+          </button>
+          <button type="button"
+                  id="lib-tab-ebook"
+                  class="lib-tab"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="lib-panel-ebook">
+            📖 Ebooks <span class="lib-tab-count" id="lib-tab-count-ebook">0</span>
+          </button>
+        </div>
+        <div class="library-viewport" id="library-viewport">
+          <div class="library-panels" id="library-panels" data-active="audio">
+            <div class="library-panel"
+                 data-kind="audio"
+                 id="lib-panel-audio"
+                 role="tabpanel"
+                 aria-labelledby="lib-tab-audio"></div>
+            <div class="library-panel"
+                 data-kind="ebook"
+                 id="lib-panel-ebook"
+                 role="tabpanel"
+                 aria-labelledby="lib-tab-ebook"></div>
+          </div>
+        </div>
+        <!-- Legacy library-list kept hidden as a no-op target for old
+             code paths that reference it; new code paths go through
+             the panel ids above. Will be removed once the migration
+             stabilizes (see #791). -->
+        <div id="library-list" class="library-list" hidden></div>
         </div>
       </dialog>
 

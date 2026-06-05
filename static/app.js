@@ -21164,13 +21164,25 @@ async function nextClipId(fromId) {
   }
   if (!clips.length) return null;
 
+  // v225v3.58 (#791): auto-advance must skip ebook clips. They have no
+  // audio blob; loading one mid-advance "jumps" the user to an ebook
+  // they didn't ask to open and silently kills the audio session.
+  // Filter at the source so both shuffle and sequential branches see
+  // only playable candidates. Same predicate used in loadClip's
+  // _isEbookClip detection — kind === "ebook" is the canonical
+  // signal (set by _openAsEbook + synced through v3.53 schema).
+  // Companion to the 🎧 Audio / 📖 Ebooks library split below — both
+  // changes treat ebook clips as a separate class from audio.
+  const playable = clips.filter((c) => c && c.kind !== "ebook");
+  if (!playable.length) return null;
+
   if (_playMode === "shuffle") {
-    const others = clips.filter((c) => c.id !== fromId);
+    const others = playable.filter((c) => c.id !== fromId);
     if (!others.length) return null;
     return others[Math.floor(Math.random() * others.length)].id;
   }
 
-  const ordered = sortClips(clips, _playMode);
+  const ordered = sortClips(playable, _playMode);
   const idx = ordered.findIndex((c) => c.id === fromId);
   if (idx < 0 || idx + 1 >= ordered.length) return null;
   return ordered[idx + 1].id;
@@ -22368,11 +22380,17 @@ async function _commitDragOrder() {
   renderLibrary();
 }
 
+// v225v3.59 (#791): re-pointable target so renderLibrary can route
+// section headers into the Audio panel vs the Ebook panel. Default
+// is the legacy library-list element for any callers outside the
+// renderLibrary flow.
+let _sectionHeaderTarget = null;
 function _appendSectionHeader(label, subtitle) {
+  const target = _sectionHeaderTarget || libraryList;
   const h = document.createElement("div");
   h.className = "library-section";
   h.textContent = label;
-  libraryList.appendChild(h);
+  target.appendChild(h);
   // v168: optional one-line subtitle under the section header. Used
   // to explain "Continue listening" to anyone who arrives at a
   // library that's been auto-split into two sections and doesn't
@@ -22381,9 +22399,137 @@ function _appendSectionHeader(label, subtitle) {
     const sub = document.createElement("div");
     sub.className = "library-section-subtitle";
     sub.textContent = subtitle;
-    libraryList.appendChild(sub);
+    target.appendChild(sub);
   }
 }
+
+// v225v3.59 (#791): library tab/panel state + handlers.
+const LIBRARY_ACTIVE_KIND_KEY = "narrative.libraryActiveKind";
+let _libraryActiveKind =
+  localStorage.getItem(LIBRARY_ACTIVE_KIND_KEY) === "ebook" ? "ebook" : "audio";
+
+function _libraryUpdateTabCounts(audioCount, ebookCount) {
+  const a = document.getElementById("lib-tab-count-audio");
+  const e = document.getElementById("lib-tab-count-ebook");
+  if (a) a.textContent = String(audioCount);
+  if (e) e.textContent = String(ebookCount);
+}
+
+function _librarySetActiveKind(kind, opts = {}) {
+  kind = kind === "ebook" ? "ebook" : "audio";
+  if (kind === _libraryActiveKind && !opts.force) return;
+  _libraryActiveKind = kind;
+  try { localStorage.setItem(LIBRARY_ACTIVE_KIND_KEY, kind); } catch {}
+  const panels = document.getElementById("library-panels");
+  if (panels) {
+    if (opts.noAnim) panels.classList.add("no-anim");
+    panels.dataset.active = kind;
+    if (opts.noAnim) {
+      // Re-enable animation on the next frame so future switches slide.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => panels.classList.remove("no-anim"));
+      });
+    }
+  }
+  const tabA = document.getElementById("lib-tab-audio");
+  const tabE = document.getElementById("lib-tab-ebook");
+  if (tabA) {
+    tabA.classList.toggle("is-active", kind === "audio");
+    tabA.setAttribute("aria-selected", kind === "audio" ? "true" : "false");
+  }
+  if (tabE) {
+    tabE.classList.toggle("is-active", kind === "ebook");
+    tabE.setAttribute("aria-selected", kind === "ebook" ? "true" : "false");
+  }
+}
+
+// Wire tab clicks + initial state. Runs once at module load.
+(function _wireLibraryTabs() {
+  const tabA = document.getElementById("lib-tab-audio");
+  const tabE = document.getElementById("lib-tab-ebook");
+  if (tabA) tabA.addEventListener("click", () => _librarySetActiveKind("audio"));
+  if (tabE) tabE.addEventListener("click", () => _librarySetActiveKind("ebook"));
+  // Apply persisted state with animation suppressed so the dialog
+  // doesn't slide at first paint.
+  _librarySetActiveKind(_libraryActiveKind, { noAnim: true, force: true });
+})();
+
+// Phone-only swipe-to-switch on the panel viewport. Tracks horizontal
+// drag, follows the finger with a partial transform, and snaps to the
+// next/previous panel on release if the drag crossed a threshold.
+// Desktop ignores swipe — only the tabs work there.
+(function _wireLibrarySwipe() {
+  const viewport = document.getElementById("library-viewport");
+  if (!viewport) return;
+  const isPhone = () =>
+    window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+  let startX = 0, startY = 0, dragging = false, dx = 0;
+  const SLIDE_THRESHOLD = 60; // px past which we commit a switch
+  const ANGLE_GUARD = 1.2;    // require horizontal-dominant motion
+
+  viewport.addEventListener("touchstart", (e) => {
+    if (!isPhone()) return;
+    if (e.touches.length !== 1) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dragging = true;
+    dx = 0;
+  }, { passive: true });
+
+  viewport.addEventListener("touchmove", (e) => {
+    if (!dragging) return;
+    const t = e.touches[0];
+    const ax = Math.abs(t.clientX - startX);
+    const ay = Math.abs(t.clientY - startY);
+    // First-move arbitration: if the user's gesture is vertical-
+    // dominant, abandon — they're scrolling the panel content.
+    if (ax < 8 && ay < 8) return;
+    if (ay * ANGLE_GUARD > ax) {
+      dragging = false;
+      return;
+    }
+    dx = t.clientX - startX;
+    // Bound dx so we don't slide off into never-land at the edges.
+    const panels = document.getElementById("library-panels");
+    if (!panels) return;
+    panels.classList.add("no-anim");
+    // base offset depends on current active kind: 0 (audio) or -50% (ebook)
+    const baseOffset = _libraryActiveKind === "ebook" ? -50 : 0;
+    // Convert dx into a percentage of viewport width so it matches the
+    // 200%-wide panels container. 1 viewport width = 50% of container.
+    const vw = viewport.clientWidth || 1;
+    const extra = (dx / vw) * 50; // dx px → % of panels
+    panels.style.transform = `translateX(${baseOffset + extra}%)`;
+  }, { passive: true });
+
+  viewport.addEventListener("touchend", () => {
+    if (!dragging) return;
+    dragging = false;
+    const panels = document.getElementById("library-panels");
+    if (!panels) return;
+    panels.classList.remove("no-anim");
+    panels.style.transform = ""; // clear inline, let data-active CSS take over
+    if (Math.abs(dx) >= SLIDE_THRESHOLD) {
+      // Negative dx = finger went left = reveal panel to the right.
+      const nextKind = dx < 0 ? "ebook" : "audio";
+      _librarySetActiveKind(nextKind);
+    }
+    // Below threshold = snap back to current kind via the existing
+    // CSS transform — no further action needed.
+    dx = 0;
+  }, { passive: true });
+
+  viewport.addEventListener("touchcancel", () => {
+    if (!dragging) return;
+    dragging = false;
+    const panels = document.getElementById("library-panels");
+    if (panels) {
+      panels.classList.remove("no-anim");
+      panels.style.transform = "";
+    }
+    dx = 0;
+  }, { passive: true });
+})();
 
 // Build + render the tag-filter chip row above the library list.
 //   allClips      — for the universe of tag chips to show
@@ -22616,33 +22762,66 @@ async function renderLibrary() {
     return;
   }
 
-  // Split into "in progress" and "other" so resume-where-you-left-off
-  // becomes a one-tap action at the top of the library. The in-progress
-  // section ignores the user's sort mode and instead shows the most
-  // recently created in-progress clip first (clip.id is a millis timestamp,
-  // so newest-first is just descending id) — that's almost always the one
-  // they want next.
-  // `clips` is already sorted by the user's chosen mode (Custom / Newest /
-  // Oldest / etc.). Continue Listening used to override that with a hard
-  // id-desc sort, which silently ate any drag-to-reorder inside this
-  // section — pick up the user's order here too so a Custom-order drag
-  // sticks regardless of which section the card lives in.
-  const inProgress = clips.filter(isClipInProgress);
+  // v225v3.59 (#791): tabbed library — render into two panels rather
+  // than one flat list. Audio panel keeps Continue listening as a
+  // sub-section (resume affordance stays one tap); ebook panel just
+  // lists its clips. Tab counts update via _libraryUpdateTabCounts.
+  // The legacy libraryList element stays mounted but hidden — old
+  // helpers (_appendSectionHeader, etc.) target whichever container
+  // _libraryActivePanel points to at the time of the call.
+  const audioClips = clips.filter((c) => c.kind !== "ebook");
+  const ebookClips = clips.filter((c) => c.kind === "ebook");
+  const inProgress = audioClips.filter(isClipInProgress);
   const inProgressIds = new Set(inProgress.map((c) => c.id));
-  const others = clips.filter((c) => !inProgressIds.has(c.id));
+  const otherAudio = audioClips.filter((c) => !inProgressIds.has(c.id));
 
-  if (inProgress.length > 0) {
-    _appendSectionHeader(
-      `Continue listening · ${inProgress.length}`,
-      "Clips you started but didn't finish — picks up where you left off.",
-    );
-    for (const clip of inProgress) libraryList.appendChild(makeClipCard(clip));
-    if (others.length > 0) {
-      _appendSectionHeader(`Other clips · ${others.length}`);
+  const audioPanel = document.getElementById("lib-panel-audio");
+  const ebookPanel = document.getElementById("lib-panel-ebook");
+  if (audioPanel) audioPanel.innerHTML = "";
+  if (ebookPanel) ebookPanel.innerHTML = "";
+
+  // Re-point the section-header helper at the audio panel for the
+  // duration of audio rendering; restore after. _appendSectionHeader
+  // appends to whichever container is set as _sectionHeaderTarget.
+  const _prevTarget = _sectionHeaderTarget;
+  _sectionHeaderTarget = audioPanel;
+
+  if (audioPanel) {
+    if (inProgress.length > 0) {
+      _appendSectionHeader(
+        `Continue listening · ${inProgress.length}`,
+        "Clips you started but didn't finish — picks up where you left off.",
+      );
+      for (const clip of inProgress) audioPanel.appendChild(makeClipCard(clip));
+      if (otherAudio.length > 0) {
+        _appendSectionHeader(`Other audio · ${otherAudio.length}`);
+      }
+    }
+    for (const clip of otherAudio) audioPanel.appendChild(makeClipCard(clip));
+    if (audioClips.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "library-empty";
+      empty.textContent = "No audio clips yet — generate one to add audio.";
+      audioPanel.appendChild(empty);
     }
   }
 
-  for (const clip of others) libraryList.appendChild(makeClipCard(clip));
+  _sectionHeaderTarget = ebookPanel;
+  if (ebookPanel) {
+    for (const clip of ebookClips) ebookPanel.appendChild(makeClipCard(clip));
+    if (ebookClips.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "library-empty";
+      empty.textContent = "No ebooks yet — import a file with the 📥 button.";
+      ebookPanel.appendChild(empty);
+    }
+  }
+  _sectionHeaderTarget = _prevTarget;
+
+  // Update tab counts. Counts reflect the total kind population BEFORE
+  // search/tag filtering would have been applied — that matches the
+  // "Library · X of N" header convention.
+  _libraryUpdateTabCounts(audioClips.length, ebookClips.length);
 }
 
 // ---- Edit clip (title + note + tags) ------------------------------------
@@ -28993,6 +29172,31 @@ function _phoneMenuBoot() {
       lib.classList.add("flashed");
     });
     app.appendChild(lib);
+  }
+
+  // v225v3.60 (#793): 🎤 Voice button. Promoted into the phone header
+  // because Voice was only reachable via the pull-up drawer AFTER
+  // loading a clip — a user with no clip yet (just arrived, or just
+  // hit "Start over") had no path to browse / change voices. Sits at
+  // right:200px between 📚 Library (right:156) and 📥 Import
+  // (right:248). Tap dispatches click on the hidden hero
+  // #voice-trigger so the voice-dialog wiring stays single-sourced.
+  if (!app.querySelector(".phone-voice-btn")) {
+    const vc = document.createElement("button");
+    vc.type = "button";
+    vc.className = "phone-voice-btn";
+    vc.setAttribute("aria-label", "Open voice picker");
+    vc.title = "Voice";
+    vc.textContent = "🎤";
+    vc.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const trigger = document.getElementById("voice-trigger");
+      if (trigger) trigger.click();
+      vc.classList.remove("flashed");
+      void vc.offsetWidth;
+      vc.classList.add("flashed");
+    });
+    app.appendChild(vc);
   }
 
   // v593: ✎ Edit text button. Sits between 📚 and 📖 — close enough
