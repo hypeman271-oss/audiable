@@ -152,10 +152,15 @@ def _row_to_clip_dict(row: sqlite3.Row) -> dict:
     """Convert a clips row into the JSON-friendly dict the frontend
     expects. JSON columns get parsed; deleted clips still include
     their tombstone so the sync layer can mirror the removal."""
+    # v225v3.53 (#786): `kind` is schema v4. Guard for rows read before
+    # the migration applied (shouldn't happen — _migrate runs at boot —
+    # but cheap defensive check matches the annotations_json pattern).
+    kind_val = row["kind"] if "kind" in row.keys() else None
     d = {
         "id": row["id"],
         "title": row["title"],
         "text": row["text"],
+        "kind": kind_val,
         "voiceId": row["voice_id"],
         "voiceName": row["voice_name"],
         "rate": row["rate"],
@@ -305,6 +310,12 @@ class ClipUpsert(BaseModel):
     id: int
     title: str = ""
     text: str = ""
+    # v225v3.53 (#786): `kind` distinguishes audio clips from ebook
+    # clips (#690). NULL/missing = audio (legacy default); "ebook" =
+    # text-only, no audio expected. Without this field ebook clips
+    # sync but lose their kind tag and break book-view routing on
+    # the receiving device.
+    kind: str | None = None
     voiceId: str | None = None
     voiceName: str | None = None
     rate: int | None = None
@@ -317,7 +328,14 @@ class ClipUpsert(BaseModel):
     note: str = ""
     notes: str = ""
     tags: list[str] = Field(default_factory=list)
-    cover: dict | None = None
+    # v225v3.54 (#787): cover may be a dict ({src, alt} from custom
+    # upload) OR a bare string URL (auto-detected ebook covers send
+    # _pendingDetectedCover.src directly — see _openAsEbook). The
+    # original `dict | None` declaration silently rejected every
+    # ebook clip push with 422, which the client logged to console
+    # and surfaced nowhere — looked like sync was working. Accept
+    # both shapes; round-trip is handled via jsdump/jsload.
+    cover: dict | str | None = None
     gitRef: dict | None = None
     images: list[dict] = Field(default_factory=list)
     # v223.annotate-1.5: phone-native revision annotations.
@@ -429,7 +447,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
             """
             INSERT INTO clips (
               tenant_key,
-              id, title, text, voice_id, voice_name, rate, volume,
+              id, title, text, kind, voice_id, voice_name, rate, volume,
               speaker_id, duration_sec, progress_sec,
               sentence_offsets_json, bookmarks_json, note, notes,
               tags_json, cover_json, git_ref_json, audio_sha256,
@@ -438,7 +456,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               created_at, updated_at, last_synced_at, deleted
             ) VALUES (
               ?,
-              ?, ?, ?, ?, ?, ?, ?,
+              ?, ?, ?, ?, ?, ?, ?, ?,
               ?, ?, ?,
               ?, ?, ?, ?,
               ?, ?, ?, ?,
@@ -449,6 +467,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
             ON CONFLICT(tenant_key, id) DO UPDATE SET
               title=excluded.title,
               text=excluded.text,
+              kind=excluded.kind,
               voice_id=excluded.voice_id,
               voice_name=excluded.voice_name,
               rate=excluded.rate,
@@ -478,6 +497,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
                 payload.id,
                 payload.title,
                 payload.text,
+                payload.kind,
                 payload.voiceId,
                 payload.voiceName,
                 payload.rate,

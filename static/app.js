@@ -20028,6 +20028,12 @@ async function clearLibrary() {
 
 const SYNC_ENABLED_KEY = "narrative.syncEnabled";
 const SYNC_LAST_PULL_KEY = "narrative.syncLastPullAt";
+// v225v3.52 (#430/#785): timestamp of first successful migration.
+// Presence = "this device has uploaded its local library at least
+// once." On flip OFF → ON we check this: missing → confirm + migrate;
+// present → silent enable (the existing pull picks up wherever
+// sync left off). Per-device flag, not server-stored.
+const SYNC_MIGRATED_KEY = "narrative.syncMigratedAt";
 const _SYNC_PULL_MIN_INTERVAL_MS = 30 * 1000; // throttle render-triggered pulls
 
 let _syncPullInFlight = null;
@@ -20054,6 +20060,111 @@ function _syncSetEnabled(enabled) {
     // Immediate pull so the toggle has visible effect; followups are
     // throttled to once per 30s.
     _syncPull(/*force*/ true).catch(() => {});
+  }
+}
+
+// v225v3.52 (#430/#785): "has this device ever migrated?" check. Used
+// to gate the confirm dialog on the very first OFF → ON flip. After
+// successful migration we stamp the timestamp; subsequent flip-ons
+// silently enable sync without re-asking.
+function _syncIsMigrated() {
+  try {
+    return !!localStorage.getItem(SYNC_MIGRATED_KEY);
+  } catch {
+    return false;
+  }
+}
+
+function _syncMarkMigrated() {
+  try {
+    localStorage.setItem(SYNC_MIGRATED_KEY, new Date().toISOString());
+  } catch {}
+}
+
+// v225v3.52 (#430/#785): migration entrypoint. Called by the
+// sync-enabled radio change handler when the user flips OFF → ON for
+// the first time on this device. Counts local clips, estimates the
+// upload size, asks for confirmation, runs _syncPushAll if confirmed,
+// stamps the migrated flag on success.
+//
+// Returns true on success (sync should be enabled), false on cancel
+// or failure (sync should NOT be enabled, radio should revert).
+async function _syncMigrate() {
+  let clips = [];
+  try {
+    clips = await listClips();
+  } catch (e) {
+    console.warn("[sync] migrate: listClips failed", e);
+  }
+  const total = clips.length;
+
+  // Empty-library short-circuit: nothing to migrate, no need to ask.
+  // Just stamp the flag and let the caller enable sync silently.
+  if (total === 0) {
+    _syncMarkMigrated();
+    return true;
+  }
+
+  // Estimate upload size from each clip's audio blob. Text-only clips
+  // contribute negligible bytes; the headline number is the MP3
+  // payload. We approximate to MB with one decimal for human-friendly
+  // copy ("~12.4 MB" reads more honest than "12345678 bytes").
+  let totalBytes = 0;
+  for (const c of clips) {
+    if (c && c.blob && typeof c.blob.size === "number") {
+      totalBytes += c.blob.size;
+    }
+  }
+  const totalMB = totalBytes / (1024 * 1024);
+  const sizeLabel =
+    totalMB >= 1
+      ? `~${totalMB.toFixed(1)} MB`
+      : totalMB >= 0.1
+      ? `~${totalMB.toFixed(1)} MB`
+      : "< 1 MB";
+
+  const msg =
+    `This will upload your ${total} clip${total === 1 ? "" : "s"} ` +
+    `(${sizeLabel}) to narrative-alpha.fly.dev so your other ` +
+    `devices can sync them. Continue?`;
+
+  // Native confirm — matches the app's other destructive-action
+  // prompts (Clear all, library wipe, etc.). Keeps the bundle small
+  // and works identically on phone + desktop.
+  let ok = false;
+  try {
+    ok = window.confirm(msg);
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    return false;
+  }
+
+  // Run the migration via the existing _syncPushAll path, which
+  // already handles per-clip iteration with progress status, preset
+  // sweep, and a final pull. We need sync enabled while pushing
+  // (every internal _syncPushClip call checks the flag), so flip it
+  // on FIRST. If migration fails catastrophically we revert below.
+  try {
+    localStorage.setItem(SYNC_ENABLED_KEY, "1");
+  } catch {}
+  try {
+    await _syncPushAll();
+    _syncMarkMigrated();
+    return true;
+  } catch (e) {
+    console.warn("[sync] migrate: push-all failed", e);
+    // Migration didn't complete cleanly — revert the enabled flag
+    // so the radio click doesn't appear to have "stuck" sync on
+    // with an incomplete server-side state.
+    try {
+      localStorage.removeItem(SYNC_ENABLED_KEY);
+    } catch {}
+    _syncStatusText =
+      "Couldn't migrate library to server — keeping sync off.";
+    _updateSyncStatusLine();
+    return false;
   }
 }
 
@@ -20101,6 +20212,11 @@ async function _syncPushClip(clip) {
     id: clip.id,
     title: clip.title || "",
     text: clip.text || "",
+    // v225v3.53 (#786): `kind` distinguishes audio clips from ebook
+    // clips (#690). Without this, ebook clips push successfully but
+    // lose their kind tag on the receiving device — book-view doesn't
+    // route, and the clip looks like a broken audio clip with no blob.
+    kind: clip.kind || null,
     voiceId: clip.voiceId || null,
     voiceName: clip.voiceName || null,
     rate: clip.rate != null ? clip.rate : null,
@@ -20277,6 +20393,10 @@ async function _syncAbsorbServerClip(sc) {
     id: sc.id,
     title: sc.title,
     text: sc.text,
+    // v225v3.53 (#786): preserve ebook-mode tag so receiving device
+    // routes through book-view + skips audio-load branches. Falsy
+    // server value → undefined locally → treated as an audio clip.
+    kind: sc.kind || undefined,
     voiceId: sc.voiceId,
     voiceName: sc.voiceName,
     rate: sc.rate,
@@ -20436,12 +20556,50 @@ async function _syncPushAll() {
 
 // Wire the radios + initial state. Toggle uses the same theme-picker
 // markup so the visual matches Mode/Theme/Skip rows.
+// v225v3.52 (#430/#785): the radio handler is the entrypoint for the
+// FIRST flip OFF → ON on a device. Subsequent flips (after a successful
+// migration, OR the user later flipping off) just call _syncSetEnabled
+// directly. The first flip-on calls _syncMigrate which prompts +
+// pushes existing clips before sync goes live.
+async function _syncRadioChange(radio) {
+  if (!radio.checked) return;
+  if (radio.value !== "on") {
+    _syncSetEnabled(false);
+    return;
+  }
+  // value === "on"
+  if (_syncIsMigrated()) {
+    // We've done the dance before — just enable + pull, no prompt.
+    _syncSetEnabled(true);
+    return;
+  }
+  // First-time enable on this device. Run migration, which prompts
+  // the user, pushes clips, stamps the flag. On cancel/failure, revert
+  // the radio so it visibly stays OFF.
+  const ok = await _syncMigrate();
+  if (!ok) {
+    const off = document.querySelector(
+      'input[name="sync-enabled"][value="off"]'
+    );
+    if (off) off.checked = true;
+    _updateSyncStatusLine();
+    return;
+  }
+  // Migration succeeded. _syncMigrate already set the enabled flag
+  // and ran a push; now do the symmetric pull so anything on the
+  // server (e.g., presets pushed from another device that we don't
+  // yet have locally) flows in.
+  _updateSyncStatusLine();
+  _syncPull(/*force*/ true).catch(() => {});
+}
+
 document
   .querySelectorAll('input[name="sync-enabled"]')
   .forEach((radio) => {
     radio.addEventListener("change", () => {
-      if (!radio.checked) return;
-      _syncSetEnabled(radio.value === "on");
+      _syncRadioChange(radio).catch((e) =>
+        console.warn("[sync] radio change handler failed:", e)
+      );
     });
   });
 {
@@ -20463,6 +20621,71 @@ document
   }
 }
 _updateSyncStatusLine();
+// v225v3.52 (#430/#785): backfill the migrated-at flag for users who
+// had sync ENABLED before this code shipped. Without this, a user
+// who flips OFF then back ON would see a surprise migration dialog
+// even though their server state is already current. If sync is on
+// already, by definition they've migrated (or were never in a state
+// that needed migrating — empty initial libraries) — so stamp it.
+if (_syncIsEnabled() && !_syncIsMigrated()) {
+  _syncMarkMigrated();
+}
+// v225v3.53 (#786): one-time backfill for the `kind` field. Clips
+// that were pushed under v3.52 or earlier landed on the server with
+// kind=NULL because the push payload didn't include the field. After
+// v3.53 the payload + server schema carry it, but existing rows are
+// still un-tagged — so any ebook clip a user already has would still
+// pull onto a fresh device as a "kind=null = audio" clip.
+//
+// Fix: on boot, if sync is on and we haven't backfilled yet, scan
+// local clips and re-push any with a non-null `kind`. Audio clips
+// are skipped (their kind was always null; nothing to update).
+// Stamp a flag so this runs exactly once per device. Fire-and-forget
+// so boot isn't blocked — re-pushes happen in the background while
+// the user uses the app.
+// v225v3.55 (#787-followup): bumped key suffix from "...At" → "...AtV2".
+// v3.53's backfill stamped the flag even though every PUT returned 422
+// (the 422 was caused by ClipUpsert rejecting string covers, fixed in
+// v3.54). Old key = backfill-thinks-it-succeeded; new key = re-fire on
+// next boot so the corrected payloads actually land on the server.
+const SYNC_KIND_BACKFILL_KEY = "narrative.syncKindBackfilledAtV2";
+async function _syncBackfillKind() {
+  try {
+    if (localStorage.getItem(SYNC_KIND_BACKFILL_KEY)) return;
+  } catch {
+    return;
+  }
+  try {
+    const clips = await listClips();
+    const ebookish = (clips || []).filter((c) => c && c.kind);
+    for (const c of ebookish) {
+      try {
+        await _syncPushClip(c);
+      } catch (e) {
+        console.warn("[sync] kind backfill push failed for", c.id, e);
+      }
+    }
+    try {
+      localStorage.setItem(SYNC_KIND_BACKFILL_KEY, new Date().toISOString());
+    } catch {}
+    if (typeof _dlog === "function") {
+      _dlog("sync", "kind-backfill complete", { pushed: ebookish.length });
+    }
+  } catch (e) {
+    console.warn("[sync] kind backfill scan failed", e);
+  }
+}
+if (_syncIsEnabled()) {
+  _syncBackfillKind().catch(() => {});
+}
+// Also sync the radio's checked state to the localStorage flag. The
+// radios are unchecked by default in the HTML; without this the
+// Settings dialog opens showing neither radio active even though
+// sync IS on.
+const _syncRadioInitial = document.querySelector(
+  `input[name="sync-enabled"][value="${_syncIsEnabled() ? "on" : "off"}"]`
+);
+if (_syncRadioInitial) _syncRadioInitial.checked = true;
 if (_syncIsEnabled()) {
   // Kick a pull at boot so the library renders with server state in
   // hand (or close to it — pull is async).

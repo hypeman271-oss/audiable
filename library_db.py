@@ -32,7 +32,7 @@ DB_PATH = DATA_DIR / "narrative.db"
 AUDIO_DIR = DATA_DIR / "audio"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -268,6 +268,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v3(c)
         c.execute("UPDATE schema_version SET version = 3")
         current = 3
+
+    if current < 4:
+        _apply_v4(c)
+        c.execute("UPDATE schema_version SET version = 4")
+        current = 4
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -519,6 +524,31 @@ def _apply_v3(c: sqlite3.Connection) -> None:
         file=sys.stderr, flush=True,
     )
     c.execute("ALTER TABLE clips ADD COLUMN annotations_json TEXT")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Schema v4 — add `kind` column to clips so ebook clips sync.
+#
+# Background: #690 introduced ebook-mode clips that carry text + cover
+# but no audio. The original sync push payload + ClipUpsert model
+# dropped clip.kind, so receiving devices saw a clip with no kind and
+# no audio — book-view routing didn't fire and the clip looked broken.
+# Adding the column lets ebook clips round-trip end-to-end.
+#
+# Additive ALTER, no recreate, no transaction needed. Existing rows
+# get NULL — which the library_api emits as `null` in JSON and the
+# client reads as undefined, which is exactly what an audio-only clip
+# should be.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _apply_v4(c: sqlite3.Connection) -> None:
+    """Add kind TEXT column to clips. NULL = audio clip (legacy default)."""
+    print(
+        "[library_db] migrating to schema v4 (add clips.kind for ebook sync)",
+        file=sys.stderr, flush=True,
+    )
+    c.execute("ALTER TABLE clips ADD COLUMN kind TEXT")
 
 
 # ──────────────────────────────────────────────────────────────────────
