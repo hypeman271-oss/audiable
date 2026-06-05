@@ -3,7 +3,37 @@
 Living document. Captures the thinking from the "I want to sell this"
 conversation. Updated as decisions get made and milestones land.
 
-Last meaningful update: 2026-05-29 — four V1 launch decisions made.
+Last meaningful update: 2026-06-04 — platform priority clarified.
+Apple is the commercial target; Windows + Android are dogfood-quality
+because that's the founder's daily setup.
+
+## Platform priority (2026-06-04)
+
+| Platform | Tier | Why | Effort |
+| --- | --- | --- | --- |
+| **macOS** | **Commercial-grade** | Writers buy on Mac. Tauri gets us 80% there; SwiftUI polish later if margin justifies. | Tauri shell already scaffolded (#397). Code-signing (#214) on critical path. |
+| **iOS** | **Commercial-grade post-V1** | "Writer revising on the train" is the most differentiated demo. iOS audience pays. Native Swift app, thin client to Fly sync API. | ~3 months single-dev post-V1. Reuses tenant-scoped sync (#437–#444). |
+| **Windows** | **Dogfood-grade (works well, no premium polish)** | Founder's daily driver — must be solid for actual self-use. Secondary commercial audience. | Tauri Windows build is free from cross-platform Tauri. Code-sign cert (#214). |
+| **Android** | **Dogfood-grade (PWA hardened + optional TWA)** | Founder's daily phone — must work for own listening + revision testing. Not a paying audience priority. | PWA hardening (#571) + Trusted Web Activity Play Store wrap if store presence wanted. |
+| **Linux** | **PWA only** | Niche audience. No platform-specific investment. | Free side-effect of PWA work. |
+
+The split rationale: **Apple is who pays; Windows + Android is who the
+founder uses every day.** Building a polished iOS Swift app while
+shipping Windows on Tauri is the right tradeoff — the Windows audience
+doesn't care that it isn't 100% native-feeling, the iOS audience does.
+Android stays PWA because there's no commercial reason to invest
+deeper, but the PWA needs to be *good* PWA so the founder can dogfood.
+
+**What this means in practice for current work:**
+
+- V1 desktop (Tauri) covers macOS + Windows. Already mostly done.
+- iOS Swift app is V1.5 / V2 — scope after V1 ships and writers are paying.
+- Android PWA gets the "feels app-like" polish in parallel with V1
+  (#571 PWA install prompt + offline cache + #573 translucent shell).
+- A Trusted Web Activity (TWA) Android wrapper is a 2–3 day project
+  that gets Narrative into the Play Store without building a real
+  Android app — optional, do only if there's signal that Play Store
+  discovery matters.
 
 ---
 
@@ -275,28 +305,124 @@ This is the recommended path. Adjust dates as needed.
 
 ### Weeks 5–8: native shells
 
-Two paths here; pick one and commit:
+Tier-laddered. Build to the tier each platform earns:
 
-**Path A: Tauri desktop wrapper (Writer-first)**
+**Tier 1 — Commercial-grade desktop (V1 release target)**
 
-- [ ] Tauri project initialized.
-- [ ] Existing web app loaded in the Tauri webview.
-- [ ] Native menu bar with Open / Quit / Preferences.
-- [ ] Auto-update infrastructure.
-- [ ] Code signing certificates (macOS Developer ID, Windows code sign).
-- [ ] DMG / MSI build pipeline.
+- [x] Tauri project initialized (#397).
+- [x] Python sidecar via PyInstaller (#398).
+- [ ] Switch Tauri WebView from Fly URL to embedded local assets.
+- [ ] Native macOS menu bar (Open / Quit / Preferences / Window).
+- [ ] Native Windows app menu + taskbar pinning + JumpList stubs.
+- [ ] Auto-updater plumbed (signed manifest endpoint).
+- [ ] Code signing certificates: macOS Developer ID + Windows code sign (#214).
+- [ ] DMG (macOS) + MSI (Windows) + NSIS installer build pipeline.
 
-**Path B: Capacitor + native Piper on Android (Reader-first)**
+**Tier 2 — Dogfood-grade Android (parallel to V1, supports founder's daily use)**
 
-- [ ] Capacitor project initialized wrapping the existing web app.
-- [ ] Kotlin Piper plugin against ONNX Runtime Android.
-- [ ] JS bridge so `fetch('/api/synthesize')` calls the native plugin.
-- [ ] APK build pipeline.
-- [ ] Play Console submission.
+- [ ] PWA install prompt + manifest polish (#571).
+- [ ] Offline shell cache + next-clip pre-cache audio (#571).
+- [ ] Translucent / app-like chrome on Android Chrome (#573).
+- [ ] Smoke test Narrative on founder's Android device once a week,
+      capture friction into specific issues (NOT generic "feels weird"
+      tickets).
+- [ ] (Optional, post-V1) Trusted Web Activity wrapper for Play Store
+      distribution — 2–3 day project. Trigger if there's evidence
+      Play Store discovery matters; otherwise stay home-screen-install.
 
-**Recommendation:** Path A. Writers work at desktops. Phone is for
-listening, where the PWA install already covers the experience. Desktop
-app is the bigger writer-conversion win.
+**Tier 3 — Commercial-grade iOS (V1.5 / post-launch, the big bet)**
+
+- [ ] SwiftUI scaffold pointing at the existing `/api/library/*` +
+      `/api/synthesize/*` endpoints (multi-tenant via #437–#444).
+- [ ] Native library list view (UICollectionView with cover-art cells).
+- [ ] Native reading view (UITextView + per-sentence tap target overlays).
+- [ ] Native audio player (AVPlayer with MediaSession lock-screen controls).
+- [ ] Bookmark + annotation UI matching the web flows.
+- [ ] App Store submission + screenshots + preview video.
+- [ ] Decision gate: only start this once V1 desktop has > N paying
+      writers and there's signal "I want to read on my phone too."
+
+**Recommendation:** Tier 1 ships first (covers macOS commercial +
+Windows dogfood from one Tauri codebase — free dogfooding win).
+Tier 2 develops in parallel since the PWA work is small and the
+founder's Android dogfood depends on it. Tier 3 (iOS Swift) is the
+post-V1 growth bet — premium iOS feel is what differentiates from
+Speechify and gets writer-influencer demos.
+
+### Testing Apple builds without owning Apple hardware (2026-06-04)
+
+Founder runs Windows + Android. Commercial target is Apple users.
+Mismatch resolved by tiering the Apple-testing investment to the
+revenue stage, not buying hardware up front.
+
+**Stage 1 — Pre-revenue: GitHub Actions only (~$0/month)**
+
+- [ ] Add `.github/workflows/build-macos.yml` — runs `tauri build`
+      on `macos-14` runner, signs with Apple Developer cert (stored
+      as encrypted GitHub secret), notarizes via `xcrun notarytool`,
+      uploads `.dmg` to GitHub Releases.
+- [ ] Free tier on GitHub Actions: 2,000 min/month for public repos.
+      Private repo: $0.08/min — a 15-min Tauri macOS build costs
+      ~$1.20. Negligible at low release cadence.
+- Founder NEVER touches macOS during this stage. Apple binaries
+  exist; nobody on the team has tested them interactively. That's
+  why beta testers are critical (see "Beta tester recruitment"
+  below).
+
+**Stage 2 — First paying customers (3–10 Mac writers): cloud-rented Mac (~$30/month)**
+
+- [ ] Subscribe to MacInCloud ($30/mo managed plan) OR Scaleway
+      Mac mini M1 hourly (€0.12/hr ≈ $3/day spot rental — cheaper
+      if usage is <10 days/month).
+- Use case: spot-checking the macOS menu bar feels right, catching
+  WKWebView rendering quirks that don't appear in Edge/Chromium,
+  recording demo videos at native quality, occasional debugging
+  of bug reports from beta testers.
+- NOT a daily-driver environment — latency over RDP/VNC is
+  acceptable for QA passes, painful for actual development.
+
+**Stage 3 — Sustained revenue (≥ 10 paying writers OR demand for iOS): buy a used Mac (one-time $300-500)**
+
+- [ ] Used M1 Mac mini, base model. eBay/Swappa/Facebook Marketplace
+      ~$300-400 used; new $599 from Apple.
+- Trigger conditions (either-or):
+  - Monthly cloud-Mac rental exceeds ~$40/month for 3 consecutive
+    months (break-even ~10-12 months).
+  - Customer demand for iOS app (Tier 3 work needs Xcode locally).
+  - Need to dogfood macOS for product decisions (e.g. native menu
+    bar UX iteration, macOS-specific feature work).
+- Side benefits: doubles as home server / Time Machine target /
+  build CI for releases without burning GitHub Actions minutes.
+
+**Beta tester recruitment (all stages)**
+
+- [ ] Recruit 3-5 Mac-using writers via Twitter, Discord, r/writing,
+      r/selfpublish before V1 launches.
+- Offer: lifetime free Narrative in exchange for installing each
+  DMG release within 48h and reporting issues with screenshots.
+- This is the founder's eyes on macOS until/unless Stage 3 triggers.
+- Even at Stage 3, keep the beta testers — they catch issues the
+  founder won't see on a single Mac mini.
+
+**For iOS specifically (Tier 3, post-V1)**
+
+- Xcode requires macOS — no escape hatch. Stage 3 (own a Mac) is a
+  hard prerequisite for native iOS development.
+- iPhone hardware: used iPhone 12/13 ~$250-400 OR rely on Xcode's
+  iOS Simulator. Real device only needed for final QA + App Store
+  screenshot capture.
+- TestFlight distributes to up to 10,000 external beta testers —
+  founder never touches their devices, just ships builds.
+
+**Summary table:**
+
+| Stage          | Cost           | What's covered                       | Gap                          |
+|----------------|----------------|--------------------------------------|------------------------------|
+| 1 (pre-rev)    | ~$0            | Build + sign + ship DMGs             | No interactive UX testing    |
+| 2 (early rev)  | ~$30/mo        | Stage 1 + spot QA + demo recording   | Slow iteration via RDP       |
+| 3 (sustained)  | one-time $400  | Stage 1+2 + daily dogfood + iOS dev  | None                         |
+
+Beta testers cover the gaps at every stage.
 
 ### Weeks 9–10: polish + launch prep
 

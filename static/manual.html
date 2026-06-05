@@ -33,6 +33,32 @@
           }
         } catch (_) {}
       })();
+      // v225fz1 (#668): detect iframe load and flip a data attr on
+      // <html> that activates the desktop TOC sidebar. Sidesteps the
+      // iframe-vs-media-query unreliability noted in the CSS comment
+      // block — the @media (min-width: 880px) rules don't always
+      // fire inside the in-app manual dialog (iframe loads while the
+      // dialog is still display:none, browsers cache the 0×0 viewport
+      // and don't re-evaluate cleanly on resize). The attribute-based
+      // rules in the CSS below mirror the media-query rules, so the
+      // sidebar paints from whichever trigger lands first.
+      //
+      // Runs in <head> so the attr is set before first paint — no
+      // FOUC. Sets on <html>, not body, because body hasn't parsed
+      // yet; CSS selectors are html[data-in-dialog="1"] descendants.
+      (function () {
+        try {
+          if (window !== window.top) {
+            document.documentElement.setAttribute("data-in-dialog", "1");
+          }
+        } catch (_) {
+          // Cross-origin iframe access throws here. Default to the
+          // in-dialog branch — a cross-origin manual iframe shouldn't
+          // happen in this app, and worst case we paint a sidebar in
+          // a standalone tab that's wider than 880px anyway.
+          document.documentElement.setAttribute("data-in-dialog", "1");
+        }
+      })();
     </script>
     <style>
       /* Manual-specific styling on top of the app's existing palette so
@@ -1000,6 +1026,161 @@
         cursor: default;
         opacity: 0.6;
       }
+
+      /* v225fz12.docs (#686): mock cover-swatch row + chapter banner
+       * for the upload-file walkthrough. The cover row mimics what
+       * appears on the library card after save (swatch + title +
+       * provenance line); the banner mimics the chapter-leading
+       * image rendered above sentence 1 in the reading view. */
+      .manual .wt-mock-imp-cover {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        background: var(--bg-card-2);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--accent);
+        border-radius: 6px;
+        font-size: 12.5px;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-imp-cover.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-imp-cover-swatch {
+        width: 32px;
+        height: 44px;
+        flex: 0 0 auto;
+        background: linear-gradient(135deg, #b06848 0%, #6e3a26 100%);
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+      }
+      .manual .wt-mock-imp-cover-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        line-height: 1.3;
+      }
+      .manual .wt-mock-imp-cover-meta strong {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .manual .wt-mock-imp-cover-meta span {
+        color: var(--fg-dim);
+        font-size: 11px;
+      }
+      .manual .wt-mock-imp-chapter-banner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 12px;
+        background: var(--accent-tint);
+        border-radius: 6px;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-imp-chapter-banner.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-imp-banner-label {
+        font-size: 11.5px;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .manual .wt-mock-imp-banner-art {
+        font-size: 22px;
+        letter-spacing: 12px;
+        color: var(--fg);
+        padding: 6px 0;
+        text-align: center;
+      }
+
+      /* v225fz14.docs (#689): mock "Detected in this import" preview
+       * strip — the captioned thumbnail row that lands above the
+       * textarea on every import so users can verify what will attach
+       * to the saved clip before generating audio. */
+      .manual .wt-mock-imp-preview {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px 10px;
+        background: var(--bg-card-2);
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-imp-preview.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .manual .wt-mock-imp-preview-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11px;
+        color: var(--fg-dim);
+      }
+      .manual .wt-mock-imp-preview-head strong {
+        color: var(--accent);
+        font-weight: 600;
+        font-size: 11.5px;
+      }
+      .manual .wt-mock-imp-preview-thumbs {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+      }
+      .manual .wt-mock-imp-thumb {
+        flex: 0 0 auto;
+        width: 56px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        font-size: 10.5px;
+        color: var(--fg-dim);
+      }
+      .manual .wt-mock-imp-thumb-img {
+        width: 56px;
+        height: 56px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+      }
+      .manual .wt-mock-imp-thumb-img.cover {
+        background: linear-gradient(135deg, #b06848 0%, #6e3a26 100%);
+      }
+      .manual .wt-mock-imp-thumb-img.banner {
+        background: var(--accent-tint);
+        color: var(--accent);
+        font-size: 16px;
+        letter-spacing: 4px;
+      }
+      .manual .wt-mock-imp-thumb-img.figure {
+        background: var(--hover-soft);
+      }
+      .manual .wt-mock-imp-thumb-kind {
+        font-weight: 600;
+        color: var(--accent);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
       @keyframes wt-blink {
         50% { opacity: 0; }
       }
@@ -1095,7 +1276,27 @@
          (the dialog caps at width: min(960px, calc(100vw - 16px))
          so a 1024px query never triggered there — only in a real
          new tab). 880px gives the sidebar headroom on the iframe's
-         effective viewport. */
+         effective viewport.
+
+         v225fz1 (#668): media-query-only activation is unreliable
+         inside the iframe — #530/#531 both shipped and neither got
+         the sidebar to paint when opened via the in-app dialog. The
+         iframe loads with the dialog still display:none (so initial
+         layout sees a 0×0 box), and some browsers don't cleanly
+         re-evaluate inline `<style>` media queries when the iframe
+         resizes after the dialog opens. Belt-and-suspenders fix:
+         pair the media query with a body-attribute selector that
+         the inline boot script flips when it detects we're inside
+         an iframe (window !== window.top). Either trigger paints
+         the sidebar. The boot script runs synchronously in <head>
+         so the attribute is set before first paint. */
+      /* Grid + TOC chrome + sticky H2s — the "desktop mode" of the
+         manual. Two triggers, identical declaration blocks: the
+         breakpoint for standalone tabs, the in-dialog attr for the
+         iframe path. CSS can't OR a media query with a selector in a
+         single rule, so we duplicate the block. Default state (line
+         1087, .manual-layout: display:block) remains the fallback
+         for phones / narrow standalone tabs. */
       @media (min-width: 880px) {
         .manual {
           max-width: 1100px;
@@ -1111,6 +1312,7 @@
           top: 16px;
           margin: 0;
           max-height: calc(100vh - 32px);
+          max-height: calc(100dvh - 32px);
           overflow-y: auto;
           font-size: 13px;
           padding: 12px 14px;
@@ -1165,10 +1367,106 @@
           background: var(--bg);
           padding: 14px 0 8px;
           margin-top: 28px;
-          /* Soft bottom fade so prose flowing below doesn't slam
-             against the sticky header. */
           box-shadow: 0 12px 8px -8px var(--bg);
+          /* v225fz12b: anchor-scroll target offset. Without this the
+             scrolled-to H2 lands AT viewport top:0 — directly under
+             the previously-pinned sticky H2 (which still occupies
+             top:0 until the layout shifts), which is also why default
+             hash navigation appeared to "do nothing" after the first
+             click. 12px of breathing room above. */
+          scroll-margin-top: 12px;
         }
+        /* H3 targets — same scroll offset so jumping to subsections
+           clears any currently-pinned H2 above. */
+        .manual-content h3[id] {
+          scroll-margin-top: 64px;
+        }
+        /* v225fz12d: TOC click handler temporarily drops sticky so the
+           browser's native scrollIntoView finds the target's true
+           natural-flow position. Re-enabled two RAFs later, by which
+           point the new target H2 is at top:0 and becomes the new
+           pinned section. */
+        body.toc-jumping .manual-content > h2[id] {
+          position: static !important;
+          box-shadow: none !important;
+        }
+      }
+      /* Duplicate block, fired by the iframe attr instead of the
+         breakpoint. Same declarations so the visual result is identical
+         no matter which trigger paints first. */
+      html[data-in-dialog="1"] .manual {
+        max-width: 1100px;
+      }
+      html[data-in-dialog="1"] .manual-layout {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        gap: 32px;
+        align-items: start;
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc {
+        position: sticky;
+        top: 16px;
+        margin: 0;
+        max-height: calc(100vh - 32px);
+        max-height: calc(100dvh - 32px);
+        overflow-y: auto;
+        font-size: 13px;
+        padding: 12px 14px;
+        border: 1px solid var(--border-soft);
+        border-radius: 10px;
+        background: var(--bg-card);
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc h2 {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--fg-dim);
+        margin: 0 0 10px;
+        padding: 0;
+        border: 0;
+        background: none;
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc ol {
+        padding-left: 18px;
+        margin: 0;
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc ol li {
+        margin: 4px 0;
+        line-height: 1.4;
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc a {
+        color: var(--fg);
+        text-decoration: none;
+        transition: color 0.12s ease;
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc a:hover {
+        color: var(--accent);
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc a.active {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      html[data-in-dialog="1"] .manual-layout > .toc ul {
+        padding-left: 16px;
+        margin: 4px 0;
+      }
+      html[data-in-dialog="1"] .manual-content > h2[id] {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: var(--bg);
+        padding: 14px 0 8px;
+        margin-top: 28px;
+        box-shadow: 0 12px 8px -8px var(--bg);
+        scroll-margin-top: 12px;
+      }
+      html[data-in-dialog="1"] .manual-content h3[id] {
+        scroll-margin-top: 64px;
+      }
+      html[data-in-dialog="1"] body.toc-jumping .manual-content > h2[id] {
+        position: static !important;
+        box-shadow: none !important;
       }
     </style>
     <script>
@@ -1215,6 +1513,54 @@
         heads.forEach(function (h) {
           io.observe(h);
         });
+
+        /* v225fz12d: temporarily un-stick the H2s while we scroll.
+           Background: every other approach we tried (default hash nav,
+           scrollIntoView, scrollTo by offsetTop) ran into the same
+           wall — once any H2 was sticky-pinned at top:0, the browser
+           computed the target's rendered position as `top: 0`, and
+           either skipped the scroll outright or scrolled by a tiny
+           delta because it thought the target was already at the top.
+           Even offsetTop didn't help — the browser's scroll heuristics
+           use the rendered position, not the natural-flow one.
+
+           Fix: add a class on <body> that flips
+           `.manual-content > h2[id]` to `position: static !important`
+           via CSS. With sticky disabled, the browser's native
+           scrollIntoView finds each H2 at its true natural-flow
+           position, scrolls there correctly, and the resulting
+           viewport state has the target H2 at top:0. We re-enable
+           sticky two RAFs later — long enough that the scroll has
+           painted, short enough that no visible flash happens. */
+        links.forEach(function (link) {
+          link.addEventListener("click", function (e) {
+            var href = link.getAttribute("href") || "";
+            if (href.charAt(0) !== "#" || href.length < 2) return;
+            var target = document.getElementById(href.slice(1));
+            if (!target) return;
+            e.preventDefault();
+            document.body.classList.add("toc-jumping");
+            target.scrollIntoView({ behavior: "auto", block: "start" });
+            // Two RAFs: first one paints the un-sticky scroll, second
+            // restores stickiness now that the target is at top:0.
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () {
+                document.body.classList.remove("toc-jumping");
+              });
+            });
+            // Update history so back/forward + deep-links still work.
+            try {
+              if (history && history.pushState) {
+                history.pushState(null, "", href);
+              } else {
+                location.hash = href;
+              }
+            } catch (_) {
+              location.hash = href;
+            }
+            setActive(target.id);
+          });
+        });
       });
     </script>
   </head>
@@ -1245,7 +1591,11 @@
           <li><a href="#player">The player</a></li>
           <li><a href="#reading">Reading view</a></li>
           <li><a href="#book-view">Book view</a></li>
-          <li><a href="#library">The library</a></li>
+          <li><a href="#library">The library</a>
+            <ul>
+              <li><a href="#clear-marks">Clear revision marks</a></li>
+            </ul>
+          </li>
           <li><a href="#settings">Settings &amp; modes</a></li>
           <li><a href="#phone">Listening on your phone</a></li>
           <li><a href="#tutorials">Tutorials</a>
@@ -1591,7 +1941,39 @@
             through a cleanup pipeline: page numbers stripped, repeated
             headers/footers detected and removed across pages, mid-
             sentence page breaks bridged so the splitter doesn't cut
-            "the cat sat on the | mat" into two sentences. 25 MB cap.</td>
+            "the cat sat on the | mat" into two sentences. 25 MB cap.
+            <br><br>
+            <strong>EPUBs (v225fz10–fz14)</strong> additionally surface
+            three kinds of image metadata: the <em>cover</em> (lands on
+            the library card as a swatch + Libby-style tint), any
+            <em>chapter-leading images</em> (banner above sentence 1 in
+            the reading view), and any <em>inline figures</em> walked out
+            of the EPUB body (RGL covers, Ex Libris plates, mid-chapter
+            illustrations). Decorative ornaments render edge-to-edge
+            without a caption; informational figures get a
+            <code>&lt;figcaption&gt;</code> from their alt text.
+            <br><br>
+            <strong>"Detected in this import" preview (v225fz14)</strong>
+            — as soon as the extractor returns, a captioned thumbnail
+            strip appears above the textarea, marked
+            <code>Cover</code> / <code>Banner</code> / <code>Figure</code>
+            / <code>Inline</code>. You can eyeball what will land on the
+            saved clip <em>before</em> tapping Generate; clearing the
+            textarea also clears the preview. See §10's
+            <em>"Upload a file"</em> walkthrough for a step-by-step demo.
+            <br><br>
+            <strong>📖 Read as ebook (v225g1):</strong> skip Generate
+            entirely. Tap <strong>📖 Open as ebook</strong> next to
+            Generate — or the <strong>📖 Read as ebook</strong> tile on
+            the empty-state, or the action button in the "Detected in
+            this import" card — and the text + detected art lands as a
+            library clip with a <code>📖 Ebook</code> badge instead of
+            a duration. You drop straight into book view (drop caps,
+            page numbers, chapter TOC, highlights, bookmarks — all the
+            M2–M7 reading features) without spending any synth. Tap
+            Generate later on the same clip to add audio without
+            re-uploading; the clip's text, cover, chapters, and
+            bookmarks are all preserved.</td>
         </tr>
         <tr>
           <td><strong>Paste URL</strong></td>
@@ -1898,12 +2280,30 @@
           <a href="https://www.gutenberg.org/ebooks/74.epub.images" target="_blank" rel="noopener">
             <code>gutenberg.org/ebooks/74.epub.images</code></a>
           (Tom Sawyer). EPUB extraction path — chapter headings,
-          inline images.
+          inline images. <em>v225fz10–fz12:</em> the
+          <code>.epub.images</code> variant carries a cover and
+          per-chapter illustrations, so this is the file to use to
+          see the auto-cover swatch land on the library card and
+          the chapter banner appear above sentence 1 in the
+          reading view.
         </li>
         <li>
           For a longer / illustrated stress test, swap
           <code>74</code> for <code>76</code> (Huckleberry Finn —
-          43 chapters, 113 images).
+          43 chapters, 113 images; every chapter has its own
+          leading illustration so the chapter-image router gets
+          a real workout). Try
+          <a href="https://www.gutenberg.org/ebooks/76.epub.images" target="_blank" rel="noopener">
+            <code>gutenberg.org/ebooks/76.epub.images</code></a>.
+        </li>
+        <li>
+          <strong>Alice in Wonderland</strong>:
+          <a href="https://www.gutenberg.org/ebooks/11.epub.images" target="_blank" rel="noopener">
+            <code>gutenberg.org/ebooks/11.epub.images</code></a>
+          — Tenniel illustrations on most chapter pages. Good
+          smoke test for the figure-vs-decorative classifier; the
+          plates render with figcaptions, the chapter ornaments
+          render as banners.
         </li>
       </ul>
 
@@ -2192,10 +2592,9 @@
 
       <h3>🔖 Bookmark</h3>
       <p>
-        Drops a bookmark at the current audio position. The chip's
-        label updates to show the count
-        (<code>🔖 Bookmark · 3</code>), and a list appears under the
-        player:
+        Drops a bookmark at the current audio position, then opens a
+        centered editor card with a note field so you can write what
+        you wanted to remember while the moment is fresh.
       </p>
       <figure>
         <div class="manual-demo">
@@ -2207,14 +2606,43 @@
             </div>
           </div>
         </div>
-        <figcaption>Bookmark row: time (tap to jump), note (tap to edit), × to delete</figcaption>
+        <figcaption>Bookmark row in the drawer: time (tap to jump), note (tap to open editor), × to delete</figcaption>
       </figure>
       <ul>
         <li>Tap the <strong>time</strong> on the left to jump there and play.</li>
-        <li>Tap the <strong>note</strong> field, type a reminder, press <span class="kbd">Enter</span> or click away to save.</li>
+        <li>Tap the <strong>note</strong> button to reopen the editor for that bookmark.</li>
         <li>Bookmarks live with the clip in the library (export/import too).</li>
         <li>Auto-regen on save-text preserves bookmarks even if the audio is rebuilt.</li>
       </ul>
+
+      <h4>Sentence-selection aware</h4>
+      <p>
+        If you've selected a sentence (tap it in the reading view —
+        you'll see a dashed accent ring), tapping 🔖 bookmarks
+        <em>that sentence's</em> start time, not the current playhead.
+        Same "select first, then act" flow as ✎ Edit and the
+        annotation chips. When a sentence is selected, all three
+        surfaces (✎, 🔖, and the bottom tag row) light up in accent so
+        you can see at a glance which actions will use the selection.
+        Tap 🔖 with no selection and it falls back to the playhead.
+      </p>
+
+      <h4>The editor</h4>
+      <p>
+        Centered floating card with a 3-row textarea, a live
+        character counter ("47 / 200"), and Cancel / Done buttons.
+        The counter turns amber at 80 % (160 chars) and red at 95 %
+        (190 chars) so you can wrap up a thought before the hard cap
+        cuts you off.
+      </p>
+      <p>
+        <strong>Cancel reverts a freshly-added bookmark.</strong> Tap
+        🔖 by accident or change your mind? Hit Cancel, ✕, Esc, or
+        tap the backdrop — the bookmark is removed. Done keeps it
+        (with or without a typed note — a timestamp-only marker is
+        valid). Editing an <em>existing</em> bookmark from the drawer
+        is non-destructive: Cancel just closes without changes.
+      </p>
 
       <h3>A↔B loop</h3>
       <p>
@@ -2813,6 +3241,132 @@
         triage every "fix this" note.
       </p>
 
+      <h3 id="clear-marks">Clear revision marks</h3>
+      <p>
+        Workflow-completion action for authors: once you've applied
+        the edits you flagged during a listen-through to your source
+        manuscript (Scrivener / GitHub / Obsidian / a local file),
+        you want a clean slate on the clip before the next pass.
+        Two entry points:
+      </p>
+      <ul>
+        <li>
+          Open <strong>✎ Edit</strong> on the library card → bottom
+          of the dialog has a "Clear revision marks" section with a
+          <strong>Clear marks…</strong> button.
+        </li>
+        <li>
+          Command palette (<span class="kbd">⌘K</span> /
+          <span class="kbd">Ctrl+K</span>) → <em>🧹 Clear revision
+          marks on this clip</em>. Only visible when a clip is
+          loaded.
+        </li>
+      </ul>
+      <p>
+        Either path opens a centered confirmation modal with:
+      </p>
+      <ul>
+        <li>
+          <strong>Three category checkboxes</strong> showing live
+          counts — Bookmarks (N), Annotations (N), Free-form notes
+          (chars). All on by default; uncheck any to preserve that
+          category. Empty categories are disabled + struck through
+          so you can see they're already empty.
+        </li>
+        <li>
+          <strong>📤 Export to Markdown first</strong> checkbox,
+          defaulted ON. The .md is your plan-of-action artifact for
+          source-manuscript edits; this is the safety net for "did
+          I already apply these?" Preference is remembered across
+          sessions.
+        </li>
+        <li>
+          <strong>Clear</strong> button (red) — disabled when
+          nothing's selected to clear.
+        </li>
+      </ul>
+      <p>
+        <strong>What gets cleared:</strong> bookmarks, annotations
+        (including their voice notes), and the free-form
+        <strong>📝 Notes</strong> field. Cleared annotations sync
+        cross-device via tombstones so they don't come back on the
+        next pull.
+      </p>
+      <p>
+        <strong>What's preserved:</strong> the clip itself, the
+        audio, the sentence text, voice / character / speaker
+        assignments, cover art, voice provenance, and book-view
+        highlights (those are reading marks, not revision marks).
+      </p>
+      <div class="tip">
+        <strong>Cancel-safe.</strong> If the export step fails for
+        any reason, the clear doesn't run — the safety net failing
+        won't cost you data. If you want a different cap on
+        per-category clearing (e.g. clear annotations but keep
+        notes), just uncheck the categories you want to preserve.
+      </div>
+
+      <h4>Restore from backup</h4>
+      <p>
+        The exported <code>.md</code> isn't just a human-readable
+        artifact — it's also a valid restore source. Every export
+        embeds a hidden backup payload inside an HTML comment at
+        the end of the file (invisible to any markdown reader,
+        base64-encoded so it can't be broken by stray characters in
+        your content). Two entry points to apply it:
+      </p>
+      <ul>
+        <li>
+          <strong>✎ Edit</strong> on the library card → next to
+          <em>Clear marks…</em> there's a
+          <strong>Restore from backup…</strong> button. Pick the
+          <code>.md</code>, the app parses it, and a confirm modal
+          opens.
+        </li>
+        <li>
+          Command palette (<span class="kbd">⌘K</span> /
+          <span class="kbd">Ctrl+K</span>) →
+          <em>📥 Restore revision marks from backup…</em>
+        </li>
+      </ul>
+      <p>
+        The confirm modal shows what was found (bookmarks /
+        annotations / notes counts) plus a merge-mode radio:
+      </p>
+      <ul>
+        <li>
+          <strong>Replace</strong> (default) — overwrite the current
+          clip's marks with the backup's. Right answer right after
+          you cleared by mistake.
+        </li>
+        <li>
+          <strong>Add</strong> — merge the backup into existing
+          marks, deduping by id so the same backup applied twice
+          doesn't double up. Right answer if you've done new work
+          since the export and want to revive an older state without
+          losing it.
+        </li>
+      </ul>
+      <p>
+        Cross-clip restore is supported — the modal shows a yellow
+        warning if the backup was made from a different clip than
+        the one you're restoring into ("This backup was made from
+        <em>Chapter 2</em>. Restoring into <em>Chapter 3</em> will
+        copy the marks across."), but it's still a valid action.
+        Cleanly copies marks between clips.
+      </p>
+      <div class="tip">
+        <strong>What about the file's other content?</strong> The
+        human-readable prose at the top of the export is ignored on
+        restore — only the encoded payload at the very bottom
+        matters. You can edit / annotate / share the prose part
+        freely (e.g. paste edit-tracking notes from your editor
+        into the body of the .md) and the file will still restore
+        cleanly, as long as the
+        <code>&lt;!--NARRATIVE_BACKUP v1 …--&gt;</code> block at
+        the end is intact.
+      </div>
+
       <h3>Drag to reorder</h3>
       <p>
         Tap and drag the <strong>⋮⋮</strong> handle on any card.
@@ -3264,49 +3818,61 @@ She set both hands flat on the table.</pre>
 
       <h4>Top edge</h4>
       <p>
-        Left edge: <strong>☰</strong> menu. Centre: the title of the
-        clip you're currently listening to. Right edge: four quick-
-        access icons that mirror Spotify's "always-on" rail —
-        Library, Edit text, Book view, Bookmark. Anything that
-        isn't here lives in the ☰ menu.
+        Left edge: <strong>☰</strong> menu. Right edge: a rail of
+        always-on icons that handle navigation, importing, help, and
+        in-clip actions. The currently-loaded clip's title sits in
+        the pull-up drawer's <em>Listening</em> slot (chevron up) —
+        moving it out of the header freed the right edge for one-tap
+        access to Help and Import.
       </p>
       <table>
         <tr><th>Control</th><th>What it does</th></tr>
         <tr>
           <td><strong>☰</strong> (top-left)</td>
           <td>
-            Menu sheet — Import · New clip · Download MP3 · Export
-            notes (.md) · Settings · Help. All "what document am I
-            on" actions that don't already have a top-bar icon.
+            Menu sheet — New clip · Download MP3 · Export notes (.md)
+            · Settings. "What document am I on" actions that don't
+            need their own header slot. Import and Help & manual
+            moved out into the header rail; they used to be here.
           </td>
         </tr>
         <tr>
-          <td><strong>Clip title</strong> (centred between ☰ and the right cluster)</td>
+          <td><strong>?</strong> (right cluster, leftmost)</td>
           <td>
-            The title of the clip that's currently loaded. Updates
-            when you load a new clip or rename one in Edit. Truncates
-            with an ellipsis on narrow phones — the start of the
-            title stays visible so you can recognise it at a glance.
+            Help &amp; manual — opens this page in an in-app dialog.
+            First time you tap it, it jumps you straight to §10
+            Tutorials; subsequent opens land on §1 (or wherever you
+            last scrolled).
           </td>
         </tr>
         <tr>
-          <td><strong>📚</strong> (right cluster, leftmost)</td>
+          <td><strong>📥</strong> (right cluster)</td>
           <td>
-            Library — opens the Library dialog. Promoted out of the
-            ☰ menu because finding the next clip is the most-
-            frequent navigation in revision work.
+            Import dropdown — Paste URL · Upload file · Browse a
+            GitHub repo · Browse an Obsidian vault · Browse a
+            Scrivener bundle. Always visible; one-tap path to add
+            new content without going through the ☰ menu.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>📚</strong> (right cluster)</td>
+          <td>
+            Library — opens the Library dialog. Finding the next
+            clip is the most-frequent navigation in revision work,
+            so it's a top-level icon.
           </td>
         </tr>
         <tr>
           <td><strong>✎</strong> (right cluster)</td>
           <td>
-            Smart edit. With a sentence selected, opens the inline
-            sentence editor (type the new line, the audio re-
-            synthesises automatically on close). With no selection,
-            shows a quick hint: <em>"Tap a sentence first to edit
-            it."</em> Tap ✎ again while editing to commit-or-cancel:
-            if you changed the text, the new version saves and re-
-            synthesises; if you didn't, the editor closes cleanly.
+            Smart edit. With a sentence selected (dashed accent
+            ring), opens the inline sentence editor — type the new
+            line, the audio re-synthesises automatically on close.
+            With no selection, shows a quick hint: <em>"Tap a
+            sentence first to edit it."</em> Tap ✎ again while
+            editing to commit-or-cancel: if you changed the text,
+            the new version saves and re-synthesises; if you didn't,
+            the editor closes cleanly.
           </td>
         </tr>
         <tr>
@@ -3320,12 +3886,24 @@ She set both hands flat on the table.</pre>
         <tr>
           <td><strong>🔖</strong> (top-right, rightmost)</td>
           <td>
-            Bookmark current time, then opens a centred editor card
-            with a note field. Tap Done to save, Cancel to discard
-            (the bookmark itself saves either way).
+            Bookmark at the current time — or, if a sentence is
+            selected, at <em>that sentence's</em> start time. Opens
+            a centered editor card with a 200-char note field and a
+            live char counter. Done saves; Cancel / Esc / ✕ /
+            backdrop reverts the just-added bookmark so an
+            accidental tap doesn't litter the list.
           </td>
         </tr>
       </table>
+      <div class="tip">
+        <strong>Selection lights up the trio.</strong> Tap a sentence
+        in the reading view and the three armed surfaces — ✎ Edit
+        (top-left of cluster), 🔖 Bookmark (top-right), and the tag
+        row (bottom) — all wake up with the same accent fill. That's
+        your at-a-glance answer to "which of these will act on this
+        selection." Tap the sentence again to deselect; all three go
+        neutral.
+      </div>
 
       <h4>Bottom edges</h4>
       <table>
@@ -3954,7 +4532,7 @@ She set both hands flat on the table.</pre>
         <div class="wt-head">
           <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
           <span class="wt-head-title">Upload a file</span>
-          <span class="wt-head-step">Step 1 of 5</span>
+          <span class="wt-head-step">Step 1 of 9</span>
           <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
         </div>
         <div class="wt-body">
@@ -3968,14 +4546,52 @@ She set both hands flat on the table.</pre>
                 <div class="wt-mock-imp-item">📓 Obsidian vault</div>
               </div>
               <div class="wt-mock-imp-file-picker" data-wt="file-picker">
-                <span class="wt-mock-imp-file-row selected">📄 chapter_01_draft.pdf</span>
+                <span class="wt-mock-imp-file-row selected">📕 tom_sawyer.epub</span>
                 <span class="wt-mock-imp-file-row">📄 chapter_02_draft.pdf</span>
                 <span class="wt-mock-imp-file-row">📄 outline.docx</span>
               </div>
               <div class="wt-mock-imp-extracting" data-wt="extracting">
-                Extracting text · stripping running headers · cleaning page breaks…
+                Extracting text · detecting cover + chapter art · cleaning page breaks…
               </div>
               <div class="wt-mock-imp-result" data-wt="result"></div>
+              <!-- v225fz14.docs (#689): import preview strip — captioned
+                   thumbnails appear above the textarea as soon as the
+                   extractor returns, so you can verify cover / banner /
+                   figure picks before tapping Generate. -->
+              <div class="wt-mock-imp-preview" data-wt="preview">
+                <div class="wt-mock-imp-preview-head">
+                  <strong>Detected in this import</strong>
+                  <span>Will land on the saved clip</span>
+                </div>
+                <div class="wt-mock-imp-preview-thumbs">
+                  <div class="wt-mock-imp-thumb">
+                    <div class="wt-mock-imp-thumb-img cover" aria-hidden="true">📕</div>
+                    <span class="wt-mock-imp-thumb-kind">Cover</span>
+                  </div>
+                  <div class="wt-mock-imp-thumb">
+                    <div class="wt-mock-imp-thumb-img banner" aria-hidden="true">❦</div>
+                    <span class="wt-mock-imp-thumb-kind">Banner</span>
+                  </div>
+                  <div class="wt-mock-imp-thumb">
+                    <div class="wt-mock-imp-thumb-img figure" aria-hidden="true">🖼</div>
+                    <span class="wt-mock-imp-thumb-kind">Figure</span>
+                  </div>
+                </div>
+              </div>
+              <!-- v225fz12.docs (#686): auto-detected cover swatch lands
+                   on the library card after save, and the chapter image
+                   surfaces above sentence 1 in the reading view. -->
+              <div class="wt-mock-imp-cover" data-wt="cover">
+                <div class="wt-mock-imp-cover-swatch" aria-hidden="true">📕</div>
+                <div class="wt-mock-imp-cover-meta">
+                  <strong>Tom Sawyer — Chapter 1</strong>
+                  <span>Auto-cover from EPUB · 104 KB JPEG</span>
+                </div>
+              </div>
+              <div class="wt-mock-imp-chapter-banner" data-wt="chapter-banner">
+                <div class="wt-mock-imp-banner-label">▼ Chapter banner above sentence 1</div>
+                <div class="wt-mock-imp-banner-art" aria-hidden="true">⚘ ❦ ⚘</div>
+              </div>
               <button class="wt-mock-imp-generate">▶ Generate audio</button>
             </div>
             <div class="wt-cursor" data-wt="cursor"></div>

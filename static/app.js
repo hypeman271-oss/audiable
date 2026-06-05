@@ -255,9 +255,14 @@ function _setBackgroundArt(clip) {
     URL.revokeObjectURL(_bgArtUrl);
     _bgArtUrl = null;
   }
-  if (clip && clip.cover && clip.cover.blob) {
-    _bgArtUrl = URL.createObjectURL(clip.cover.blob);
-    bgArt.style.backgroundImage = `url("${_bgArtUrl}")`;
+  // v225g12 (#700): use _coverImgSrc so the page-background tint also
+  // works for ebook clips whose cover is a data URL string.
+  const _bgCover = clip && typeof _coverImgSrc === "function"
+    ? _coverImgSrc(clip.cover)
+    : null;
+  if (_bgCover) {
+    bgArt.style.backgroundImage = `url("${_bgCover.url}")`;
+    if (_bgCover.revoke) _bgArtUrl = _bgCover.url;
     bgArt.classList.add("active");
   } else {
     bgArt.classList.remove("active");
@@ -388,6 +393,437 @@ let _pendingImages = [];
 // browser pick) returned a gitRef. Persisted onto the saved clip so
 // the update-checker can compare SHA against the live tree later.
 let _pendingGitRef = null;
+// v225fz11.cover (#677): /api/extract returns a `cover` object when
+// image_detector.detect_images() finds one in the source file (EPUB
+// cover, etc.). We stash it here at upload time and pull it into
+// clip.cover in generate()'s fresh-clip save branch — only when the
+// user hasn't already uploaded their own. Re-narrate paths preserve
+// existing cover, so this never fires for an in-place regen. Cleared
+// after save so it doesn't leak into the next fresh clip the user
+// types. Shape: {src: "data:image/jpeg;base64,...", mime, size_bytes,
+// source}. We only persist `src` onto the clip — the other fields
+// are diagnostic.
+let _pendingDetectedCover = null;
+// v225fz12.chapter-images (#678): /api/extract also returns
+// `chapter_images` — per-chapter leading images (banner above the
+// first paragraph, or an inline figure right after the chapter
+// heading). Shape: [{src, alt, mime, kind: "decorative"|"figure",
+// reason, chapter_heading, size_bytes}, ...]. When a clip is saved
+// (single or chapter-queue), we match by chapter title and merge
+// the matched image into clip.images as a synthetic entry at
+// sentence_index 0, so the existing reading-view image renderer
+// (flushImagesAt) picks it up and surfaces it above sentence 1 —
+// which is where the chapter heading lives after splitting.
+let _pendingChapterImages = [];
+
+// v225fz12.chapter-images: find the chapter_image whose
+// chapter_heading best matches a given clip title. Title-substring
+// match (case-insensitive, both directions) is highest-precision;
+// ordinal fallback (Nth import-clip → Nth image) handles cases
+// where the heading text was reformatted by extract.py and no
+// substring matches. Returns null when nothing usable matched.
+function _chapterImageForTitle(title, ordinal) {
+  if (!_pendingChapterImages || !_pendingChapterImages.length) return null;
+  const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const target = norm(title);
+  if (target) {
+    for (const img of _pendingChapterImages) {
+      const heading = norm(img.chapter_heading);
+      if (!heading) continue;
+      if (heading.includes(target) || target.includes(heading)) return img;
+    }
+  }
+  // Ordinal fallback. Clamp into range so the last chapter still
+  // gets an image if the user added a header chapter mid-import.
+  if (Number.isFinite(ordinal) && ordinal >= 0) {
+    return _pendingChapterImages[Math.min(ordinal, _pendingChapterImages.length - 1)] || null;
+  }
+  return null;
+}
+
+// v225fz12.chapter-images: produce an images-array entry for
+// clip.images from a chapter_image dict. flushImagesAt expects
+// {sentence_index, src, alt}; we extend with {kind, source} so
+// the renderer can apply the right CSS class + figure wrapping.
+function _chapterImageToImagesEntry(chimg) {
+  if (!chimg || !chimg.src) return null;
+  return {
+    sentence_index: 0,
+    src: chimg.src,
+    alt: chimg.alt || "",
+    kind: chimg.kind || "figure",
+    source: "chapter-image",
+  };
+}
+
+// v225fz14 (#688): paint the import-preview thumbnail strip from the
+// current pending-image state. Called from upload / URL / picker
+// handlers after they populate _pendingDetectedCover / _pendingImages
+// / _pendingChapterImages, and from clearForNewClip when the pending
+// state is reset. The strip is hidden when no images are pending so
+// it doesn't clutter the empty-state.
+function _paintImportPreview() {
+  const panel = document.getElementById("import-preview");
+  const thumbs = document.getElementById("import-preview-thumbs");
+  if (!panel || !thumbs) return;
+  // Collect entries: [{src, label, kind}] in display order:
+  //   cover → chapter_images → inline images
+  const entries = [];
+  if (_pendingDetectedCover && _pendingDetectedCover.src) {
+    entries.push({
+      src: _pendingDetectedCover.src,
+      label: "Auto-detected cover",
+      kind: "Cover",
+    });
+  }
+  if (Array.isArray(_pendingChapterImages)) {
+    for (const ci of _pendingChapterImages) {
+      if (!ci || !ci.src) continue;
+      entries.push({
+        src: ci.src,
+        label: ci.chapter_heading || ci.alt || "Chapter art",
+        kind: ci.kind === "decorative" ? "Banner" : "Figure",
+      });
+    }
+  }
+  if (Array.isArray(_pendingImages)) {
+    for (const img of _pendingImages) {
+      if (!img || !img.src) continue;
+      entries.push({
+        src: img.src,
+        label: img.alt || "Inline image",
+        kind: "Inline",
+      });
+    }
+  }
+  if (!entries.length) {
+    panel.hidden = true;
+    thumbs.innerHTML = "";
+    return;
+  }
+  thumbs.innerHTML = "";
+  for (const e of entries) {
+    const t = document.createElement("div");
+    t.className = "import-preview-thumb";
+    const img = document.createElement("img");
+    img.src = e.src;
+    img.alt = e.label;
+    img.loading = "lazy";
+    img.decoding = "async";
+    // If the image fails to load (broken data URL, bad bytes), drop
+    // the whole thumbnail so the strip doesn't show a broken icon.
+    img.addEventListener("error", () => t.remove(), { once: true });
+    t.appendChild(img);
+    const kindEl = document.createElement("span");
+    kindEl.className = "import-preview-thumb-kind";
+    kindEl.textContent = e.kind;
+    t.appendChild(kindEl);
+    const labelEl = document.createElement("span");
+    labelEl.className = "import-preview-thumb-label";
+    labelEl.textContent = e.label;
+    t.appendChild(labelEl);
+    thumbs.appendChild(t);
+  }
+  panel.hidden = false;
+}
+window._paintImportPreview = _paintImportPreview;
+
+// v225g12 (#700): cover format resolver. Returns { url, revoke } or
+// null. Used by every site that needs to render clip.cover as an
+// image: the library card swatch, the background art, the book view
+// cover slot, the book view print path.
+//
+// clip.cover can arrive in three shapes:
+//   - { blob: Blob, color?: string } — canonical (custom uploads,
+//     v125+ Edit dialog flow)
+//   - "data:image/...;base64,..." or "https://..." — string URL,
+//     produced by _openAsEbook + the auto-detected-cover branch of
+//     generate(), which both stash _pendingDetectedCover.src directly
+//   - { src: "data:..." } — defensive fallback for hand-rolled shapes
+//
+// User reported: opened Bicycle Ghost EPUB as ebook, the cover slot
+// showed the seed-letter gradient (giant "R") instead of the real
+// cyclist cover, AND the inline copy had been deduped (v225g7), so
+// the cover was effectively invisible everywhere except the
+// transient import-preview thumbnails. Resolver makes the three
+// shapes interchangeable so renderers don't have to care.
+function _coverImgSrc(cover) {
+  if (!cover) return null;
+  if (cover.blob && typeof URL !== "undefined" && URL.createObjectURL) {
+    try {
+      return { url: URL.createObjectURL(cover.blob), revoke: true };
+    } catch {
+      return null;
+    }
+  }
+  if (typeof cover === "string" && cover.length > 0) {
+    return { url: cover, revoke: false };
+  }
+  if (cover.src && typeof cover.src === "string" && cover.src.length > 0) {
+    return { url: cover.src, revoke: false };
+  }
+  return null;
+}
+window._coverImgSrc = _coverImgSrc;
+
+// ──────────────────────────────────────────────────────────────────────
+// v225g1 (#690): Ebook mode — open the current text + detected images
+// as a no-audio library clip and drop straight into book view.
+//
+// Why a separate path from generate()? generate() couples four jobs:
+// (1) send text to the synth server, (2) accumulate streaming sentence
+// WAVs, (3) combine into MP3, (4) save the clip. _openAsEbook only
+// does step 4, and the resulting clip carries `kind: "ebook"` so the
+// library card renders 📖 Ebook instead of a duration and loadClip
+// skips the audio setup. The user can still tap Generate later on the
+// same card to add audio (generate() naturally overwrites by clip id).
+//
+// Entry points (all three route here):
+//   - #open-as-ebook button next to Generate
+//   - #import-preview-ebook chip in the "Detected in this import" head
+//   - data-empty-action="ebook" tile on the empty-state
+// ──────────────────────────────────────────────────────────────────────
+
+// When the empty-state ebook tile triggers an upload, this flag tells
+// the post-extract path to auto-route into _openAsEbook instead of
+// just leaving the text in the textarea waiting for a Generate tap.
+let _pendingEbookMode = false;
+
+// v225g3 (#692): track the loaded clip's kind so the phone Generate
+// audio bar can hide on ebook clips. Set in _openAsEbook + loadClip;
+// cleared on clearForNewClip. The bar's _syncGenerateBar observer
+// reads this to decide visibility — its "has text" check would
+// otherwise always show the bar on an ebook, which is the opposite
+// of what the user just asked for.
+let _currentClipKind = null;
+window._currentClipKind = null;
+function _setCurrentClipKind(kind) {
+  _currentClipKind = kind || null;
+  window._currentClipKind = _currentClipKind;
+  // Stamp body so CSS can also gate things off this attribute. Phone
+  // top-bar Book-view button can use it to stay visible on ebooks
+  // even when no audio is loaded, for example.
+  if (kind) document.body.dataset.clipKind = kind;
+  else delete document.body.dataset.clipKind;
+  // Nudge the phone Generate bar's sync observer if it's wired up.
+  if (typeof window._syncPhoneGenerateBar === "function") {
+    try { window._syncPhoneGenerateBar(); } catch {}
+  }
+}
+window._setCurrentClipKind = _setCurrentClipKind;
+
+// v225v3.4 (#738): snapshot the pre-open state so closing the book
+// view can restore the user to where they were (import preview with
+// detected thumbnails + Generate/Ebook/Queue bar + pending images).
+// Only snapshot when entering from a NO-CLIP-LOADED state — if a clip
+// was already loaded, normal exit-to-reading-view is what the user
+// expects. Snapshot is consumed on exit; nulled out by loadClip too
+// so navigating to a different clip mid-ebook doesn't trigger a
+// stale restore.
+let _ebookPreviewSnapshot = null;
+window._ebookPreviewSnapshot = null;
+
+async function _openAsEbook() {
+  _dlog("ebook", "_openAsEbook entry", {
+    textLen: (textEl.value || "").length,
+    hasPendingCover: !!(_pendingDetectedCover && _pendingDetectedCover.src),
+    pendingChapterImagesCount: Array.isArray(_pendingChapterImages) ? _pendingChapterImages.length : 0,
+    pendingImagesCount: Array.isArray(_pendingImages) ? _pendingImages.length : 0,
+    currentClipId: _currentClipId,
+    currentClipKind: _currentClipKind,
+  });
+
+  // v225v3.4 (#738): pre-open snapshot for restore-on-close. Only
+  // snapshot the import-preview case (no clip currently loaded) —
+  // otherwise normal exit-to-reading-view is correct.
+  if (!_currentClipId) {
+    _ebookPreviewSnapshot = {
+      pendingCover: _pendingDetectedCover
+        ? JSON.parse(JSON.stringify(_pendingDetectedCover))
+        : null,
+      pendingImages: Array.isArray(_pendingImages)
+        ? _pendingImages.slice()
+        : null,
+      pendingChapterImages: Array.isArray(_pendingChapterImages)
+        ? _pendingChapterImages.slice()
+        : null,
+      pendingChapterTitle: _pendingChapterTitle,
+      pendingGitRef: _pendingGitRef,
+      textareaValue: textEl ? textEl.value : "",
+    };
+    window._ebookPreviewSnapshot = _ebookPreviewSnapshot;
+    _dlog("ebook", "snapshot taken", {
+      hasCover: !!_ebookPreviewSnapshot.pendingCover,
+      imageCount: _ebookPreviewSnapshot.pendingImages
+        ? _ebookPreviewSnapshot.pendingImages.length : 0,
+    });
+  }
+  const text = textEl.value.trim();
+  if (!text) {
+    _dlog("ebook", "_openAsEbook bail: empty text");
+    setStatus("Type, paste, or import some text first.", true);
+    if (textEl && typeof textEl.focus === "function") textEl.focus();
+    return;
+  }
+  // Same credential guard generate() uses — if someone pasted an API
+  // key by mistake, don't snapshot it into a library clip.
+  if (typeof _looksLikeCredential === "function" && _looksLikeCredential(text)) {
+    if (
+      typeof _confirmCredentialSynth === "function" &&
+      !_confirmCredentialSynth("text")
+    ) {
+      setStatus("Cancelled — that text looked like a credential.", true);
+      return;
+    }
+  }
+
+  // v225g8 (#697): dedup. User reported their library filling up
+  // with copies of the same EPUB — clicking "Read as ebook" every
+  // time they re-imported (or re-tapped trying to make navigation
+  // work) creates a fresh clip with Date.now() id. Before creating
+  // a new clip, scan the library for an existing ebook clip whose
+  // text matches. If found, load THAT instead of saving a new one.
+  // Match key is (kind === "ebook") + exact text — title can drift
+  // (makeTitle picks first sentence + EPUB titles vary), but full
+  // text is the stable identity for "same book."
+  const _proposedTitle = _pendingChapterTitle || makeTitle(text);
+  try {
+    const existingClips = await listClips();
+    const dupe = existingClips.find(
+      (c) => c && c.kind === "ebook" && (c.text || "").trim() === text,
+    );
+    if (dupe) {
+      _dlog("ebook", "_openAsEbook dedupe hit — loading existing clip", {
+        existingId: dupe.id,
+        title: dupe.title,
+        textLen: text.length,
+      });
+      _currentClipId = dupe.id;
+      if (typeof _setCurrentClipKind === "function") _setCurrentClipKind("ebook");
+      try {
+        await loadClip(dupe.id, { autoPlay: false });
+      } catch (e) {
+        console.error("[ebook] loadClip (dedup) failed:", e);
+      }
+      if (typeof enterBookView === "function") {
+        try { await enterBookView(); } catch (e) { console.error("[ebook] enterBookView (dedup):", e); }
+      }
+      setStatus(`📖 Already in your library — opened existing ebook (${dupe.title || "untitled"}).`);
+      return;
+    }
+  } catch (e) {
+    _dlog("ebook", "_openAsEbook dedupe scan failed — falling through to new save", {
+      error: String(e),
+    });
+    // Non-fatal; proceed to create the new clip below.
+  }
+
+  // Build the clip dict the same way generate() does, but with no
+  // blob / no offsets / no duration. Pull cover + chapter art from
+  // the pending state (same mirror of generate's image-merge block).
+  const ebookId = Date.now();
+  const titleForMatch = _proposedTitle;
+  const ord =
+    typeof _chapterCurrentIndex === "number" && _chapterCurrentIndex >= 1
+      ? _chapterCurrentIndex - 1
+      : 0;
+  const baseImages = Array.isArray(_pendingImages) ? _pendingImages.slice() : [];
+  let chimg = null;
+  try { chimg = _chapterImageForTitle(titleForMatch, ord); } catch {}
+  let chEntry = null;
+  try { chEntry = _chapterImageToImagesEntry(chimg); } catch {}
+  if (
+    chEntry &&
+    !baseImages.some((i) => i && i.source === "chapter-image" && i.src === chEntry.src)
+  ) {
+    baseImages.unshift(chEntry);
+  }
+  const cover =
+    (_pendingDetectedCover && _pendingDetectedCover.src) || undefined;
+  // v225g7 (#696): de-dupe the cover. When the EPUB's first inline
+  // <img> in the spine IS the cover (very common — RGL editions, KDP
+  // wraps, most self-pub), the image_detector reports it as the cover
+  // AND the inline-image walker captures it at sentence 0. Result:
+  // it renders twice — once on the library card swatch (correct),
+  // once at the start of the book view (huge, dominating the first
+  // spread). User saw the Bicycle Ghost's cover rendered full-page
+  // inline + a giant drop cap on the facing page and asked "I can't
+  // read the book on desktop." Drop any inline image whose src
+  // matches the cover's src so book view starts on actual content.
+  const dedupedImages = cover
+    ? baseImages.filter((img) => !img || img.src !== cover)
+    : baseImages;
+  const ebookClip = {
+    id: ebookId,
+    kind: "ebook",
+    title: _pendingChapterTitle || makeTitle(text),
+    note: "",
+    text,
+    // No voice / rate / speaker — those are audio-only. They land
+    // empty on save so a later Generate tap can fill them in.
+    voiceId: null,
+    voiceName: "",
+    rate: null,
+    volume: null,
+    speakerId: null,
+    sentenceOffsetsSec: [],
+    // blob intentionally absent — loadClip's audio-setup branch
+    // detects kind === "ebook" and skips the URL.createObjectURL
+    // call that would throw on undefined.
+    durationSec: 0,
+    progressSec: 0,
+    bookmarks: [],
+    images: dedupedImages,
+    gitRef: _pendingGitRef || null,
+    sentenceAssignments: {},
+    assignmentsDirty: false,
+    notes: "",
+    tags: [],
+    cover,
+    annotations: [],
+    highlights: [],
+    lastSyncedAt: null,
+    createdAt: new Date().toISOString(),
+  };
+  try {
+    await saveClip(ebookClip);
+  } catch (e) {
+    console.error("[ebook] saveClip failed:", e);
+    setStatus("Couldn't save the ebook — see console.", true);
+    return;
+  }
+  // Same as generate's success path: bind the player + textarea state
+  // to the new clip, render the library, then load + open book view.
+  _currentClipId = ebookId;
+  // v225g3 (#692): tell the phone Generate bar's observer that the
+  // current clip is an ebook so it stops painting itself over the
+  // top of the user's reading view.
+  if (typeof _setCurrentClipKind === "function") _setCurrentClipKind("ebook");
+  try { await renderLibrary(); } catch {}
+  try {
+    await loadClip(ebookId, { autoPlay: false });
+  } catch (e) {
+    console.error("[ebook] loadClip failed:", e);
+  }
+  // Drop straight into book view. enterBookView needs _bookViewSource
+  // populated, which loadClip → enterReadingView already did.
+  if (typeof enterBookView === "function") {
+    try { await enterBookView(); } catch (e) { console.error("[ebook] enterBookView:", e); }
+  }
+  setStatus("📖 Opened as ebook — tap Generate later to add audio.");
+}
+window._openAsEbook = _openAsEbook;
+
+// Enable/disable the "📖 Open as ebook" Generate-row button based on
+// whether there's any text to save. Called from updateCounts (which
+// already fires on every textarea input). Same gate generate() uses
+// for its own enable/disable.
+function _updateOpenAsEbookEnabled() {
+  const btn = document.getElementById("open-as-ebook");
+  if (!btn) return;
+  btn.disabled = !(textEl && textEl.value && textEl.value.trim().length > 0);
+}
+window._updateOpenAsEbookEnabled = _updateOpenAsEbookEnabled;
 
 // ---- Interruption-aware auto-resume -------------------------------------
 // When a phone call, Siri, Google Assistant, or system notification
@@ -1506,6 +1942,34 @@ document
     });
   });
 
+// v225fz11.panes (#685): desktop side-panel visibility radios in
+// Settings. Route through the same _setPaneHidden helper as the ×
+// close + reopen pill + palette so all four control surfaces stay
+// in lockstep. Below 1280px the radios still toggle the localStorage
+// flag (so a desktop preference set on a phone-narrow window sticks)
+// but the layout function's wide gate means no visible effect until
+// the user resizes back to ≥1280px.
+document
+  .querySelectorAll('input[name="pane-visibility-library"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      if (typeof window._setPaneHidden === "function") {
+        window._setPaneHidden("library", radio.value === "hide");
+      }
+    });
+  });
+document
+  .querySelectorAll('input[name="pane-visibility-author"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      if (typeof window._setPaneHidden === "function") {
+        window._setPaneHidden("author", radio.value === "hide");
+      }
+    });
+  });
+
 // Skip-interval radios. Same pattern: persist + apply on change; the
 // dialog-open hook below syncs the checked state to localStorage.
 document
@@ -1864,6 +2328,36 @@ function _refreshSettingsNavChips() {
     chipRow.appendChild(chip);
   }
 
+  // v225fz11c: mouse-wheel → horizontal scroll on the chip row. Without
+  // this, desktop users with a vertical-only wheel have no easy way to
+  // reach chips that overflow off the right edge — the row IS
+  // overflow-x: auto but spinning the wheel scrolls the dialog body
+  // instead. We translate deltaY to scrollLeft and preventDefault so
+  // the wheel doesn't bubble to the dialog body. Idempotent via a
+  // dataset guard. Phone touch swipe is unaffected (touchscroll fires
+  // its own pointer events, not wheel).
+  if (!chipRow.dataset.wheelBound) {
+    chipRow.dataset.wheelBound = "1";
+    chipRow.addEventListener(
+      "wheel",
+      (e) => {
+        // Only intervene when the row actually has overflow — otherwise
+        // we'd swallow vertical scroll on viewports where everything
+        // fits.
+        if (chipRow.scrollWidth <= chipRow.clientWidth) return;
+        // If the user is doing a deliberate horizontal scroll (trackpad
+        // two-finger swipe, shift+wheel), let it through — the browser
+        // already maps it to scrollLeft.
+        const dx = Math.abs(e.deltaX);
+        const dy = Math.abs(e.deltaY);
+        if (dx > dy) return;
+        e.preventDefault();
+        chipRow.scrollLeft += e.deltaY;
+      },
+      { passive: false }
+    );
+  }
+
   // Highlight the chip whose section is currently visible. Throttled
   // scroll listener — single observer would be cleaner but our
   // section list is small enough that a scroll handler is fine.
@@ -1999,6 +2493,25 @@ settingsBtn.addEventListener("click", () => {
     .forEach((r) => {
       r.checked = _esHidden ? r.value === "hide" : r.value === "show";
     });
+  // v225fz11.panes (#685): sync pane-visibility radios with the
+  // current localStorage state so the dialog reflects whatever the ×
+  // / pill / palette last set.
+  {
+    const _libHidden =
+      typeof window._paneIsHidden === "function" && window._paneIsHidden("library");
+    const _authHidden =
+      typeof window._paneIsHidden === "function" && window._paneIsHidden("author");
+    document
+      .querySelectorAll('input[name="pane-visibility-library"]')
+      .forEach((r) => {
+        r.checked = _libHidden ? r.value === "hide" : r.value === "show";
+      });
+    document
+      .querySelectorAll('input[name="pane-visibility-author"]')
+      .forEach((r) => {
+        r.checked = _authHidden ? r.value === "hide" : r.value === "show";
+      });
+  }
   // And the skip-interval radios.
   document
     .querySelectorAll('input[name="skip-interval"]')
@@ -2167,12 +2680,52 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
     openManualDialog();
   }
 
+  // v225fx (#666): first time the user opens the manual via the ? icon,
+  // jump straight to the §10 Tutorials section. The manual's full TOC
+  // is dense and the most useful answer to "what does this app do" is
+  // a video-style walkthrough, not §1 Layout. After the first open we
+  // get out of the way: subsequent opens land at the top (or wherever
+  // they last scrolled). Flag is per-device localStorage — a fresh
+  // install gets the redirect again, which is the right default for
+  // a new tester. _routeManualClick gets reused with the anchor
+  // injected via a one-shot wrapper so the original handler stays
+  // anchor-agnostic for other call sites.
+  const MANUAL_FIRST_OPEN_KEY = "narrative.hintSeen.manualFirstOpen";
+  function _routeManualClickWithFirstOpen(e) {
+    let anchor;
+    try {
+      if (!localStorage.getItem(MANUAL_FIRST_OPEN_KEY)) {
+        anchor = "tutorials";
+        localStorage.setItem(MANUAL_FIRST_OPEN_KEY, "1");
+      }
+    } catch (_) {
+      // Storage might be disabled (private mode). Skip the redirect
+      // silently — landing on §1 is a fine fallback.
+    }
+    if (!anchor) {
+      _routeManualClick(e);
+      return;
+    }
+    // Mirror _routeManualClick's modifier-key + button gating before
+    // we override the anchor — otherwise cmd-click would also redirect
+    // and lose the new-tab affordance.
+    if (e.defaultPrevented) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (typeof e.button === "number" && e.button !== 0) return;
+    e.preventDefault();
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      _openPhoneManualViewer(anchor);
+    } else {
+      openManualDialog(anchor);
+    }
+  }
+
   // Wire all three call sites. getElementById for the IDs we have;
   // querySelector for the empty-state link (no id) and the Settings
   // link (no id either — it's the first manual.html href in the
   // settings-body, promoted to top in v220f).
   const headerHelp = document.getElementById("help-btn");
-  if (headerHelp) headerHelp.addEventListener("click", _routeManualClick);
+  if (headerHelp) headerHelp.addEventListener("click", _routeManualClickWithFirstOpen);
 
   const emptyStateLink = document.querySelector(
     ".empty-state-manual-link a[href='/manual.html']"
@@ -2203,6 +2756,53 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
     a.addEventListener("click", _routeManualClick);
   }
 
+  // v225fz11.panes (#685): per-pane hide toggle. Two localStorage
+  // flags suppress the data-multipane-* attribute that drives each
+  // sidebar's visibility at ≥1280px. When a pane is hidden, the
+  // .app width math reverts and a small floating reopen pill
+  // appears at the matching edge so the pane is always recoverable.
+  //
+  // Single source of truth: localStorage. Helpers read/write the
+  // flag, then call back into _applyLibraryLayout /
+  // _applyAuthorPaneLayout to re-paint the data attributes. The
+  // layout functions are the ones that decide whether to set the
+  // attr based on (wide AND not-hidden) — they're the gate.
+  const _PANE_HIDDEN_KEY = (name) => `narrative.paneHidden.${name}`;
+  function _paneIsHidden(name) {
+    try {
+      return localStorage.getItem(_PANE_HIDDEN_KEY(name)) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function _setPaneHidden(name, hidden) {
+    try {
+      if (hidden) localStorage.setItem(_PANE_HIDDEN_KEY(name), "1");
+      else localStorage.removeItem(_PANE_HIDDEN_KEY(name));
+    } catch {}
+    // Re-run both layouts so data attrs + reopen pills repaint.
+    if (typeof _applyLibraryLayout === "function") _applyLibraryLayout();
+    if (typeof _applyAuthorPaneLayout === "function") _applyAuthorPaneLayout();
+  }
+  // Exposed so command palette + Settings can drive them.
+  window._paneIsHidden = _paneIsHidden;
+  window._setPaneHidden = _setPaneHidden;
+
+  // Repaint the reopen-pill data attrs on body. Pills are static
+  // HTML; CSS shows them when body[data-pane-hidden-X="1"] AND
+  // viewport ≥1280px. Called from both layout functions so the
+  // pill state matches the pane state on every resize/toggle.
+  function _paintPaneHiddenAttrs() {
+    const wide = window.matchMedia("(min-width: 1280px)").matches;
+    const libHidden = wide && _paneIsHidden("library");
+    const authHidden = wide && _paneIsHidden("author");
+    if (libHidden) document.body.dataset.paneHiddenLibrary = "1";
+    else delete document.body.dataset.paneHiddenLibrary;
+    if (authHidden) document.body.dataset.paneHiddenAuthor = "1";
+    else delete document.body.dataset.paneHiddenAuthor;
+  }
+  window._paintPaneHiddenAttrs = _paintPaneHiddenAttrs;
+
   // v225en (#631): multi-pane library sidebar at ≥1280px.
   // Relocates the library's content (head + #library-card body)
   // from #library-dialog into #desktop-library-pane when the
@@ -2218,11 +2818,19 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
   function _applyLibraryLayout() {
     if (!_libDialog || !_libSidebar) return;
     const wide = _libMQ.matches;
+    // v225fz11.panes (#685): even at wide widths, honor the hidden
+    // preference. When hidden we DON'T relocate the nodes (they
+    // stay in their current parent) and we DON'T set the data attr
+    // — so the sidebar visually collapses and the library reverts
+    // to dialog-trigger mode. The trigger comes back via the
+    // `#library-trigger { display: none }` rule being gated on
+    // [data-multipane-library="1"], which we're now omitting.
+    const hidden = _paneIsHidden("library");
     const head = _libDialog.querySelector(".voice-browser-head");
     const card = _libDialog.querySelector("#library-card");
     const sidebarHead = _libSidebar.querySelector(".voice-browser-head");
     const sidebarCard = _libSidebar.querySelector("#library-card");
-    if (wide) {
+    if (wide && !hidden) {
       if (head) _libSidebar.appendChild(head);
       if (card) _libSidebar.appendChild(card);
       // v225ep (#632): switched to per-pane flags so library and
@@ -2236,6 +2844,7 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
       if (sidebarCard) _libDialog.appendChild(sidebarCard);
       delete document.body.dataset.multipaneLibrary;
     }
+    _paintPaneHiddenAttrs();
     // v225fe (#647): voice mirrors the library pattern — its dialog
     // contents relocate into the top of the right pane on wide,
     // return to the dialog on narrow.
@@ -2288,12 +2897,46 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
     handle.title = "Drag to resize · double-click to reset";
     _libSidebar.appendChild(handle);
   }
+  // v225fz11.panes (#685): close × button on library pane. Floats at
+  // the top-right corner inside the pane. Clicking sets the hidden
+  // flag and the layout function suppresses the data attr → CSS
+  // hides the pane → reopen pill becomes visible at the left edge.
+  if (_libSidebar && !_libSidebar.querySelector(".pane-close-btn")) {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "pane-close-btn";
+    close.dataset.pane = "library";
+    close.setAttribute("aria-label", "Hide library pane");
+    close.title = "Hide library pane";
+    close.textContent = "×";
+    close.addEventListener("click", () => _setPaneHidden("library", true));
+    _libSidebar.appendChild(close);
+  }
 
   _applyLibraryLayout();
   if (typeof _libMQ.addEventListener === "function") {
     _libMQ.addEventListener("change", _applyLibraryLayout);
   } else if (typeof _libMQ.addListener === "function") {
     _libMQ.addListener(_applyLibraryLayout);
+  }
+
+  // v225fz11.panes (#685): wire the author pane × close button + both
+  // reopen pills. Author × lives in static HTML so we bind here once;
+  // library × is injected above with its own listener. Pills are
+  // siblings of the panes — single-shot bindings at boot suffice.
+  const _authorCloseBtn = document.querySelector(
+    '#desktop-author-pane .pane-close-btn[data-pane="author"]'
+  );
+  if (_authorCloseBtn) {
+    _authorCloseBtn.addEventListener("click", () => _setPaneHidden("author", true));
+  }
+  const _libReopen = document.getElementById("pane-reopen-library");
+  if (_libReopen) {
+    _libReopen.addEventListener("click", () => _setPaneHidden("library", false));
+  }
+  const _authReopen = document.getElementById("pane-reopen-author");
+  if (_authReopen) {
+    _authReopen.addEventListener("click", () => _setPaneHidden("author", false));
   }
 
   // v225ej (#626): public helper so other surfaces (the empty-state
@@ -2655,11 +3298,19 @@ function _applyAuthorPaneLayout() {
   // loaded. The "This clip" sections below the voice picker still
   // only populate when _currentClipId is set; _renderAuthorPane
   // already handles the empty-state branch.
-  if (wide) {
+  // v225fz11.panes (#685): user can hide via × close + reopen via
+  // edge pill / palette / Settings. Hidden trumps wide.
+  const hidden =
+    typeof window._paneIsHidden === "function" &&
+    window._paneIsHidden("author");
+  if (wide && !hidden) {
     document.body.dataset.multipaneAuthor = "1";
     _renderAuthorPane();
   } else {
     delete document.body.dataset.multipaneAuthor;
+  }
+  if (typeof window._paintPaneHiddenAttrs === "function") {
+    window._paintPaneHiddenAttrs();
   }
 }
 
@@ -2756,6 +3407,67 @@ function _applyAuthorPaneLayout() {
       }
     } catch {}
     drag = null;
+    // v225v3.2 (#736): explicit V3 re-paginate after panel drag ends.
+    // ResizeObserver may not catch every panel-drag-induced spread
+    // resize on all platforms, so we hook the pointerup directly:
+    // when the user releases the mouse after dragging a panel handle,
+    // wait for layout to settle (rAF × 2) then re-paginate from
+    // scratch with anchor preserved.
+    try {
+      if (typeof _bookViewV3Enabled === "function"
+          && _bookViewV3Enabled()
+          && typeof bookView !== "undefined" && bookView && !bookView.hidden
+          && typeof bookViewSpread !== "undefined" && bookViewSpread
+          && bookViewSpread.classList.contains("v3")) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const anchor = _bookViewV3State.anchorSentenceIdx;
+            if (typeof _dlog === "function") {
+              _dlog("book-v3", "panel-drag-end", {
+                spreadW: bookViewSpread.clientWidth,
+                spreadH: bookViewSpread.clientHeight,
+                anchor,
+              });
+            }
+            _bookViewV3Setup(_bookViewSource);
+            if (anchor !== null && anchor !== undefined) {
+              _bookViewV3GotoSentenceIdx(anchor);
+            } else {
+              _bookViewV3GotoSpread(0);
+            }
+          });
+        });
+      }
+    } catch {}
+    // v225v3.3 (#737): also re-paginate V1 on panel drag end. V1
+    // never auto-repaginates on any signal — that's been the
+    // long-standing UX papercut. Same pointerup the panels use.
+    try {
+      if (typeof _bookViewV3Enabled === "function"
+          && !_bookViewV3Enabled()
+          && typeof bookView !== "undefined" && bookView && !bookView.hidden
+          && typeof bookViewSpread !== "undefined" && bookViewSpread
+          && !bookViewSpread.classList.contains("v3")
+          && !bookViewSpread.classList.contains("v2")
+          && typeof _bookViewRepaginate === "function") {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (typeof _dlog === "function") {
+              _dlog("book-v1", "panel-drag-repaginate", {
+                spreadW: bookViewSpread.clientWidth,
+                spreadH: bookViewSpread.clientHeight,
+              });
+            }
+            try { _bookViewRepaginate(); } catch (err) {
+              if (typeof _dlog === "function") {
+                _dlog("book-v1", "panel-drag-repaginate-err",
+                  { msg: String(err) });
+              }
+            }
+          });
+        });
+      }
+    } catch {}
   }
   document.addEventListener("pointerup", endDrag);
   document.addEventListener("pointercancel", endDrag);
@@ -3391,6 +4103,43 @@ document.addEventListener("keydown", (e) => {
         if (d) d.showModal();
       },
     });
+    // v225fz11.panes (#685): toggle desktop side panes. Only useful at
+    // ≥1280px (the panes don't render below that), but we surface
+    // them always so the palette doesn't blink in and out — the
+    // toggle just becomes a no-op on narrow viewports.
+    {
+      const wide = window.matchMedia("(min-width: 1280px)").matches;
+      const isLibHidden =
+        typeof window._paneIsHidden === "function" &&
+        window._paneIsHidden("library");
+      const isAuthHidden =
+        typeof window._paneIsHidden === "function" &&
+        window._paneIsHidden("author");
+      out.push({
+        group: "View",
+        icon: "📚",
+        label: isLibHidden ? "Show library pane" : "Hide library pane",
+        key: "view:toggle-library-pane",
+        run: () => {
+          if (typeof window._setPaneHidden === "function") {
+            window._setPaneHidden("library", !isLibHidden);
+          }
+        },
+      });
+      out.push({
+        group: "View",
+        icon: "📝",
+        label: isAuthHidden ? "Show notes pane" : "Hide notes pane",
+        key: "view:toggle-author-pane",
+        run: () => {
+          if (typeof window._setPaneHidden === "function") {
+            window._setPaneHidden("author", !isAuthHidden);
+          }
+        },
+      });
+      // Silence the unused-var lint if wide gating ever gets added.
+      void wide;
+    }
 
     // --- Actions (player). Only show if a clip is loaded — the
     //     handlers will no-op otherwise but they'd clutter the empty
@@ -3440,6 +4189,49 @@ document.addEventListener("keydown", (e) => {
           if (typeof addBookmarkAtCurrentTime === "function") {
             addBookmarkAtCurrentTime();
           }
+        },
+      });
+      // v225fz3 (#670): clear revision marks on the loaded clip via
+      // command palette. Mirrors the Edit clip dialog button — opens
+      // the same confirm modal with the same export-first safety net.
+      // Gated on a loaded clip (we wrap in the same _currentClipId
+      // guard the other clip-scoped actions use).
+      out.push({
+        group: "Actions",
+        icon: "🧹",
+        label: "Clear revision marks on this clip",
+        key: "act:clear-marks",
+        run: () => {
+          if (typeof _openClearMarksConfirm === "function" && _currentClipId) {
+            _openClearMarksConfirm(_currentClipId);
+          }
+        },
+      });
+      // v225fz5 (#672): restore from .md backup. Opens the same OS
+      // file picker the Edit dialog uses (sharing the input element
+      // means one wiring + one event handler). The picker's change
+      // handler is bound on _clipEditRestoreInput further below — but
+      // for the command palette path we need _editingClipId to point
+      // at _currentClipId BEFORE the picker fires, because that's
+      // what the change handler reads. Set it here, the change handler
+      // will reset it after restore completes.
+      out.push({
+        group: "Actions",
+        icon: "📥",
+        label: "Restore revision marks from backup…",
+        key: "act:restore-marks",
+        run: () => {
+          if (!_currentClipId) return;
+          const input = document.getElementById("clip-edit-restore-input");
+          if (!input) return;
+          // Use _currentClipId as the restore target. We piggyback on
+          // the Edit-dialog input's change handler, which reads
+          // _editingClipId — so set it (the handler clears it after).
+          // The Edit dialog need NOT be open; this is a pure
+          // command-palette short-circuit.
+          _editingClipId = _currentClipId;
+          input.value = "";
+          input.click();
         },
       });
     }
@@ -3694,7 +4486,21 @@ document.addEventListener("keydown", (e) => {
   }
 
   // Wire trigger button + close button
-  if (trigger) trigger.addEventListener("click", open);
+  if (trigger) {
+    trigger.addEventListener("click", () => {
+      open();
+      // v225fm (#655): first-tap hint. ⌘K is universal among power
+      // users but invisible to everyone else; surface the shortcut
+      // once so the chip's value is obvious.
+      if (typeof _fireChipHint === "function") {
+        const key = IS_MAC ? "⌘K" : "Ctrl+K";
+        _fireChipHint(
+          "narrative.hintSeen.cmdk",
+          `💡 ${key} opens this from anywhere. Type to search clips, actions, settings.`,
+        );
+      }
+    });
+  }
   if (closeBtn) closeBtn.addEventListener("click", close);
 
   // Backdrop click closes (dialog click outside its content)
@@ -5180,6 +5986,39 @@ async function _renderStatsPanel() {
 // double-tap intent (typically <300ms) but below "user really
 // wants two close bookmarks" (which would be much slower).
 let _lastBookmarkAddMs = 0;
+// v225fq (#659): compute the start time (in seconds) of the i-th
+// sentence in the current clip. Honors both playback modes:
+//
+//   - Streaming mode (per-sentence WAVs not yet concatenated): sum
+//     the durations of all earlier sentences in _streamQueue.
+//   - Combined WAV mode: read directly from sentenceOffsetsSec, the
+//     server-provided sentence boundary table.
+//
+// Returns null if the index is out of range or we have no timing
+// data yet (e.g. sentence hasn't been synthesized in streaming mode).
+function _sentenceStartSec(i) {
+  if (typeof i !== "number" || i < 0) return null;
+  if (
+    _streamPlayhead >= 0 &&
+    Array.isArray(_streamQueue) &&
+    i < _streamQueue.length
+  ) {
+    let elapsed = 0;
+    for (let k = 0; k < i; k++) {
+      elapsed += _streamQueue[k] ? (_streamQueue[k].durationSec || 0) : 0;
+    }
+    return elapsed;
+  }
+  if (
+    typeof sentenceOffsetsSec !== "undefined" &&
+    Array.isArray(sentenceOffsetsSec) &&
+    i < sentenceOffsetsSec.length
+  ) {
+    return sentenceOffsetsSec[i];
+  }
+  return null;
+}
+
 async function addBookmarkAtCurrentTime() {
   if (!_currentClipId) {
     setStatus("Load a clip first — nothing to bookmark.", true);
@@ -5207,11 +6046,32 @@ async function addBookmarkAtCurrentTime() {
     stack: new Error().stack?.split("\n").slice(1, 5).join(" | "),
   });
   try {
+    // v225fq (#659): if the user has a sentence selected (dashed
+    // ring — same selection state Edit + Annotate use), bookmark
+    // that sentence's start time instead of the current playback
+    // position. Matches the "tap to select, then act" flow they've
+    // already learned for the other tools. Falls through to
+    // virtualTime() when nothing's selected.
+    let t = virtualTime();
+    let fromSelection = false;
+    let selectedIdx = -1;
+    if (
+      typeof _selectedSentenceIdx === "number" &&
+      _selectedSentenceIdx >= 0 &&
+      Array.isArray(sentenceSpans) &&
+      _selectedSentenceIdx < sentenceSpans.length
+    ) {
+      const s = _sentenceStartSec(_selectedSentenceIdx);
+      if (s !== null && isFinite(s)) {
+        t = s;
+        fromSelection = true;
+        selectedIdx = _selectedSentenceIdx;
+      }
+    }
     // v223.tn19 (#488): atomic read-modify-write so a concurrent
     // _syncAbsorbServerClip can't slip between our read and write
     // and cause our save to wipe newly-absorbed content (annotations,
     // highlights, etc.) on the server via LWW.
-    const t = virtualTime();
     let _newBookmarkId = null;
     const clip = await _mutateClipAtomic(_currentClipId, (c) => {
       if (!Array.isArray(c.bookmarks)) c.bookmarks = [];
@@ -5233,10 +6093,16 @@ async function addBookmarkAtCurrentTime() {
       _bookViewSource.bookmarks = clip.bookmarks;
       _bookViewRenderSpread(_bookViewCurrentSpread);
     }
-    setStatus(`Bookmark added at ${formatTime(t)}.`);
+    setStatus(
+      fromSelection
+        ? `Bookmark added at sentence ${selectedIdx + 1} (${formatTime(t)}).`
+        : `Bookmark added at ${formatTime(t)}.`,
+    );
     _dlog("bookmark", "add OK", {
       id: _newBookmarkId,
       timeSec: t,
+      fromSelection: fromSelection,
+      selectedIdx: fromSelection ? selectedIdx : null,
       totalBookmarks: clip.bookmarks.length,
     });
     return _newBookmarkId;
@@ -5257,6 +6123,39 @@ async function addBookmarkAtCurrentTime() {
 // translate(-50%,-50%) recenters within whatever viewport is left.
 let _bookmarkEditorBound = false;
 let _bookmarkEditorCurrentId = null;
+// v225fz (#668): track whether the open editor is a freshly-added
+// bookmark (from the 🔖 button → addBookmarkAtCurrentTime → editor)
+// vs. editing an existing one (tap a note row in the drawer). On
+// cancel/dismiss the new path deletes the bookmark — author tapped
+// 🔖 by accident or changed their mind, so leaving an empty
+// timestamp-only row in the list feels like litter. Editing path
+// always preserves the bookmark on cancel (no destructive default).
+let _bookmarkEditorIsNew = false;
+
+// v225fy (#667): char-count thresholds for the bookmark editor counter.
+// 200 is the textarea's maxlength. WARN at 80% (160) gives the author
+// runway to wrap up a thought; AT_LIMIT at 95% (190) makes the last
+// 10 chars feel scarce so they don't get cut off mid-word. Driven by
+// _paintBookmarkNoteCounter on every input event.
+const _BOOKMARK_NOTE_MAX = 200;
+const _BOOKMARK_NOTE_WARN_AT = 160;
+const _BOOKMARK_NOTE_LIMIT_AT = 190;
+
+function _paintBookmarkNoteCounter() {
+  const noteEl = document.getElementById("bookmark-editor-note");
+  const ctr = document.getElementById("bookmark-editor-note-counter");
+  if (!noteEl || !ctr) return;
+  const len = noteEl.value.length;
+  ctr.textContent = `${len} / ${_BOOKMARK_NOTE_MAX}`;
+  ctr.classList.toggle(
+    "at-limit",
+    len >= _BOOKMARK_NOTE_LIMIT_AT,
+  );
+  ctr.classList.toggle(
+    "warn",
+    len >= _BOOKMARK_NOTE_WARN_AT && len < _BOOKMARK_NOTE_LIMIT_AT,
+  );
+}
 
 function _initBookmarkEditor() {
   if (_bookmarkEditorBound) return;
@@ -5273,6 +6172,14 @@ function _initBookmarkEditor() {
   el.querySelector(".bookmark-editor-save").addEventListener("click", () =>
     close(true),
   );
+  // v225fy (#667): live char counter. Bound once on first init;
+  // every keystroke + paste repaints. Also fires from _openBookmarkEditor
+  // after pre-filling so the counter reflects the existing note
+  // length on open (not the stale 0/200 from the previous edit).
+  const noteEl = el.querySelector("#bookmark-editor-note");
+  if (noteEl) {
+    noteEl.addEventListener("input", _paintBookmarkNoteCounter);
+  }
   // Tap the backdrop (outside the card) to dismiss without saving.
   el.addEventListener("click", (e) => {
     if (e.target === el) close(false);
@@ -5291,7 +6198,7 @@ function _initBookmarkEditor() {
   });
 }
 
-async function _openBookmarkEditor(bookmarkId) {
+async function _openBookmarkEditor(bookmarkId, isNew) {
   _initBookmarkEditor();
   const el = document.getElementById("bookmark-editor");
   if (!el || !_currentClipId) return;
@@ -5301,10 +6208,18 @@ async function _openBookmarkEditor(bookmarkId) {
     const bm = clip.bookmarks.find((b) => b.id === bookmarkId);
     if (!bm) return;
     _bookmarkEditorCurrentId = bookmarkId;
+    // v225fz (#668): default false so existing call sites (drawer note-row
+    // tap) keep their old "always preserve" behavior. The 🔖 button path
+    // passes true so a cancel reverts the just-added bookmark.
+    _bookmarkEditorIsNew = isNew === true;
     const timeEl = document.getElementById("bookmark-editor-time-val");
     const noteEl = document.getElementById("bookmark-editor-note");
     if (timeEl) timeEl.textContent = formatTime(bm.timeSec);
     if (noteEl) noteEl.value = bm.note || "";
+    // v225fy (#667): paint the counter against the pre-filled value
+    // BEFORE the dialog renders so an existing 170-char note opens
+    // with the .warn state already lit (no flash of stale 0/200).
+    _paintBookmarkNoteCounter();
     el.hidden = false;
     // Focus + cursor-to-end after a frame so the modal is in the
     // render tree before we request keyboard focus. rAF gives the
@@ -5336,9 +6251,23 @@ async function _closeBookmarkEditor(save) {
     } catch (e) {
       console.warn("[bookmark-editor] save failed:", e);
     }
+  } else if (!save && _bookmarkEditorIsNew && _bookmarkEditorCurrentId != null) {
+    // v225fz (#668): cancel/dismiss on a freshly-added bookmark reverts
+    // the add so we don't litter the list with an empty timestamp the
+    // user didn't actually want. ✕ / Cancel / Esc / backdrop tap all
+    // hit this branch. "Done" with empty note is a separate, deliberate
+    // commit ("I want a timestamp-only mark") — that flows through the
+    // save branch above and the bookmark stays.
+    try {
+      await deleteBookmark(_bookmarkEditorCurrentId);
+      // deleteBookmark already updates IDB + re-renders + status line.
+    } catch (e) {
+      console.warn("[bookmark-editor] revert-on-cancel failed:", e);
+    }
   }
   el.hidden = true;
   _bookmarkEditorCurrentId = null;
+  _bookmarkEditorIsNew = false;
 }
 
 // Initialize the editor wiring on first script load so any caller
@@ -5576,7 +6505,29 @@ async function renderBookmarks() {
   }
 }
 
-bookmarkAddBtn.addEventListener("click", addBookmarkAtCurrentTime);
+// v225fz2 (#669): desktop bookmark-add now routes through the centered
+// editor with isNew=true, matching the phone 🔖 flow (v225fz / #668).
+// The bookmark is persisted by addBookmarkAtCurrentTime; the editor
+// then lets the author type a note while the moment is fresh, and
+// cancel/Esc/✕/backdrop reverts the just-added bookmark via the
+// _closeBookmarkEditor isNew branch. "Done" — with or without a note
+// typed — commits. The command palette path (act:bookmark) keeps the
+// bare call so keyboard-shortcut power users get fire-and-forget speed
+// with no editor popup interrupting their flow.
+bookmarkAddBtn.addEventListener("click", async () => {
+  let newId = null;
+  try {
+    newId = await addBookmarkAtCurrentTime();
+  } catch (err) {
+    console.warn("[bookmark-add-btn] save failed:", err);
+    setStatus("Bookmark failed.", true);
+    return;
+  }
+  if (newId == null) return;
+  if (typeof _openBookmarkEditor === "function") {
+    _openBookmarkEditor(newId, true);
+  }
+});
 
 // ---- Configurable skip-back / skip-forward ------------------------------
 // Quick recovery for "I zoned out for a moment" + its mirror for "okay
@@ -5904,6 +6855,14 @@ function updateCounts() {
   // running the counter is essentially free, so we don't branch on
   // isAuthorMode here.
   _renderFillerChips(text);
+
+  // v225g1 (#690): keep "📖 Open as ebook" enabled in sync with whether
+  // there's any text. updateCounts already fires on every textarea
+  // input + after every paste / extract / sample-text injection, so
+  // piggybacking here means we don't need separate listeners.
+  if (typeof _updateOpenAsEbookEnabled === "function") {
+    _updateOpenAsEbookEnabled();
+  }
 }
 
 // ---- Filler-word callout (Author mode) ---------------------------------
@@ -6050,6 +7009,7 @@ function _updateEmptyState() {
   // it back if a first-timer regrets the dismiss.
   const dismissed = _isEmptyStateDismissed();
   const show = !hasText && !_currentClipId && !inReadingView && !dismissed;
+  const wasShown = !emptyStateEl.hidden;
   emptyStateEl.hidden = !show;
   // v220b: swap the head text based on user state. First-time users
   // get the welcome; returning users get a compact "next thing to do"
@@ -6062,7 +7022,46 @@ function _updateEmptyState() {
         ? "Start a new clip:"
         : "New to Narrative? Try one of these to get started.";
     }
+    // v225fw (#665): pulse the "Watch tutorial" rows so users notice
+    // the secondary affordance. Only fire on the EDGE (hidden → shown)
+    // so we don't restart the animation every time _updateEmptyState
+    // is called (it's called from many code paths and would otherwise
+    // make the pulse run on every keystroke / clip event). Reset by
+    // toggling the class off-then-on across a frame so the animation
+    // restarts cleanly even if it had completed earlier in the session.
+    if (!wasShown) _pulseEmptyStateTutorialLinks();
   }
+}
+
+// v225fw (#665): add the attention-pulse class to every Watch-tutorial
+// row in the empty state. Listens once for any interaction inside the
+// empty state to cancel the pulse (so a user who's already mid-action
+// doesn't keep seeing the wobble after they've committed). Pulse is
+// purely cosmetic — the click handlers on the tutorial-link spans + on
+// the empty-state cards are already wired separately.
+function _pulseEmptyStateTutorialLinks() {
+  if (!emptyStateEl) return;
+  const links = emptyStateEl.querySelectorAll(".empty-state-tutorial-link");
+  if (!links.length) return;
+  // Remove any stale class first so the animation restarts cleanly on
+  // the second-and-later edge transitions.
+  links.forEach((el) => el.classList.remove("attention-pulse"));
+  // Defer the add by one frame so the browser commits the class
+  // removal before the re-add — otherwise the animation just keeps
+  // running from wherever it was.
+  requestAnimationFrame(() => {
+    links.forEach((el) => el.classList.add("attention-pulse"));
+  });
+  // First interaction inside the helper cancels the pulse on every
+  // link (not just the one tapped). Bound on the container so we get
+  // one listener total, not 4. {once:true} auto-cleans.
+  emptyStateEl.addEventListener(
+    "click",
+    () => {
+      links.forEach((el) => el.classList.remove("attention-pulse"));
+    },
+    { once: true },
+  );
 }
 // Card clicks reuse the existing Import-dropdown paths so the action
 // behavior stays in one place (no duplicate file pickers, no
@@ -6111,9 +7110,45 @@ document.querySelectorAll("[data-empty-action]").forEach((btn) => {
       const genBtn = document.getElementById("generate");
       if (genBtn) genBtn.scrollIntoView({ behavior: "smooth", block: "nearest" });
       setStatus("Sample text loaded — hit Generate to hear it.");
+    } else if (action === "ebook") {
+      // v225g1 (#690): "📖 Read as ebook" tile — same upload flow as
+      // the file tile, but stash _pendingEbookMode so the post-extract
+      // hook auto-routes through _openAsEbook (see uploadInput change
+      // handler) instead of leaving the text in the textarea waiting
+      // for a Generate tap. Users who only want to read EPUBs without
+      // burning synth never have to think about voice / audio at all.
+      _pendingEbookMode = true;
+      setStatus("Pick an EPUB / PDF — it'll open in book view once extracted.");
+      uploadInput.click();
     }
   });
 });
+
+// v225g1 (#690): "📖 Open as ebook" button next to Generate — single
+// entry point that doesn't need an import; uses whatever text + images
+// are currently staged.
+const _openAsEbookBtn = document.getElementById("open-as-ebook");
+if (_openAsEbookBtn) {
+  _openAsEbookBtn.addEventListener("click", () => {
+    _openAsEbook().catch((e) => {
+      console.error("[ebook] _openAsEbook failed:", e);
+      setStatus("Couldn't open as ebook — see console.", true);
+    });
+  });
+}
+
+// v225g1 (#690): "📖 Read as ebook" action in the import-preview head.
+// Same call as the Generate-row button; sits where the user just saw
+// the detected cover + chapter art so the action feels immediate.
+const _importPreviewEbookBtn = document.getElementById("import-preview-ebook");
+if (_importPreviewEbookBtn) {
+  _importPreviewEbookBtn.addEventListener("click", () => {
+    _openAsEbook().catch((e) => {
+      console.error("[ebook] _openAsEbook (preview) failed:", e);
+      setStatus("Couldn't open as ebook — see console.", true);
+    });
+  });
+}
 
 // voice_id → num_speakers, populated from /api/voices. Used by onVoiceChange
 // to decide whether to surface the speaker picker. SAPI voices and most
@@ -7533,6 +8568,15 @@ function deletePreset(id) {
   const list = _loadPresets().filter((p) => p.id !== id);
   _savePresets(list);
   renderPresets();
+  // v225fz8 (#674): push a server-side tombstone so other devices on
+  // this tenant_key drop the row on their next pull. Sync gate inside
+  // _syncDeletePreset means this is a no-op when the user hasn't
+  // opted into sync.
+  if (typeof _syncDeletePreset === "function") {
+    _syncDeletePreset(id).catch((e) =>
+      console.warn("[sync] preset delete failed:", e),
+    );
+  }
 }
 
 function renderPresets() {
@@ -7603,18 +8647,175 @@ presetSaveBtn.addEventListener("click", () => {
   const name = window.prompt("Name this preset:", suggested);
   if (!name || !name.trim()) return;
   const list = _loadPresets();
-  list.unshift({
+  const now = new Date().toISOString();
+  const preset = {
     id: Date.now(),
     name: name.trim(),
     ..._currentPresetSnapshot(),
-    createdAt: new Date().toISOString(),
-  });
+    createdAt: now,
+    // v225fz8 (#674): every preset carries an updatedAt for the
+    // server-side LWW conflict resolution. Save / rename / re-save
+    // bumps this so the freshest write wins across devices.
+    updatedAt: now,
+  };
+  list.unshift(preset);
   _savePresets(list);
   renderPresets();
+  // v225fz8 (#674): push this preset to /api/library/presets/{id} so
+  // other devices on the same tenant key pick it up on their next pull.
+  // Gated on the same sync toggle that gates clip sync — users who
+  // haven't opted in stay local-only.
+  if (typeof _syncPushPreset === "function") {
+    _syncPushPreset(preset).catch((e) =>
+      console.warn("[sync] preset push failed:", e),
+    );
+  }
   setStatus(`Saved preset: ${name.trim()}`);
 });
 
 renderPresets();
+
+// v225fz8 (#674): cross-device preset sync. Server endpoints have
+// existed since #427 (GET/PUT/DELETE /api/library/presets, tenant_key
+// scoped); this block is the client-side wiring that was missing —
+// without it, presets only ever lived in localStorage and a user
+// switching from desktop to phone got an empty Saved list. Schema
+// mirrors the clip-sync pattern (same _syncIsEnabled gate, same
+// updatedAt LWW story, same 409 absorb-server-version on conflict).
+
+// Push a single preset to the server. Called by the save handler
+// above and by the delete path below (for tombstoning). The preset's
+// `id` is a JS timestamp number locally; the server uses TEXT, so we
+// stringify in the URL. No-op when sync is disabled.
+async function _syncPushPreset(preset) {
+  if (!_syncIsEnabled()) return;
+  if (!preset || preset.id == null) return;
+  const payload = {
+    id: String(preset.id),
+    name: preset.name || "",
+    voiceId: preset.voiceId || null,
+    rate: preset.rate != null ? preset.rate : null,
+    volume: preset.volume != null ? preset.volume : null,
+    speakerId: preset.speakerId != null ? preset.speakerId : null,
+    updatedAt: preset.updatedAt || new Date().toISOString(),
+    deleted: !!preset.deleted,
+  };
+  try {
+    const res = await fetch(`/api/library/presets/${encodeURIComponent(payload.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 409) {
+      // Server's row is newer. Absorb its version locally so subsequent
+      // saves race the right base. Pull-all triggers will catch this
+      // too — this is just the fast path.
+      try {
+        const body = await res.json();
+        const serverPreset = body.detail && body.detail.server_preset;
+        if (serverPreset) _syncAbsorbServerPreset(serverPreset);
+      } catch {}
+      setStatus(
+        "Preset was updated on another device; using the latest.",
+      );
+    } else if (!res.ok) {
+      console.warn(`[sync] preset push failed: HTTP ${res.status}`);
+    }
+  } catch (e) {
+    console.warn("[sync] preset push network error:", e);
+  }
+}
+
+// Delete propagates via a server-side tombstone (deleted=1 in the
+// presets table). The DELETE endpoint takes the updatedAt as a query
+// arg so concurrent edits don't silently lose to a stale delete.
+async function _syncDeletePreset(presetId) {
+  if (!_syncIsEnabled()) return;
+  if (presetId == null) return;
+  const updatedAt = new Date().toISOString();
+  try {
+    const u =
+      `/api/library/presets/${encodeURIComponent(String(presetId))}` +
+      `?updated_at=${encodeURIComponent(updatedAt)}`;
+    await fetch(u, { method: "DELETE" });
+  } catch (e) {
+    console.warn("[sync] preset delete failed:", e);
+  }
+}
+
+// Absorb a server-shaped preset into local localStorage. Server uses
+// snake_case column names but the FastAPI response model returns
+// camelCase per the existing clip pattern; we just spread it into our
+// local shape. If a row with the same id exists we update in place,
+// otherwise prepend.
+function _syncAbsorbServerPreset(srv) {
+  if (!srv || srv.id == null) return;
+  // localStorage list — coerce types so equality checks work whether
+  // the local id is a number (legacy) or a string (post-sync).
+  const list = _loadPresets();
+  const idx = list.findIndex((p) => String(p.id) === String(srv.id));
+  // Server's deleted flag = local removal. Drop the row entirely;
+  // the rendered chip list goes away on the next render.
+  if (srv.deleted) {
+    if (idx >= 0) {
+      list.splice(idx, 1);
+      _savePresets(list);
+      if (typeof renderPresets === "function") renderPresets();
+    }
+    return;
+  }
+  const incoming = {
+    id: srv.id,
+    name: srv.name || "",
+    voiceId: srv.voiceId || null,
+    rate: srv.rate != null ? srv.rate : null,
+    volume: srv.volume != null ? srv.volume : null,
+    speakerId: srv.speakerId != null ? srv.speakerId : null,
+    createdAt: srv.createdAt || srv.updatedAt || new Date().toISOString(),
+    updatedAt: srv.updatedAt || new Date().toISOString(),
+  };
+  if (idx >= 0) {
+    // LWW — keep local if its updatedAt is newer (server might have
+    // sent a stale version we already superseded).
+    const local = list[idx];
+    if (local.updatedAt && local.updatedAt > incoming.updatedAt) return;
+    list[idx] = incoming;
+  } else {
+    list.unshift(incoming);
+  }
+  _savePresets(list);
+  if (typeof renderPresets === "function") renderPresets();
+}
+
+// Pull-all on boot + Sync now. Server returns the full preset list for
+// the tenant_key (live rows only — tombstones filtered server-side).
+// We merge with local by absorbing each, which honors LWW per-row.
+async function _syncPullPresets() {
+  if (!_syncIsEnabled()) return;
+  try {
+    const res = await fetch("/api/library/presets");
+    if (!res.ok) {
+      console.warn(`[sync] preset pull failed: HTTP ${res.status}`);
+      return;
+    }
+    const body = await res.json();
+    const incoming = Array.isArray(body) ? body : (body && body.presets) || [];
+    if (!incoming.length) return;
+    // Server is authoritative for what's live. Drop any local row
+    // that DOESN'T appear in the server response — those rows were
+    // deleted on another device (and the server's tombstone filter
+    // hid them from this response). Without this, deletes wouldn't
+    // propagate to this device on pull.
+    const liveIds = new Set(incoming.map((p) => String(p.id)));
+    let local = _loadPresets();
+    const filtered = local.filter((p) => liveIds.has(String(p.id)));
+    if (filtered.length !== local.length) _savePresets(filtered);
+    // Then absorb each — adds new rows + LWW-updates existing.
+    for (const srv of incoming) _syncAbsorbServerPreset(srv);
+  } catch (e) {
+    console.warn("[sync] preset pull network error:", e);
+  }
+}
 
 // ---- Character voices (Author mode) -------------------------------------
 // Persisted roster of {id, name, voiceId, speakerId}. When Author mode is
@@ -9347,9 +10548,39 @@ async function generate() {
               // Carry any URL-extracted images onto the clip. Existing
               // images survive a regen (text didn't change → positions
               // still valid); only a new URL fetch can replace them.
+              // v225fz12.chapter-images (#678): fresh-clip branch also
+              // merges the matched chapter_image (if any) from the
+              // upload-time _pendingChapterImages — title-match first,
+              // ordinal fallback. Entry lands at sentence_index 0 so
+              // it renders above the first sentence (the chapter
+              // heading after splitting). Re-narrate keeps existing.
               images: regenExistingMeta && Array.isArray(regenExistingMeta.images)
                 ? regenExistingMeta.images
-                : (_pendingImages || []),
+                : (() => {
+                    const base = Array.isArray(_pendingImages)
+                      ? _pendingImages.slice()
+                      : [];
+                    const titleForMatch = _pendingChapterTitle || makeTitle(text);
+                    const ord =
+                      typeof _chapterCurrentIndex === "number" && _chapterCurrentIndex >= 1
+                        ? _chapterCurrentIndex - 1
+                        : 0;
+                    const chimg = _chapterImageForTitle(titleForMatch, ord);
+                    const entry = _chapterImageToImagesEntry(chimg);
+                    if (entry && !base.some((i) => i && i.source === "chapter-image" && i.src === entry.src)) {
+                      base.unshift(entry);
+                    }
+                    // v225g7 (#696): same cover dedup as _openAsEbook —
+                    // drop inline images whose src matches the auto-
+                    // detected cover so the book view + reading view
+                    // don't render the cover twice (once on the card
+                    // swatch + once inline at sentence 0).
+                    const coverSrc =
+                      (_pendingDetectedCover && _pendingDetectedCover.src) || null;
+                    return coverSrc
+                      ? base.filter((img) => !img || img.src !== coverSrc)
+                      : base;
+                  })(),
               // GitHub source pin.
               //   - Refetch regen: _pendingGitRef is set to the NEW SHA
               //     from the refetch — must win, else the outdated
@@ -9390,7 +10621,14 @@ async function generate() {
               tags: regenExistingMeta && Array.isArray(regenExistingMeta.tags)
                 ? regenExistingMeta.tags
                 : [],
-              cover: regenExistingMeta ? regenExistingMeta.cover || undefined : undefined,
+              // v225fz11.cover (#677): fresh-clip branch uses the
+              // image_detector cover stashed at upload time, if any.
+              // Re-narrate branch (regenExistingMeta truthy) keeps
+              // existing.cover as before — detection is a one-shot
+              // benefit of the initial import.
+              cover: regenExistingMeta
+                ? regenExistingMeta.cover || undefined
+                : (_pendingDetectedCover && _pendingDetectedCover.src) || undefined,
               annotations: regenExistingMeta && Array.isArray(regenExistingMeta.annotations)
                 ? regenExistingMeta.annotations
                 : [],
@@ -11563,7 +12801,15 @@ async function _preSynthesizeChapter(chapter, opts) {
       // metadata and must survive the refresh untouched.
       notes: existingClip ? existingClip.notes || "" : "",
       tags: existingClip ? existingClip.tags || [] : [],
-      cover: existingClip ? existingClip.cover || undefined : undefined,
+      // v225fz11.cover (#677): fresh-chapter saves (no existingClip)
+      // share the upload-time detected cover. Re-narrate (existingClip
+      // truthy) keeps the user's existing cover. Bg-queue runs one
+      // chapter at a time but we DON'T clear _pendingDetectedCover
+      // here — a 12-chapter EPUB import should land the cover on every
+      // new chapter. Clear happens on next upload / clearForNewClip.
+      cover: existingClip
+        ? existingClip.cover || undefined
+        : (_pendingDetectedCover && _pendingDetectedCover.src) || undefined,
       text: chapter.text,
       voiceId,
       voiceName,
@@ -11610,9 +12856,27 @@ async function _preSynthesizeChapter(chapter, opts) {
       bookmarks: existingClip && Array.isArray(existingClip.bookmarks)
         ? existingClip.bookmarks
         : [],
+      // v225fz12.chapter-images (#678): fresh-chapter saves through
+      // bg-queue merge the matched chapter_image (title or ordinal).
+      // Re-narrate (existingClip truthy) keeps existing.images so the
+      // user's URL-extracted images survive — chapter detection is a
+      // one-shot benefit of the initial import.
       images: existingClip && Array.isArray(existingClip.images)
         ? existingClip.images
-        : [],
+        : (() => {
+            const base = [];
+            const titleForMatch = chapter.title || "";
+            // chapter queue is 1-indexed; the just-processed chapter
+            // we're saving is at _chapterCurrentIndex if active.
+            const ord =
+              typeof _chapterCurrentIndex === "number" && _chapterCurrentIndex >= 1
+                ? _chapterCurrentIndex - 1
+                : 0;
+            const chimg = _chapterImageForTitle(titleForMatch, ord);
+            const entry = _chapterImageToImagesEntry(chimg);
+            if (entry) base.push(entry);
+            return base;
+          })(),
       // gitRef: prefer the fresh one from the re-narrate fetch so
       // the new SHA is recorded; fall back to the existing clip's
       // ref if for some reason we don't have a new one.
@@ -11941,7 +13205,32 @@ function enterReadingView(text, images, highlights) {
       // A broken image (404, blocked host, expired hotlink) shouldn't
       // leave an empty slot in the middle of the reading view — drop it.
       el.addEventListener("error", () => el.remove(), { once: true });
-      readingView.appendChild(el);
+      // v225fz12.chapter-images (#678): differentiate per-format.
+      //   - source="chapter-image" + kind="decorative" → banner above
+      //     the chapter heading, no caption, full-width.
+      //   - source="chapter-image" + kind="figure" → wrap in <figure>
+      //     with a <figcaption> drawn from alt so the figure carries
+      //     its label. Empty alt → no caption (rare but possible).
+      //   - default (URL-extracted inline image): unchanged behavior.
+      if (img.source === "chapter-image") {
+        if (img.kind === "decorative") {
+          el.classList.add("chapter-image", "chapter-image-decorative");
+          readingView.appendChild(el);
+        } else {
+          el.classList.add("chapter-image", "chapter-image-figure");
+          const fig = document.createElement("figure");
+          fig.className = "chapter-image-figure-wrap";
+          fig.appendChild(el);
+          if (img.alt) {
+            const cap = document.createElement("figcaption");
+            cap.textContent = img.alt;
+            fig.appendChild(cap);
+          }
+          readingView.appendChild(fig);
+        }
+      } else {
+        readingView.appendChild(el);
+      }
     }
   }
 
@@ -12246,6 +13535,16 @@ function clearForNewClip() {
   // a freshly-typed clip.
   _pendingImages = [];
   _pendingGitRef = null;
+  // v225fz11.cover (#677): drop the detected cover too — a clean
+  // slate clip shouldn't inherit it from a previous import.
+  _pendingDetectedCover = null;
+  // v225fz12.chapter-images (#678): same reasoning for per-chapter
+  // images — they belong to the import they came from, not the
+  // next thing the user types.
+  _pendingChapterImages = [];
+  // v225fz14 (#688): tear down the preview strip — no pending
+  // images, nothing to show.
+  if (typeof _paintImportPreview === "function") _paintImportPreview();
   // v149: textarea + clip just got wiped — give the empty-state card
   // a chance to re-appear if the library is also empty.
   _updateEmptyState();
@@ -13251,6 +14550,14 @@ function _bookViewMakeImageEl(imgRecord, dims, pageWidth, pageHeight) {
 // sub-pixel rounding so a body whose content fits exactly to the
 // pixel doesn't get a spurious overflow signal.
 function _bookViewBodyOverflows(body, pageHeight) {
+  // v225g24 (#721): reverted g16→g23 paginator changes per user
+  // request — "roll everything back to when we had it fixed on the
+  // desktop." Back to the v201 (M5.1) hybrid check that shipped in
+  // v225g15: vertical via scrollHeight > pageHeight (chrome eats
+  // ~100px so the last line clips on phone) + horizontal for
+  // magazine multi-column overflow. Future fix: rewrite paginator
+  // on CSS multi-column or paged.js; do NOT attempt another in-
+  // place tweak.
   if (body.scrollHeight > pageHeight - 1) return true;
   if (body.scrollWidth > body.clientWidth + 1) return true;
   return false;
@@ -15620,14 +16927,23 @@ function _bookViewRenderSpread(spreadIdx, flipDirection = null) {
       // Cover page.
       pageEl.classList.add("book-page-cover");
       const src = _bookViewSource;
-      if (src && src.cover && src.cover.blob) {
+      // v225g12 (#700): _coverImgSrc handles all three formats:
+      //   - { blob }   — canonical, from custom uploads
+      //   - "data:…"   — from image_detector auto-detect (ebook saves)
+      //   - { src: "data:…" } — defensive, in case the shape varies
+      // Without this fallback the book view cover slot rendered the
+      // seed-letter gradient even when the EPUB had a real cover,
+      // because _openAsEbook saves clip.cover as a bare data URL
+      // string (not the {blob,...} shape custom uploads use).
+      const coverImgSrc = _coverImgSrc(src && src.cover);
+      if (coverImgSrc) {
         const img = document.createElement("img");
         img.className = "book-page-cover-art";
         img.alt = src.title || "Cover";
-        try {
-          img.src = URL.createObjectURL(src.cover.blob);
+        img.src = coverImgSrc.url;
+        if (coverImgSrc.revoke) {
           img.addEventListener("load", () => URL.revokeObjectURL(img.src), { once: true });
-        } catch {}
+        }
         pageEl.appendChild(img);
       } else {
         // Hash-gradient fallback. Uses the same title-hash color the
@@ -15865,6 +17181,17 @@ function _bookViewUpdateNav() {
 // the spread back. Centralized so a future fourth manual-nav path
 // (keyboard shortcuts overlay, gestures, etc.) just calls this.
 function _bookViewNavigateManual(targetSpread) {
+  // v225v3.0 (#734): V3 branch — page-row translateX navigation.
+  if (_bookViewV3Enabled()) {
+    _bookViewV3GotoSpread(targetSpread);
+    return;
+  }
+  // v225h0 (#728): V2 branch — multi-column flow doesn't use the V1
+  // spread-render path. Translate the flow container directly.
+  if (_bookViewV2Enabled()) {
+    _bookViewV2GotoSpread(targetSpread);
+    return;
+  }
   if (targetSpread < 0 || targetSpread >= _bookViewSpreadsCount) return;
   _bookViewUserPaged = true;
   // v220: pass the direction so _bookViewRenderSpread can play the
@@ -15877,6 +17204,820 @@ function _bookViewNavigateManual(targetSpread) {
   // page-jump, return-to-current) would look weird with a flip.
   const animate = dir !== null && Math.abs(targetSpread - _bookViewCurrentSpread) === 1;
   _bookViewRenderSpread(targetSpread, animate ? dir : null);
+}
+
+// =====================================================================
+// v225h0 (#728): Book View V2 — multi-column module (Phase 1)
+// =====================================================================
+//
+// Feature-flagged via localStorage.bookViewV2 = "true" or
+// ?bookviewv2=1 in the URL. When on, enterBookView and
+// _bookViewNavigateManual branch into the V2 functions below.
+//
+// Phase 1 scope: sentence + image rendering, prev/next nav, spread
+// count via measurement-free CSS columns. Bookmarks/TOC/find/drop
+// caps/print/3D flip are dropped — added back in Phase 2.
+
+const _bookViewV2State = {
+  spreadIdx: 0,
+  spreadCount: 1,
+  spreadWidth: 0,
+  // v225h0.5 (#730): sentence-idx anchor for the start of the current
+  // spread. Used by the resize handler to preserve reading position
+  // when columns reflow (window resize, phone rotation, etc).
+  anchorSentenceIdx: null,
+};
+
+function _bookViewV2Enabled() {
+  try {
+    // URL param wins (so QA can opt in without persisting).
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("bookviewv2") === "1") {
+      localStorage.setItem("bookViewV2", "true");
+      return true;
+    }
+    return localStorage.getItem("bookViewV2") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function _bookViewV2Setup(source) {
+  const spread = bookViewSpread;
+  // Mark spread with v2 class so CSS overrides kick in. Remove if
+  // re-entering after V1 use.
+  spread.classList.add("v2");
+  spread.innerHTML = "";
+
+  const flow = document.createElement("div");
+  flow.className = "book-view-flow";
+
+  // Copy theme + font-size to the spread so the CSS vars cascade
+  // into the flow exactly like the live render does in V1.
+  if (bookView && bookView.dataset.bookTheme) {
+    spread.dataset.bookTheme = bookView.dataset.bookTheme;
+  }
+
+  // Cover image as the first column.
+  if (source.cover) {
+    const resolved = typeof _coverImgSrc === "function"
+      ? _coverImgSrc(source.cover)
+      : null;
+    const coverUrl = resolved ? resolved.url
+      : typeof source.cover === "string" ? source.cover
+      : (source.cover && source.cover.src) ? source.cover.src
+      : null;
+    if (coverUrl) {
+      const coverWrap = document.createElement("div");
+      coverWrap.className = "v2-cover-page";
+      const img = document.createElement("img");
+      img.src = coverUrl;
+      img.alt = source.title || "Cover";
+      coverWrap.appendChild(img);
+      flow.appendChild(coverWrap);
+    }
+  }
+
+  // Sentences with attached images in document order. v225h1 (#731):
+  // each image goes in a .v2-image-page wrapper so CSS break-before/
+  // break-after forces it onto its own column. Avoids the unbalanced
+  // "image + 2 orphan lines" column we get with interleaved flow.
+  const sentences = source.sentences || [];
+  const imgByIdx = source.imgByIdx;
+  const appendImagePage = (img) => {
+    const wrap = document.createElement("div");
+    wrap.className = "v2-image-page";
+    const el = document.createElement("img");
+    el.src = img.url || img.src;
+    el.alt = img.alt || "";
+    el.loading = "lazy";
+    wrap.appendChild(el);
+    flow.appendChild(wrap);
+  };
+  for (let i = 0; i < sentences.length; i++) {
+    const imgs = imgByIdx ? (imgByIdx.get(i) || []) : [];
+    for (const img of imgs) appendImagePage(img);
+    const span = document.createElement("span");
+    span.className = "sentence";
+    span.dataset.idx = String(i);
+    span.textContent = sentences[i] + " ";
+    flow.appendChild(span);
+  }
+
+  // Trailing images (sentence_index = sentences.length) — also each
+  // get their own page.
+  if (imgByIdx) {
+    const trailing = imgByIdx.get(sentences.length) || [];
+    for (const img of trailing) appendImagePage(img);
+  }
+
+  spread.appendChild(flow);
+
+  // Measure after layout settles. Two rAFs because the first frame
+  // applies layout, the second has accurate scrollWidth.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      _bookViewV2Measure();
+      _bookViewV2GotoSpread(0);
+      // Re-measure on image load (column count can change).
+      const imgs = spread.querySelectorAll("img");
+      let pendingImgs = imgs.length;
+      if (pendingImgs === 0) return;
+      imgs.forEach((img) => {
+        if (img.complete) {
+          pendingImgs--;
+        } else {
+          img.addEventListener("load", () => {
+            pendingImgs--;
+            if (pendingImgs <= 0) {
+              _bookViewV2Measure();
+              _bookViewV2GotoSpread(_bookViewV2State.spreadIdx);
+            }
+          }, { once: true });
+          img.addEventListener("error", () => {
+            pendingImgs--;
+            if (pendingImgs <= 0) {
+              _bookViewV2Measure();
+              _bookViewV2GotoSpread(_bookViewV2State.spreadIdx);
+            }
+          }, { once: true });
+        }
+      });
+      if (pendingImgs === 0) {
+        _bookViewV2Measure();
+        _bookViewV2GotoSpread(_bookViewV2State.spreadIdx);
+      }
+    });
+  });
+}
+
+// v225h3 (#733): Readium-style two-phase layout. Phase A: lay out the
+// flow as a single column at pageWidth and read scrollHeight (=
+// total content height). Phase B: divide by pageHeight to get column
+// count N. Phase C: lock the flow at columnCount:N, width:N*pageWidth,
+// height:pageHeight — browser knows exactly what to make, no overflow
+// clipping. Phase D: verify by reading where the last visible content
+// piece actually sits and adjust N if our estimate was off.
+function _bookViewV2Measure() {
+  const spread = bookViewSpread;
+  const flow = spread.querySelector(".book-view-flow");
+  if (!flow) return;
+
+  const isPhone = window.innerWidth <= 720;
+  const pagesPerSpread = isPhone ? 1 : 2;
+  const spreadWidth = spread.clientWidth;
+  const pageWidth = spreadWidth / pagesPerSpread;
+  const pageHeight = spread.clientHeight;
+
+  // --- Phase A: single-column natural-height measurement --------------
+  // Reset to single-column so scrollHeight = true content height.
+  flow.style.transform = "none";
+  flow.style.position = "relative";
+  flow.style.width = pageWidth + "px";
+  flow.style.height = "auto";
+  flow.style.columnCount = "1";
+  flow.style.columnWidth = "auto";
+  // Force synchronous layout flush.
+  // eslint-disable-next-line no-unused-expressions
+  flow.offsetHeight;
+  const contentHeight = flow.scrollHeight;
+
+  // --- Phase B: estimate column count needed --------------------------
+  // Each image with break-before:column + break-after:column eats one
+  // extra column boundary. Add 2*imageCount safety margin + 2 to cover
+  // mid-content widows. Overestimating is cheap (extra empty columns
+  // are invisible after Phase D trim); underestimating clips content.
+  const imageCount = flow.querySelectorAll(
+    ".v2-image-page, .v2-cover-page"
+  ).length;
+  const estimatedColumns = Math.max(
+    1,
+    Math.ceil(contentHeight / Math.max(pageHeight, 100)) + 2 * imageCount + 2
+  );
+
+  // --- Phase C: lock multi-column layout ------------------------------
+  flow.style.position = "absolute";
+  flow.style.top = "0";
+  flow.style.left = "0";
+  flow.style.width = (estimatedColumns * pageWidth) + "px";
+  flow.style.height = pageHeight + "px";
+  flow.style.columnCount = String(estimatedColumns);
+  flow.style.columnWidth = "auto";
+  // Force flush so the multi-column layout settles before we measure.
+  // eslint-disable-next-line no-unused-expressions
+  flow.offsetWidth;
+
+  // --- Phase D: trim to actual used columns ---------------------------
+  // Find the rightmost piece of content (any sentence, image-page, or
+  // cover-page). Divide its right edge by pageWidth to get the actual
+  // column count used.
+  const flowRect = flow.getBoundingClientRect();
+  let maxRight = 0;
+  const blocks = flow.querySelectorAll(
+    ".sentence, .v2-image-page, .v2-cover-page"
+  );
+  blocks.forEach((el) => {
+    const r = el.getBoundingClientRect();
+    const relRight = r.right - flowRect.left;
+    if (relRight > maxRight) maxRight = relRight;
+  });
+  let actualColumns = Math.max(1, Math.ceil(maxRight / pageWidth));
+
+  // If actualColumns >= estimatedColumns, content overflowed our
+  // estimate — re-layout with double and re-measure once.
+  if (actualColumns >= estimatedColumns) {
+    const N2 = estimatedColumns * 2;
+    flow.style.width = (N2 * pageWidth) + "px";
+    flow.style.columnCount = String(N2);
+    // eslint-disable-next-line no-unused-expressions
+    flow.offsetWidth;
+    maxRight = 0;
+    blocks.forEach((el) => {
+      const r = el.getBoundingClientRect();
+      const relRight = r.right - flowRect.left;
+      if (relRight > maxRight) maxRight = relRight;
+    });
+    actualColumns = Math.max(1, Math.ceil(maxRight / pageWidth));
+  }
+
+  // Trim if we overestimated significantly.
+  if (actualColumns < estimatedColumns) {
+    flow.style.width = (actualColumns * pageWidth) + "px";
+    flow.style.columnCount = String(actualColumns);
+    // eslint-disable-next-line no-unused-expressions
+    flow.offsetWidth;
+  }
+
+  // --- Done: update state -------------------------------------------
+  _bookViewV2State.spreadWidth = spreadWidth;
+  _bookViewV2State.spreadCount = Math.max(
+    1,
+    Math.ceil(actualColumns / pagesPerSpread)
+  );
+  _bookViewSpreadsCount = _bookViewV2State.spreadCount;
+
+  if (typeof _dlog === "function") {
+    _dlog("book-v2", "compute-layout", {
+      spreadWidth,
+      pageWidth,
+      pageHeight,
+      pagesPerSpread,
+      contentHeight,
+      imageCount,
+      estimatedColumns,
+      actualColumns,
+      spreadCount: _bookViewV2State.spreadCount,
+    });
+  }
+}
+
+function _bookViewV2GotoSpread(n) {
+  const spread = bookViewSpread;
+  const flow = spread.querySelector(".book-view-flow");
+  if (!flow) return;
+  const total = _bookViewV2State.spreadCount;
+  const target = Math.max(0, Math.min(n, total - 1));
+  _bookViewV2State.spreadIdx = target;
+  _bookViewCurrentSpread = target;
+  flow.style.transform = `translateX(${-target * _bookViewV2State.spreadWidth}px)`;
+  // v225h0.5 (#730): capture the sentence-idx at the start of this
+  // spread so the resize handler can re-anchor reading position
+  // after columns reflow.
+  _bookViewV2State.anchorSentenceIdx =
+    _bookViewV2FirstSentenceIdxAtSpread(target);
+  _bookViewV2UpdateNav();
+}
+
+// v225h0.5 (#730): find the first sentence whose offsetLeft falls
+// inside the given spread. Used to capture (on goto) and restore
+// (on resize) reading position.
+function _bookViewV2FirstSentenceIdxAtSpread(spreadIdx) {
+  const spread = bookViewSpread;
+  const flow = spread.querySelector(".book-view-flow");
+  if (!flow) return null;
+  const targetX = spreadIdx * _bookViewV2State.spreadWidth;
+  const sentences = flow.querySelectorAll(".sentence");
+  for (const s of sentences) {
+    if (s.offsetLeft >= targetX) {
+      const idx = parseInt(s.dataset.idx, 10);
+      if (!isNaN(idx)) return idx;
+    }
+  }
+  // Fallback: last sentence (we're on the final spread).
+  if (sentences.length) {
+    const last = sentences[sentences.length - 1];
+    const idx = parseInt(last.dataset.idx, 10);
+    return isNaN(idx) ? null : idx;
+  }
+  return null;
+}
+
+// v225h0.5 (#730): jump to whichever spread contains the given
+// sentence. Called by the resize handler post-reflow to preserve
+// the user's reading position. Bypasses GotoSpread's anchor capture
+// (anchor stays unchanged across the re-anchor).
+function _bookViewV2GotoSentenceIdx(sentenceIdx) {
+  const spread = bookViewSpread;
+  const flow = spread.querySelector(".book-view-flow");
+  if (!flow) return;
+  const span = flow.querySelector(`.sentence[data-idx="${sentenceIdx}"]`);
+  if (!span) {
+    _bookViewV2GotoSpread(0);
+    return;
+  }
+  const newSpread = Math.floor(
+    span.offsetLeft / Math.max(_bookViewV2State.spreadWidth, 1)
+  );
+  // Don't re-capture anchor — keep the original sentence-idx so
+  // subsequent resizes still target the same place.
+  const total = _bookViewV2State.spreadCount;
+  const target = Math.max(0, Math.min(newSpread, total - 1));
+  _bookViewV2State.spreadIdx = target;
+  _bookViewCurrentSpread = target;
+  flow.style.transform = `translateX(${-target * _bookViewV2State.spreadWidth}px)`;
+  _bookViewV2UpdateNav();
+}
+
+function _bookViewV2UpdateNav() {
+  if (bookViewIndicator) {
+    bookViewIndicator.textContent =
+      `Spread ${_bookViewV2State.spreadIdx + 1} of ${_bookViewV2State.spreadCount}`;
+  }
+  if (bookViewPrev) {
+    bookViewPrev.disabled = _bookViewV2State.spreadIdx <= 0;
+  }
+  if (bookViewNext) {
+    bookViewNext.disabled =
+      _bookViewV2State.spreadIdx >= _bookViewV2State.spreadCount - 1;
+  }
+}
+
+// v225h0.5 (#730): debounced + anchor-preserving resize handler.
+// Native `resize` fires ~60×/s during a window drag — re-measuring
+// on every event causes layout thrash. Debounce to 120ms (after the
+// user stops dragging) and use the stored sentence-idx anchor so
+// reading position survives the column reflow.
+let _bookViewV2ResizeTimer = null;
+window.addEventListener("resize", () => {
+  if (!_bookViewV2Enabled()) return;
+  if (!bookView || bookView.hidden) return;
+  if (!bookViewSpread.classList.contains("v2")) return;
+  if (_bookViewV2ResizeTimer) clearTimeout(_bookViewV2ResizeTimer);
+  _bookViewV2ResizeTimer = setTimeout(() => {
+    _bookViewV2ResizeTimer = null;
+    _bookViewV2Measure();
+    const anchor = _bookViewV2State.anchorSentenceIdx;
+    if (anchor !== null && anchor !== undefined) {
+      _bookViewV2GotoSentenceIdx(anchor);
+    } else {
+      _bookViewV2GotoSpread(_bookViewV2State.spreadIdx);
+    }
+  }, 120);
+});
+
+async function _enterBookViewV2() {
+  if (!_bookViewSource || !_bookViewSource.sentences.length) {
+    setStatus("Generate or load a clip first.", true);
+    return;
+  }
+  // Populate title + cover from the loaded clip.
+  if (_currentClipId) {
+    const clip = await getClip(_currentClipId).catch(() => null);
+    if (clip) {
+      _bookViewSource.title = clip.title || "Untitled chapter";
+      _bookViewSource.cover = clip.cover || null;
+      _bookViewSource.bookmarks = clip.bookmarks || [];
+      _bookViewSource.highlights = clip.highlights || [];
+    }
+  } else {
+    _bookViewSource.title = "Untitled chapter";
+  }
+
+  // Preload image dimensions + bucket by sentence_index (shared with
+  // V1; harmless even though V2 doesn't use imgDims for measurement).
+  if (!_bookViewSource.imgByIdx) {
+    _bookViewSource.imgByIdx = _bookViewBucketImages(
+      _bookViewSource.images,
+      _bookViewSource.sentences.length
+    );
+  }
+  if (!_bookViewSource.imgDims) {
+    bookView.style.visibility = "hidden";
+    bookView.hidden = false;
+    _bookViewSource.imgDims = await _bookViewPreloadImages(
+      _bookViewSource.images || []
+    );
+  }
+
+  bookView.hidden = false;
+  bookView.style.visibility = "hidden";
+  readingView.hidden = true;
+
+  _bookViewV2Setup(_bookViewSource);
+
+  if (bookViewToggle) bookViewToggle.textContent = "▶ Audio view";
+  bookView.style.visibility = "visible";
+  // Scroll the document to the top so the page header is visible.
+  try {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
+}
+
+// =====================================================================
+// v225v3.0 (#734): Book View V3 — manual JS pagination (word-processor)
+// =====================================================================
+//
+// Each page is a real DOM <div> sized exactly to pageWidth × pageHeight.
+// Content streams in sentence-by-sentence: append to current page body,
+// check scrollHeight > clientHeight, if overflow remove + start new
+// page. Images get their own page. No CSS columns anywhere; just
+// block layout inside each page with overflow:hidden as the boundary.
+//
+// Feature-flagged via localStorage.bookViewV3 = "true" or ?bookviewv3=1.
+
+const _bookViewV3State = {
+  spreadIdx: 0,
+  spreadCount: 1,
+  pageCount: 1,
+  pagesPerSpread: 2,
+  pageWidth: 0,
+  spreadWidth: 0,
+  anchorSentenceIdx: null,
+};
+
+function _bookViewV3Enabled() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("bookviewv3") === "1") {
+      localStorage.setItem("bookViewV3", "true");
+      return true;
+    }
+    return localStorage.getItem("bookViewV3") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function _bookViewV3CreatePage(pageRow, pageWidth, pageHeight) {
+  const page = document.createElement("div");
+  page.className = "book-view-page";
+  page.style.width = pageWidth + "px";
+  page.style.height = pageHeight + "px";
+  const body = document.createElement("div");
+  body.className = "book-view-page-body";
+  page.appendChild(body);
+  pageRow.appendChild(page);
+  return { page, body };
+}
+
+function _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt) {
+  const { page, body } = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+  page.classList.add("book-view-page-image");
+  const img = document.createElement("img");
+  img.src = src;
+  img.alt = alt || "";
+  img.loading = "lazy";
+  body.appendChild(img);
+}
+
+function _bookViewV3Setup(source) {
+  const spread = bookViewSpread;
+  spread.classList.add("v3");
+  spread.classList.remove("v2");
+  spread.innerHTML = "";
+
+  if (bookView && bookView.dataset.bookTheme) {
+    spread.dataset.bookTheme = bookView.dataset.bookTheme;
+  }
+
+  const isPhone = window.innerWidth <= 720;
+  const pagesPerSpread = isPhone ? 1 : 2;
+  const spreadWidth = spread.clientWidth;
+  const pageWidth = spreadWidth / pagesPerSpread;
+  const pageHeight = spread.clientHeight;
+
+  const pageRow = document.createElement("div");
+  pageRow.className = "book-view-page-row";
+  spread.appendChild(pageRow);
+
+  let pageCount = 0;
+
+  // Cover image as first page (if present).
+  if (source.cover) {
+    const resolved = typeof _coverImgSrc === "function"
+      ? _coverImgSrc(source.cover) : null;
+    const coverUrl = resolved ? resolved.url
+      : typeof source.cover === "string" ? source.cover
+      : (source.cover && source.cover.src) ? source.cover.src
+      : null;
+    if (coverUrl) {
+      _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight,
+        coverUrl, source.title || "Cover");
+      pageCount++;
+    }
+  }
+
+  // Start the first text page.
+  let cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+  pageCount++;
+  let hasContent = false;
+
+  // Helper: insert an image page, swapping the current empty page for
+  // an image page and starting a fresh text page after.
+  const pushImage = (src, alt) => {
+    if (hasContent) {
+      cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+      pageCount++;
+      hasContent = false;
+    }
+    // cur is now empty — replace with image page.
+    pageRow.removeChild(cur.page);
+    pageCount--;
+    _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt);
+    pageCount++;
+    // Start a fresh text page for following content.
+    cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+    pageCount++;
+    hasContent = false;
+  };
+
+  const sentences = source.sentences || [];
+  const imgByIdx = source.imgByIdx;
+  let firstBreakLogged = false;
+
+  for (let i = 0; i < sentences.length; i++) {
+    // Images attached to this sentence index get their own page first.
+    const imgs = imgByIdx ? (imgByIdx.get(i) || []) : [];
+    for (const img of imgs) {
+      const src = img.url || img.src;
+      if (src) pushImage(src, img.alt || "");
+    }
+
+    // Try to add the sentence to the current page.
+    const span = document.createElement("span");
+    span.className = "sentence";
+    span.dataset.idx = String(i);
+    span.textContent = sentences[i] + " ";
+    cur.body.appendChild(span);
+    hasContent = true;
+
+    // Overflow check.
+    if (cur.body.scrollHeight > cur.body.clientHeight + 1) {
+      if (!firstBreakLogged && typeof _dlog === "function") {
+        firstBreakLogged = true;
+        _dlog("book-v3", "first-break", {
+          sentenceIdx: i,
+          scrollHeight: cur.body.scrollHeight,
+          clientHeight: cur.body.clientHeight,
+          pageStyleHeight: cur.page.style.height,
+          pageClientHeight: cur.page.clientHeight,
+          pageOffsetHeight: cur.page.offsetHeight,
+        });
+      }
+      cur.body.removeChild(span);
+      // If the current page had ONLY this sentence and it overflows,
+      // we have an oversize sentence. Accept the overflow (clipped by
+      // overflow:hidden) rather than infinite-loop.
+      if (cur.body.childNodes.length === 0) {
+        cur.body.appendChild(span);
+        hasContent = true;
+        continue;
+      }
+      // Otherwise, start a new page with this sentence.
+      cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+      pageCount++;
+      cur.body.appendChild(span);
+      hasContent = true;
+    }
+  }
+
+  // v225v3.1: if NO break was ever triggered (suspicious — content
+  // claimed to fit in one page), log what the final body looks like.
+  if (!firstBreakLogged && typeof _dlog === "function") {
+    _dlog("book-v3", "no-breaks", {
+      sentenceCount: sentences.length,
+      finalScrollHeight: cur.body.scrollHeight,
+      finalClientHeight: cur.body.clientHeight,
+      pageClientHeight: cur.page.clientHeight,
+      pageStyleHeight: cur.page.style.height,
+    });
+  }
+
+  // Trailing images.
+  if (imgByIdx) {
+    const trailing = imgByIdx.get(sentences.length) || [];
+    for (const img of trailing) {
+      const src = img.url || img.src;
+      if (src) pushImage(src, img.alt || "");
+    }
+  }
+
+  // Remove trailing empty page if present.
+  if (!hasContent && pageCount > 1) {
+    pageRow.removeChild(cur.page);
+    pageCount--;
+  }
+
+  // Fix the page row's width so flex layout has explicit dimensions.
+  pageRow.style.width = (pageCount * pageWidth) + "px";
+
+  // Compute spread state.
+  _bookViewV3State.pageCount = pageCount;
+  _bookViewV3State.pagesPerSpread = pagesPerSpread;
+  _bookViewV3State.pageWidth = pageWidth;
+  _bookViewV3State.spreadWidth = pagesPerSpread * pageWidth;
+  _bookViewV3State.spreadCount =
+    Math.max(1, Math.ceil(pageCount / pagesPerSpread));
+  _bookViewSpreadsCount = _bookViewV3State.spreadCount;
+
+  if (typeof _dlog === "function") {
+    _dlog("book-v3", "setup", {
+      spreadWidth, pageWidth, pageHeight, pagesPerSpread,
+      pageCount, spreadCount: _bookViewV3State.spreadCount,
+      sentenceCount: sentences.length,
+    });
+  }
+
+  // Initial position.
+  _bookViewV3State.spreadIdx = 0;
+  _bookViewV3GotoSpread(0);
+}
+
+function _bookViewV3GotoSpread(n) {
+  const spread = bookViewSpread;
+  const pageRow = spread.querySelector(".book-view-page-row");
+  if (!pageRow) return;
+  const total = _bookViewV3State.spreadCount;
+  const target = Math.max(0, Math.min(n, total - 1));
+  _bookViewV3State.spreadIdx = target;
+  _bookViewCurrentSpread = target;
+  pageRow.style.transform =
+    `translateX(${-target * _bookViewV3State.spreadWidth}px)`;
+  // Capture anchor (first-page first-sentence) for resize handler.
+  _bookViewV3State.anchorSentenceIdx =
+    _bookViewV3FirstSentenceIdxAtSpread(target);
+  _bookViewV3UpdateNav();
+}
+
+function _bookViewV3FirstSentenceIdxAtSpread(spreadIdx) {
+  const spread = bookViewSpread;
+  const pageRow = spread.querySelector(".book-view-page-row");
+  if (!pageRow) return null;
+  const pages = pageRow.children;
+  const firstPageIdx = spreadIdx * _bookViewV3State.pagesPerSpread;
+  if (firstPageIdx >= pages.length) return null;
+  for (let k = firstPageIdx;
+       k < pages.length && k < firstPageIdx + _bookViewV3State.pagesPerSpread;
+       k++) {
+    const span = pages[k].querySelector(".sentence");
+    if (span) {
+      const idx = parseInt(span.dataset.idx, 10);
+      if (!isNaN(idx)) return idx;
+    }
+  }
+  return null;
+}
+
+function _bookViewV3PageOfSentence(sentenceIdx) {
+  const spread = bookViewSpread;
+  const pageRow = spread.querySelector(".book-view-page-row");
+  if (!pageRow) return 0;
+  const span = pageRow.querySelector(`.sentence[data-idx="${sentenceIdx}"]`);
+  if (!span) return 0;
+  let el = span;
+  while (el && !(el.classList && el.classList.contains("book-view-page"))) {
+    el = el.parentElement;
+  }
+  if (!el) return 0;
+  const pages = pageRow.children;
+  for (let i = 0; i < pages.length; i++) {
+    if (pages[i] === el) return i;
+  }
+  return 0;
+}
+
+function _bookViewV3GotoSentenceIdx(sentenceIdx) {
+  const pageIdx = _bookViewV3PageOfSentence(sentenceIdx);
+  const spreadIdx = Math.floor(pageIdx / _bookViewV3State.pagesPerSpread);
+  // Bypass GotoSpread's anchor re-capture so the anchor sentence stays
+  // stable across subsequent resizes.
+  const spread = bookViewSpread;
+  const pageRow = spread.querySelector(".book-view-page-row");
+  if (!pageRow) return;
+  const total = _bookViewV3State.spreadCount;
+  const target = Math.max(0, Math.min(spreadIdx, total - 1));
+  _bookViewV3State.spreadIdx = target;
+  _bookViewCurrentSpread = target;
+  pageRow.style.transform =
+    `translateX(${-target * _bookViewV3State.spreadWidth}px)`;
+  _bookViewV3UpdateNav();
+}
+
+function _bookViewV3UpdateNav() {
+  if (bookViewIndicator) {
+    bookViewIndicator.textContent =
+      `Spread ${_bookViewV3State.spreadIdx + 1} of ${_bookViewV3State.spreadCount}`;
+  }
+  if (bookViewPrev) {
+    bookViewPrev.disabled = _bookViewV3State.spreadIdx <= 0;
+  }
+  if (bookViewNext) {
+    bookViewNext.disabled =
+      _bookViewV3State.spreadIdx >= _bookViewV3State.spreadCount - 1;
+  }
+}
+
+// v225v3.1 (#735): use ResizeObserver instead of window.resize so we
+// fire AFTER the spread's actual box has resized — handles the case
+// where the spread changes size from sidebars / orientation /
+// other layout shifts that window.resize doesn't catch.
+let _bookViewV3ResizeTimer = null;
+let _bookViewV3LastW = 0;
+let _bookViewV3LastH = 0;
+if (typeof ResizeObserver !== "undefined" && bookViewSpread) {
+  const ro = new ResizeObserver((entries) => {
+    if (!_bookViewV3Enabled()) return;
+    if (!bookView || bookView.hidden) return;
+    if (!bookViewSpread.classList.contains("v3")) return;
+    // Ignore noisy 1-2px sub-pixel changes — they cause re-paginate
+    // loops without changing pagination outcome.
+    const entry = entries[0];
+    if (!entry) return;
+    const w = Math.round(entry.contentRect.width);
+    const h = Math.round(entry.contentRect.height);
+    if (Math.abs(w - _bookViewV3LastW) < 4 &&
+        Math.abs(h - _bookViewV3LastH) < 4) return;
+    _bookViewV3LastW = w;
+    _bookViewV3LastH = h;
+    if (_bookViewV3ResizeTimer) clearTimeout(_bookViewV3ResizeTimer);
+    _bookViewV3ResizeTimer = setTimeout(() => {
+      _bookViewV3ResizeTimer = null;
+      const anchor = _bookViewV3State.anchorSentenceIdx;
+      if (typeof _dlog === "function") {
+        _dlog("book-v3", "resize-trigger", {
+          newW: w, newH: h,
+          spreadW: bookViewSpread.clientWidth,
+          spreadH: bookViewSpread.clientHeight,
+          anchor,
+        });
+      }
+      _bookViewV3Setup(_bookViewSource);
+      if (anchor !== null && anchor !== undefined) {
+        _bookViewV3GotoSentenceIdx(anchor);
+      } else {
+        _bookViewV3GotoSpread(0);
+      }
+    }, 100);
+  });
+  ro.observe(bookViewSpread);
+}
+
+async function _enterBookViewV3() {
+  if (!_bookViewSource || !_bookViewSource.sentences.length) {
+    setStatus("Generate or load a clip first.", true);
+    return;
+  }
+  if (_currentClipId) {
+    const clip = await getClip(_currentClipId).catch(() => null);
+    if (clip) {
+      _bookViewSource.title = clip.title || "Untitled chapter";
+      _bookViewSource.cover = clip.cover || null;
+      _bookViewSource.bookmarks = clip.bookmarks || [];
+      _bookViewSource.highlights = clip.highlights || [];
+    }
+  } else {
+    _bookViewSource.title = "Untitled chapter";
+  }
+
+  if (!_bookViewSource.imgByIdx) {
+    _bookViewSource.imgByIdx = _bookViewBucketImages(
+      _bookViewSource.images,
+      _bookViewSource.sentences.length
+    );
+  }
+  if (!_bookViewSource.imgDims) {
+    bookView.style.visibility = "hidden";
+    bookView.hidden = false;
+    _bookViewSource.imgDims = await _bookViewPreloadImages(
+      _bookViewSource.images || []
+    );
+  }
+
+  bookView.hidden = false;
+  bookView.style.visibility = "hidden";
+  readingView.hidden = true;
+
+  _bookViewV3Setup(_bookViewSource);
+
+  if (bookViewToggle) bookViewToggle.textContent = "▶ Audio view";
+  bookView.style.visibility = "visible";
+  try {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
 }
 
 // v208 (M6.2): click the spread indicator to enter page-jump mode.
@@ -16080,6 +18221,16 @@ async function enterBookView() {
     setStatus("Generate or load a clip first.", true);
     return;
   }
+  // v225v3.0 (#734): Book View V3 branch — word-processor pagination.
+  // Takes priority over V2 and V1.
+  if (_bookViewV3Enabled()) {
+    return _enterBookViewV3();
+  }
+  // v225h0 (#728): Book View V2 branch — multi-column rewrite.
+  // Feature-flagged so V1 remains the default until parity reached.
+  if (_bookViewV2Enabled()) {
+    return _enterBookViewV2();
+  }
   // Populate title + cover from the currently-loaded clip if we have
   // its id (otherwise leave the fallback gradient + a generic title).
   if (_currentClipId) {
@@ -16176,6 +18327,45 @@ async function enterBookView() {
   _bookViewUpdateTocButton();
   bookView.style.visibility = "visible";
   if (bookViewToggle) bookViewToggle.textContent = "▶ Audio view";
+  // v225g10 (#698): scroll the PAGE to the top so the Narrative
+  // header (title, ⚙ Settings, ⌘K, etc.) is visible — not the book
+  // view's top edge. The previous behavior left the user at whatever
+  // scroll position they were at before opening as ebook, which on
+  // a Bicycle-Ghost-sized spread meant the header was off-screen
+  // above and the spread filled the viewport, with no way to reach
+  // navigation. window.scrollTo(0, 0) puts the page top in view;
+  // the import preview + book view render below it; the user can
+  // scroll down to engage with the book view OR see the header at
+  // any time. Phone gets the fixed-position takeover from v225g3
+  // so this call is harmless there (fixed elements ignore page
+  // scroll). One RAF gives the visibility:visible above a paint
+  // cycle to settle before the scroll fires.
+  requestAnimationFrame(() => {
+    try {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } catch {
+      try { window.scrollTo(0, 0); } catch {}
+    }
+    // v225g13 (#701): after the page-scroll, do a second paint cycle
+    // and force a repagination. User reported the bottom of each
+    // book-view page was being clipped — last 1-2 lines of text cut
+    // off mid-paragraph. Cause: the initial pagination measured the
+    // spread BEFORE v225g9's max-height CSS clamp took effect (CSS
+    // hadn't paint-settled when getBoundingClientRect ran inside
+    // enterBookView's synchronous block). The paginator laid out
+    // pages assuming the un-clamped tall geometry, then CSS shrunk
+    // the spread to fit viewport-minus-nav, leaving the bottom of
+    // each page overflowed and clipped. A re-measure + repaginate
+    // after the CSS settles fixes the page-fit. The repaginator
+    // preserves the user's spread position (it anchors on the
+    // current sentence), so this is invisible to the user — pages
+    // just suddenly fit correctly.
+    requestAnimationFrame(() => {
+      try { _bookViewRepaginate(); } catch (e) {
+        console.warn("[bookview] post-enter repaginate failed:", e);
+      }
+    });
+  });
 }
 
 // v202 (M3.3): build a single page element for the given slot
@@ -16192,14 +18382,19 @@ function _bookViewBuildPageElement(slot) {
     // Cover — same as the renderer's cover branch.
     pageEl.classList.add("book-page-cover");
     const src = _bookViewSource;
-    if (src && src.cover && src.cover.blob) {
+    // v225g12 (#700): same multi-format cover resolver as the live
+    // renderer. Print rebuilds every page flat so this slot fires for
+    // every book; without the resolver, print would show the seed-
+    // letter gradient instead of the real cover for ebook clips.
+    const coverImgSrc = _coverImgSrc(src && src.cover);
+    if (coverImgSrc) {
       const img = document.createElement("img");
       img.className = "book-page-cover-art";
       img.alt = src.title || "Cover";
-      try {
-        img.src = URL.createObjectURL(src.cover.blob);
+      img.src = coverImgSrc.url;
+      if (coverImgSrc.revoke) {
         img.addEventListener("load", () => URL.revokeObjectURL(img.src), { once: true });
-      } catch {}
+      }
       pageEl.appendChild(img);
     } else {
       const fb = document.createElement("div");
@@ -16508,6 +18703,65 @@ function exitBookView(opts = {}) {
   if (bookViewTocBtn) bookViewTocBtn.hidden = true;
   // v208 (M6.3): close the find bar so re-entering book view starts fresh.
   if (bookViewFind && !bookViewFind.hidden) _bookViewCloseFind();
+  // v225v3.4 (#738): restore-on-close path. If we have a snapshot of
+  // the pre-open import-preview state, restore the user there instead
+  // of dropping them in the reading view of the just-previewed clip.
+  // This makes "Read as ebook" a non-destructive preview from import.
+  if (_ebookPreviewSnapshot && !opts.skipReadingView) {
+    const s = _ebookPreviewSnapshot;
+    _ebookPreviewSnapshot = null;
+    window._ebookPreviewSnapshot = null;
+    try {
+      // Restore pending image / chapter state so the import preview
+      // panel can re-render with its thumbnails.
+      if (s.pendingCover) _pendingDetectedCover = s.pendingCover;
+      if (s.pendingImages) _pendingImages = s.pendingImages;
+      if (s.pendingChapterImages) _pendingChapterImages = s.pendingChapterImages;
+      if (s.pendingChapterTitle !== undefined) _pendingChapterTitle = s.pendingChapterTitle;
+      if (s.pendingGitRef !== undefined) _pendingGitRef = s.pendingGitRef;
+      // Restore textarea text (usually unchanged but covers edge cases
+      // where loadClip muted it).
+      if (textEl && s.textareaValue !== undefined) {
+        textEl.value = s.textareaValue;
+      }
+      // Clear "current clip" — we were on import preview, no clip
+      // loaded then, none loaded now.
+      _currentClipId = null;
+      if (typeof _setCurrentClipKind === "function") {
+        _setCurrentClipKind(null);
+      }
+      // Hide the reading view — it would otherwise show the previewed
+      // clip's sentences, which is exactly what we're trying NOT to do.
+      if (readingView) readingView.hidden = true;
+      // v225v3.5 (#739): UN-hide the textarea. loadClip toggled
+      // textEl.hidden = true when it switched the UI to "loaded clip
+      // playback" mode; restoring import-preview state requires the
+      // textarea visible so the user can edit / paste / continue.
+      // Also flip the edit/save buttons + book view toggle back to
+      // their "no clip loaded" defaults so the chrome is consistent.
+      if (textEl) textEl.hidden = false;
+      if (typeof editTextBtn !== "undefined" && editTextBtn) editTextBtn.hidden = true;
+      if (typeof saveTextBtn !== "undefined" && saveTextBtn) saveTextBtn.hidden = true;
+      if (typeof bookViewToggle !== "undefined" && bookViewToggle) bookViewToggle.hidden = true;
+      // Re-paint the import preview chrome (thumbnails, Read as ebook
+      // button, etc).
+      if (typeof _paintImportPreview === "function") _paintImportPreview();
+      // Refresh the phone Generate / Ebook bar at the bottom.
+      if (typeof window._syncPhoneGenerateBar === "function") {
+        try { window._syncPhoneGenerateBar(); } catch {}
+      }
+      _dlog("ebook", "exit restored import-preview snapshot", {
+        hadCover: !!s.pendingCover,
+        imageCount: s.pendingImages ? s.pendingImages.length : 0,
+      });
+      return;
+    } catch (e) {
+      _dlog("ebook", "exit restore failed — falling through to normal exit", {
+        error: String(e),
+      });
+      // Fall through to the normal path below.
+    }
+  }
   if (!opts.skipReadingView) {
     readingView.hidden = false;
   }
@@ -16517,6 +18771,21 @@ if (bookViewToggle) {
   bookViewToggle.addEventListener("click", () => {
     if (bookView.hidden) enterBookView();
     else exitBookView();
+  });
+}
+// v225g3 (#692): explicit Close button inside book view. Needed on
+// phone (where the takeover hides the hero toggle) and helpful on
+// desktop too. Also nudges _syncPhoneGenerateBar so the Generate
+// bar can flip back on for non-ebook clips after exit.
+const _bookViewCloseBtn = document.getElementById("book-view-close");
+if (_bookViewCloseBtn) {
+  _bookViewCloseBtn.addEventListener("click", () => {
+    if (typeof exitBookView === "function" && !bookView.hidden) {
+      exitBookView();
+      if (typeof window._syncPhoneGenerateBar === "function") {
+        try { window._syncPhoneGenerateBar(); } catch {}
+      }
+    }
   });
 }
 // v202 (M3.3): print button. Direct call; the function handles
@@ -17161,11 +19430,40 @@ async function _syncPushAll() {
         console.warn("[sync] push failed for clip", clip.id, e);
       }
     }
+    // v225fz8 (#674): push every locally-saved preset too. The user
+    // probably has a few from before they opted into sync; without
+    // this, first-time opt-in would only ship clips and their preset
+    // list would silently stay device-local. Counts join the clip
+    // numbers in the status toast below.
+    if (typeof _loadPresets === "function") {
+      const presets = _loadPresets();
+      for (const preset of presets) {
+        // Stamp updatedAt if missing — legacy presets from pre-v225fz8
+        // don't have one and would otherwise lose every LWW race.
+        if (!preset.updatedAt) {
+          preset.updatedAt = preset.createdAt || new Date().toISOString();
+        }
+        try {
+          await _syncPushPreset(preset);
+        } catch (e) {
+          console.warn("[sync] preset push failed:", preset.id, e);
+        }
+      }
+      // Persist the updatedAt backfill so subsequent runs don't re-stamp.
+      _savePresets(presets);
+    }
     _syncStatusText = total
       ? `Pushed ${pushed}/${total}${failed ? ` (${failed} failed)` : ""}. Pulling…`
       : "Nothing local to push. Pulling…";
     _updateSyncStatusLine();
     await _syncPull(/*force*/ true);
+    // v225fz8 (#674): include presets in the manual Sync now sweep so
+    // users mash the button after saving a preset on phone and see it
+    // immediately on desktop. Runs after the clip pull so the status
+    // line's "Pulling…" text covers both.
+    if (typeof _syncPullPresets === "function") {
+      await _syncPullPresets().catch(() => {});
+    }
     // _syncPull clears _syncStatusText on success; restore a confirmation
     // line so users see the button did something.
     const ago = "just now";
@@ -17217,6 +19515,14 @@ if (_syncIsEnabled()) {
   // hand (or close to it — pull is async).
   _syncPull(true).catch(() => {});
   setInterval(() => _syncPull(false).catch(() => {}), 60 * 1000);
+  // v225fz8 (#674): presets are a separate endpoint, pulled in
+  // parallel. Same 60s poll cadence so a preset saved on phone shows
+  // up on desktop without a refresh. Pull is cheap (tiny payload,
+  // tenant-scoped) so polling at clip cadence is fine.
+  if (typeof _syncPullPresets === "function") {
+    _syncPullPresets().catch(() => {});
+    setInterval(() => _syncPullPresets().catch(() => {}), 60 * 1000);
+  }
 }
 
 function formatTime(sec) {
@@ -17810,10 +20116,13 @@ function makeClipCard(clip) {
   const swatch = document.createElement("span");
   swatch.className = "clip-swatch";
   swatch.setAttribute("aria-hidden", "true");
-  if (clip.cover && clip.cover.blob) {
-    const url = URL.createObjectURL(clip.cover.blob);
-    swatch.style.backgroundImage = `url("${url}")`;
-    swatch.dataset.coverUrl = url;
+  // v225g12 (#700): use _coverImgSrc so the swatch renders for ebook
+  // clips (cover saved as a data-URL string) the same as for custom
+  // uploads (cover saved as { blob }).
+  const _swatchCover = _coverImgSrc(clip.cover);
+  if (_swatchCover) {
+    swatch.style.backgroundImage = `url("${_swatchCover.url}")`;
+    if (_swatchCover.revoke) swatch.dataset.coverUrl = _swatchCover.url;
     swatch.classList.add("has-cover");
   } else {
     swatch.style.background = _clipSwatchGradient(clip.title || "");
@@ -17880,16 +20189,14 @@ function makeClipCard(clip) {
     noteEl.textContent = clip.note.trim();
     titleStack.appendChild(noteEl);
   }
-  // v138 notes indicator. Free-form scratchpad presence — just an
-  // icon, no content preview, so the card stays compact and the
-  // user opens Notes (Edit dialog or 📝 chip) to read or edit.
-  if (clip.notes && clip.notes.trim()) {
-    const notesEl = document.createElement("span");
-    notesEl.className = "clip-notes-indicator";
-    notesEl.title = "This clip has notes attached";
-    notesEl.textContent = "📝 Notes";
-    titleStack.appendChild(notesEl);
-  }
+  // v225fo (#658): notes indicator relocated. Used to render here
+  // inside titleStack (next to the cover swatch) but the "📝 Notes"
+  // label kept overflowing onto the +Cover chip on cards with short
+  // play buttons. Moved to the lastSyncFooter strip below where it
+  // shares the bottom row with "Synced · N ago" — both are clip-
+  // metadata signals that belong on the low-chrome footer, not
+  // crammed against the play button. See lastSyncFooter construction
+  // further down.
   // Tag chips. Each chip carries the tag-hash color as a left border so
   // the same tag is always the same color across cards. Inside the play
   // button so a single tap still loads the clip (no nested interactives).
@@ -17926,7 +20233,14 @@ function makeClipCard(clip) {
   // Whichever is newer wins the label. Footer shows for ANY clip with
   // either timestamp — previously gated to git-sourced clips, which
   // meant the cross-device freshness signal had nowhere to land.
+  // v225fo (#658): footer is now a flex row carrying two clip-metadata
+  // signals — the notes badge (📝) on the LEFT and the sync timestamp
+  // on the RIGHT. The notes badge is created if clip.notes has content,
+  // independent of whether a sync timestamp exists, so cards with notes
+  // but no sync metadata still get the footer strip.
   let lastSyncFooter = null;
+  let syncText = null;
+  let syncTitle = null;
   if (!isSyncingNow && !isSyncingQueued) {
     const ghAt = clip.lastSyncedAt || null;
     const devAt = clip.lastDeviceSyncAt || null;
@@ -17943,11 +20257,34 @@ function makeClipCard(clip) {
     if (chosenAt) {
       const rel = _formatTimeAgo(chosenAt);
       if (rel) {
-        lastSyncFooter = document.createElement("div");
-        lastSyncFooter.className = "clip-last-synced";
-        lastSyncFooter.textContent = `${label} · ${rel}`;
-        lastSyncFooter.title = new Date(chosenAt).toLocaleString();
+        syncText = `${label} · ${rel}`;
+        syncTitle = new Date(chosenAt).toLocaleString();
       }
+    }
+  }
+  const hasNotes = !!(clip.notes && clip.notes.trim());
+  if (syncText || hasNotes) {
+    lastSyncFooter = document.createElement("div");
+    lastSyncFooter.className = "clip-last-synced";
+    if (hasNotes) {
+      const notesSpan = document.createElement("span");
+      notesSpan.className = "clip-last-synced-notes";
+      notesSpan.textContent = "📝 Notes";
+      notesSpan.title = "This clip has notes attached";
+      lastSyncFooter.appendChild(notesSpan);
+    } else {
+      // Empty placeholder so the sync text aligns right consistently
+      // whether or not the card has notes.
+      const spacer = document.createElement("span");
+      spacer.className = "clip-last-synced-notes is-empty";
+      lastSyncFooter.appendChild(spacer);
+    }
+    if (syncText) {
+      const syncSpan = document.createElement("span");
+      syncSpan.className = "clip-last-synced-text";
+      syncSpan.textContent = syncText;
+      if (syncTitle) syncSpan.title = syncTitle;
+      lastSyncFooter.appendChild(syncSpan);
     }
   }
 
@@ -18240,7 +20577,17 @@ function makeClipCard(clip) {
   // Title row has room for the one signal that actually helps the
   // user decide whether to play it now — duration. Resume-position
   // (`1:23 / 5:00`) renders for in-progress clips.
-  if (clip.durationSec) {
+  // v225g1 (#690): ebook clips have no duration → show a "📖 Ebook"
+  // pill in the same slot so the row still has a strong glance signal
+  // about what kind of clip it is. Falls back to duration for normal
+  // audio clips (and to nothing for clips that haven't synth'd yet).
+  if (clip.kind === "ebook" || (!clip.durationSec && !clip.blob)) {
+    const badge = document.createElement("span");
+    badge.className = "clip-title-top-ebook";
+    badge.textContent = "📖 Ebook";
+    badge.title = "No audio yet — tap to read; tap Generate later to add audio.";
+    titleTop.appendChild(badge);
+  } else if (clip.durationSec) {
     const durSpan = document.createElement("span");
     durSpan.className = "clip-title-top-duration";
     const progress = Number(clip.progressSec) || 0;
@@ -19265,6 +21612,30 @@ function _renderProvenanceBlock(clip) {
   wrap.hidden = false;
 }
 
+// v225fz7 (#673): re-read the edit-dialog clip from IDB and re-paint
+// the text fields that can be mutated by side actions (Clear marks,
+// Restore from backup). Without this, the dialog keeps its initial
+// values and a subsequent Save would silently undo the side action by
+// writing the stale textarea content back. Only the fields that
+// clear/restore can change get re-synced — title / cover / tags /
+// gitRef etc. are not affected and stay as the user has them. Safe to
+// call when the dialog is closed or pointing at a different clip
+// (no-ops). Used by the clear-marks + restore-marks confirm flows.
+async function _resyncClipEditFromIDB() {
+  if (_editingClipId == null) return;
+  const dlg = document.getElementById("clip-edit");
+  if (!dlg || !dlg.open) return;
+  try {
+    const clip = await getClip(_editingClipId);
+    if (!clip) return;
+    if (typeof clip.notes === "string") {
+      clipEditNotes.value = clip.notes;
+    }
+  } catch (e) {
+    console.warn("[clip-edit] resync from IDB failed:", e);
+  }
+}
+
 async function openClipEdit(clipId) {
   const clip = await getClip(clipId);
   if (!clip) return;
@@ -19400,6 +21771,58 @@ clipEditClose.addEventListener("click", closeClipEdit);
 clipEditSave.addEventListener("click", saveClipEdit);
 clipEditDialog.addEventListener("close", () => { _editingClipId = null; });
 
+// v225fz3 (#670): "Clear marks…" button in the Edit clip dialog opens
+// the confirm modal scoped to whichever clip the Edit dialog is
+// currently editing. Edit dialog stays open behind the confirm — if
+// the user cancels the clear they're back in Edit where they were.
+const _clipEditClearMarksBtn = document.getElementById("clip-edit-clear-marks-btn");
+if (_clipEditClearMarksBtn) {
+  _clipEditClearMarksBtn.addEventListener("click", () => {
+    if (_editingClipId == null) return;
+    _openClearMarksConfirm(_editingClipId);
+  });
+}
+
+// v225fz5 (#672): "Restore from backup…" button. Same scoping as the
+// Clear button — operates on _editingClipId. Opens the OS file picker;
+// the change handler does the parse + confirm-dialog flow.
+const _clipEditRestoreMarksBtn = document.getElementById("clip-edit-restore-marks-btn");
+const _clipEditRestoreInput = document.getElementById("clip-edit-restore-input");
+if (_clipEditRestoreMarksBtn && _clipEditRestoreInput) {
+  _clipEditRestoreMarksBtn.addEventListener("click", () => {
+    if (_editingClipId == null) return;
+    // Reset so picking the same file twice still fires `change`.
+    _clipEditRestoreInput.value = "";
+    _clipEditRestoreInput.click();
+  });
+  _clipEditRestoreInput.addEventListener("change", async () => {
+    const file = _clipEditRestoreInput.files && _clipEditRestoreInput.files[0];
+    if (!file) return;
+    const targetClipId = _editingClipId;
+    if (targetClipId == null) {
+      setStatus("Restore needs a clip open in the Edit dialog.", true);
+      return;
+    }
+    let text;
+    try {
+      text = await file.text();
+    } catch (e) {
+      console.warn("[md-restore] file read failed:", e);
+      setStatus("Couldn't read the file.", true);
+      return;
+    }
+    const backup = _parseClipBackupFromMd(text);
+    if (!backup) {
+      setStatus(
+        "This file doesn't contain Narrative backup data.",
+        true,
+      );
+      return;
+    }
+    _openRestoreMarksConfirm(targetClipId, backup);
+  });
+}
+
 // v219: copy-attribution affordance. Grabs the exact credit line
 // from the currently-displayed provenance block. Lets audiobook
 // publishers / animators paste it straight into a credits roll
@@ -19474,6 +21897,14 @@ notesBtn.addEventListener("click", () => {
     return;
   }
   openNotesDialog(_currentClipId);
+  // v225fm (#655): first-tap hint distinguishes clip-wide Notes
+  // from per-sentence bookmarks/flags so users don't conflate them.
+  if (typeof _fireChipHint === "function") {
+    _fireChipHint(
+      "narrative.hintSeen.notes",
+      "💡 Notes are free-form thoughts about the whole clip. For per-moment thoughts, use 🔖 Bookmark.",
+    );
+  }
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -19659,28 +22090,224 @@ function _buildClipNotesMarkdown(clip) {
     lines.push("");
   }
 
+  // v225fz5 (#672): append a hidden backup block so the .md can
+  // round-trip — i.e. the same file the Clear-marks flow exports as
+  // a safety net is also a valid restore source. The block is an
+  // HTML comment so it never renders in a markdown viewer; the
+  // payload is base64-encoded JSON so user content with stray "-->"
+  // or special chars can't break the parser. Schema below is what
+  // _parseClipBackup / _restoreClipMarks expect.
+  try {
+    const backup = {
+      version: 1,
+      clipId: clip.id,
+      title: clip.title || "",
+      exportedAt: new Date().toISOString(),
+      // Bookmarks have no tombstones — array contains live entries only.
+      bookmarks: Array.isArray(clip.bookmarks) ? clip.bookmarks : [],
+      // Export LIVE annotations only. Tombstoned entries shouldn't
+      // come back on restore — they'd just re-tombstone and silently
+      // hide. Restoring them as live again would defeat the previous
+      // clear/delete.
+      annotations: (Array.isArray(clip.annotations) ? clip.annotations : [])
+        .filter((a) => a && !a.deletedAt),
+      notes: typeof clip.notes === "string" ? clip.notes : "",
+    };
+    const payload = JSON.stringify(backup);
+    // btoa() handles ASCII; JSON.stringify already escapes non-ASCII
+    // to \uXXXX, so the payload is always ASCII. Encoding will not
+    // throw on user content.
+    const b64 = btoa(payload);
+    lines.push("");
+    lines.push("<!--NARRATIVE_BACKUP v1");
+    lines.push(b64);
+    lines.push("-->");
+  } catch (e) {
+    // If anything in the backup-block construction blows up, ship the
+    // human-readable part anyway. The .md is still useful as a
+    // reference even if it can't be restored from.
+    console.warn("[md-export] backup block skipped:", e);
+  }
+
   // Strip trailing blank line so the file ends with the last real
   // line + a single newline.
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n") + "\n";
 }
 
+// v225fz5 (#672): extract the backup payload from an exported .md.
+// Returns the decoded object on success, or null if the file isn't a
+// Narrative backup (missing the marker, malformed base64, JSON parse
+// failure, or wrong schema version). The marker pattern is anchored on
+// our literal "NARRATIVE_BACKUP v1" string so any reasonable .md file
+// the user picks by mistake just returns null without throwing.
+function _parseClipBackupFromMd(mdText) {
+  if (typeof mdText !== "string") return null;
+  // Tolerate trailing whitespace + CRLF line endings — users on
+  // Windows opening + re-saving the .md in Notepad will introduce
+  // both. The capturing group grabs base64 chars + newlines; we
+  // strip whitespace before decoding.
+  const m = mdText.match(
+    /<!--NARRATIVE_BACKUP v1\s+([A-Za-z0-9+/=\s]+?)\s*-->/,
+  );
+  if (!m) return null;
+  let json;
+  try {
+    json = atob(m[1].replace(/\s+/g, ""));
+  } catch (e) {
+    console.warn("[md-restore] base64 decode failed:", e);
+    return null;
+  }
+  let obj;
+  try {
+    obj = JSON.parse(json);
+  } catch (e) {
+    console.warn("[md-restore] JSON parse failed:", e);
+    return null;
+  }
+  if (!obj || obj.version !== 1) {
+    console.warn("[md-restore] unexpected schema version:", obj && obj.version);
+    return null;
+  }
+  return obj;
+}
+
+// v225fz5 (#672): apply a parsed backup to a clip. Two modes:
+//
+//   - "replace" (default after a Clear-marks flow): the backup's
+//     bookmarks/annotations/notes overwrite whatever's on the clip
+//     now. Right answer for the canonical "undo a clear" case.
+//
+//   - "add": append the backup's marks alongside existing ones,
+//     deduping by id when present so the same backup applied twice
+//     doesn't double up. Right answer when the user is reviving an
+//     older backup but has done new work in the meantime they want
+//     to keep.
+//
+// Returns the counts of what landed so the caller can toast it.
+async function _restoreClipMarks(clipId, backup, mode) {
+  if (clipId == null || !backup) return null;
+  const isAdd = mode === "add";
+  const landed = { bookmarks: 0, annotations: 0, notes: 0 };
+  const now = new Date().toISOString();
+  try {
+    await _mutateClipAtomic(clipId, (c) => {
+      // ─ Bookmarks ─────────────────────────────────────────────────
+      const incomingBms = Array.isArray(backup.bookmarks)
+        ? backup.bookmarks
+        : [];
+      if (isAdd) {
+        const existing = Array.isArray(c.bookmarks) ? c.bookmarks : [];
+        const seenIds = new Set(existing.map((b) => b && b.id).filter(Boolean));
+        const fresh = incomingBms.filter(
+          (b) => b && (!b.id || !seenIds.has(b.id)),
+        );
+        c.bookmarks = existing.concat(fresh);
+        landed.bookmarks = fresh.length;
+      } else {
+        c.bookmarks = incomingBms.slice();
+        landed.bookmarks = incomingBms.length;
+      }
+      // ─ Annotations ───────────────────────────────────────────────
+      // Backup-exported annotations have NO deletedAt by construction
+      // (we filtered them out at export). Bump updatedAt to now so
+      // the server-side merge prefers our restored copy over any
+      // stale ghost record on another device.
+      const incomingAnnos = (
+        Array.isArray(backup.annotations) ? backup.annotations : []
+      ).map((a) => ({ ...a, deletedAt: undefined, updatedAt: now }));
+      if (isAdd) {
+        const existing = Array.isArray(c.annotations) ? c.annotations : [];
+        const seenIds = new Set(existing.map((a) => a && a.id).filter(Boolean));
+        const fresh = incomingAnnos.filter(
+          (a) => a && (!a.id || !seenIds.has(a.id)),
+        );
+        c.annotations = existing.concat(fresh);
+        landed.annotations = fresh.length;
+      } else {
+        c.annotations = incomingAnnos;
+        landed.annotations = incomingAnnos.length;
+      }
+      // ─ Notes ─────────────────────────────────────────────────────
+      // Notes is a single field, so "add" doesn't really mean
+      // anything; we append the backup notes onto current with a
+      // separator, but only if both are non-empty. Replace mode
+      // overwrites.
+      const backupNotes = typeof backup.notes === "string"
+        ? backup.notes.trim()
+        : "";
+      if (backupNotes) {
+        if (isAdd) {
+          const existing = typeof c.notes === "string" ? c.notes.trim() : "";
+          c.notes = existing
+            ? `${existing}\n\n---\n\n${backupNotes}`
+            : backupNotes;
+        } else {
+          c.notes = backupNotes;
+        }
+        landed.notes = 1;
+      } else if (!isAdd) {
+        // Replace mode + empty backup notes → clear the field. Matches
+        // the export's snapshot: "this clip had no notes at the time."
+        c.notes = "";
+      }
+    });
+  } catch (e) {
+    console.warn("[md-restore] mutation failed:", e);
+    return null;
+  }
+  // Same multi-surface refresh as _clearClipMarks — same need to
+  // repaint reading view chips, drawer rows, library cards, panes.
+  if (
+    _currentClipId === clipId &&
+    typeof _applyAnnotationMarkers === "function"
+  ) {
+    try {
+      const clip = await getClip(clipId);
+      if (clip) _applyAnnotationMarkers(clip);
+    } catch (e) {
+      console.warn("[md-restore] annotation repaint failed:", e);
+    }
+  }
+  if (_currentClipId === clipId && typeof renderBookmarks === "function") {
+    try { await renderBookmarks(); } catch {}
+  }
+  if (typeof renderLibrary === "function") {
+    try { renderLibrary(); } catch {}
+  }
+  if (typeof _renderAuthorPane === "function") {
+    try { _renderAuthorPane(); } catch {}
+  }
+  if (typeof _updatePullupState === "function") {
+    try { _updatePullupState(); } catch {}
+  }
+  _dlog("md-restore", "done", { clipId, mode: isAdd ? "add" : "replace", ...landed });
+  return landed;
+}
+
 const exportNotesBtn = document.getElementById("export-notes-btn");
-async function _exportClipNotes() {
-  if (!_currentClipId) {
+// v225fz3 (#670): optional clipId arg so the clear-marks flow can
+// export ANY clip (not just the currently-loaded one). When omitted,
+// behavior is unchanged — falls back to _currentClipId as before.
+// Returns true on success, false on any error / no clip / no data;
+// caller can use the result to decide whether to proceed with a
+// dependent destructive action.
+async function _exportClipNotes(clipId) {
+  const targetId = clipId != null ? clipId : _currentClipId;
+  if (!targetId) {
     setStatus("Load a clip first to export its notes.", true);
-    return;
+    return false;
   }
   let clip;
   try {
-    clip = await getClip(_currentClipId);
+    clip = await getClip(targetId);
   } catch (e) {
     setStatus(`Couldn't read clip — ${e.message || e}`, true);
-    return;
+    return false;
   }
   if (!clip) {
     setStatus("Clip not found.", true);
-    return;
+    return false;
   }
   const md = _buildClipNotesMarkdown(clip);
   const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
@@ -19695,9 +22322,392 @@ async function _exportClipNotes() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   setStatus("Notes exported.");
+  return true;
 }
 if (exportNotesBtn) {
-  exportNotesBtn.addEventListener("click", _exportClipNotes);
+  exportNotesBtn.addEventListener("click", () => _exportClipNotes());
+}
+
+// v225fz3 (#670): "Clear revision marks" — author workflow completion
+// action. After applying edits to the source manuscript, wipe the
+// clip's bookmarks + annotations + free-form notes so the next
+// listen-through starts clean. NOT cleared: book-view highlights
+// (they're a reading mark, not a revision mark — user's call in #670)
+// and voice/character assignments (they're clip configuration).
+//
+// Honors per-category opt-out: opts.bookmarks / opts.annotations /
+// opts.notes default to true; flip any to false to preserve that
+// category. Annotations get the tombstone treatment (deletedAt on
+// each, not array-filter) so the cleared state propagates cross-
+// device — mirrors the single-delete path in _tombstoneAnnotation
+// (#498). Bookmarks array-filter is fine — they don't have the
+// server-side merge intent annotations got in #495.
+//
+// Returns the cleared counts so the caller can show a status toast.
+async function _clearClipMarks(clipId, opts) {
+  if (clipId == null) return null;
+  const o = opts || {};
+  const clearBookmarks = o.bookmarks !== false;
+  const clearAnnotations = o.annotations !== false;
+  const clearNotes = o.notes !== false;
+  const cleared = { bookmarks: 0, annotations: 0, notes: 0 };
+  const now = new Date().toISOString();
+  let clipForSync = null;
+  try {
+    clipForSync = await _mutateClipAtomic(clipId, (c) => {
+      if (clearBookmarks && Array.isArray(c.bookmarks)) {
+        cleared.bookmarks = c.bookmarks.length;
+        c.bookmarks = [];
+      }
+      if (clearAnnotations && Array.isArray(c.annotations)) {
+        // Count live (non-deleted) entries only — already-tombstoned
+        // ones shouldn't inflate the "cleared 47" toast.
+        const live = c.annotations.filter((a) => a && !a.deletedAt);
+        cleared.annotations = live.length;
+        // Tombstone each live entry. Keep the entry in the array so
+        // the server-side merge sees deletedAt and propagates the
+        // delete; _mutateClipAtomic's saveClip will push it.
+        c.annotations = c.annotations.map((a) => {
+          if (!a || a.deletedAt) return a;
+          return { ...a, deletedAt: now, updatedAt: now };
+        });
+      }
+      if (clearNotes && typeof c.notes === "string" && c.notes.trim()) {
+        cleared.notes = 1;
+        c.notes = "";
+      }
+    });
+  } catch (e) {
+    console.warn("[clear-marks] mutation failed:", e);
+    return null;
+  }
+  // Repaint the reading view's annotation chips so cleared flags
+  // disappear immediately (not just on next clip-load). Mirrors the
+  // pattern in _removeAnnotation / _tombstoneAnnotation.
+  if (
+    clearAnnotations &&
+    _currentClipId === clipId &&
+    clipForSync &&
+    typeof _applyAnnotationMarkers === "function"
+  ) {
+    try { _applyAnnotationMarkers(clipForSync); } catch (e) {
+      console.warn("[clear-marks] annotation repaint failed:", e);
+    }
+  }
+  // Refresh the bookmark drawer + ribbon if we cleared bookmarks AND
+  // the loaded clip is the one we cleared.
+  if (
+    clearBookmarks &&
+    _currentClipId === clipId &&
+    typeof renderBookmarks === "function"
+  ) {
+    try { await renderBookmarks(); } catch (e) {
+      console.warn("[clear-marks] bookmark repaint failed:", e);
+    }
+  }
+  // Library + author pane + pull-up author counts all read from the
+  // mutated clip on next render.
+  if (typeof renderLibrary === "function") {
+    try { renderLibrary(); } catch {}
+  }
+  if (typeof _renderAuthorPane === "function") {
+    try { _renderAuthorPane(); } catch {}
+  }
+  if (typeof _updatePullupState === "function") {
+    try { _updatePullupState(); } catch {}
+  }
+  _dlog("clear-marks", "done", { clipId, ...cleared });
+  return cleared;
+}
+
+// v225fz3 (#670): clear-marks dialog wiring. Opened from the Edit
+// clip dialog's "Clear marks…" button OR the command palette
+// "act:clear-marks" entry. Populates counts from the target clip,
+// remembers the user's last "Export first?" preference, and on
+// confirm: exports the .md (if checked) THEN clears (if export
+// succeeded or was skipped). The export-then-clear order matters
+// — if export throws, we don't wipe the data.
+const _CLEAR_MARKS_EXPORT_PREF_KEY = "narrative.clearMarks.exportFirst";
+let _clearMarksDialogBound = false;
+let _clearMarksCurrentClipId = null;
+
+function _initClearMarksDialog() {
+  if (_clearMarksDialogBound) return;
+  const dlg = document.getElementById("clear-marks-confirm");
+  if (!dlg) return;
+  _clearMarksDialogBound = true;
+  const close = () => {
+    if (dlg.open) dlg.close();
+    _clearMarksCurrentClipId = null;
+  };
+  dlg
+    .querySelector("#clear-marks-close")
+    .addEventListener("click", close);
+  dlg
+    .querySelector("#clear-marks-cancel")
+    .addEventListener("click", close);
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg) close();
+  });
+  const confirmBtn = dlg.querySelector("#clear-marks-confirm-btn");
+  confirmBtn.addEventListener("click", async () => {
+    const clipId = _clearMarksCurrentClipId;
+    if (clipId == null) return;
+    const bookmarks = dlg.querySelector("#clear-marks-cat-bookmarks").checked;
+    const annotations = dlg.querySelector("#clear-marks-cat-annotations").checked;
+    const notes = dlg.querySelector("#clear-marks-cat-notes").checked;
+    const exportFirst = dlg.querySelector("#clear-marks-export-first").checked;
+    try {
+      localStorage.setItem(
+        _CLEAR_MARKS_EXPORT_PREF_KEY,
+        exportFirst ? "1" : "0",
+      );
+    } catch {}
+    // Nothing to do — silently close (don't pop a toast that'd feel
+    // like a phantom action).
+    if (!bookmarks && !annotations && !notes) {
+      close();
+      return;
+    }
+    confirmBtn.disabled = true;
+    if (exportFirst) {
+      const ok = await _exportClipNotes(clipId);
+      if (!ok) {
+        // _exportClipNotes already set an error status. Don't proceed
+        // to clear — the safety net failed.
+        confirmBtn.disabled = false;
+        return;
+      }
+    }
+    const cleared = await _clearClipMarks(clipId, {
+      bookmarks,
+      annotations,
+      notes,
+    });
+    // v225fz7 (#673): if the Edit clip dialog is still open on this
+    // clip (it stays open behind the confirm modal), repaint its
+    // notes textarea from IDB so a subsequent Save can't write back
+    // the stale pre-clear content.
+    if (typeof _resyncClipEditFromIDB === "function") {
+      try { await _resyncClipEditFromIDB(); } catch {}
+    }
+    confirmBtn.disabled = false;
+    close();
+    if (cleared) {
+      const parts = [];
+      if (cleared.bookmarks)
+        parts.push(`${cleared.bookmarks} bookmark${cleared.bookmarks === 1 ? "" : "s"}`);
+      if (cleared.annotations)
+        parts.push(`${cleared.annotations} annotation${cleared.annotations === 1 ? "" : "s"}`);
+      if (cleared.notes) parts.push("notes");
+      setStatus(
+        parts.length
+          ? `Cleared ${parts.join(", ")}.`
+          : "Nothing to clear.",
+      );
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!dlg.open) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+    }
+  });
+}
+
+// v225fz5 (#672): restore-marks confirm dialog wiring. Mirrors the
+// init/open shape of the clear-marks dialog. Targets a specific clip
+// (passed in by caller) — usually _editingClipId for the Edit-dialog
+// path, or _currentClipId for the command palette path.
+let _restoreMarksDialogBound = false;
+let _restoreMarksCurrentClipId = null;
+let _restoreMarksCurrentBackup = null;
+
+function _initRestoreMarksDialog() {
+  if (_restoreMarksDialogBound) return;
+  const dlg = document.getElementById("restore-marks-confirm");
+  if (!dlg) return;
+  _restoreMarksDialogBound = true;
+  const close = () => {
+    if (dlg.open) dlg.close();
+    _restoreMarksCurrentClipId = null;
+    _restoreMarksCurrentBackup = null;
+  };
+  dlg.querySelector("#restore-marks-close").addEventListener("click", close);
+  dlg.querySelector("#restore-marks-cancel").addEventListener("click", close);
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg) close();
+  });
+  const confirmBtn = dlg.querySelector("#restore-marks-confirm-btn");
+  confirmBtn.addEventListener("click", async () => {
+    const clipId = _restoreMarksCurrentClipId;
+    const backup = _restoreMarksCurrentBackup;
+    if (clipId == null || !backup) return;
+    const modeInput = dlg.querySelector(
+      "input[name='restore-marks-mode']:checked",
+    );
+    const mode = modeInput ? modeInput.value : "replace";
+    confirmBtn.disabled = true;
+    const landed = await _restoreClipMarks(clipId, backup, mode);
+    // v225fz7 (#673): same reason as the clear path — repaint the
+    // Edit dialog's notes textarea from IDB so a subsequent Save
+    // doesn't clobber the restored content.
+    if (typeof _resyncClipEditFromIDB === "function") {
+      try { await _resyncClipEditFromIDB(); } catch {}
+    }
+    confirmBtn.disabled = false;
+    close();
+    if (landed) {
+      const parts = [];
+      if (landed.bookmarks)
+        parts.push(`${landed.bookmarks} bookmark${landed.bookmarks === 1 ? "" : "s"}`);
+      if (landed.annotations)
+        parts.push(`${landed.annotations} annotation${landed.annotations === 1 ? "" : "s"}`);
+      if (landed.notes) parts.push("notes");
+      setStatus(
+        parts.length
+          ? `Restored ${parts.join(", ")}.`
+          : "Nothing to restore.",
+      );
+    } else {
+      setStatus("Restore failed.", true);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!dlg.open) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+    }
+  });
+}
+
+async function _openRestoreMarksConfirm(clipId, backup) {
+  _initRestoreMarksDialog();
+  const dlg = document.getElementById("restore-marks-confirm");
+  if (!dlg) return;
+  let targetClip;
+  try {
+    targetClip = await getClip(clipId);
+  } catch (e) {
+    setStatus(`Couldn't read clip — ${e.message || e}`, true);
+    return;
+  }
+  if (!targetClip) {
+    setStatus("Clip not found.", true);
+    return;
+  }
+  _restoreMarksCurrentClipId = clipId;
+  _restoreMarksCurrentBackup = backup;
+  // Header: which clip is the backup FROM (title at export time +
+  // a friendly export date if we have one). The exportedAt is stored
+  // as ISO; trim to date for display.
+  dlg.querySelector("#restore-marks-source-title").textContent =
+    backup.title || "a clip";
+  const dateEl = dlg.querySelector("#restore-marks-source-date");
+  if (backup.exportedAt) {
+    const d = backup.exportedAt.slice(0, 10);
+    dateEl.textContent = `(exported ${d})`;
+  } else {
+    dateEl.textContent = "";
+  }
+  // Cross-clip warning: backup.clipId vs target clipId. The backup
+  // can still be applied — copying marks across clips is a real
+  // use-case — but the author should know they're doing it.
+  const mismatchEl = dlg.querySelector("#restore-marks-mismatch");
+  const sameClip = backup.clipId && backup.clipId === clipId;
+  if (sameClip) {
+    mismatchEl.hidden = true;
+  } else {
+    mismatchEl.hidden = false;
+    dlg.querySelector("#restore-marks-target-title").textContent =
+      targetClip.title || "this clip";
+  }
+  // Counts — straight from the backup payload.
+  const bmCount = Array.isArray(backup.bookmarks) ? backup.bookmarks.length : 0;
+  const annoCount = Array.isArray(backup.annotations)
+    ? backup.annotations.length
+    : 0;
+  const notesLen = typeof backup.notes === "string"
+    ? backup.notes.trim().length
+    : 0;
+  dlg.querySelector("#restore-marks-count-bookmarks").textContent = String(bmCount);
+  dlg.querySelector("#restore-marks-count-annotations").textContent = String(annoCount);
+  dlg.querySelector("#restore-marks-count-notes").textContent = notesLen
+    ? `${notesLen} char${notesLen === 1 ? "" : "s"}`
+    : "—";
+  // Reset radio to Replace each time (matches the most common case
+  // right after a Clear; Add is an opt-in second choice).
+  const replaceRadio = dlg.querySelector(
+    "input[name='restore-marks-mode'][value='replace']",
+  );
+  if (replaceRadio) replaceRadio.checked = true;
+  // Disable confirm when there's nothing to restore.
+  const anyRestorable = bmCount > 0 || annoCount > 0 || notesLen > 0;
+  dlg.querySelector("#restore-marks-confirm-btn").disabled = !anyRestorable;
+  if (!dlg.open) dlg.showModal();
+}
+
+async function _openClearMarksConfirm(clipId) {
+  _initClearMarksDialog();
+  const dlg = document.getElementById("clear-marks-confirm");
+  if (!dlg) return;
+  let clip;
+  try {
+    clip = await getClip(clipId);
+  } catch (e) {
+    setStatus(`Couldn't read clip — ${e.message || e}`, true);
+    return;
+  }
+  if (!clip) {
+    setStatus("Clip not found.", true);
+    return;
+  }
+  _clearMarksCurrentClipId = clipId;
+  const titleEl = dlg.querySelector("#clear-marks-clip-title");
+  if (titleEl) titleEl.textContent = clip.title || "this clip";
+  // Count LIVE (non-tombstoned) annotations only — already-deleted
+  // ones shouldn't show in the preview.
+  const bmCount = Array.isArray(clip.bookmarks) ? clip.bookmarks.length : 0;
+  const annoCount = Array.isArray(clip.annotations)
+    ? clip.annotations.filter((a) => a && !a.deletedAt).length
+    : 0;
+  const notesText = typeof clip.notes === "string" ? clip.notes.trim() : "";
+  const notesLen = notesText.length;
+  dlg.querySelector("#clear-marks-count-bookmarks").textContent = String(bmCount);
+  dlg.querySelector("#clear-marks-count-annotations").textContent = String(annoCount);
+  dlg.querySelector("#clear-marks-count-notes").textContent = notesLen
+    ? `${notesLen} char${notesLen === 1 ? "" : "s"}`
+    : "—";
+  // Pre-check checkboxes based on what actually exists — no point
+  // checking "Annotations" when there are zero. Per-category default
+  // also disables that row so the toggle reads as "this is empty,
+  // not just unchecked."
+  const bmInput = dlg.querySelector("#clear-marks-cat-bookmarks");
+  const annoInput = dlg.querySelector("#clear-marks-cat-annotations");
+  const notesInput = dlg.querySelector("#clear-marks-cat-notes");
+  bmInput.checked = bmCount > 0;
+  bmInput.disabled = bmCount === 0;
+  annoInput.checked = annoCount > 0;
+  annoInput.disabled = annoCount === 0;
+  notesInput.checked = notesLen > 0;
+  notesInput.disabled = notesLen === 0;
+  // Restore the user's last "Export first?" preference. Defaults to
+  // ON because the .md is the artifact they take to their source.
+  const expInput = dlg.querySelector("#clear-marks-export-first");
+  let expPref = "1";
+  try {
+    const stored = localStorage.getItem(_CLEAR_MARKS_EXPORT_PREF_KEY);
+    if (stored === "0" || stored === "1") expPref = stored;
+  } catch {}
+  expInput.checked = expPref === "1";
+  // Disable confirm if nothing is actually clearable — empty clip
+  // shouldn't let the author hit a destructive button that does
+  // nothing.
+  const anyClearable = bmCount > 0 || annoCount > 0 || notesLen > 0;
+  dlg.querySelector("#clear-marks-confirm-btn").disabled = !anyClearable;
+  if (!dlg.open) dlg.showModal();
 }
 notesDialogClose.addEventListener("click", () => notesDialog.close());
 notesDialog.addEventListener("close", async () => {
@@ -20311,10 +23321,55 @@ async function loadClip(id, { autoPlay = true } = {}) {
   // logic doesn't try to walk a queue from a previous generate().
   resetStream();
 
-  if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
-  lastBlob = clip.blob;
-  lastBlobUrl = URL.createObjectURL(clip.blob);
-  sentenceOffsetsSec = (clip.sentenceOffsetsSec || []).slice();
+  // v225g1 (#690): ebook clips have no audio blob. URL.createObjectURL
+  // would throw on undefined. Clear the player's source so a stale
+  // blob from a previous audio clip doesn't keep playing, and skip
+  // sentenceOffsetsSec (which is empty on ebooks anyway). The rest of
+  // loadClip — text, images, highlights, voice picker hydration — is
+  // safe to run; voiceId/rate/volume guards are conditional already.
+  const _isEbookClip = clip.kind === "ebook" || !clip.blob;
+  // v225g3 (#692): stamp the kind so the phone Generate bar hides
+  // and CSS gates can react. Setter also prods _syncPhoneGenerateBar.
+  if (typeof _setCurrentClipKind === "function") {
+    _setCurrentClipKind(_isEbookClip ? "ebook" : "audio");
+  }
+  // v225g11 (#699): clear ALL pending import state. The loaded clip
+  // is now the source of truth — its own clip.images / clip.cover
+  // get used by enterReadingView + book view. Any leftover
+  // _pendingImages / _pendingDetectedCover / _pendingChapterImages
+  // from an earlier import session is stale: it doesn't belong to
+  // this clip, and if the user later taps "📖 Open as ebook" on
+  // newly-pasted text, the stale list would silently get saved onto
+  // the new clip. User reported: opened Bicycle Ghost as ebook,
+  // later opened "Chapter 1: The Awakening" as ebook — the
+  // Awakening's book view showed the Bicycle Ghost's Ex Libris
+  // image because that pending list was never cleared. Clearing
+  // here closes the leak. The upload + URL handlers reset these
+  // explicitly when they have new data; loadClip resets them when
+  // the user transitions away from "live import flow" to "viewing
+  // a saved clip."
+  _pendingImages = [];
+  _pendingDetectedCover = null;
+  _pendingChapterImages = [];
+  _pendingGitRef = null;
+  _pendingChapterTitle = null;
+  if (typeof _paintImportPreview === "function") {
+    try { _paintImportPreview(); } catch {}
+  }
+  if (_isEbookClip) {
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlob = null;
+    lastBlobUrl = null;
+    try { playerEl.removeAttribute("src"); playerEl.load(); } catch {}
+    // Hide the player card and download button — there's no audio.
+    if (playerCard) playerCard.hidden = true;
+    sentenceOffsetsSec = [];
+  } else {
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlob = clip.blob;
+    lastBlobUrl = URL.createObjectURL(clip.blob);
+    sentenceOffsetsSec = (clip.sentenceOffsetsSec || []).slice();
+  }
 
   textEl.value = clip.text || "";
   updateCounts();
@@ -20400,29 +23455,37 @@ async function loadClip(id, { autoPlay = true } = {}) {
   // Resume from saved position once metadata is in. Only restore if it's a
   // meaningful chunk past the start AND a bit before the end — otherwise
   // just play from 0 so the user isn't dumped at the end of a "completed" clip.
-  const resumeAt = Number(clip.progressSec) || 0;
-  if (resumeAt > 1) {
-    playerEl.addEventListener("loadedmetadata", () => {
-      const dur = playerEl.duration;
-      if (isFinite(dur) && resumeAt < dur - 1) {
-        playerEl.currentTime = resumeAt;
-      }
-    }, { once: true });
+  // v225g1 (#690): ebook clips skip resume + player-card + autoplay
+  // entirely. The book view is what they came for; there's no audio
+  // to seek into. setStatus still fires so the user gets confirmation.
+  if (_isEbookClip) {
+    downloadBtn.disabled = true;
+    setStatus(`📖 Loaded · ${clip.title || "(untitled)"} (ebook — no audio)`);
+  } else {
+    const resumeAt = Number(clip.progressSec) || 0;
+    if (resumeAt > 1) {
+      playerEl.addEventListener("loadedmetadata", () => {
+        const dur = playerEl.duration;
+        if (isFinite(dur) && resumeAt < dur - 1) {
+          playerEl.currentTime = resumeAt;
+        }
+      }, { once: true });
+    }
+
+    playerEl.src = lastBlobUrl;
+    playerCard.hidden = false;
+    downloadBtn.disabled = false;
+
+    setStatus(
+      resumeAt > 1
+        ? `Resuming · ${clip.title} · ${formatTime(resumeAt)}`
+        : `Loaded · ${clip.title}`
+    );
+    // v589: only auto-play when the caller asks for it. The library-
+    // card click on phone passes autoPlay:false so the user sees the
+    // loaded clip and decides whether to start.
+    if (autoPlay) playerEl.play().catch(() => {});
   }
-
-  playerEl.src = lastBlobUrl;
-  playerCard.hidden = false;
-  downloadBtn.disabled = false;
-
-  setStatus(
-    resumeAt > 1
-      ? `Resuming · ${clip.title} · ${formatTime(resumeAt)}`
-      : `Loaded · ${clip.title}`
-  );
-  // v589: only auto-play when the caller asks for it. The library-
-  // card click on phone passes autoPlay:false so the user sees the
-  // loaded clip and decides whether to start.
-  if (autoPlay) playerEl.play().catch(() => {});
   // Re-render so the ▶ indicator moves to this clip + the new clip's
   // bookmarks list appears under the player.
   renderLibrary();
@@ -21642,6 +24705,9 @@ async function openGithubBrowser(repoUrl) {
         _pendingChapterTitle = chapters[0].title;
         _pendingImages = [];
         _pendingGitRef = null;
+        _pendingDetectedCover = null;
+        _pendingChapterImages = [];
+        if (typeof _paintImportPreview === "function") _paintImportPreview();
         updateCounts();
         _checkForChapters();
         setStatus(`Loaded ${chapters[0].title} · ready to Generate`);
@@ -22105,6 +25171,9 @@ function openScrivenerBrowser(data) {
         _pendingChapterTitle = ch.title;
         _pendingImages = [];
         _pendingGitRef = null;
+        _pendingDetectedCover = null;
+        _pendingChapterImages = [];
+        if (typeof _paintImportPreview === "function") _paintImportPreview();
         updateCounts();
         _checkForChapters();
         setStatus(`Loaded ${ch.title} · ready to Generate`);
@@ -22155,6 +25224,9 @@ function openObsidianBrowser(data) {
         _pendingChapterTitle = ch.title;
         _pendingImages = [];
         _pendingGitRef = null;
+        _pendingDetectedCover = null;
+        _pendingChapterImages = [];
+        if (typeof _paintImportPreview === "function") _paintImportPreview();
         updateCounts();
         _checkForChapters();
         setStatus(`Loaded ${ch.title} · ready to Generate`);
@@ -22359,13 +25431,49 @@ async function fetchFromUrl() {
     // GitHub-sourced URLs come back with gitRef; stash so the next
     // generate() pins it onto the saved clip.
     _pendingGitRef = data.gitRef || null;
+    // v225fz11.cover (#677): URL fetch doesn't run image_detector
+    // (covers come from file uploads only). Reset so a previously
+    // uploaded file's cover doesn't leak into this URL-sourced clip.
+    _pendingDetectedCover = null;
+    // v225fz12.chapter-images (#678): same — URL fetch doesn't
+    // produce chapter_images; reset so they don't leak across imports.
+    _pendingChapterImages = [];
+    // v225g6 (#695): same fresh-start semantics as the upload path —
+    // release the ebook-kind gate + drop the previous clip id so the
+    // phone Generate bar reappears and a Generate tap doesn't route
+    // through the regen path against an unrelated old clip.
+    if (typeof _setCurrentClipKind === "function") {
+      _setCurrentClipKind(null);
+    }
+    _currentClipId = null;
+    if (typeof window._syncPhoneGenerateBar === "function") {
+      try { window._syncPhoneGenerateBar(); } catch {}
+    }
+    // v225fz14 (#688): repaint preview strip (URL fetch can still
+    // contribute inline images via _pendingImages above).
+    _paintImportPreview();
     updateCounts();
     _checkForChapters();
 
     hideUrlRow();
     const chars = (data.chars || 0).toLocaleString();
     setStatus(`Loaded ${data.filename} · ${chars} chars · ready to Generate`);
-    textEl.focus();
+    // v225g5 (#694): same caret + scroll fix as the upload path —
+    // phone browsers scroll a long textarea to the caret on focus,
+    // and the caret defaults to the end after textEl.value = "…".
+    try {
+      textEl.scrollTop = 0;
+      if (typeof textEl.setSelectionRange === "function") {
+        textEl.setSelectionRange(0, 0);
+      }
+    } catch {}
+    const _isPhone = window.matchMedia("(max-width: 767px)").matches;
+    if (!_isPhone) textEl.focus();
+    try {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } catch {
+      try { window.scrollTo(0, 0); } catch {}
+    }
   } catch (err) {
     setStatus(`Fetch failed: ${err.message}`, true);
   } finally {
@@ -22405,11 +25513,104 @@ uploadInput.addEventListener("change", async (e) => {
     updateCounts();
     _checkForChapters();
 
+    // v225fz11.cover (#677): if the file's image_detector found a cover,
+    // stash it so generate()'s fresh-clip save branch can slot it into
+    // clip.cover. We only keep covers with an inline src — skipped
+    // entries (oversized) come back as {skipped, size_bytes, ...} with
+    // no usable image, so we drop those silently. Detected covers
+    // never overwrite an existing clip.cover (re-narrate paths
+    // already preserve existing.cover before this even runs).
+    if (data.cover && typeof data.cover === "object" && data.cover.src) {
+      _pendingDetectedCover = data.cover;
+    } else {
+      _pendingDetectedCover = null;
+    }
+    // v225fz12.chapter-images (#678): stash per-chapter leading
+    // images. Filtered to entries with a usable src — skipped
+    // (oversized) entries come back as {skipped, ...} without one.
+    _pendingChapterImages = Array.isArray(data.chapter_images)
+      ? data.chapter_images.filter((c) => c && c.src)
+      : [];
+    // v225fz13 (#687): EPUB uploads now surface inline <img> tags
+    // alongside the text (same shape as URL fetch returns:
+    // {sentence_index, src, alt}). Stash so generate()'s fresh-clip
+    // branch threads them into clip.images and the reading view
+    // renders them above the right sentence.
+    // v225g6 (#695): ALWAYS overwrite — previously this branch only
+    // set _pendingImages when the new import HAD images, so a TXT/MD
+    // import after an EPUB would silently inherit the EPUB's image
+    // list and surface it in the "Detected in this import" card.
+    // User reported uploading a debug log after a Bicycle Ghost
+    // EPUB and seeing the ghost's Green-Baize Door + Ex Libris in
+    // the new import's preview. Always-assign aligns with how
+    // _pendingDetectedCover + _pendingChapterImages already reset.
+    _pendingImages = Array.isArray(data.images) ? data.images : [];
+    // v225g6 (#695): also release the "current clip is an ebook"
+    // gate so the phone Generate bar reappears on the new import.
+    // Uploading a new file is implicitly "I'm starting fresh" —
+    // the previous ebook clip's kind shouldn't suppress UI for
+    // unrelated text. Same call clears document.body.dataset.clipKind
+    // so any CSS rules also reset.
+    if (typeof _setCurrentClipKind === "function") {
+      _setCurrentClipKind(null);
+    }
+    // Drop the previous clip's id too — the new text isn't bound to
+    // it yet, and leaving it set would route a subsequent Generate
+    // tap through the regen path (overwriting the old clip with
+    // the new text). Mirrors the semantic of Clear → New.
+    _currentClipId = null;
+    // Nudge the bar's observer in case it was stuck in ebook-hidden.
+    if (typeof window._syncPhoneGenerateBar === "function") {
+      try { window._syncPhoneGenerateBar(); } catch {}
+    }
+    // v225fz14 (#688): paint the thumbnail strip so the user sees
+    // exactly what art will land on the saved clip before tapping
+    // Generate.
+    _paintImportPreview();
+
     const chars = (data.chars || 0).toLocaleString();
     setStatus(`Loaded ${data.filename} · ${chars} chars · ready to Generate`);
-    textEl.focus();
+    // v225g5 (#694): pin the caret + scroll to position 0 so the user
+    // lands at the top of the imported text. Without this, phone
+    // browsers focus the textarea with the caret wherever, and the
+    // first paint scrolls the textarea to the bottom of a long
+    // import (e.g. a 14k-char EPUB chapter) — user reported "after
+    // import I'm looking at THE END of the book." Skip .focus() on
+    // phone entirely; users typically want to read, not type. On
+    // desktop the focus is benign (no scroll-to-caret quirk).
+    try {
+      textEl.scrollTop = 0;
+      if (typeof textEl.setSelectionRange === "function") {
+        textEl.setSelectionRange(0, 0);
+      }
+    } catch {}
+    const _isPhone = window.matchMedia("(max-width: 767px)").matches;
+    if (!_isPhone) textEl.focus();
+    // Also scroll the page itself to the top so the import-preview
+    // card + the first few sentences are visible — not the bottom
+    // of the textarea + the Generate bar.
+    try {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } catch {
+      try { window.scrollTo(0, 0); } catch {}
+    }
+
+    // v225g1 (#690): if the upload was triggered by the "📖 Read as
+    // ebook" empty-state tile (or any other caller that set the flag),
+    // skip the "wait for Generate" step and route straight into the
+    // ebook save + book-view path. Flag is one-shot — cleared on first
+    // use so a subsequent generate-tap on the same text still synths.
+    if (_pendingEbookMode) {
+      _pendingEbookMode = false;
+      try {
+        await _openAsEbook();
+      } catch (e) {
+        console.error("[ebook] auto-route after upload failed:", e);
+      }
+    }
   } catch (err) {
     setStatus(`Upload failed: ${err.message}`, true);
+    _pendingEbookMode = false; // clear so the flag doesn't stick into a later import
   } finally {
     // Reset so picking the same file again still fires "change".
     uploadInput.value = "";
@@ -24303,13 +27504,27 @@ function _phoneMenuToggle() {
 // path keyed on _currentClipId — used by boot.
 function _phonePaintTopTitle(clip) {
   if (!_phoneMenuIsPhone()) return;
-  const el = document.querySelector(".phone-top-title");
-  if (!el) return;
+  // v225fl (#654): paints into the pull-up drawer's Listening slot
+  // instead of the phone top bar. Name kept (paintTopTitle) so the
+  // many call sites in loadClip / clearForNewClip / saveClipEdit
+  // don't need to change. The title now lives one tap away (open the
+  // drawer) and the top bar's right edge has room for the v225fk
+  // Import icon + bookmark.
+  const listening = document.querySelector('[data-state="listening"]');
+  // Optional: also keep the phone-top-title in sync if it exists
+  // (so cached DOM from older builds doesn't break — the CSS hides
+  // the element, but we keep its content nullable for safety).
+  const topTitle = document.querySelector(".phone-top-title");
   const apply = (c) => {
-    if (!c) { el.textContent = ""; el.removeAttribute("title"); return; }
-    const t = (c.title || "").trim() || "Untitled clip";
-    el.textContent = t;
-    el.title = t; // tooltip for the truncated case
+    const t = c ? ((c.title || "").trim() || "Untitled clip") : "";
+    if (listening) {
+      listening.textContent = t;
+      if (t) listening.title = t; else listening.removeAttribute("title");
+    }
+    if (topTitle) {
+      topTitle.textContent = "";
+      topTitle.removeAttribute("title");
+    }
   };
   if (clip) { apply(clip); return; }
   if (!_currentClipId) { apply(null); return; }
@@ -24337,16 +27552,12 @@ function _phoneMenuBoot() {
     app.insertBefore(btn, app.firstChild);
   }
 
-  // v225eb (#615): clip title between ☰ and the right cluster.
-  // Fixed-positioned via CSS (same family as ☰/📚/🔖). Injected
-  // empty; painted by _phonePaintTopTitle on every clip load.
-  if (!app.querySelector(".phone-top-title")) {
-    const ttl = document.createElement("div");
-    ttl.className = "phone-top-title";
-    ttl.setAttribute("aria-live", "polite");
-    app.appendChild(ttl);
-    _phonePaintTopTitle();
-  }
+  // v225fl (#654): no longer inject .phone-top-title — the clip
+  // title moved back into the pull-up Listening slot to make room
+  // for the v225fk Import icon at the top-right. _phonePaintTopTitle
+  // now writes into [data-state="listening"] instead. The boot call
+  // is kept so the slot's initial paint runs on first load.
+  _phonePaintTopTitle();
 
   // v225fk (#653): quick-access Import icon at the top-right. Tester
   // reported the empty header (☰ on the left + centered books emoji,
@@ -24368,8 +27579,38 @@ function _phoneMenuBoot() {
       e.stopPropagation();
       const target = document.getElementById("import-btn");
       if (target) target.click();
+      // v225fm (#655): first-tap hint. Phone title attrs aren't
+      // surfaced on tap, so the only way the user learns what 📥
+      // does is by seeing the dropdown after they tap it. Status
+      // line says it explicitly once, then never again.
+      if (typeof _fireChipHint === "function") {
+        _fireChipHint(
+          "narrative.hintSeen.import",
+          "💡 Import pulls text from any URL, PDF/EPUB/DOCX file, GitHub repo, or Obsidian vault.",
+        );
+      }
     });
     app.appendChild(imp);
+  }
+
+  // v225fu (#663): ? Help icon to the LEFT of 📥 Import. Promoted
+  // out of the ☰ menu so the manual is one tap away — same priority
+  // as Library and Import. Dispatches to the existing #help-btn so
+  // the manual-dialog wiring (showModal + iframe load + Esc handler)
+  // stays the single source of truth.
+  if (!app.querySelector(".phone-help-btn")) {
+    const hlp = document.createElement("button");
+    hlp.type = "button";
+    hlp.className = "phone-help-btn";
+    hlp.setAttribute("aria-label", "Open help and manual");
+    hlp.title = "Help & manual";
+    hlp.textContent = "?";
+    hlp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = document.getElementById("help-btn");
+      if (target) target.click();
+    });
+    app.appendChild(hlp);
   }
 
   // v225.tn42 (#519): quick-access bookmark button at top-right.
@@ -24426,8 +27667,14 @@ function _phoneMenuBoot() {
       // bookmark is already saved by addBookmarkAtCurrentTime;
       // the editor just lets the author add a note while the
       // moment is fresh.
+      //
+      // v225fz (#668): pass isNew=true so the editor knows that a
+      // cancel/dismiss should revert the just-added bookmark — the
+      // 🔖 tap is provisional until they hit Done. Existing-bookmark
+      // edits (the drawer note-row tap below in renderBookmarks)
+      // omit the arg so it defaults to false.
       if (typeof _openBookmarkEditor === "function") {
-        _openBookmarkEditor(newId);
+        _openBookmarkEditor(newId, true);
       }
     });
     app.appendChild(bm);
@@ -24553,10 +27800,22 @@ function _phoneMenuBoot() {
     const bar = document.createElement("div");
     bar.className = "phone-generate-bar";
     bar.hidden = true;
+    // v225g4 (#693): added "📖 Ebook" as a peer option to Generate
+    // audio so post-import phone users see both flows immediately
+    // instead of having to dig through the ☰ menu (where #691 put
+    // the entry). Author reported feeling stuck after EPUB import:
+    // the textarea filled, the Generate bar dominated the bottom,
+    // and the import-preview's "Read as ebook" chip was scrolled
+    // off-screen by the time they got there. Putting both actions
+    // in the same fixed-bottom strip means the choice is in their
+    // face the moment the file lands.
     bar.innerHTML =
       '<button type="button" class="phone-generate-btn" aria-label="Generate audio from this text">' +
       '<span class="phone-generate-icon" aria-hidden="true">▶</span>' +
       '<span class="phone-generate-label">Generate audio</span>' +
+      "</button>" +
+      '<button type="button" class="phone-generate-ebook" aria-label="Save as ebook and open book view">' +
+      "📖 Ebook" +
       "</button>" +
       '<button type="button" class="phone-generate-queue" aria-label="Queue silently in background">' +
       "Queue silently →" +
@@ -24564,6 +27823,14 @@ function _phoneMenuBoot() {
     bar.querySelector(".phone-generate-btn").addEventListener("click", () => {
       const t = document.getElementById("generate");
       if (t) t.click();
+    });
+    bar.querySelector(".phone-generate-ebook").addEventListener("click", () => {
+      if (typeof _openAsEbook === "function") {
+        _openAsEbook().catch((err) => {
+          console.error("[ebook] phone-generate-bar Ebook tap failed:", err);
+          setStatus("Couldn't open as ebook — see console.", true);
+        });
+      }
     });
     bar.querySelector(".phone-generate-queue").addEventListener("click", () => {
       const t = document.getElementById("queue-silently");
@@ -24578,6 +27845,29 @@ function _phoneMenuBoot() {
       const isPhone = window.matchMedia("(max-width: 767px)").matches;
       if (!isPhone) {
         bar.hidden = true;
+        return;
+      }
+      // v225g3 (#692): hide the bar when the loaded clip is an ebook.
+      // The user explicitly chose "Open as ebook" — surfacing a giant
+      // "Generate audio" prompt on top of that is the opposite signal.
+      // They can still add audio later via ☰ → Open as ebook? no —
+      // ☰ → tap the clip in library → Generate (which is in the
+      // hidden hero, dispatchable from ☰). The "Add audio" path is
+      // covered by the manual + "what's new" — the bar isn't the
+      // right surface for it.
+      if (_currentClipKind === "ebook" || document.body.dataset.clipKind === "ebook") {
+        bar.hidden = true;
+        delete document.body.dataset.phoneGenerateBar;
+        return;
+      }
+      // v225g3 (#692): also hide when book view is open — the book
+      // view is a takeover surface; the Generate bar peeking through
+      // the bottom is visual noise and not actionable from inside
+      // the book.
+      const bv = document.getElementById("book-view");
+      if (bv && !bv.hidden) {
+        bar.hidden = true;
+        delete document.body.dataset.phoneGenerateBar;
         return;
       }
       const playerCard = document.getElementById("player-card");
@@ -24595,6 +27885,9 @@ function _phoneMenuBoot() {
       if (shouldShow) document.body.dataset.phoneGenerateBar = "1";
       else delete document.body.dataset.phoneGenerateBar;
     };
+    // v225g3 (#692): expose so _setCurrentClipKind and the book-view
+    // toggle handlers can prod the bar at the right moments.
+    window._syncPhoneGenerateBar = _syncGenerateBar;
     _syncGenerateBar();
     const playerCard = document.getElementById("player-card");
     const gen = document.getElementById("generate");
@@ -24643,6 +27936,10 @@ function _phoneMenuBoot() {
       bookview: "book-view-toggle",
       // v225.tn48 (#525): Download MP3 dispatch.
       download: "download",
+      // v225g2 (#691): phone parity for ebook mode — dispatch to the
+      // hidden Generate-row button. The button's click handler runs
+      // _openAsEbook() the same way the desktop tap does.
+      "open-as-ebook": "open-as-ebook",
       // v225dr: export notes dispatch — same id as the new chip.
       "export-notes": "export-notes-btn",
       settings: "settings-btn",
@@ -24659,6 +27956,22 @@ function _phoneMenuBoot() {
       // dismissed by tap-outside (our scrim eats the clicks).
       _phoneMenuClose();
       if (!targetId) return;
+      // v225g2 (#691): "📖 Open as ebook" menu item — the hero button
+      // is disabled until text appears, so target.click() would be a
+      // silent no-op. Route directly through _openAsEbook so the
+      // user gets the "Type, paste, or import some text first" status
+      // message instead of nothing happening.
+      if (action === "open-as-ebook") {
+        Promise.resolve().then(() => {
+          if (typeof _openAsEbook === "function") {
+            _openAsEbook().catch((err) => {
+              console.error("[ebook] phone menu open-as-ebook failed:", err);
+              setStatus("Couldn't open as ebook — see console.", true);
+            });
+          }
+        });
+        return;
+      }
       const target = document.getElementById(targetId);
       if (target) {
         // Use a microtask so the sheet's close transition starts
@@ -24858,15 +28171,30 @@ function _updatePullupState() {
     playbackEl.textContent = `${rate} wpm · ${vol}%`;
   }
 
-  // Listening: nothing useful to show here. Everything that fits
-  // ("how am I listening") is already on screen — mini-player at the
-  // bottom, A↔B / Sleep chip labels in the row above. The clip
-  // TITLE — which was the one remaining "what am I listening to"
-  // surface — moved to the phone top bar in v225eb (#615), where
-  // it's visible without opening the drawer. So the slot stays
-  // empty, the :empty CSS rule hides it cleanly, and the row
-  // collapses to just the chip strip.
-  if (listeningEl) listeningEl.textContent = "";
+  // Listening: clip title lives here (v225fl, #654 — moved back from
+  // the phone top bar so that the v225fk Import icon has room). The
+  // title is painted by _phonePaintTopTitle, which runs on every
+  // clip load + edit. We re-paint here too so opening the drawer
+  // mid-session reflects the current clip even if the chain ever
+  // gets out of sync. If no clip is loaded the slot stays empty and
+  // the :empty CSS rule collapses the row to just the chip strip.
+  if (listeningEl) {
+    if (!_currentClipId) {
+      listeningEl.textContent = "";
+      listeningEl.removeAttribute("title");
+    } else {
+      getClip(_currentClipId)
+        .then((clip) => {
+          const t = clip ? ((clip.title || "").trim() || "Untitled clip") : "";
+          listeningEl.textContent = t;
+          if (t) listeningEl.title = t;
+          else listeningEl.removeAttribute("title");
+        })
+        .catch(() => {
+          listeningEl.textContent = "";
+        });
+    }
+  }
 
   // Author: annotation counts on the loaded clip. Skip silently if
   // no clip loaded — the state-strip is hidden via :empty.

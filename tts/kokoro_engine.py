@@ -311,9 +311,21 @@ def synthesize_iter(
 
         if sample_rate == 0:
             sample_rate = sr2
+        # v225fz9 (#675): pad sentence WAV with trailing silence so
+        # periods get an audible pause. Mirrors the piper_engine change.
+        # Silence frames are added to cumulative_frames before this
+        # sentence's offset is recorded — wait, no: this sentence's
+        # offset is recorded based on cumulative BEFORE this sentence,
+        # so we add silence frames AFTER appending the offset, alongside
+        # this sentence's own frames. That way sentence N+1's offset
+        # accounts for the pause that follows N. _pad_wav_trailing_silence
+        # is defined in piper_engine.py so we import lazily to avoid a
+        # circular-import surprise.
+        from .piper_engine import _pad_wav_trailing_silence, SENTENCE_PAUSE_MS
+        data, silence_frames = _pad_wav_trailing_silence(data, SENTENCE_PAUSE_MS)
         offset_ms = int(cumulative_frames * 1000 / (sr2 or 24000))
         offsets_ms.append(offset_ms)
-        cumulative_frames += frames
+        cumulative_frames += frames + silence_frames
         wavs.append(data)
         yield {
             "type": "sentence",

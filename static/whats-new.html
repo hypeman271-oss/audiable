@@ -141,6 +141,123 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225g1</span>
+          <span class="release-tagline">📖 Read as ebook — open imports in book view without generating audio</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Three new entry points that skip Generate.</strong>
+            (1) A <strong>📖 Open as ebook</strong> button right next to
+            the Generate button, enabled whenever there's text in the
+            box. (2) A <strong>📖 Read as ebook</strong> link inside the
+            "Detected in this import" preview card — tap it the moment
+            the cover and chapter art look right. (3) A <strong>📖 Read
+            as ebook</strong> tile on the empty-state for first-time
+            users: pick an EPUB/PDF and drop straight into book view,
+            no thinking about voice or audio at all.
+          </li>
+          <li>
+            <strong>Saves like a normal clip — minus the audio.</strong>
+            Same library card you'd get from Generate: cover swatch,
+            Libby-style tint, chapter banners, inline figures, tags,
+            notes, bookmarks, sync across devices. The duration slot
+            shows a <code>📖 Ebook</code> pill instead of a runtime.
+          </li>
+          <li>
+            <strong>You can add audio later without re-uploading.</strong>
+            Tap a library ebook card to load it back into the textarea,
+            then hit Generate — synth runs over the existing text and
+            attaches audio to the same clip. Cover, chapters, bookmarks,
+            and any highlights you made while reading all stick around.
+          </li>
+          <li>
+            <strong>Built on the existing book view.</strong> Drop caps,
+            page numbers, IA-style "book on a desk" frame, chapter
+            detection + mini-TOC, font-size control, paperback / magazine
+            / manuscript themes, swipe + arrow-key navigation, Ctrl+F
+            find-in-book, highlights, bookmarks — everything that ships
+            with audio clips also ships with ebook clips. Multi-chapter
+            EPUBs land as one book with chapter jumps via the mini-TOC.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v225fz10–fz14</span>
+          <span class="release-tagline">Cover art + chapter banners + figures auto-detected — and previewed before you generate</span>
+        </div>
+        <ul>
+          <li>
+            <strong>EPUB cover art lands on the library card without
+            asking.</strong> The new image-detector ranks EPUB cover
+            lookups in the order Calibre / Apple Books actually use —
+            <code>properties=cover-image</code> first, then the EPUB-2
+            <code>&lt;meta name="cover"&gt;</code> manifest reference,
+            then a <code>cover.xhtml</code> spine page, then filename
+            heuristics. A matching swatch + Libby-style tint paints onto
+            the card the moment the clip saves (unless you've already
+            uploaded a custom cover — yours always wins).
+          </li>
+          <li>
+            <strong>Chapter-leading images surface above sentence 1 in
+            the reading view.</strong> A wide, alt-less ornament between
+            <code>&lt;h2&gt;</code> and the first body paragraph renders
+            edge-to-edge as a decorative banner; an alt-bearing or
+            figcaption-bearing image renders as an inline
+            <code>&lt;figure&gt;</code> with the alt text as the caption.
+            The classifier looks at aspect ratio, position, alt-text
+            patterns ("Fig.", "Plate", "Photograph" vs ornament-y
+            silence), and filename hints (<code>ornament</code>,
+            <code>fleuron</code> vs <code>fig01</code>).
+          </li>
+          <li>
+            <strong>Inline figures inside the chapter body are no longer
+            silently dropped.</strong> EPUB extraction used to call
+            <code>get_text()</code> and lose every <code>&lt;img&gt;</code>
+            tag — so Read Listen Repeat covers, Ex Libris plates, and
+            mid-chapter illustrations vanished. The new extractor walks
+            descendants in document order, anchoring each image to its
+            sentence position and embedding it as a base64 data URL
+            (≤1 MB each). The full set is threaded through to the
+            reading view so figures appear where the author put them.
+          </li>
+          <li>
+            <strong>"Detected in this import" preview — see the picks
+            before you spend synth.</strong> As soon as the extractor
+            returns, an accent-bordered card lands above the textarea
+            with captioned thumbnails of every image detected — labelled
+            <code>Cover</code>, <code>Banner</code>,
+            <code>Figure</code>, or <code>Inline</code>. Eyeball them,
+            catch the publisher-logo-as-cover or the typeset-page-as-
+            figure, then tap Generate with confidence. Clearing the
+            textarea also clears the preview; importing a new source
+            replaces it.
+          </li>
+          <li>
+            <strong>Bug it fixed.</strong> EPUBs with a root-level
+            <code>content.opf</code> (Calibre default, also used by
+            <em>A Bicycle Ghost</em>) used to throw "EPUB contains no
+            readable text" because the OPF-directory join produced
+            <code>./filename</code> instead of <code>filename</code>.
+            Now both the OEBPS-wrapped (Project Gutenberg) and root-OPF
+            (Calibre) conventions extract cleanly.
+          </li>
+          <li>
+            See §3's import table and §10's <em>Tutorial 4 — Upload a
+            file</em> walkthrough for the demo. Sample EPUBs that
+            exercise the full pipeline: Tom Sawyer
+            (<code>gutenberg.org/ebooks/74.epub.images</code>),
+            Huckleberry Finn (43 chapters, 113 images), Alice in
+            Wonderland (Tenniel plates).
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v220</span>
           <span class="release-tagline">Book view: IA-style "open book on a desk" aesthetic + page-flip animation</span>
         </div>

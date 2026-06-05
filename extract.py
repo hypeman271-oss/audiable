@@ -1114,13 +1114,46 @@ def _pdf_join_pages(page_texts: list[str]) -> str:
 
 
 def _extract_epub(data: bytes) -> str:
-    # ebooklib insists on reading from a path-ish input; give it the bytes
-    # via a BytesIO-backed zipfile reader by writing to a temp buffer.
-    # Easier: use the lower-level zipfile + manifest walk so we don't pay
-    # ebooklib's stricter validation (some EPUBs in the wild trip it).
-    from bs4 import BeautifulSoup
+    """Text-only EPUB extraction. For the structured shape with inline
+    images, callers use _extract_epub_with_images directly. This thin
+    wrapper preserves the str → str contract for the existing dispatcher
+    table (_HANDLERS)."""
+    return _extract_epub_with_images(data)["text"]
+
+
+# v225fz13 (#687): max inline image size for the EPUB extractor. Mirrors
+# image_detector's _MAX_INLINE_BYTES so a 5 MB plate doesn't blow up the
+# /api/extract response. Skipped images are dropped silently — the
+# reading view still gets the text, just without that figure.
+_EPUB_INLINE_IMG_MAX_BYTES = 1_000_000
+
+
+def _extract_epub_with_images(data: bytes) -> dict:
+    """EPUB extraction that captures inline images alongside text.
+
+    Returns ``{"text": str, "images": [{"sentence_index": int, "src": str,
+    "alt": str}, ...]}``. The src is a base64 data URL so the client can
+    render the image without a follow-up fetch — EPUB images live inside
+    the zip, not on the public web. sentence_index is the count of
+    sentence-ending punctuation seen BEFORE the image's position, so the
+    reading view inserts it above sentence ``index`` (matches the URL
+    fetch convention from extract_url).
+
+    Why this exists: ``_extract_epub`` collapses each spine item via
+    ``soup.get_text()``, which silently drops every ``<img>`` tag. URL
+    fetch carries images through; EPUB upload never did. The user who
+    uploaded an RGL-built short story expected the RGL cover-replay and
+    Ex Libris plate to land in the reading view; they didn't, because
+    the text walker discarded them mid-extraction.
+    """
+    import base64
+    from bs4 import BeautifulSoup, NavigableString, Tag
 
     parts: list[str] = []
+    images: list[dict] = []
+    sentence_cursor = 0
+    SENT_END_RE = re.compile(r"[.!?](?=\s|$)")
+
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         # Find the OPF (package document) via META-INF/container.xml.
         try:
@@ -1131,24 +1164,38 @@ def _extract_epub(data: bytes) -> str:
         if not m:
             raise ExtractionError("invalid EPUB: no rootfile in container.xml")
         opf_path = m.group(1)
+        # v225fz12e: PurePath("file.opf").parent.as_posix() returns "."
+        # for an OPF at the archive root — not "". Without this guard
+        # we'd build doc_path = "./titlepage.xhtml" and zipfile.read()
+        # raises KeyError because the member is stored as
+        # "titlepage.xhtml" (no leading "./"). Real symptom: EPUBs
+        # built by Calibre with no enclosing OEBPS folder fail with
+        # "EPUB contains no readable text" even though the spine is
+        # full of prose.
         opf_dir = PurePath(opf_path).parent.as_posix()
+        if opf_dir == ".":
+            opf_dir = ""
         opf = zf.read(opf_path).decode("utf-8", "replace")
 
-        # Build id -> href map from the manifest.
-        manifest: dict[str, str] = {}
+        # Two manifest views: spine HTML (id -> href) and images
+        # (href -> mime, relative to opf_dir).
+        manifest_html: dict[str, str] = {}
+        manifest_images: dict[str, str] = {}
         for item in re.finditer(
             r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"[^>]*\bmedia-type="([^"]+)"',
             opf,
         ):
             iid, href, media = item.group(1), item.group(2), item.group(3)
             if media in ("application/xhtml+xml", "text/html"):
-                manifest[iid] = href
+                manifest_html[iid] = href
+            elif media.startswith("image/"):
+                manifest_images[href] = media
 
         # Spine gives reading order.
         spine_ids = re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf)
 
         for iid in spine_ids:
-            href = manifest.get(iid)
+            href = manifest_html.get(iid)
             if not href:
                 continue
             doc_path = f"{opf_dir}/{href}" if opf_dir else href
@@ -1168,12 +1215,123 @@ def _extract_epub(data: bytes) -> str:
                 if t and t[-1] not in ".!?":
                     htag.clear()
                     htag.append(t + ".")
-            text = soup.get_text("\n", strip=True)
-            if text:
-                parts.append(text)
+
+            # The doc may live in a subdirectory (e.g. OEBPS/text/foo.xhtml).
+            # <img src="...rel..."> resolves against the doc's directory.
+            doc_dir = PurePath(doc_path).parent.as_posix()
+            if doc_dir == ".":
+                doc_dir = ""
+
+            # Walk descendants in document order. Track text via
+            # NavigableString chunks (matches what get_text() would
+            # produce); record <img> at the current sentence_cursor so
+            # the client knows which sentence the figure precedes.
+            text_chunks: list[str] = []
+            root = soup.body or soup
+            for node in root.descendants:
+                if isinstance(node, NavigableString):
+                    s = str(node).strip()
+                    if not s:
+                        continue
+                    text_chunks.append(s)
+                    sentence_cursor += len(SENT_END_RE.findall(s))
+                elif isinstance(node, Tag) and node.name == "img":
+                    src = node.get("src") or node.get("xlink:href") or ""
+                    if not src:
+                        continue
+                    # Resolve relative path against the doc's directory.
+                    img_path = _resolve_epub_doc_path(doc_dir, src)
+                    img_data = None
+                    img_mime = None
+                    # Try direct zip member first.
+                    try:
+                        img_data = zf.read(img_path)
+                    except KeyError:
+                        # Some EPUBs reference images relative to OPF
+                        # instead of relative to the doc. Try that as a
+                        # fallback. Then try the bare src as a last
+                        # resort (archives that store everything at root).
+                        alt_path = f"{opf_dir}/{src}" if opf_dir else src
+                        try:
+                            img_data = zf.read(alt_path)
+                            img_path = alt_path
+                        except KeyError:
+                            try:
+                                img_data = zf.read(src)
+                                img_path = src
+                            except KeyError:
+                                continue
+                    if not img_data:
+                        continue
+                    if len(img_data) > _EPUB_INLINE_IMG_MAX_BYTES:
+                        # Skip oversize plates. The user can re-upload
+                        # a smaller variant or upload a manual cover.
+                        continue
+                    # Resolve mime: prefer manifest declaration; fall
+                    # back to extension-based guess.
+                    rel = img_path
+                    if opf_dir and rel.startswith(opf_dir + "/"):
+                        rel = rel[len(opf_dir) + 1:]
+                    img_mime = manifest_images.get(rel) or manifest_images.get(src) or _guess_image_mime(img_path)
+                    if not img_mime:
+                        continue
+                    b64 = base64.b64encode(img_data).decode("ascii")
+                    data_url = f"data:{img_mime};base64,{b64}"
+                    images.append({
+                        "sentence_index": sentence_cursor,
+                        "src": data_url,
+                        "alt": (node.get("alt") or "").strip(),
+                    })
+
+            spine_text = "\n".join(text_chunks)
+            if spine_text:
+                parts.append(spine_text)
+
     if not parts:
         raise ExtractionError("EPUB contains no readable text")
-    return "\n\n".join(parts)
+    return {"text": "\n\n".join(parts), "images": images}
+
+
+def _resolve_epub_doc_path(doc_dir: str, src: str) -> str:
+    """Resolve an <img src> relative to the document's directory.
+
+    Mirrors what a browser would do, but inside the EPUB zip. Strips
+    fragment / query strings just in case. Returns a posix-style path
+    suitable for zipfile.read()."""
+    src = src.split("#", 1)[0].split("?", 1)[0]
+    if not src:
+        return ""
+    # Already absolute (within the archive) → just normalize.
+    if src.startswith("/"):
+        return src.lstrip("/")
+    if doc_dir:
+        combined = (PurePath(doc_dir) / src).as_posix()
+    else:
+        combined = src
+    # Resolve `..` segments without touching the filesystem.
+    out: list[str] = []
+    for part in combined.split("/"):
+        if part == "" or part == ".":
+            continue
+        if part == "..":
+            if out:
+                out.pop()
+            continue
+        out.append(part)
+    return "/".join(out)
+
+
+def _guess_image_mime(path: str) -> str:
+    ext = PurePath(path).suffix.lower().lstrip(".")
+    return {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "svg": "image/svg+xml",
+        "bmp": "image/bmp",
+    }.get(ext, "")
 
 
 def extract_scrivener_bundle(data: bytes) -> dict:

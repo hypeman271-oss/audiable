@@ -195,9 +195,18 @@ def synthesize_iter(
             data, frames, sr = _silent_wav(sample_rate or 22050)
         if sample_rate == 0:
             sample_rate = sr
+        # v225fz9 (#675): pad each sentence WAV with trailing silence
+        # so periods get an audible pause. Padding the per-sentence WAV
+        # (not the concat) means BOTH the streamed-to-client copy AND
+        # the combined-WAV result include the gap, with no client-side
+        # changes. We add the silence frames to `cumulative_frames`
+        # before recording the offset so sentence N+1's start time
+        # accounts for the pause that follows sentence N. Last sentence
+        # also gets padded — harmless trailing silence at end of clip.
+        data, silence_frames = _pad_wav_trailing_silence(data, SENTENCE_PAUSE_MS)
         offset_ms = int(cumulative_frames * 1000 / sr)
         offsets_ms.append(offset_ms)
-        cumulative_frames += frames
+        cumulative_frames += frames + silence_frames
         wavs.append(data)
         yield {
             "type": "sentence",
@@ -250,6 +259,51 @@ def _silent_wav(sample_rate: int) -> tuple[bytes, int, int]:
         # No writeframes — header-only WAV. lameenc / browsers handle
         # zero-length PCM as silence.
     return buf.getvalue(), 0, sample_rate
+
+
+# v225fz9 (#675): default trailing silence appended to each per-sentence
+# WAV. Both Piper and Kokoro produce minimal end-of-utterance decay, and
+# the concat path stitches frame-to-frame with no gap, so without this
+# pad the listener hears "world.This" instead of "world. This." 250 ms
+# is a natural sentence-break length — long enough to register as a
+# pause, short enough not to feel like the reader stalled. Future
+# refinement (#483): per-period vs per-paragraph length, voice-aware
+# tuning. For now: one constant, applied uniformly.
+SENTENCE_PAUSE_MS = 250
+
+
+def _pad_wav_trailing_silence(wav_bytes: bytes, silence_ms: int) -> tuple[bytes, int]:
+    """Append `silence_ms` of mono silence to a WAV blob.
+
+    Returns the new WAV bytes plus the number of silence frames added
+    (caller must include those in cumulative_frames so sentence offsets
+    stay in sync with the audible content). Round-trips through the wave
+    module so the output is a valid WAV with a coherent header rather
+    than raw PCM tacked on.
+    """
+    if silence_ms <= 0:
+        # Defensive — count silence frames as 0 even if a caller passes
+        # something nonsensical.
+        return wav_bytes, 0
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as src:
+            params = src.getparams()
+            frames = src.readframes(src.getnframes())
+            sample_rate = src.getframerate()
+            sample_width = src.getsampwidth()
+            n_channels = src.getnchannels()
+    except wave.Error:
+        # Malformed input (e.g. the zero-frame placeholder from
+        # _silent_wav). Return unchanged — adding silence to silence
+        # would just bloat the placeholder for no listener benefit.
+        return wav_bytes, 0
+    n_silence_frames = int(sample_rate * silence_ms / 1000)
+    silence = b"\x00" * (n_silence_frames * sample_width * n_channels)
+    out = io.BytesIO()
+    with wave.open(out, "wb") as dst:
+        dst.setparams(params)
+        dst.writeframes(frames + silence)
+    return out.getvalue(), n_silence_frames
 
 
 def _concat_wavs(wav_blobs: list[bytes]) -> bytes:

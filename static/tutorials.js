@@ -301,27 +301,68 @@
         },
         {
           callout:
-            "Your system file picker opens. Choose a PDF, EPUB, DOCX, TXT, or MD up to 25 MB.",
+            "Your system file picker opens. Choose a PDF, EPUB, DOCX, TXT, or MD up to 25 MB. EPUBs unlock auto-cover + chapter art.",
           action: "show",
           target: '[data-wt="file-picker"]',
+          addClass: "shown",
+          duration: 2400,
+        },
+        {
+          callout:
+            "Narrative extracts the text — pulls clean prose out of layout, strips headers and page numbers, and scans for cover + chapter images.",
+          action: "show",
+          target: '[data-wt="extracting"]',
           addClass: "shown",
           duration: 2200,
         },
         {
           callout:
-            "Narrative extracts the text — pulls clean prose out of layout, strips headers and page numbers.",
-          action: "show",
-          target: '[data-wt="extracting"]',
-          addClass: "shown",
-          duration: 2000,
-        },
-        {
-          callout:
-            "The extracted text lands in the editor — tap <strong>Generate</strong> to listen.",
+            "Text lands in the editor — chapter heading and first paragraph ready to synth.",
           action: "show",
           target: '[data-wt="result"]',
           text:
-            "Chapter 1. Down the Rabbit-Hole. Alice was beginning to get very tired of sitting by her sister on the bank…",
+            "Chapter 1. “Tom!” No answer. “Tom!” No answer. “What’s gone with that boy, I wonder? You TOM!”…",
+          addClass: "shown",
+          duration: 2400,
+        },
+        // v225fz14.docs (#689): import-preview thumbnail strip — what
+        // got detected is surfaced as captioned thumbnails (Cover /
+        // Banner / Figure / Inline) BEFORE the user hits Generate, so
+        // bad picks (publisher logo as cover, etc.) can be caught early.
+        {
+          callout:
+            "<strong>“Detected in this import”</strong> appears above the textarea — captioned thumbnails of every image the extractor found. Verify the cover, banners, and figures here <em>before</em> tapping Generate. Clearing the text clears the preview.",
+          action: "show",
+          target: '[data-wt="preview"]',
+          addClass: "shown",
+          duration: 3000,
+        },
+        // v225fz12.docs (#686): show the auto-detected cover landing on
+        // the saved clip (image_detector ranks EPUB cover lookups
+        // properties=cover-image → meta name=cover → cover page).
+        {
+          callout:
+            "If the source carries a cover (EPUBs almost always do), it lands on the library card as a swatch and as the Libby-style tint.",
+          action: "show",
+          target: '[data-wt="cover"]',
+          addClass: "shown",
+          duration: 2400,
+        },
+        // v225fz12.docs (#686): show the chapter-leading image rendering
+        // above sentence 1 in the reading view.
+        {
+          callout:
+            "Per-chapter art — the image right after the chapter heading — surfaces above sentence 1 in the reading view. Decoratives render as banners; informational figures get a caption.",
+          action: "show",
+          target: '[data-wt="chapter-banner"]',
+          addClass: "shown",
+          duration: 2800,
+        },
+        {
+          callout:
+            "Tap <strong>Generate</strong> to listen. Every chapter in a multi-chapter EPUB shares the same cover; each chapter's leading art tracks its own clip.",
+          action: "show",
+          target: '[data-wt="result"]',
           addClass: "shown",
           duration: 2400,
         },
@@ -329,7 +370,15 @@
       reset(stage) {
         const btn = stage.querySelector('[data-wt="import-btn"]');
         if (btn) btn.classList.remove("pressed");
-        ["import-menu", "file-picker", "extracting", "result"].forEach((k) => {
+        [
+          "import-menu",
+          "file-picker",
+          "extracting",
+          "result",
+          "preview",
+          "cover",
+          "chapter-banner",
+        ].forEach((k) => {
           const el = stage.querySelector('[data-wt="' + k + '"]');
           if (el) {
             el.classList.remove("shown");

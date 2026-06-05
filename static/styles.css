@@ -172,6 +172,46 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* v225ft (#662): no clip loaded = no page scroll, full stop. There is
+   literally nothing below the input to scroll to in the empty state
+   — every piece of meaningful UI (header icons, empty-state cards,
+   textarea, counter) sits in the first viewport. The page used to be
+   scrollable anyway because html/body { min-height: 100vh } + the
+   .app's padding-bottom + the dynamic-viewport quirk (visible viewport
+   < 100vh while a mobile address bar is showing) reliably produced a
+   slice of scrollable cream/dark below the textarea on both phone and
+   desktop. Lock body to the small viewport unit (100svh — never grows
+   with address-bar collapse) and clip overflow so the page sits exactly
+   at viewport height with zero scrollable dead space. Mirrors the phone
+   "clip loaded → scroll lock" treatment (v225.tn51 / #528) but for the
+   opposite state and applied at every viewport size. */
+html:has(#player-card[hidden]) {
+  overflow: hidden;
+}
+body:has(#player-card[hidden]) {
+  overflow: hidden;
+  height: 100svh;
+  max-height: 100svh;
+  min-height: 100svh;
+}
+
+/* v225fx (#666): when the "Start a new clip" helper is visible, the
+   stacked empty-state cards + URL row + textarea + counter legitimately
+   exceed phone viewport height. Re-enable page scroll for THIS sub-case
+   so the user can reach the bottom of the text window. Narrows the
+   v225ft "no scroll" rule from "no clip" to "no clip AND no helper" —
+   when the helper is dismissed or text is typed, the lock takes over
+   again because the empty-state element gets the hidden attr back. */
+html:has(#player-card[hidden]):has(#empty-state:not([hidden])) {
+  overflow: auto;
+}
+body:has(#player-card[hidden]):has(#empty-state:not([hidden])) {
+  overflow: auto;
+  height: auto;
+  max-height: none;
+  min-height: 100svh;
+}
+
 .app {
   max-width: 640px;
   margin: 0 auto;
@@ -1159,6 +1199,14 @@ body:not([data-ui-mode="author"]) .sentence-select-pending {
   border-radius: 10px;
 }
 
+/* v225fz11.panes (#685): hide desktop-only settings rows on phones +
+   tablets, where the side panes don't render. The radios still work
+   below 1280px (the localStorage flag persists) — we just don't
+   surface the control on screens where it has no effect. */
+@media (max-width: 1279px) {
+  .settings-desktop-only { display: none; }
+}
+
 /* Segmented control — three pill-shaped radios in a track. The visually
    hidden inputs keep keyboard / a11y semantics; the visible <span> is
    what users actually see and click. */
@@ -1643,6 +1691,36 @@ dialog.manual-dialog:not([open]) {
 }
 .settings-nav-chips::-webkit-scrollbar {
   display: none;
+}
+/* v225fz11c: show a thin scrollbar on devices with a hoverable pointer
+ * (desktop / laptop trackpad). Phones with touch scroll don't need one
+ * — they can swipe — and the hidden bar there keeps the layout clean.
+ * The chip row's mouse-wheel handler (app.js) also translates wheel-Y
+ * to scroll-X so users don't have to find and drag the scrollbar. */
+@media (hover: hover) and (pointer: fine) {
+  .settings-nav-chips {
+    scrollbar-width: thin;
+    /* Drop the right-edge mask on desktop — the scrollbar already
+     * signals "scrollable", and the fade can dim chips that are
+     * actually fully visible. */
+    -webkit-mask-image: none;
+    mask-image: none;
+    padding-bottom: 4px;
+  }
+  .settings-nav-chips::-webkit-scrollbar {
+    display: block;
+    height: 6px;
+  }
+  .settings-nav-chips::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  .settings-nav-chips::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
+  }
+  .settings-nav-chips::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 .settings-nav-chip {
   flex: 0 0 auto;
@@ -2718,6 +2796,49 @@ dialog.manual-dialog:not([open]) {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
+/* v225fw (#665): attention pulse on the "Watch tutorial" rows when the
+   empty-state helper is shown on app open. Mirrors v220g's pulse on
+   ?/⚙ icons — same "fresh user just landed, here's where to look"
+   intent — but tuned for a full-width row instead of a 40px circle:
+   no scale (would jitter wide elements), just a background-color +
+   border-top + halo pulse. Staggered across the four tiles so the
+   eye sweeps left-to-right across the grid (and top-to-bottom on
+   phones where the grid collapses to one column). Three iterations
+   over ~3.6s — enough to register, short enough not to nag. Stops
+   on first interaction with any tile (handled in JS). */
+@keyframes emptyStateTutorialAttention {
+  0% {
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+    border-top-color: var(--border-soft);
+    box-shadow: 0 0 0 0 rgba(101, 116, 255, 0.55);
+  }
+  50% {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+    border-top-color: var(--accent);
+    box-shadow: 0 0 0 6px rgba(101, 116, 255, 0);
+  }
+  100% {
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+    border-top-color: var(--border-soft);
+    box-shadow: 0 0 0 0 rgba(101, 116, 255, 0);
+  }
+}
+.empty-state-tutorial-link.attention-pulse {
+  animation: emptyStateTutorialAttention 1.2s cubic-bezier(0.4, 0, 0.2, 1) 3 both;
+}
+/* Stagger so the pulse cascades through the tiles instead of all
+   firing in lockstep. 180ms feels like a quick sweep without leaving
+   the later tiles dead until the earlier ones finish. */
+.empty-state-grid > .empty-state-card:nth-child(1) .empty-state-tutorial-link.attention-pulse { animation-delay: 0s; }
+.empty-state-grid > .empty-state-card:nth-child(2) .empty-state-tutorial-link.attention-pulse { animation-delay: 0.18s; }
+.empty-state-grid > .empty-state-card:nth-child(3) .empty-state-tutorial-link.attention-pulse { animation-delay: 0.36s; }
+.empty-state-grid > .empty-state-card:nth-child(4) .empty-state-tutorial-link.attention-pulse { animation-delay: 0.54s; }
+@media (prefers-reduced-motion: reduce) {
+  .empty-state-tutorial-link.attention-pulse {
+    animation: none;
+  }
+}
+
 /* v220c: arrow + hint below the cards, pointing at the textarea so
  * testers who looked at the cards still get told "or just paste/type
  * directly". Slightly indented + accent-tinted so the eye registers
@@ -3228,6 +3349,142 @@ input[type="search"]:focus {
   cursor: wait;
 }
 
+/* v225fz14 (#688): import-preview strip between the URL row and the
+ * textarea. Shows captioned thumbnails for the cover + each inline
+ * image returned by /api/extract so the user can verify the art
+ * before clicking Generate. Horizontal scroll on overflow — typical
+ * import has 1-3 images. */
+.import-preview {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+.import-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.import-preview-title {
+  font-weight: 600;
+  color: var(--fg);
+}
+.import-preview-hint {
+  color: var(--fg-dim);
+  font-size: 11.5px;
+}
+.import-preview-thumbs {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+.import-preview-thumb {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 96px;
+}
+.import-preview-thumb img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+.import-preview-thumb-label {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--fg-dim);
+  text-align: center;
+  width: 100%;
+  word-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.import-preview-thumb-kind {
+  font-size: 10px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+/* v225g1 (#690): "📖 Read as ebook" button inside the import-preview
+ * head. Small accent-tinted pill that lets the user skip Generate and
+ * go straight to reading. Sits to the right of the title + hint. */
+.import-preview-ebook {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.import-preview-ebook:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* v225g1 (#690): "📖 Open as ebook" on the Generate row. Same family
+ * as #download (secondary button) but with an accent border so the
+ * book-icon stands out from a "discard" affordance. */
+#open-as-ebook {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+#open-as-ebook:hover:not(:disabled) {
+  background: var(--accent-tint);
+}
+#open-as-ebook:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* v225g1 (#690): "📖 Ebook" badge in the library card title row, in
+ * the slot where audio clips show their duration. Accent pill so the
+ * row scans at a glance — most clips will be audio with a `0:34`,
+ * ebooks pop with the icon + label. */
+.clip-title-top-ebook {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .import-preview-head {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .import-preview-thumb {
+    width: 80px;
+  }
+  .import-preview-thumb img {
+    width: 80px;
+    height: 80px;
+  }
+}
+
 .label-row {
   display: flex;
   align-items: baseline;
@@ -3296,7 +3553,15 @@ input[type="search"]:focus {
    size, which feels cramped when revising a long chapter.
    Selector is scoped to `textarea#text` so it doesn't accidentally
    target the manual's H2 with id="text" (section anchor) when the
-   manual loads this shared stylesheet. */
+   manual loads this shared stylesheet.
+
+   v225fv (#664): restored the unconditional sizing. v225fr split this
+   by clip state to fight scroll-into-dead-space in the empty state,
+   but v225ft (#662) solved that at the root by locking page overflow
+   when no clip is loaded — so the tall textarea no longer creates a
+   scrollable page. The big edit window is back in the empty state too,
+   which feels right: even before the first clip, paste-and-revise is
+   the dominant flow and the bigger box invites it. */
 textarea#text {
   min-height: 240px;
   max-height: min(55vh, 540px);
@@ -3439,6 +3704,48 @@ body[data-ui-mode="author"] .reading-view .sentence.played {
   border: 1px solid var(--border-soft);
   background: var(--bg-card-3, var(--bg-card-2));
   object-fit: contain;
+}
+
+/* v225fz12.chapter-images (#678): per-format treatment for
+ * image_detector chapter_images. Decoratives are banner-style — taller,
+ * borderless, edge-to-edge within the reading column. Figures get a
+ * subtle border + figcaption styling. Both live above sentence 1
+ * (the chapter heading after splitting) by virtue of being inserted
+ * at sentence_index 0. */
+.reading-view .inline-image.chapter-image-decorative {
+  max-height: 360px;
+  margin: 4px auto 18px;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  /* Pull slightly beyond the column edges so it reads as a banner
+   * rather than a card-style image. Tight bounds so it can't escape
+   * the viewport. */
+  width: calc(100% + 24px);
+  max-width: calc(100% + 24px);
+  margin-left: -12px;
+  margin-right: -12px;
+  object-fit: cover;
+}
+.reading-view .chapter-image-figure-wrap {
+  display: block;
+  margin: 14px auto;
+  text-align: center;
+}
+.reading-view .chapter-image-figure-wrap .inline-image.chapter-image-figure {
+  margin: 0 auto 6px;
+  max-height: 320px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-3, var(--bg-card-2));
+}
+.reading-view .chapter-image-figure-wrap figcaption {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--text-muted);
+  padding: 0 8px;
+  margin: 0 auto;
+  max-width: 80%;
+  line-height: 1.4;
 }
 
 /* ---- Chapter auto-split banner ----------------------------------------
@@ -5291,13 +5598,41 @@ button:disabled {
   font-size: 12.5px;
   margin: 0 0 14px;
 }
+/* v225fy (#667): flex row pairs the label with the live counter on the
+   right. baseline alignment so the all-caps label and the smaller
+   numeric counter sit on the same letter baseline. */
+.bookmark-editor-note-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+}
 .bookmark-editor-note-label {
   display: block;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-dim);
-  margin: 0 0 6px;
+  margin: 0;
+}
+/* v225fy (#667): live char counter. Three color states driven by JS
+   adding .warn / .at-limit when the input crosses 80% / 95% of the
+   200-char cap. tabular-nums keeps the digits from re-flowing as the
+   number grows. */
+.bookmark-editor-note-counter {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+  transition: color 120ms;
+}
+.bookmark-editor-note-counter.warn {
+  color: var(--warning, #d4a72c);
+  font-weight: 600;
+}
+.bookmark-editor-note-counter.at-limit {
+  color: var(--danger, #e5484d);
+  font-weight: 700;
 }
 #bookmark-editor-note {
   width: 100%;
@@ -6107,14 +6442,33 @@ button:disabled {
    so this spans naturally edge-to-edge with `display: block`. The
    top border separates it from the action chip row above. */
 .clip-last-synced {
-  display: block;
+  /* v225fo (#658): now a flex row. Notes badge on the left, sync
+   * timestamp on the right. Center is empty space the badge can
+   * grow into on narrow cards if a future sync label gets longer. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 6px 14px 8px;
   border-top: 1px solid var(--border-soft);
   color: var(--fg-dim);
   font-size: 11.5px;
   font-style: italic;
   font-variant-numeric: tabular-nums;
-  text-align: center;
+}
+.clip-last-synced-notes {
+  flex: 0 0 auto;
+  font-style: normal; /* override the italic from the parent — emoji */
+  letter-spacing: -0.01em;
+}
+.clip-last-synced-notes.is-empty {
+  /* Placeholder span when there are no notes — keeps the sync
+   * timestamp flush-right via space-between justification. */
+  width: 0;
+  padding: 0;
+}
+.clip-last-synced-text {
+  flex: 0 0 auto;
 }
 /* v220as (bug #416): partial-synth warning chip. Amber accent so it
  * reads as "needs attention" without being alarming red. Pairs with
@@ -6479,6 +6833,12 @@ button:disabled {
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
+  /* v225fz7 (#673): belt for horizontal overflow. Any child whose
+     intrinsic min-content width exceeds the dialog (long button
+     labels, long gitref SHAs, long voice provenance attribution
+     strings) should wrap or get clipped — never push a scrollbar. */
+  overflow-x: hidden;
+  min-width: 0;
 }
 
 .clip-edit-body .label {
@@ -6589,6 +6949,312 @@ button:disabled {
 #clip-edit-title {
   padding: 10px 12px;
   font-size: 15px;
+}
+
+/* v225fz3 (#670): "Clear revision marks" section in the Edit clip
+   dialog. Visually de-emphasized vs the primary Save action — quiet
+   border-top separator, neutral copy, no destructive red until the
+   user opens the confirm modal. Sits ABOVE the Save row so it reads
+   as "one of the things you can do with this clip" rather than the
+   primary action. */
+.clip-edit-clear-marks {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.clip-edit-clear-marks-head {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.clip-edit-clear-marks-desc {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+/* v225fz5 (#672): two-button row — Clear marks (destructive intent
+   on hover, red) and Restore from backup (restorative intent on
+   hover, accent). The shared neutral resting state keeps the section
+   from screaming for attention; the hover differentiation gives the
+   right semantic cue once the author commits to either action.
+
+   v225fz7 (#673): min-width: 0 stops the flex container from forcing
+   its parent wider than the dialog body when the button labels are
+   long; box-sizing on the buttons + the section keeps padding inside
+   the width budget. Without this, the Edit dialog grows a horizontal
+   scrollbar on narrow viewports. */
+.clip-edit-clear-marks {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.clip-edit-clear-marks-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.clip-edit-clear-marks-btn,
+.clip-edit-restore-marks-btn {
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.clip-edit-clear-marks-btn:hover {
+  background: color-mix(in srgb, var(--danger, #e5484d) 8%, transparent);
+  border-color: var(--danger, #e5484d);
+  color: var(--danger, #e5484d);
+}
+.clip-edit-clear-marks-btn:active,
+.clip-edit-restore-marks-btn:active {
+  transform: translateY(1px);
+}
+.clip-edit-restore-marks-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* v225fz5 (#672): restore confirm dialog — extra rules over the
+   shared .clear-marks-dialog chrome. Read-only category rows (no
+   checkboxes — the backup defines what comes back), an indented
+   merge-mode radio group, a yellow mismatch warning row for
+   cross-clip restores, a green Restore button (accent rather than
+   danger). */
+.restore-marks-source-date {
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  margin-left: 6px;
+}
+.restore-marks-mismatch {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--warning, #d4a72c) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning, #d4a72c) 50%, transparent);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.45;
+}
+.clear-marks-cat-readonly {
+  cursor: default;
+}
+.clear-marks-cat-readonly .clear-marks-cat-name {
+  color: var(--fg);
+}
+.restore-marks-mode {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.restore-marks-mode legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.restore-marks-mode-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.restore-marks-mode-row input[type="radio"] {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.restore-marks-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+  color: var(--fg);
+}
+.restore-marks-mode-hint {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+.restore-marks-confirm-btn {
+  padding: 10px 18px;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.05s;
+}
+.restore-marks-confirm-btn:hover {
+  background: color-mix(in srgb, var(--accent) 90%, black);
+}
+.restore-marks-confirm-btn:active {
+  transform: translateY(1px);
+}
+.restore-marks-confirm-btn:disabled {
+  background: var(--bg-card-2);
+  color: var(--fg-dim);
+  cursor: not-allowed;
+}
+
+/* v225fz3 (#670): clear-marks confirmation dialog. Same chrome family
+   as the existing centered dialogs (settings, shortcuts, edit clip).
+   Three category checkboxes + an Export-first checkbox + a destructive
+   Clear button that's red only here, where the warning copy is right
+   above it. */
+.clear-marks-dialog {
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  background: var(--bg-card);
+  color: var(--fg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.clear-marks-dialog::backdrop { background: var(--scrim); }
+.clear-marks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.clear-marks-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+.clear-marks-body {
+  padding: 16px 18px 18px;
+}
+.clear-marks-target {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--fg);
+}
+.clear-marks-target strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.clear-marks-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  background: var(--bg-card-2);
+  border-radius: 8px;
+}
+.clear-marks-cat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+  font-size: 14px;
+}
+.clear-marks-cat input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.clear-marks-cat-text {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.clear-marks-cat-name {
+  color: var(--fg);
+}
+.clear-marks-cat-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
+/* Greyed-out state when the user unchecks a category — the count
+   stays visible but reads as "this many will be preserved." */
+.clear-marks-cat:has(input:not(:checked)) .clear-marks-cat-name,
+.clear-marks-cat:has(input:not(:checked)) .clear-marks-cat-count {
+  color: var(--fg-dim);
+  text-decoration: line-through;
+}
+.clear-marks-export-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.clear-marks-export-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.clear-marks-warn {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+}
+.clear-marks-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.clear-marks-confirm-btn {
+  padding: 10px 18px;
+  background: var(--danger, #e5484d);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.05s;
+}
+.clear-marks-confirm-btn:hover {
+  background: color-mix(in srgb, var(--danger, #e5484d) 90%, black);
+}
+.clear-marks-confirm-btn:active {
+  transform: translateY(1px);
+}
+.clear-marks-confirm-btn:disabled {
+  background: var(--bg-card-2);
+  color: var(--fg-dim);
+  cursor: not-allowed;
 }
 
 .clip-edit-actions {
@@ -8292,6 +8958,33 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   align-items: center;
   justify-content: center;
   gap: 14px;
+  /* v225g8 (#697): pin the nav bar to the bottom of the viewport
+   * so users can always reach the page-flip buttons regardless of
+   * how tall the current spread is. User reported "I can't flip
+   * a page" on a Bicycle Ghost spread that was taller than the
+   * screen — the < > buttons were rendered, just below the fold.
+   * Sticky + a frosted backdrop keeps them visible without
+   * dominating the spread's visual weight. The Close (×) button
+   * (also in this nav row) becomes always-reachable too. */
+  position: sticky;
+  /* v225g29 (#727): nav pill pushed further down to make more vertical
+   * room for the spread above. Was 12px. */
+  bottom: 0;
+  z-index: 5;
+  padding: 10px 14px;
+  background: rgba(20, 16, 12, 0.72);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin: 8px auto 0;
+  width: fit-content;
+  max-width: 96%;
+  flex-wrap: wrap;
+}
+[data-theme="light"] .book-view-nav {
+  background: rgba(245, 235, 215, 0.85);
+  border-color: rgba(120, 90, 60, 0.18);
 }
 .book-view-nav-btn {
   background: transparent;
@@ -8420,6 +9113,25 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
    triggers _bookViewPrintBook which rebuilds the spread DOM with
    every page flat, sets body[data-book-printing], and fires
    window.print(). */
+/* v225g3 (#692): explicit Close button — exit affordance from inside
+ * book view. Sits at the start of the nav row so it's the first thing
+ * users see at the top of the takeover on phone. Uses the same chip
+ * shape as the other nav buttons but with a soft danger tint so it
+ * reads as "back out" rather than "another option". */
+.book-view-close-btn {
+  flex: 0 0 auto;
+  padding: 6px 12px !important;
+  background: var(--bg-card-2) !important;
+  border: 1px solid var(--border) !important;
+  font-weight: 600 !important;
+  color: var(--fg) !important;
+}
+.book-view-close-btn:hover:not(:disabled) {
+  background: var(--danger-tint-soft) !important;
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+}
+
 .book-view-print-btn {
   border-color: var(--accent);
   color: var(--accent);
@@ -8622,6 +9334,256 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   pointer-events: none;
 }
 
+/* =====================================================================
+ * v225h0 (#728): Book View V2 — multi-column rewrite (Phase 1)
+ * =====================================================================
+ *
+ * Readium-pattern multi-column flow. Browser does pagination via CSS
+ * columns; JS only translates the flow container left/right to
+ * navigate between spreads. Feature-flagged on the .book-view-spread
+ * via the .v2 class — added by JS when localStorage.bookViewV2 = "true"
+ * or ?bookviewv2=1 is in the URL.
+ *
+ * Key differences from V1:
+ *   - One flow container, content placed in document order
+ *   - column-width: 50% on desktop (2-up spread), 100% on phone
+ *   - column-fill: auto → browser distributes content into columns
+ *   - Navigation = transform: translateX(-N * spreadWidth)
+ *   - overflow: hidden on the spread = no scrollbars
+ *   - Sentence DOM is identical (.sentence + data-idx) so click-to-seek,
+ *     karaoke highlight, and bookmark anchoring all work unchanged
+ */
+.book-view-spread.v2 {
+  /* Override V1's grid + aspect-ratio with a plain block container. */
+  display: block;
+  grid-template-columns: none;
+  aspect-ratio: auto;
+  width: 100%;
+  height: calc(100vh - 220px);
+  max-height: calc(100vh - 220px);
+  overflow: hidden;
+  position: relative;
+  padding: 0;
+  background: var(--bg-card);
+  border-radius: 8px;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.18),
+    inset 0 0 24px rgba(0, 0, 0, 0.04);
+}
+.book-view-spread.v2::before,
+.book-view-spread.v2::after {
+  display: none;
+}
+
+.book-view-spread.v2 .book-view-flow {
+  /* v225h3 (#733): Readium-style fixed-count layout. JS computes the
+   * required column count from a single-column measurement pass, then
+   * sets `style.columnCount = N`, `style.width = N * pageWidth`,
+   * `style.height = pageHeight`, and `style.columnWidth = auto` inline.
+   * The browser then knows EXACTLY how many columns to make and how
+   * wide the container is — no circular dependency, no overflow
+   * clipping. We just set the shared properties here. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  column-gap: 0;
+  column-fill: auto;
+  padding: 40px 36px;
+  box-sizing: border-box;
+  font-family: var(--book-font-family,
+    "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
+    Palatino, "Liberation Serif", Georgia, "Times New Roman", serif);
+  font-size: var(--book-font-size, 16px);
+  font-style: var(--book-font-style, normal);
+  line-height: var(--book-line-height, 1.65);
+  text-align: var(--book-text-align, justify);
+  letter-spacing: var(--book-letter-spacing, 0.005em);
+  color: var(--fg);
+  hyphens: auto;
+  /* Smooth slide animation between spreads. */
+  transition: transform 0.28s cubic-bezier(0.45, 0.05, 0.55, 0.95);
+}
+
+/* Sentences inherit the existing .sentence styling for karaoke
+ * highlight + click affordance. Just constrain to flow context. */
+.book-view-spread.v2 .book-view-flow .sentence {
+  cursor: pointer;
+}
+
+/* Images in the flow — keep them within a single column where
+ * possible, max to column height. break-inside avoid prevents an image
+ * from being split across the column boundary. */
+.book-view-spread.v2 .book-view-flow img {
+  max-width: 100%;
+  max-height: calc(100vh - 320px);
+  display: block;
+  margin: 0.8em auto;
+  break-inside: avoid;
+}
+
+/* v225h1 (#731): images get their own column. break-before forces the
+ * image to start a new column; break-after forces following text to
+ * start the next column after the image. Combined: image sits alone
+ * in its own page, centered, filling the column height. Matches the
+ * Kindle/Kobo treatment of inline figures and avoids the "image plus
+ * orphan-text-below" balance problem we'd get with interleaved flow. */
+.book-view-spread.v2 .book-view-flow .v2-image-page {
+  height: 100%;
+  break-before: column;
+  break-after: column;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 8px;
+  box-sizing: border-box;
+}
+.book-view-spread.v2 .book-view-flow .v2-image-page img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  margin: 0;
+}
+
+/* Cover page: the first column's content. Aspect-fitting the cover
+ * image to the column. */
+.book-view-spread.v2 .book-view-flow .v2-cover-page {
+  break-after: column;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.book-view-spread.v2 .book-view-flow .v2-cover-page img {
+  max-height: 100%;
+  max-width: 100%;
+  margin: 0;
+  object-fit: contain;
+}
+
+/* Phone: 1-up, larger touch padding, slightly tighter font. */
+@media (max-width: 720px) {
+  .book-view-spread.v2 {
+    height: calc(100dvh - 120px);
+    max-height: calc(100dvh - 120px);
+  }
+  .book-view-spread.v2 .book-view-flow {
+    /* Phone: full-viewport column. JS sets --book-page-width to the
+     * spread's clientWidth so we get exactly one column per page. */
+    padding: 28px 22px;
+  }
+}
+
+/* =====================================================================
+ * v225v3.0 (#734): Book View V3 — manual JS pagination
+ * =====================================================================
+ *
+ * Word-processor model. Each page is a real DOM div, content streamed
+ * in sentence-by-sentence until overflow, then a new page starts.
+ * No CSS columns anywhere; plain block layout inside each page.
+ *
+ * Structure:
+ *   .book-view-spread.v3       — overflow:hidden viewport
+ *     .book-view-page-row      — horizontal flex of pages, translateX
+ *       .book-view-page        — fixed pageWidth × pageHeight
+ *         .book-view-page-body — sentences live here (flex:1, overflow:hidden)
+ *       .book-view-page.book-view-page-image — image fills the page
+ */
+.book-view-spread.v3 {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 220px);
+  max-height: calc(100vh - 220px);
+  overflow: hidden;
+  position: relative;
+  padding: 0;
+  background: var(--bg-card);
+  border-radius: 8px;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.18),
+    inset 0 0 24px rgba(0, 0, 0, 0.04);
+}
+.book-view-spread.v3::before,
+.book-view-spread.v3::after {
+  display: none;
+}
+.book-view-spread.v3 .book-view-page-row {
+  display: flex;
+  height: 100%;
+  /* width set inline = pageCount × pageWidth */
+  transition: transform 0.28s cubic-bezier(0.45, 0.05, 0.55, 0.95);
+}
+.book-view-spread.v3 .book-view-page {
+  flex: 0 0 auto;
+  /* width + height set inline */
+  padding: 40px 36px;
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  position: relative;
+}
+.book-view-spread.v3 .book-view-page-body {
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-family: var(--book-font-family,
+    "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
+    Palatino, "Liberation Serif", Georgia, "Times New Roman", serif);
+  font-size: var(--book-font-size, 16px);
+  font-style: var(--book-font-style, normal);
+  line-height: var(--book-line-height, 1.65);
+  text-align: var(--book-text-align, justify);
+  letter-spacing: var(--book-letter-spacing, 0.005em);
+  color: var(--fg);
+  hyphens: auto;
+}
+.book-view-spread.v3 .book-view-page-body .sentence {
+  cursor: pointer;
+}
+.book-view-spread.v3 .book-view-page-image {
+  padding: 16px 8px;
+}
+.book-view-spread.v3 .book-view-page-image .book-view-page-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.book-view-spread.v3 .book-view-page-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .book-view-spread.v3 {
+    height: calc(100dvh - 120px);
+    max-height: calc(100dvh - 120px);
+  }
+  .book-view-spread.v3 .book-view-page {
+    padding: 28px 22px;
+  }
+}
+
+/* v225g25 (#726): cap the spread on desktop so the sticky nav pill
+ * never overlaps the page text AND so there's visible bottom gutter
+ * matching the top + side margins. Previously calc(100vh - 160px) +
+ * 80px padding left the spread visually touching the nav pill on
+ * common laptop viewports. Bumping the reserve to 220px + bottom
+ * padding to 120px gives ~100px of breathing room between the
+ * spread's bottom edge and the floating nav, mirroring the gap above
+ * the spread. Phone keeps its own values from the @media block. */
+.book-view-spread {
+  max-height: calc(100vh - 200px);
+}
+/* Extra cushion inside the book view so the nav floats over empty
+ * background rather than touching the spread's bottom edge. */
+.book-view {
+  padding-bottom: 140px;
+}
+
 /* Mobile: single page, no spread. */
 @media (max-width: 720px) {
   /* v199 (M3.1): force 1-column body on phones even for the
@@ -8633,10 +9595,46 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   .book-view-measure[data-book-theme="magazine"] {
     --book-columns: 1;
   }
+  /* v225g3 (#692): make book view a full-screen takeover on phone.
+     Previously book-view rendered inline in document flow, so the
+     spread was sized at parent-width × aspect-ratio and ended up
+     small with empty cream space around it. Bug surfaced when ebook
+     mode (#690) made book view the primary surface — the spread
+     looked broken because there was nothing else useful on the
+     screen. Fixed-position takes over the viewport; the existing
+     spread + nav controls scale to fill. */
+  #book-view:not([hidden]) {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    margin: 0;
+    border-radius: 0;
+    overflow-y: auto;
+    padding: 14px 12px calc(14px + env(safe-area-inset-bottom)) 12px;
+    background:
+      radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0.35), transparent 60%),
+      linear-gradient(180deg, rgba(20, 16, 12, 0.85), rgba(8, 6, 4, 0.95));
+    -webkit-overflow-scrolling: touch;
+  }
+  [data-theme="light"] #book-view:not([hidden]) {
+    background:
+      radial-gradient(ellipse at 50% 120%, rgba(120, 90, 60, 0.18), transparent 60%),
+      linear-gradient(180deg, rgba(225, 210, 180, 0.95), rgba(200, 175, 140, 0.98));
+  }
+  /* Lock body scroll so the underlying app doesn't scroll behind
+     the takeover. Doesn't conflict with v225.tn51 (page-scroll lock
+     when clip loaded) — both want the same lock. */
+  body:has(#book-view:not([hidden])) {
+    overflow: hidden;
+  }
   .book-view-spread {
     grid-template-columns: 1fr;
     aspect-ratio: 1 / 1.4;
-    max-height: 80vh;
+    /* v225g9 (#698): leave room for the sticky nav pill (×, ‹, page
+     * indicator, ›, Print) at the bottom — was 80vh, but the pill is
+     * ~50px tall + 12px bottom offset + 16px safe-area = ~80px
+     * needed below the spread. Drop to 70dvh + cushion. */
+    max-height: calc(100dvh - 120px);
   }
   .book-view-spread::before,
   .book-view-spread::after {
@@ -9391,6 +10389,17 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     box-shadow: inset 0 0 0 1px var(--accent);
     transition: background 150ms, box-shadow 150ms;
   }
+  /* v225fs (#661): the 🔖 quick-access button is now selection-aware
+     too — tap with a sentence selected and the bookmark lands on that
+     sentence's start time (v225fq #659). Wake it up with the same
+     accent fill + inset ring as ✎ so all three armed surfaces (top-
+     left ✎, top-right 🔖, bottom tag row) read as a paired group when
+     a sentence is selected. Same accent tokens → same visual weight. */
+  body[data-sentence-selected="1"] .phone-bookmark-btn {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    transition: background 150ms, box-shadow 150ms;
+  }
 
   /* Phase D (#502): when no clip is loaded, #player-card carries
      the `hidden` attribute → not rendered. In that empty state
@@ -9617,6 +10626,25 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
+  }
+  /* v225g4 (#693): "📖 Ebook" button on the phone Generate bar — sits
+   * between the primary Generate button and the "Queue silently" link.
+   * Reads as a peer-action to Generate, not a link, because it's the
+   * second real path for the imported text (read it vs synth it). */
+  .phone-generate-ebook {
+    flex: 0 0 auto;
+    padding: 12px 14px;
+    background: var(--accent-tint, rgba(108, 99, 255, 0.12));
+    border: 1px solid var(--accent, #6c63ff);
+    border-radius: 12px;
+    color: var(--accent, #6c63ff);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .phone-generate-ebook:active {
+    transform: translateY(1px);
   }
   /* When the Generate bar is up, give the body bottom padding so the
      last bit of scrollable content (chapter pill / textarea) clears
@@ -10025,9 +11053,18 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
      is glass-translucent above and overlaps OK). The reading view
      inside the card flexes to fill and scrolls internally.
 
-     Empty state (no clip loaded) keeps normal page scrolling so the
-     empty-state cards / textarea remain reachable. */
-  body:has(#player-card:not([hidden])) {
+     v225ft (#662): empty state (no clip loaded) ALSO locks page
+     scroll. Previously we kept the body scrollable in case empty-state
+     cards + textarea overflowed on small viewports, but in practice
+     html/body { min-height: 100vh } + .app's padding-bottom + the
+     dynamic-viewport quirk (visible viewport < 100vh while the address
+     bar is showing) reliably produced 30-100px of scrollable cream
+     below the textarea. There's literally nothing to scroll TO down
+     there — so we kill the overflow outright. Anything that would
+     legitimately overflow (long empty-state grid on a tiny phone) is
+     handled by .card.card-text's own internal scroll. */
+  body:has(#player-card:not([hidden])),
+  body:has(#player-card[hidden]) {
     overflow: hidden;
     height: 100dvh;
     height: 100svh;
@@ -10481,13 +11518,13 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     display: none;
   }
 
-  /* v225fk (#653): Import icon. Same dimensions / hit zone as the
-   * bookmark button. Sits at right:60px when the bookmark button is
-   * visible (clip loaded) so they share the top-right strip, and
-   * flushes to right:12px when the bookmark button hides (no clip
-   * loaded — this is the "lonely header" state the tester reported).
-   * Always visible on phone so first-time users always have a path
-   * to start. */
+  /* v225fk (#653) / v225fp: Import icon. Sits at right:200px so it
+   * lives to the LEFT of 📚 Library (right:156px). Always visible
+   * regardless of clip state — first-time users always have a path
+   * to start, and existing users always have one-tap access to add
+   * new content. The earlier right:60px / 12px placement collided
+   * with the bookview button (right:60px) when a clip was loaded;
+   * 200px is past 📚's left edge with comfortable breathing room. */
   .phone-import-btn {
     display: inline-flex;
     align-items: center;
@@ -10504,7 +11541,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     cursor: pointer;
     position: fixed;
     top: calc(8px + env(safe-area-inset-top));
-    right: 60px; /* default — bookmark is at right:12px when shown */
+    right: 200px;
     z-index: 41;
   }
   .phone-import-btn:hover {
@@ -10513,10 +11550,39 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   .phone-import-btn:active {
     transform: scale(0.92);
   }
-  /* No clip loaded → bookmark is hidden, Import takes the flush-right
-   * slot so the top-right doesn't look offset from the edge. */
-  body:has(#player-card[hidden]) .phone-import-btn {
-    right: 12px;
+
+  /* v225fu (#663): ? Help icon, promoted from the ☰ menu into the
+     header so the manual is one tap away — same priority as Import
+     and Library. Sits at right:248px so it lives to the LEFT of
+     📥 Import (right:200px) with the standard 8px gap between 40px
+     icons. Always visible regardless of clip state — same rationale
+     as Import (the manual is for first-time AND returning users).
+     Tap dispatches to the existing #help-btn so the existing
+     manual-dialog wiring stays the single source of truth. */
+  .phone-help-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    right: 248px;
+    z-index: 41;
+  }
+  .phone-help-btn:hover {
+    background: var(--bg-card-2);
+  }
+  .phone-help-btn:active {
+    transform: scale(0.92);
   }
 
   /* v225eb (#615): clip title between ☰ (left:52) and the 📚 button
@@ -10527,30 +11593,12 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
      two-letters problem. Left-aligned so the truncation eats the
      END of the title — readers recognize a title by its first
      word, not its last. */
+  /* v225fl (#654): hidden — the clip title moved back into the
+   * pull-up Listening slot to make room for the v225fk Import icon
+   * in the top-right. Selector kept so any cached DOM from older
+   * builds still hides this element gracefully. */
   .phone-top-title {
-    position: fixed;
-    top: calc(8px + env(safe-area-inset-top));
-    left: 60px;     /* clears the 40px ☰ + 8px gap */
-    right: 200px;   /* clears 📚 (right:156) + its 40px width + 4px breath */
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    z-index: 40;    /* one below the buttons (41) so they always win taps */
-    pointer-events: none;
-    color: var(--fg);
-    /* 10px floor, 12px target, scales up to 13px on wider phones.
-       Calibrated against a "chapter_00_draft" (16 char) sample so
-       even iPhone SE renders the full word "chapter" before
-       truncating. */
-    font-size: clamp(10px, 3vw, 13px);
-    font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: -0.01em;
-    text-align: left;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    display: none !important;
   }
   /* Hide when no clip loaded — same gate family as the other
      clip-dependent top-bar elements. */
@@ -10827,7 +11875,10 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     position: sticky;
     top: 0;
     background: var(--bg-card);
-    padding: 14px 14px 8px;
+    /* v225fz11b: extra right padding reserves space for the × close
+     * button so it doesn't overlap "Clear all" / sort label.
+     * 14 (base) + 28 (btn width) + 8 (gap) = 50px. */
+    padding: 14px 50px 8px 14px;
     border-bottom: 1px solid var(--border-soft);
     z-index: 1;
   }
@@ -10927,7 +11978,10 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
    * Close button — useless inside the pane. Hide. The h2 stays as
    * the section header. */
   .desktop-author-pane .dap-voice-host .voice-browser-head {
-    padding: 14px 14px 8px;
+    /* v225fz11b: reserve right padding for the × close button so it
+     * doesn't overlap any future filter chips / actions in the
+     * relocated voice header. Mirrors the library pane fix. */
+    padding: 14px 50px 8px 14px;
     border-bottom: 1px solid var(--border-soft);
   }
   .desktop-author-pane .dap-voice-host .voice-browser-head h2 {
@@ -11008,6 +12062,98 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   body.pane-resizing * {
     cursor: ew-resize !important;
   }
+
+  /* v225fz11.panes (#685): close × button on each side pane.
+   * Top-right corner, small + subtle so it doesn't compete with the
+   * pane header. Hidden by default outside the pane (the .desktop-*-
+   * pane parents are display:none until their data-multipane-* flag
+   * fires). z-index sits above the resize handle so a corner click
+   * doesn't get eaten by the drag area.
+   */
+  .pane-close-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 36;
+    transition: background 120ms ease, color 120ms ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pane-close-btn:hover,
+  .pane-close-btn:focus-visible {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--text);
+    outline: none;
+  }
+  /* Library pane × needs to sit to the left of the resize handle
+   * (6px wide on the right edge) to avoid overlap. */
+  body[data-multipane-library="1"] .desktop-library-pane .pane-close-btn {
+    right: 14px;
+  }
+  /* Author pane × sits to the right of its left-edge resize handle —
+   * default 8px works. */
+
+  /* Reopen pills — fixed to the relevant edge when the matching pane
+   * is hidden. Vertically centered. Soft, accent-tinted glass so they
+   * read as "secondary chrome" rather than a primary control.
+   */
+  .pane-reopen-pill {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 64px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-card) 78%, transparent);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    cursor: pointer;
+    z-index: 32;
+    color: var(--text);
+    font-size: 18px;
+    transition: background 140ms ease, transform 140ms ease;
+    padding: 0;
+  }
+  .pane-reopen-pill-left {
+    left: 0;
+    border-left: 0;
+    border-top-right-radius: 12px;
+    border-bottom-right-radius: 12px;
+  }
+  .pane-reopen-pill-right {
+    right: 0;
+    border-right: 0;
+    border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
+  }
+  .pane-reopen-pill:hover {
+    background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
+  }
+  .pane-reopen-pill-left:hover { transform: translateY(-50%) translateX(2px); }
+  .pane-reopen-pill-right:hover { transform: translateY(-50%) translateX(-2px); }
+  body[data-pane-hidden-library="1"] #pane-reopen-library { display: flex; }
+  body[data-pane-hidden-author="1"] #pane-reopen-author { display: flex; }
+}
+
+/* Outside the @media block: ensure the pills NEVER show below
+ * 1280px even if data attrs leak (defensive — the JS clears them
+ * via _paintPaneHiddenAttrs but a stale state could otherwise show
+ * a pill on a tablet where the pane never existed). */
+@media (max-width: 1279px) {
+  .pane-reopen-pill { display: none !important; }
 }
 
 /* v225ez: belt-and-suspenders horizontal clip on html + body.

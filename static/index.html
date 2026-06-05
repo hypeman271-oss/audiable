@@ -368,6 +368,17 @@
           aria-label="Resize author pane"
           title="Drag to resize · double-click to reset"
         ></div>
+        <!-- v225fz11.panes (#685): hide × button. Wired in app.js to
+             set the narrative.paneHidden.author flag, which suppresses
+             data-multipane-author and reveals the reopen pill at the
+             right edge of the viewport. -->
+        <button
+          type="button"
+          class="pane-close-btn"
+          data-pane="author"
+          aria-label="Hide notes pane"
+          title="Hide notes pane"
+        >×</button>
         <!-- v225fe (#647): Voice section. Voice dialog contents
              (.voice-browser-head + .voice-dialog-body) relocate here
              at ≥1280px so voice is always reachable without occluding
@@ -413,6 +424,29 @@
           </section>
         </div>
       </aside>
+
+      <!-- v225fz11.panes (#685): reopen pills for the desktop side
+           panes. Default hidden; CSS shows each when its body
+           data-pane-hidden-X="1" flag is set (AND viewport ≥1280px).
+           Tap restores the pane via _setPaneHidden(name, false). -->
+      <button
+        type="button"
+        id="pane-reopen-library"
+        class="pane-reopen-pill pane-reopen-pill-left"
+        aria-label="Show library pane"
+        title="Show library pane"
+      >
+        <span class="pane-reopen-pill-icon">📚</span>
+      </button>
+      <button
+        type="button"
+        id="pane-reopen-author"
+        class="pane-reopen-pill pane-reopen-pill-right"
+        aria-label="Show notes pane"
+        title="Show notes pane"
+      >
+        <span class="pane-reopen-pill-icon">📝</span>
+      </button>
 
       <!-- v195: dual chip strips. #hero-controls lives back inside
            .hero-row (v188 position) as a flex middle item, visible
@@ -708,6 +742,66 @@
               </label>
               <label>
                 <input type="radio" name="empty-state-visibility" value="hide" />
+                <span>Hide</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- v225fz11.panes (#685): desktop side-panel visibility. Two
+               rows mirror the × close + 📚/📝 reopen pill flow but
+               surface the toggle for users who don't know about them.
+               Only meaningful at ≥1280px (panes don't render below);
+               below that the radios still work but are inert because
+               the layout function gates on viewport AND the hidden
+               flag. settings-desktop-only class hides the rows on
+               phones where the underlying feature is irrelevant. -->
+          <div class="settings-row settings-desktop-only">
+            <div class="settings-toggle-label">
+              <strong>Library pane (desktop)</strong>
+              <span class="settings-toggle-desc">
+                The Library list pinned to the left edge on screens 1280px
+                and wider. Hide for a wider center column when you don't
+                need quick clip-switching. Re-open from the 📚 pill at
+                the left edge, this toggle, or ⌘K → "Show library pane".
+              </span>
+            </div>
+            <div
+              class="theme-picker"
+              role="radiogroup"
+              aria-label="Library pane visibility"
+            >
+              <label>
+                <input type="radio" name="pane-visibility-library" value="show" />
+                <span>Show</span>
+              </label>
+              <label>
+                <input type="radio" name="pane-visibility-library" value="hide" />
+                <span>Hide</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-row settings-desktop-only">
+            <div class="settings-toggle-label">
+              <strong>Notes pane (desktop)</strong>
+              <span class="settings-toggle-desc">
+                The right-side pane that holds Voice + the "This clip"
+                summary (flags, bookmarks, notes). Hide for more reading
+                room. Re-open from the 📝 pill at the right edge, this
+                toggle, or ⌘K → "Show notes pane".
+              </span>
+            </div>
+            <div
+              class="theme-picker"
+              role="radiogroup"
+              aria-label="Notes pane visibility"
+            >
+              <label>
+                <input type="radio" name="pane-visibility-author" value="show" />
+                <span>Show</span>
+              </label>
+              <label>
+                <input type="radio" name="pane-visibility-author" value="hide" />
                 <span>Hide</span>
               </label>
             </div>
@@ -1330,7 +1424,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225fk</span>
+            Narrative <span id="settings-version-tag">v225v3.5</span>
             <button
               type="button"
               id="settings-force-update"
@@ -1521,6 +1615,25 @@
                    landing page. -->
               <span class="empty-state-tutorial-link" data-tutorial="wt-first-listen" role="link" tabindex="0">↗ Watch tutorial</span>
             </button>
+            <!-- v225g1 (#690): ebook-mode entry point. Opens the file
+                 picker exactly like the Upload tile, but stashes
+                 `_pendingEbookMode = true` so the extract handler
+                 routes through _openAsEbook() instead of waiting for
+                 a Generate tap. The user sees the same import preview;
+                 the clip lands in the library as 📖 Ebook (no audio)
+                 and immediately drops into book view. -->
+            <button
+              class="empty-state-card"
+              type="button"
+              data-empty-action="ebook"
+            >
+              <span class="empty-state-emoji" aria-hidden="true">📖</span>
+              <span class="empty-state-title">Read as ebook</span>
+              <span class="empty-state-desc">
+                Upload an EPUB / PDF and read it without generating audio.
+              </span>
+              <span class="empty-state-tutorial-link" data-tutorial="wt-upload-file" role="link" tabindex="0">↗ Watch tutorial</span>
+            </button>
           </div>
           <p class="empty-state-or">↓ Or paste / type your own text into the box below</p>
           <!-- v220e: discoverable manual link for first-timers who
@@ -1576,6 +1689,30 @@
           />
           <button id="url-fetch-btn" type="button" class="url-fetch-btn">Fetch</button>
         </div>
+        <!-- v225fz14 (#688): import-preview strip. Populated whenever
+             /api/extract returns a cover or inline images so the user
+             can see what art will land on the saved clip BEFORE they
+             commit to TTS synthesis. Hidden when no images are
+             pending; cleared on Clear / new content. The cover (if
+             any) and each inline image render as captioned thumbnails
+             in a horizontal scroll row. -->
+        <div id="import-preview" class="import-preview" hidden>
+          <div class="import-preview-head">
+            <span class="import-preview-title">Detected in this import</span>
+            <span class="import-preview-hint">Will land on the saved clip — Clear above to discard</span>
+            <!-- v225g1 (#690): "📖 Read as ebook" action right inside the
+                 preview head. Saves the imported text + detected images
+                 to the library as an ebook (no audio) and drops into
+                 book view. Same call as the empty-state tile. -->
+            <button
+              type="button"
+              id="import-preview-ebook"
+              class="import-preview-ebook"
+              title="Save as a no-audio library clip and open book view"
+            >📖 Read as ebook</button>
+          </div>
+          <div id="import-preview-thumbs" class="import-preview-thumbs"></div>
+        </div>
         <textarea
           id="text"
           placeholder="Paste an article, a chapter, or just a sentence — or upload a file above."
@@ -1609,6 +1746,19 @@
         <div id="book-view" class="book-view" hidden>
           <div id="book-view-spread" class="book-view-spread" aria-live="polite"></div>
           <div class="book-view-nav">
+            <!-- v225g3 (#692): explicit Close button so phone users
+                 can exit the full-screen book-view takeover (the hero
+                 #book-view-toggle is hidden behind the takeover). Also
+                 visible on desktop because "how do I get out of book
+                 view?" was a known onboarding question. Wired in JS
+                 below to call exitBookView(). -->
+            <button
+              id="book-view-close"
+              type="button"
+              class="book-view-nav-btn book-view-close-btn"
+              aria-label="Close book view"
+              title="Close book view (Esc)"
+            >× Close</button>
             <button
               id="book-view-prev"
               type="button"
@@ -2313,6 +2463,18 @@
           <span class="label-text">Generate</span>
           <span class="spinner" hidden></span>
         </button>
+        <!-- v225g1 (#690): "📖 Open as ebook" — save current text +
+             detected images as a library clip with NO audio and drop
+             straight into book view. Sits next to Generate so the
+             user always has both options on every clip. Disabled
+             until there's text; auto-syncs to library + cross-device. -->
+        <button
+          id="open-as-ebook"
+          class="secondary"
+          disabled
+          title="Save as a no-audio library clip and open it in book view."
+          aria-label="Save the current text as an ebook and open book view"
+        >📖 Open as ebook</button>
         <button
           id="download"
           class="secondary"
@@ -2540,18 +2702,15 @@
       <div id="phone-menu-scrim" class="phone-menu-scrim" aria-hidden="true"></div>
       <div id="phone-menu" class="phone-menu" aria-hidden="true">
         <div class="phone-menu-content">
-          <!-- v587/v588/v593: author-frequency layout. Library, Book
-               view, and Edit text are now top-bar icons next to 🔖
-               (always-on access without opening the menu). Import
-               stays here as the single high-frequency revision-
-               adjacent action that doesn't need a top-bar slot.
-               Casual-reader and rare actions sit below the first
-               divider; config below the second. -->
-          <button class="phone-menu-item" data-action="import" type="button">
-            <span class="phone-menu-icon" aria-hidden="true">↑</span>
-            <span>Import</span>
-          </button>
-          <div class="phone-menu-divider"></div>
+          <!-- v225fn (#656): Import promoted to the phone header top-
+               right icon (.phone-import-btn, v225fk) and removed from
+               here. Earlier (v587/v588/v593) layout had Library + Book
+               view + Edit text as top-bar icons and Import in this
+               menu; now Import joins the always-on rail so first-time
+               users have a visible "start" affordance without opening
+               the menu. The data-action="import" wiring in app.js's
+               triggers map is kept harmless — it's a no-op when the
+               item is absent from the DOM. -->
           <button class="phone-menu-item" data-action="new" type="button">
             <span class="phone-menu-icon" aria-hidden="true">✚</span>
             <span>Start over</span>
@@ -2559,6 +2718,17 @@
           <button class="phone-menu-item" data-action="download" type="button">
             <span class="phone-menu-icon" aria-hidden="true">↓</span>
             <span>Download MP3</span>
+          </button>
+          <!-- v225g2 (#691): phone parity for ebook mode. The Generate-
+               row "📖 Open as ebook" button next to Generate is hidden
+               on phone (.actions.card-actions is visibility:hidden per
+               v225.tn48), so phone users with text but no fresh import
+               had no entry point. Dispatch click() to the same hidden
+               hero button — the empty-state tile and import-preview
+               chip remain the in-flow phone entries. -->
+          <button class="phone-menu-item" data-action="open-as-ebook" type="button">
+            <span class="phone-menu-icon" aria-hidden="true">📖</span>
+            <span>Open as ebook</span>
           </button>
           <button class="phone-menu-item" data-action="export-notes" type="button">
             <span class="phone-menu-icon" aria-hidden="true">📤</span>
@@ -2569,10 +2739,11 @@
             <span class="phone-menu-icon" aria-hidden="true">⚙</span>
             <span>Settings</span>
           </button>
-          <button class="phone-menu-item" data-action="help" type="button">
-            <span class="phone-menu-icon" aria-hidden="true">?</span>
-            <span>Help &amp; manual</span>
-          </button>
+          <!-- v225fu (#663): Help promoted to a header icon (left of
+               📥 Import). Removed from the ☰ menu to avoid duplicating
+               the same affordance in two places — same precedent as
+               #656 (Import removal). -->
+
         </div>
       </div>
 
@@ -2792,10 +2963,21 @@
           <div class="bookmark-editor-time">
             at <span id="bookmark-editor-time-val">--:--</span>
           </div>
-          <label
-            for="bookmark-editor-note"
-            class="bookmark-editor-note-label"
-          >Note</label>
+          <!-- v225fy (#667): label + live char counter in a flex row.
+               Counter starts neutral, switches to .warn at 80%, .at-limit
+               at 95% so the author has visual warning before they get
+               cut off mid-thought. -->
+          <div class="bookmark-editor-note-row">
+            <label
+              for="bookmark-editor-note"
+              class="bookmark-editor-note-label"
+            >Note</label>
+            <span
+              id="bookmark-editor-note-counter"
+              class="bookmark-editor-note-counter"
+              aria-live="polite"
+            >0 / 200</span>
+          </div>
           <textarea
             id="bookmark-editor-note"
             rows="3"
@@ -3347,8 +3529,262 @@
               hidden
             />
           </div>
+          <!-- v225fz3 (#670): "Clear revision marks" section. Workflow
+               completion action: author has applied their flagged
+               edits to the source manuscript (Scrivener / GitHub /
+               Obsidian / local), wants a clean slate before the next
+               listen-through. Wipes bookmarks + annotations + clip
+               notes for THIS clip; book-view highlights and voice/
+               character assignments are NOT touched (they're config
+               or reading marks, not revision marks). The actual
+               destructive step happens in #clear-marks-confirm with
+               a counts-preview and an Export-to-Markdown safety net. -->
+          <div class="clip-edit-clear-marks">
+            <h3 class="clip-edit-clear-marks-head">Clear &amp; restore</h3>
+            <p class="clip-edit-clear-marks-desc">
+              Clear this clip's bookmarks, annotations, and notes
+              once you've applied them to your source manuscript —
+              the safety-net Markdown export is also a valid restore
+              source if you change your mind.
+            </p>
+            <div class="clip-edit-clear-marks-actions">
+              <button
+                id="clip-edit-clear-marks-btn"
+                type="button"
+                class="clip-edit-clear-marks-btn"
+                title="Open the clear-marks confirmation dialog"
+              >Clear marks…</button>
+              <button
+                id="clip-edit-restore-marks-btn"
+                type="button"
+                class="clip-edit-restore-marks-btn"
+                title="Pick a previously-exported .md and restore its marks"
+              >Restore from backup…</button>
+            </div>
+            <!-- v225fz5 (#672): hidden file picker for the Restore
+                 flow. Reused for both the Edit-dialog button and the
+                 command palette entry. Accept .md and .markdown so
+                 users can pick either extension. -->
+            <input
+              id="clip-edit-restore-input"
+              type="file"
+              accept=".md,.markdown,text/markdown"
+              hidden
+            />
+          </div>
           <div class="clip-edit-actions">
             <button id="clip-edit-save" type="button" class="primary">Save</button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- v225fz3 (#670): clear-marks confirmation dialog. Centered
+           modal, opened from the Edit clip dialog's "Clear marks…"
+           button OR the command palette "Clear revision marks on
+           this clip" entry. Shows live counts of what would be
+           cleared, three category checkboxes (so the author can
+           preserve e.g. notes while wiping bookmarks + annotations),
+           and an Export-to-Markdown checkbox that defaults ON
+           (defaulted ON because the .md is their plan-of-action
+           artifact for source-manuscript edits; preference persisted
+           in localStorage thereafter). -->
+      <dialog id="clear-marks-confirm" class="clear-marks-dialog">
+        <div class="clear-marks-head">
+          <h2>Clear revision marks</h2>
+          <button
+            id="clear-marks-close"
+            type="button"
+            class="link-btn"
+            aria-label="Cancel"
+          >Cancel</button>
+        </div>
+        <div class="clear-marks-body">
+          <p class="clear-marks-target">
+            From <strong id="clear-marks-clip-title">this clip</strong>:
+          </p>
+          <div class="clear-marks-categories">
+            <label class="clear-marks-cat">
+              <input
+                id="clear-marks-cat-bookmarks"
+                type="checkbox"
+                checked
+              />
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Bookmarks</span>
+                <span
+                  id="clear-marks-count-bookmarks"
+                  class="clear-marks-cat-count"
+                >0</span>
+              </span>
+            </label>
+            <label class="clear-marks-cat">
+              <input
+                id="clear-marks-cat-annotations"
+                type="checkbox"
+                checked
+              />
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Annotations</span>
+                <span
+                  id="clear-marks-count-annotations"
+                  class="clear-marks-cat-count"
+                >0</span>
+              </span>
+            </label>
+            <label class="clear-marks-cat">
+              <input
+                id="clear-marks-cat-notes"
+                type="checkbox"
+                checked
+              />
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Free-form notes</span>
+                <span
+                  id="clear-marks-count-notes"
+                  class="clear-marks-cat-count"
+                >—</span>
+              </span>
+            </label>
+          </div>
+          <label class="clear-marks-export-row">
+            <input
+              id="clear-marks-export-first"
+              type="checkbox"
+              checked
+            />
+            <span>📤 Export to Markdown first</span>
+          </label>
+          <p class="clear-marks-warn">
+            This can't be undone. Cleared marks sync to your other
+            devices so they don't come back.
+          </p>
+          <div class="clear-marks-actions">
+            <button
+              id="clear-marks-cancel"
+              type="button"
+              class="link-btn"
+            >Cancel</button>
+            <button
+              id="clear-marks-confirm-btn"
+              type="button"
+              class="clear-marks-confirm-btn"
+            >Clear</button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- v225fz5 (#672): Restore-from-backup confirmation dialog.
+           Opens after the user picks a .md from the file system AND
+           the parser successfully extracts a NARRATIVE_BACKUP v1
+           block. Shows what was found, a clipId-mismatch warning
+           when the backup was made from a different clip, and a
+           Replace/Add merge-mode radio. Same dialog chrome family
+           as #clear-marks-confirm for consistency. -->
+      <dialog id="restore-marks-confirm" class="clear-marks-dialog">
+        <div class="clear-marks-head">
+          <h2>Restore revision marks</h2>
+          <button
+            id="restore-marks-close"
+            type="button"
+            class="link-btn"
+            aria-label="Cancel"
+          >Cancel</button>
+        </div>
+        <div class="clear-marks-body">
+          <p class="clear-marks-target">
+            From backup of
+            <strong id="restore-marks-source-title">a clip</strong>
+            <span
+              id="restore-marks-source-date"
+              class="restore-marks-source-date"
+            ></span>
+          </p>
+          <!-- Cross-clip warning: shown only when the backup's clipId
+               doesn't match the current edit target. Cross-clip
+               restore is intentional (copying marks between clips is
+               a legit case) but worth flagging so the author doesn't
+               do it by accident. -->
+          <p
+            id="restore-marks-mismatch"
+            class="restore-marks-mismatch"
+            hidden
+          >
+            ⚠ This backup was made from a different clip. Restoring
+            into <strong id="restore-marks-target-title">this
+            clip</strong> will copy the marks across.
+          </p>
+          <div class="clear-marks-categories">
+            <div class="clear-marks-cat clear-marks-cat-readonly">
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Bookmarks</span>
+                <span
+                  id="restore-marks-count-bookmarks"
+                  class="clear-marks-cat-count"
+                >0</span>
+              </span>
+            </div>
+            <div class="clear-marks-cat clear-marks-cat-readonly">
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Annotations</span>
+                <span
+                  id="restore-marks-count-annotations"
+                  class="clear-marks-cat-count"
+                >0</span>
+              </span>
+            </div>
+            <div class="clear-marks-cat clear-marks-cat-readonly">
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Free-form notes</span>
+                <span
+                  id="restore-marks-count-notes"
+                  class="clear-marks-cat-count"
+                >—</span>
+              </span>
+            </div>
+          </div>
+          <fieldset class="restore-marks-mode">
+            <legend>Merge mode</legend>
+            <label class="restore-marks-mode-row">
+              <input
+                type="radio"
+                name="restore-marks-mode"
+                value="replace"
+                checked
+              />
+              <span class="restore-marks-mode-text">
+                <strong>Replace</strong>
+                <span class="restore-marks-mode-hint">
+                  Overwrite the clip's current marks. Right answer
+                  right after Clear.
+                </span>
+              </span>
+            </label>
+            <label class="restore-marks-mode-row">
+              <input
+                type="radio"
+                name="restore-marks-mode"
+                value="add"
+              />
+              <span class="restore-marks-mode-text">
+                <strong>Add</strong>
+                <span class="restore-marks-mode-hint">
+                  Merge into existing marks (deduped by id). Right
+                  answer if you've done new work you want to keep.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+          <div class="clear-marks-actions">
+            <button
+              id="restore-marks-cancel"
+              type="button"
+              class="link-btn"
+            >Cancel</button>
+            <button
+              id="restore-marks-confirm-btn"
+              type="button"
+              class="restore-marks-confirm-btn"
+            >Restore</button>
           </div>
         </div>
       </dialog>

@@ -1529,16 +1529,46 @@ async def extract_endpoint(file: UploadFile = File(...)):
             status_code=413,
             detail=f"file too large ({len(data)} bytes, max {MAX_UPLOAD_BYTES})",
         )
+    # v225fz13 (#687): for EPUBs, use the inline-image-aware extractor so
+    # <img> tags inside the spine HTML get base64-encoded and threaded
+    # through as `images` (mirroring the URL-fetch shape). Other formats
+    # still use the text-only dispatcher — DOCX inline shapes would need
+    # their own walker, and PDFs already surface their images via
+    # image_detector's chapter_images path.
+    inline_images: list = []
     try:
-        text = extract.extract_text(file.filename, data)
+        ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+        if ext == "epub":
+            epub_result = extract._extract_epub_with_images(data)
+            text = extract._normalize(epub_result["text"])
+            inline_images = epub_result.get("images") or []
+        else:
+            text = extract.extract_text(file.filename, data)
     except extract.UnsupportedFormatError as e:
         raise HTTPException(status_code=415, detail=str(e))
     except extract.ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # v225fz10 (#676): also detect the cover + chapter-leading images
+    # for EPUB / PDF / DOCX. Best-effort enrichment; image_detector
+    # returns {"cover": None, "chapter_images": []} on any failure so
+    # the rest of the response is unaffected. See image_detector.py
+    # for the per-format detection rules.
+    try:
+        import image_detector
+        image_data = image_detector.detect_images(file.filename, data)
+    except Exception as e:
+        print(f"[/api/extract] image detection failed: {e!r}", flush=True)
+        image_data = {"cover": None, "chapter_images": []}
     return {
         "filename": file.filename,
         "chars": len(text),
         "text": text,
+        # v225fz13 (#687): EPUB inline-image list (URL-fetch shape).
+        # Empty list for other formats so the frontend's array spread
+        # stays defensive.
+        "images": inline_images,
+        "cover": image_data.get("cover"),
+        "chapter_images": image_data.get("chapter_images") or [],
     }
 
 
