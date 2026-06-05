@@ -1154,7 +1154,19 @@ def _extract_epub_with_images(data: bytes) -> dict:
     sentence_cursor = 0
     SENT_END_RE = re.compile(r"[.!?](?=\s|$)")
 
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+    # v225v3.71 (#802): a BadZipFile escaping here surfaces as an
+    # uncaught 500 in /api/extract — the corpus runner hit this on a
+    # Standard Ebooks download that came back as HTML (redirect / WAF /
+    # rate-limit). Catch it and surface a clear 422 instead so the
+    # client and the corpus harness both get a meaningful reason.
+    try:
+        zf_ctx = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        raise ExtractionError(
+            "invalid EPUB: file is not a zip archive (download may have "
+            "returned an HTML error page instead of the .epub bytes)"
+        ) from e
+    with zf_ctx as zf:
         # Find the OPF (package document) via META-INF/container.xml.
         try:
             container = zf.read("META-INF/container.xml").decode("utf-8", "replace")
@@ -1179,13 +1191,23 @@ def _extract_epub_with_images(data: bytes) -> dict:
 
         # Two manifest views: spine HTML (id -> href) and images
         # (href -> mime, relative to opf_dir).
+        #
+        # v225v3.71 (#802): the old version pinned attribute order to
+        # id → href → media-type, which Gutenberg's EPUB3 violates (it
+        # often writes media-type first, with properties=cover-image
+        # interleaved). That silently dropped every spine item and the
+        # response came back as 422 "EPUB contains no readable text".
+        # Parse <item ...> attributes order-agnostically.
         manifest_html: dict[str, str] = {}
         manifest_images: dict[str, str] = {}
-        for item in re.finditer(
-            r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"[^>]*\bmedia-type="([^"]+)"',
-            opf,
-        ):
-            iid, href, media = item.group(1), item.group(2), item.group(3)
+        ATTR_RE = re.compile(r'\b(\w[\w:-]*)\s*=\s*"([^"]*)"')
+        for item in re.finditer(r"<item\b([^/>]*)/?>", opf):
+            attrs = dict(ATTR_RE.findall(item.group(1)))
+            iid = attrs.get("id")
+            href = attrs.get("href")
+            media = attrs.get("media-type", "")
+            if not iid or not href:
+                continue
             if media in ("application/xhtml+xml", "text/html"):
                 manifest_html[iid] = href
             elif media.startswith("image/"):

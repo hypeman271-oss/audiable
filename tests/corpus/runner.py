@@ -155,6 +155,25 @@ def _validate(case: dict[str, Any], data: dict[str, Any], t0: float) -> dict[str
         failures.append(f"chars {chars} < min {case['min_chars']}")
     if sentences < case.get("min_sentences", 0):
         failures.append(f"sentences {sentences} < min {case['min_sentences']}")
+    # v225v3.71 (#802): content-level assertions catch silent-empty
+    # extracts where char/sentence floors numerically pass but the
+    # body is navigation chrome or an error page (the Roy Glashan
+    # freeread.de case the user originally hit).
+    #
+    # content_must_contain — all listed strings must appear
+    # content_must_contain_one_of — at least one must appear
+    # content_must_not_contain — none of the listed strings may appear
+    must = case.get("content_must_contain") or []
+    for needle in must:
+        if needle not in text:
+            failures.append(f"missing required substring {needle!r}")
+    any_of = case.get("content_must_contain_one_of") or []
+    if any_of and not any(n in text for n in any_of):
+        failures.append(f"none of {any_of!r} present")
+    forbid = case.get("content_must_not_contain") or []
+    for needle in forbid:
+        if needle in text:
+            failures.append(f"contains forbidden substring {needle!r}")
     return {
         "ok": not failures,
         "reason": "; ".join(failures) if failures else None,
