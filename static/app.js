@@ -217,6 +217,25 @@ let _libraryHasClips = false;
 // cards as outdated in renderLibrary. Cleared when the user refetches
 // the affected clip OR re-runs Sync GitHub and the SHAs match again.
 let _outdatedClipIds = new Set();
+
+// v225v3.24: helper to mark a clip as no-longer-outdated. Wraps the
+// _outdatedClipIds.delete + main-view banner hide together so the two
+// surfaces (per-card footer + in-view banner) never disagree. User
+// hit the bug where the per-card refetch path cleared the card's
+// outdated state but the active clip's #git-outdated-banner stayed
+// up because the bg-queue completion never told it to hide. Use
+// this everywhere instead of bare _outdatedClipIds.delete.
+function _markClipFresh(clipId) {
+  if (!clipId) return;
+  _outdatedClipIds.delete(clipId);
+  if (typeof _gitOutdatedClipId !== "undefined" && _gitOutdatedClipId === clipId) {
+    if (typeof _gitOutdatedBanner !== "undefined" && _gitOutdatedBanner) {
+      _gitOutdatedBanner.hidden = true;
+    }
+    _gitOutdatedClipId = null;
+    _gitOutdatedNewSha = null;
+  }
+}
 const playModeBtn = $("play-mode-btn");
 const libraryLabel = $("library-label");
 const librarySearch = $("library-search");
@@ -321,6 +340,8 @@ const settingsClose = $("settings-close");
 // replaces it. The picker's radios are queried inline.)
 const settingsFeedbackLink = $("settings-feedback-link");
 const settingsFeedbackGmailLink = $("settings-feedback-gmail-link");
+const settingsPushDebugLogLink = $("settings-push-debug-log-link");
+const settingsPushDebugLogStatus = $("settings-push-debug-log-status");
 const settingsResetHintsLink = $("settings-reset-hints-link");
 const settingsDebugLogLink = $("settings-debug-log-link");
 const settingsWhatsNewLink = $("settings-whats-new-link");
@@ -3609,6 +3630,21 @@ function _openPhoneManualViewer(anchor) {
   if (!viewer) return;
   viewer.hidden = false;
   document.body.dataset.phoneManualOpen = "1";
+  // v225v3.31: push a history entry so Android back button + browser
+  // back gesture close the manual instead of leaving the app. Without
+  // this, if the viewer's UI becomes unreachable for any reason
+  // (contrast bug, touch handler bug, anything), the user is trapped.
+  // Also wire popstate so back DOES close. matched once-only listener
+  // so re-opens don't stack handlers.
+  try {
+    history.pushState({ phoneManual: true }, "");
+    const onBack = () => {
+      window.removeEventListener("popstate", onBack);
+      const v = document.getElementById("phone-manual-viewer");
+      if (v && !v.hidden) _closePhoneManualViewer();
+    };
+    window.addEventListener("popstate", onBack, { once: true });
+  } catch {}
   // v225fi (#651): only reset scroll to first section when opening
   // WITHOUT a target anchor. Previously this requestAnimationFrame
   // fired the next frame and overrode the smooth horizontal scroll
@@ -3642,12 +3678,20 @@ function _phoneManualGotoByAnchor(anchor) {
   if (!anchor) return;
   const viewer = document.getElementById("phone-manual-viewer");
   if (!viewer) return;
-  // Direct H2 match first.
+  // Direct H2 match first — _phoneManualSections stores original
+  // anchor names from the source doc, not the v225v3.43 pmv-
+  // prefixed DOM ids. Incoming anchors (from empty-state tutorial
+  // links etc.) use the original names, so this still matches.
   let idx = _phoneManualSections.findIndex((s) => s.id === anchor);
   if (idx < 0) {
     // Walk the live DOM: find the matching id, then trace back to
     // the closest .pmv-page ancestor and read its data-idx.
-    const target = viewer.querySelector("#" + CSS.escape(anchor));
+    // v225v3.43 (#777): try the pmv- prefixed id first since
+    // that's what cloned content uses now; fall back to bare for
+    // anything that wasn't id-rewritten.
+    const target =
+      viewer.querySelector("#pmv-" + CSS.escape(anchor)) ||
+      viewer.querySelector("#" + CSS.escape(anchor));
     if (target) {
       const page = target.closest(".pmv-page");
       if (page) idx = parseInt(page.dataset.idx, 10);
@@ -3806,10 +3850,29 @@ async function _loadPhoneManualContent() {
       const wrap = document.createElement("article");
       wrap.className = "pmv-page";
       wrap.dataset.idx = String(idx);
-      wrap.appendChild(h2.cloneNode(true));
+      // v225v3.43 (#777, fix B for #758): prefix every cloned id
+      // with "pmv-" to prevent collisions with app-level CSS
+      // selectors. The H2 with id="book-view" in manual section 6
+      // collided with the app's #book-view container styles and
+      // painted a translucent cream gradient over the manual
+      // content. We prefix h2 + every nested id (h3/h4 anchors,
+      // table ids, etc.) defensively so this whole class of bug
+      // can't recur. _phoneManualSections still stores the
+      // ORIGINAL anchor name (from the source doc) for incoming
+      // anchor-lookup paths; the DOM ids are the prefixed form.
+      const clonedH2 = h2.cloneNode(true);
+      if (clonedH2.id) clonedH2.id = "pmv-" + clonedH2.id;
+      wrap.appendChild(clonedH2);
       let n = h2.nextElementSibling;
       while (n && n.tagName !== "H2") {
-        wrap.appendChild(n.cloneNode(true));
+        const clonedNode = n.cloneNode(true);
+        if (clonedNode.id) clonedNode.id = "pmv-" + clonedNode.id;
+        if (clonedNode.querySelectorAll) {
+          clonedNode.querySelectorAll("[id]").forEach((el) => {
+            el.id = "pmv-" + el.id;
+          });
+        }
+        wrap.appendChild(clonedNode);
         n = n.nextElementSibling;
       }
       pages.appendChild(wrap);
@@ -3864,6 +3927,46 @@ async function _loadPhoneManualContent() {
 
     _phoneManualLoaded = true;
     _phoneManualSetActive(0);
+
+    // v225v3.37: diagnostic injection removed. Bug found in v3.36
+    // (font-family fallback resolving to thinner-stroke variant on
+    // Samsung Chrome with the long stack), fix shipped in styles.css.
+    // Keeping the dlog probe below as a permanent diagnostic in case
+    // a related issue recurs — it's small and runs once per open.
+    // v225v3.43 (#777): probe slimmed back to a lean render-ready
+    // dlog. The v3.34→v3.42 diagnostic scaffolding (ancestor walks,
+    // pseudo dumps, sibling walks, dual control injection,
+    // elementsFromPoint stack) successfully diagnosed #758 as an
+    // ID collision between <h2 id="book-view"> in manual section 6
+    // and the app's #book-view CSS rule. Fix shipped in v3.43:
+    // (A) scope CSS to div#book-view, (B) prefix cloned ids with
+    // pmv-. The lean dlog stays as a permanent diagnostic seed in
+    // case a related rendering bug recurs on this surface — it's
+    // 4 lines and runs once per open.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try {
+          const samplePara = pages.querySelector(".pmv-page p")
+            || pages.querySelector("p");
+          _dlog("manual:phone", "render ready (v3.43 fix shipped)", {
+            paraColor: samplePara
+              ? getComputedStyle(samplePara).color
+              : null,
+            paraFontFamily: samplePara
+              ? getComputedStyle(samplePara).fontFamily
+              : null,
+            // v225v3.43: explicitly confirm the H2 id was rewritten —
+            // if a future bug surfaces, this tells us whether the
+            // pmv- prefix protection is in place on the affected
+            // session.
+            firstH2Id:
+              pages.querySelector(".pmv-page h2")?.id || null,
+          });
+        } catch (e) {
+          _dlog("manual:phone", "probe failed", { msg: String(e) });
+        }
+      });
+    });
 
     // v225ej (#626): if the open call passed an anchor (e.g. from an
     // empty-state "Watch tutorial" link), jump there now that the
@@ -5008,6 +5111,50 @@ settingsFeedbackGmailLink.addEventListener("click", () =>
   _onFeedbackLinkClick("Gmail")
 );
 
+// v225v3.38 (#769): manual "Push debug log to debugger" button. Hidden
+// by default; we ping /api/debug-log/status once at boot and reveal the
+// link if the server reports the pipeline is configured. Click fires
+// _autoDownloadDebugLog("manual-share") which downloads locally AND
+// pushes to the private repo (via the extension added in #768).
+(async () => {
+  if (!settingsPushDebugLogLink) return;
+  try {
+    const res = await fetch("/api/debug-log/status");
+    if (!res.ok) return;
+    const data = await res.json().catch(() => null);
+    if (data && data.enabled) {
+      settingsPushDebugLogLink.hidden = false;
+    }
+  } catch (e) {
+    // Server unreachable or endpoint missing — fail silent, link stays hidden.
+  }
+})();
+
+if (settingsPushDebugLogLink) {
+  settingsPushDebugLogLink.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (settingsPushDebugLogStatus) {
+      settingsPushDebugLogStatus.hidden = false;
+      settingsPushDebugLogStatus.textContent = "Pushing…";
+    }
+    // _autoDownloadDebugLog handles both: local download AND server push.
+    // We do it through the same path so the user gets the local copy
+    // even if their network drops mid-push.
+    _autoDownloadDebugLog("manual-share");
+    // Allow the fire-and-forget push a beat to settle, then report.
+    // We can't await it from inside _autoDownloadDebugLog (intentional —
+    // local download must never block), so we wait a fixed window and
+    // ping status again. Imperfect but honest: tells the user the push
+    // was attempted, not that it definitely landed.
+    setTimeout(() => {
+      if (settingsPushDebugLogStatus) {
+        settingsPushDebugLogStatus.textContent =
+          "Log pushed (local copy downloaded too). The debugger can read it now.";
+      }
+    }, 1500);
+  });
+}
+
 // v174: replay every onboarding tip + first-tap hint. Useful after
 // dismissing one by accident — or when the user iterated through
 // several builds and a stale flag from an earlier round is now
@@ -5399,6 +5546,73 @@ if (debugLogDownload) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
+}
+
+// v225v3.32: programmatic trigger for the debug log download. Used by
+// the phone manual viewer to auto-export diagnostics after open so the
+// user doesn't have to navigate to Settings (which can be a trap when
+// the manual itself blocks taps). Reason gets baked into the filename
+// so multiple auto-exports during one session are distinguishable.
+function _autoDownloadDebugLog(reason) {
+  let text = "";
+  try {
+    text = _formatDebugLogForDisplay();
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:.]/g, "-");
+    const ver = _currentAppVersion().replace(/[^a-zA-Z0-9]/g, "");
+    const safeReason = (reason || "auto").replace(/[^a-zA-Z0-9-]/g, "-");
+    a.href = url;
+    a.download = `narrative-debug-${ver}-${safeReason}-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) {
+    console.warn("[debug-log] auto-download failed:", e);
+  }
+  // v225v3.38 (#768): fire-and-forget push to /api/debug-log so the
+  // narrative-debug-logs repo gets a copy too. Best-effort — the local
+  // download above is the source of truth. We never await this; the
+  // user-visible flow doesn't change whether the push lands or not.
+  // Server endpoint always returns 200 (with ok=true|false), so a
+  // network failure is the only thing that throws.
+  if (text) {
+    _pushDebugLogToServer(reason, text).catch((e) => {
+      console.warn("[debug-log] server push failed:", e);
+    });
+  }
+}
+
+// v225v3.38 (#768): background push of a debug log payload to
+// /api/debug-log. Resolves to {ok, path?, sha?, html_url?, reason?}.
+// Auth flows through the window.fetch monkey-patch (X-Narrative-Key).
+async function _pushDebugLogToServer(reason, text) {
+  const ver = _currentAppVersion();
+  const payload = {
+    log: text,
+    reason: reason || "auto",
+    version: ver,
+    ua: navigator.userAgent || "",
+  };
+  const res = await fetch("/api/debug-log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    // Server returns 200 with ok=false on the normal failure modes,
+    // so a non-2xx here is something structurally wrong (404 wrong
+    // route, 5xx server crash). Log loudly so it's findable.
+    console.warn(
+      "[debug-log] server returned",
+      res.status,
+      "for /api/debug-log push"
+    );
+    return { ok: false, reason: `http_${res.status}` };
+  }
+  return await res.json().catch(() => ({ ok: false, reason: "bad_json" }));
 }
 if (debugLogClear) {
   debugLogClear.addEventListener("click", () => {
@@ -13200,8 +13414,9 @@ async function _preSynthesizeChapter(chapter, opts) {
         : new Date().toISOString(),
     });
     if (existingClip) {
-      // Drop the outdated flag now that the clip is current.
-      _outdatedClipIds.delete(existingClip.id);
+      // Drop the outdated flag now that the clip is current. Routed
+      // through _markClipFresh so the main-view banner clears too.
+      _markClipFresh(existingClip.id);
     }
     renderLibrary();
     _preSynthChapter = { clipId: newClipId, title: chapter.title };
@@ -21032,6 +21247,13 @@ function makeClipCard(clip) {
       try {
         const ok = await _refetchAndQueueClipFromGithub(clip.id, token);
         if (ok) {
+          // v225v3.24: mirror the in-view banner's instant-hide on
+          // confirm (line 24420). Once the user has queued the
+          // refetch, both the card footer AND any main-view banner
+          // showing for this clip should clear immediately — even
+          // before the bg-queue synth finishes — so the user sees
+          // their tap registered.
+          _markClipFresh(clip.id);
           setStatus(
             `Queued ${clip.title} for re-narrate — watch the queue panel.`,
           );
@@ -21055,8 +21277,10 @@ function makeClipCard(clip) {
       // Session-only dismissal: drop from the outdated set + re-render
       // so the card returns to its normal state (no ↻ badge, no sync
       // chip, no banner). On next library reload the freshness check
-      // may re-flag it if the SHA still differs upstream.
-      _outdatedClipIds.delete(clip.id);
+      // may re-flag it if the SHA still differs upstream. Routed
+      // through _markClipFresh so the main-view banner clears too if
+      // it happens to be showing for this clip.
+      _markClipFresh(clip.id);
       renderLibrary();
     });
     actions.appendChild(refetchBtn);

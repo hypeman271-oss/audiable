@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1020" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf4e3" />
+    <!-- v225v3.27: reverted v3.23 color-scheme meta (was breaking
+         rendering). -->
+
     <title>Narrative — Manual</title>
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
     <link rel="stylesheet" href="/styles.css" />
@@ -31,8 +34,69 @@
           if (resolved === "light") {
             document.documentElement.setAttribute("data-theme", "light");
           }
+          // v225v3.32: stash the resolved theme so the instrumentation
+          // block below can dlog it. window.parent._dlog is accessible
+          // when manual is loaded as an iframe inside the app; we'll
+          // also try window._dlog (tutorials.js exposes _dlog on the
+          // local window when loaded into manual.html directly).
+          window.__narrativeManualResolvedTheme = resolved;
+          window.__narrativeManualThemePref = pref;
         } catch (_) {}
       })();
+      // v225v3.32: diagnose the unreadable-phone-manual bug by dumping
+      // computed style of a sample paragraph + the actual values that
+      // --fg / --fg-dim / --bg resolve to. Runs after DOM is parsed.
+      // Logs to window._dlog (tutorials.js exposes it) AND to console.
+      window.addEventListener("DOMContentLoaded", function () {
+        try {
+          var html = document.documentElement;
+          var body = document.body;
+          var cs = getComputedStyle(html);
+          var bodycs = getComputedStyle(body);
+          var samplePara = document.querySelector(".manual p")
+            || document.querySelector("p");
+          var paraColor = null, paraBg = null, paraOpacity = null;
+          if (samplePara) {
+            var pcs = getComputedStyle(samplePara);
+            paraColor = pcs.color;
+            paraBg = pcs.backgroundColor;
+            paraOpacity = pcs.opacity;
+          }
+          var sampleH2 = document.querySelector(".manual h2");
+          var h2Color = sampleH2 ? getComputedStyle(sampleH2).color : null;
+          var sampleLede = document.querySelector(".manual .lede");
+          var ledeColor = sampleLede ? getComputedStyle(sampleLede).color : null;
+          var payload = {
+            href: location.href,
+            inIframe: window !== window.top,
+            dataTheme: html.getAttribute("data-theme"),
+            resolvedTheme: window.__narrativeManualResolvedTheme,
+            themePref: window.__narrativeManualThemePref,
+            viewport: window.innerWidth + "x" + window.innerHeight,
+            fgVar: cs.getPropertyValue("--fg").trim(),
+            fgDimVar: cs.getPropertyValue("--fg-dim").trim(),
+            bgVar: cs.getPropertyValue("--bg").trim(),
+            bodyColor: bodycs.color,
+            bodyBg: bodycs.backgroundColor,
+            bodyOpacity: bodycs.opacity,
+            bodyFilter: bodycs.filter,
+            paraColor: paraColor,
+            paraBg: paraBg,
+            paraOpacity: paraOpacity,
+            h2Color: h2Color,
+            ledeColor: ledeColor,
+          };
+          // Try both contexts since manual.html might be top-level OR iframe.
+          if (typeof window._dlog === "function") {
+            window._dlog("manual:diag", "contrast probe", payload);
+          } else if (window.parent && typeof window.parent._dlog === "function") {
+            window.parent._dlog("manual:diag", "contrast probe (from iframe)", payload);
+          }
+          console.log("[manual:diag]", payload);
+        } catch (e) {
+          console.warn("[manual:diag] failed:", e);
+        }
+      });
       // v225fz1 (#668): detect iframe load and flip a data attr on
       // <html> that activates the desktop TOC sidebar. Sidesteps the
       // iframe-vs-media-query unreliability noted in the CSS comment
@@ -64,7 +128,15 @@
       /* Manual-specific styling on top of the app's existing palette so
          the manual reads like part of the app, not a bolted-on doc. All
          colors flow through the semantic tokens defined in styles.css so
-         the manual flips correctly when the user is on Light theme. */
+         the manual flips correctly when the user is on Light theme.
+
+         v225v3.30: reverted the v3.25/26/28/29 chain — they were
+         aggressive overrides built on top of a misdiagnosis (I thought
+         the original screenshot was Samsung Internet on Android; it
+         was Claude Code's preview pane). v3.29's --fg-dim = --fg
+         redefine didn't fix the real phone bug, and removed
+         intentional visual hierarchy as a side effect. Cleaner to
+         restore baseline and re-diagnose with a phone debug log. */
       body { padding-bottom: 80px; }
       .manual {
         max-width: 760px;

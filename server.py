@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import debug_log_push
 import extract
 import github_oauth
 import library_db
@@ -1624,6 +1625,62 @@ async def extract_obsidian_endpoint(file: UploadFile = File(...)):
     except extract.ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return result
+
+
+# v225v3.38 (#767): debug log → GitHub push. Phone-side
+# _autoDownloadDebugLog also POSTs here after the local download
+# fires. The server commits the log to the private
+# narrative-debug-logs repo via the Contents API. Authed via the
+# normal middleware (same X-Narrative-Key) so only known tenants
+# can write. Best-effort: a failure here never blocks the local
+# download path on the client.
+class DebugLogPushRequest(BaseModel):
+    """Payload from the phone. `log` is the raw text the local
+    auto-download would have written; the server prepends its own
+    provenance header before committing."""
+    log: str = Field(..., min_length=1, max_length=4_000_000)  # 4 MB hard cap; helper enforces 2 MB
+    reason: str = Field(default="unknown", max_length=64)
+    version: str = Field(default="unknown", max_length=32)
+    ua: str = Field(default="", max_length=300)
+
+
+@app.post("/api/debug-log")
+async def debug_log_endpoint(req: DebugLogPushRequest, request: Request):
+    """Push a debug log to narrative-debug-logs. Returns
+    {ok, path?, sha?, html_url?, reason?} so the phone-side can
+    surface a quiet success/failure indicator next to the version
+    stamp without blocking on it.
+
+    Failure modes are returned as 200 ok=False, not 5xx — the phone
+    treats this as a side-effect that may quietly fail, never as a
+    blocker. The actual error reason ("disabled", "too_large",
+    "github_403", "network", etc.) is in the response body.
+    """
+    import asyncio
+    import functools
+
+    tenant_label = getattr(request.state, "tenant_label", "") or ""
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        functools.partial(
+            debug_log_push.push_log,
+            log=req.log,
+            reason=req.reason,
+            version=req.version,
+            ua=req.ua,
+            tenant_label=tenant_label,
+        ),
+    )
+    return result
+
+
+@app.get("/api/debug-log/status")
+async def debug_log_status_endpoint():
+    """Tells the phone-side whether the push pipeline is configured.
+    Used by the manual "Push debug log to debugger" button to decide
+    whether to show itself + what to say if the push silently fails."""
+    return {"enabled": debug_log_push.is_enabled()}
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

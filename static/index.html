@@ -22,6 +22,9 @@
          override in Settings is handled by app.js mutating these tags.) -->
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1020" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf4e3" />
+    <!-- v225v3.27: reverted v3.23 color-scheme meta (was breaking the
+         phone manual viewer). -->
+
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Narrative" />
@@ -996,6 +999,23 @@
             class="settings-help-link"
             aria-label="Send feedback via Gmail"
           >Send feedback (Gmail) →</a>
+          <!-- v225v3.38 (#769): manual push of the debug log to the
+               private narrative-debug-logs repo. Downloads locally too
+               (so the user still has a copy). Hidden by JS until the
+               server confirms the push pipeline is enabled — keeps
+               local-dev installs from showing a button that can't work. -->
+          <a
+            id="settings-push-debug-log-link"
+            href="#"
+            class="settings-help-link"
+            hidden
+            aria-label="Push debug log to the debugger's private repo"
+          >Push debug log to debugger →</a>
+          <span
+            id="settings-push-debug-log-status"
+            class="settings-toggle-desc"
+            hidden
+          ></span>
 
           <p class="settings-subheader">Stats</p>
 
@@ -1451,7 +1471,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v3.22</span>
+            Narrative <span id="settings-version-tag">v225v3.43</span>
             <button
               type="button"
               id="settings-force-update"

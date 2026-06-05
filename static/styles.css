@@ -1,4 +1,11 @@
 :root {
+  /* v225v3.27: REVERTED v225v3.23 `color-scheme: light dark` declaration.
+     Hypothesis was that it would protect against Samsung Internet
+     force-dark; in practice, after deploy, the phone manual viewer
+     went from "readable" to "unreadable faint text". Reverting to
+     isolate. If the manual reads correctly without this declaration,
+     the issue was Samsung Internet interpreting `color-scheme` in a
+     way that broke our explicit theme handling. */
   /* Core surface + brand tokens. The light theme block below overrides
      these — every other color in the file should resolve through here so
      a single data-theme="light" flip recolors the whole app. */
@@ -9696,7 +9703,14 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
      looked broken because there was nothing else useful on the
      screen. Fixed-position takes over the viewport; the existing
      spread + nav controls scale to fill. */
-  #book-view:not([hidden]) {
+  /* v225v3.43 (#777, fix A for #758): scope to div#book-view. The
+     unscoped #book-view selector also matched the cloned <h2
+     id="book-view"> from manual section 6 inside the phone manual
+     viewer, which inherited position:fixed + the translucent cream
+     gradient below, painting a wash over all the manual content.
+     The original element is a <div>, the cloned anchor is an <h2>,
+     so adding the tag selector excludes the collision. */
+  div#book-view:not([hidden]) {
     position: fixed;
     inset: 0;
     z-index: 60;
@@ -9709,7 +9723,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
       linear-gradient(180deg, rgba(20, 16, 12, 0.85), rgba(8, 6, 4, 0.95));
     -webkit-overflow-scrolling: touch;
   }
-  [data-theme="light"] #book-view:not([hidden]) {
+  [data-theme="light"] div#book-view:not([hidden]) {
     background:
       radial-gradient(ellipse at 50% 120%, rgba(120, 90, 60, 0.18), transparent 60%),
       linear-gradient(180deg, rgba(225, 210, 180, 0.95), rgba(200, 175, 140, 0.98));
@@ -9717,7 +9731,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   /* Lock body scroll so the underlying app doesn't scroll behind
      the takeover. Doesn't conflict with v225.tn51 (page-scroll lock
      when clip loaded) — both want the same lock. */
-  body:has(#book-view:not([hidden])) {
+  body:has(div#book-view:not([hidden])) {
     overflow: hidden;
   }
   .book-view-spread {
@@ -10880,7 +10894,36 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
 
   /* Prose styling inside each section. The manual's own stylesheet
      lives in manual.html and isn't inherited here (we're rendering
-     extracted nodes into our document), so we restate the basics. */
+     extracted nodes into our document), so we restate the basics.
+
+     v225v3.37: FIX for the phone manual contrast bug (#758). Three-way
+     font-property probe in v3.36 proved every computed property
+     identical between a known-readable inline-styled control and the
+     broken cloned content EXCEPT font-family: the cloned content
+     inherits body's long stack including "Helvetica Neue, Arial"
+     which Samsung Chrome resolves to a thinner-stroke variant than
+     the short stack the controls use. Override font-family on the
+     pmv-pages content to match the readable controls.
+
+     The long stack stays on the main app (Settings et al render
+     fine with it — different element-specific styles probably steer
+     font selection there). This override is scoped to the cloned
+     manual content. */
+  .pmv-pages,
+  .pmv-page,
+  .pmv-page h1,
+  .pmv-page h2,
+  .pmv-page h3,
+  .pmv-page h4,
+  .pmv-page p,
+  .pmv-page li,
+  .pmv-page td,
+  .pmv-page th,
+  .pmv-page span,
+  .pmv-page div {
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
   .pmv-page h2 {
     font-size: 22px;
     margin: 0 0 12px;
