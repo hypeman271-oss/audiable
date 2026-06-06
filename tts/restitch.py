@@ -186,6 +186,16 @@ def restitch_clip(
                 f.write(f"file '{quoted}'\n")
 
         out_mp3 = tmp / "out.mp3"
+        # v4.19 (#811): do NOT force `-ar 22050` here. Kokoro emits at
+        # 24kHz; Piper voices vary (LibriTTS at 22.05k, some at 16k).
+        # When inputs aren't already at 22050, ffmpeg's resampler runs
+        # over the concat pipeline and produces a startup transient at
+        # each input-file boundary — audible as a brief click at the
+        # start of each sentence. Splice.py doesn't have this problem
+        # because it operates on the combined MP3 directly (single SR
+        # already), not on per-sentence files. Let ffmpeg pick the
+        # natural rate from the inputs; all sentences in a clip share
+        # one voice today, so the FLACs are uniform.
         cmd = [
             "ffmpeg",
             "-hide_banner",
@@ -196,7 +206,6 @@ def restitch_clip(
             "-i", str(listing),
             "-c:a", "libmp3lame",
             "-b:a", f"{bitrate_kbps}k",
-            "-ar", "22050",     # match splice.py / encode.py output
             "-ac", "1",
             str(out_mp3),
         ]
