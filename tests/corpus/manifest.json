@@ -36,8 +36,8 @@
       "url": "https://en.wikisource.org/wiki/The_Yellow_Wallpaper",
       "min_chars": 24000,
       "min_sentences": 180,
-      "content_must_contain": ["wallpaper", "John"],
-      "notes": "Charlotte Perkins Gilman, The Yellow Wallpaper — standalone single-page Wikisource story. Replaces v3.71's wikisource-sherlock-ch1 (Adventure_1 URL 404'd) and the original wikisource-frankenstein-ch1 (Letter_1 URL 404'd)."
+      "content_must_contain": ["Yellow Wall Paper", "John"],
+      "notes": "Charlotte Perkins Gilman, The Yellow Wall Paper — standalone single-page Wikisource story. Title is two words (Wall Paper) on the source page, not 'wallpaper'. Replaces v3.71's wikisource-sherlock-ch1 (Adventure_1 URL 404'd) and the original wikisource-frankenstein-ch1 (Letter_1 URL 404'd)."
     },
     {
       "id": "rgl-freeread-de",
