@@ -27318,8 +27318,13 @@ async function fetchFromUrl() {
 }
 
 
-uploadInput.addEventListener("change", async (e) => {
-  const file = e.target.files?.[0];
+// v225v4.1 (#812): extracted from the uploadInput change handler so
+// drag-and-drop onto the textarea can reuse the same import path. Any
+// caller passing a File ends up in the same place: server extract →
+// stash detected images/cover → repaint preview → reset clip id →
+// optionally auto-route to ebook view. Returns nothing; surfaces all
+// errors via setStatus.
+async function _runFileImport(file) {
   if (!file) return;
 
   // Single-document upload path (txt/md/pdf/epub/docx). The accept
@@ -27449,7 +27454,101 @@ uploadInput.addEventListener("change", async (e) => {
     // Reset so picking the same file again still fires "change".
     uploadInput.value = "";
   }
+}
+
+uploadInput.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  _runFileImport(file);
 });
+
+// v225v4.1 (#812): drag-and-drop file import on the textarea. Drop a
+// .epub / .pdf / .docx / .txt / .md from Finder/Explorer onto the
+// text area and it routes through the same path the Import dropdown
+// uses. Whole-document import gesture, same shape as paste.
+//
+// We also catch dragover on the document itself with preventDefault so
+// a misaimed drop outside the textarea doesn't make the browser
+// navigate to the file's contents (default behavior would swap out the
+// whole app). Drop ONLY on the textarea actually imports.
+(function _initFileDropTarget() {
+  if (!textEl) return;
+
+  // The set of extensions we'll accept by drop. Matches
+  // #upload-input's accept attribute. Lowercased; checked after
+  // splitting on the last "." so "Chapter.One.epub" still parses.
+  const DROP_ACCEPT = new Set([
+    "txt", "md", "markdown", "pdf", "epub", "docx",
+  ]);
+
+  function _isAcceptedFile(file) {
+    if (!file || !file.name) return false;
+    const i = file.name.lastIndexOf(".");
+    if (i < 0) return false;
+    return DROP_ACCEPT.has(file.name.slice(i + 1).toLowerCase());
+  }
+
+  // Document-level: stop the browser from opening the dropped file
+  // when the user misses the textarea. Important — without this, a
+  // missed drop loses ALL their app state because the browser
+  // navigates to the file.
+  document.addEventListener("dragover", (e) => {
+    // Only intercept when the drag includes files; ignore in-page
+    // drags (drag-handle reordering, etc.) so we don't disturb them.
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+      e.preventDefault();
+    }
+  });
+  document.addEventListener("drop", (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+      // If the actual drop target isn't the textarea, swallow it so
+      // the browser doesn't load the file.
+      if (e.target !== textEl && !textEl.contains(e.target)) {
+        e.preventDefault();
+      }
+    }
+  });
+
+  // textarea-level: highlight on dragenter, clear on dragleave/drop,
+  // route the file on drop.
+  let _dragDepth = 0;
+  textEl.addEventListener("dragenter", (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
+    e.preventDefault();
+    _dragDepth++;
+    textEl.classList.add("file-drop-active");
+  });
+  textEl.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  textEl.addEventListener("dragleave", (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
+    _dragDepth = Math.max(0, _dragDepth - 1);
+    if (_dragDepth === 0) textEl.classList.remove("file-drop-active");
+  });
+  textEl.addEventListener("drop", (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
+    e.preventDefault();
+    _dragDepth = 0;
+    textEl.classList.remove("file-drop-active");
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    if (!_isAcceptedFile(file)) {
+      setStatus(
+        `Can't import ${file.name} — try .epub, .pdf, .docx, .txt, or .md.`,
+        true,
+      );
+      return;
+    }
+    if (e.dataTransfer.files.length > 1) {
+      setStatus(
+        `Dropped ${e.dataTransfer.files.length} files — importing only the first (${file.name}).`,
+      );
+    }
+    _runFileImport(file);
+  });
+})();
 
 renderLibrary();
 

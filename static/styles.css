@@ -7207,6 +7207,18 @@ button:disabled {
   line-height: 1.4;
 }
 
+/* v225v4.1 (#812): drag-and-drop file import. Applied to #text-input
+   while a file drag is over the textarea. Accent border + a subtle
+   tint signals "this is a valid drop target." Transition is fast
+   (90ms) so it tracks the cursor without lag; without it the
+   highlight feels laggy on mouse-out. */
+textarea#text-input.file-drop-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-card));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  transition: border-color 90ms, background 90ms, box-shadow 90ms;
+}
+
 /* The conversion-confirm modal shares chrome with .clear-marks-dialog.
    These extra rules style the "what gets dropped" rationale + lose-
    ness checkbox the way the clear-marks dialog styles its categories. */
