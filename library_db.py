@@ -30,9 +30,14 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("NARRATIVE_DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "narrative.db"
 AUDIO_DIR = DATA_DIR / "audio"
+# v6 (#811): per-sentence FLAC cache for partial re-narrate. Same
+# content-addressed pattern as AUDIO_DIR — identical sentences (same
+# text + voice + speaker + rate) produce the same sha256 and dedup
+# across clips. See docs/phase-b-design.md for the full design.
+SENTENCE_DIR = DATA_DIR / "sentences"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -278,6 +283,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v5(c)
         c.execute("UPDATE schema_version SET version = 5")
         current = 5
+
+    if current < 6:
+        _apply_v6(c)
+        c.execute("UPDATE schema_version SET version = 6")
+        current = 6
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -596,6 +606,60 @@ def _apply_v5(c: sqlite3.Connection) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Schema v6 — per-sentence FLAC cache for partial re-narrate (#811).
+#
+# When a clip has opted into per-line storage (v5 lines_json non-NULL),
+# the synth pipeline writes each sentence's WAV to /data/sentences/
+# keyed by sha256, and inserts a row here pointing at it. Partial
+# re-narrate then re-synthesizes one sentence, swaps the row, and
+# re-stitches the combined MP3 from all the cached FLACs — no seam
+# artifact, unlike the splice.py path which atrim+concats the combined
+# MP3 directly.
+#
+# Cache key is (tenant_key, clip_id, line_id) where line_id is the
+# stable Phase A ID ("c_{clip_id}-{seq:04d}"). Indexing by position
+# would invalidate the cache on every insertion; line_id is birth-
+# ordered and never reused.
+#
+# duration_ms is pre-computed so re-stitch doesn't have to reopen the
+# FLACs to build the offset table. We trust the value because it's
+# written at the same atomic moment as the file itself.
+#
+# See docs/phase-b-design.md for the full design.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _apply_v6(c: sqlite3.Connection) -> None:
+    """Add sentence_audio table for per-sentence FLAC cache."""
+    print(
+        "[library_db] migrating to schema v6 (add sentence_audio table "
+        "for Phase B per-sentence WAV cache)",
+        file=sys.stderr, flush=True,
+    )
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sentence_audio (
+          tenant_key TEXT NOT NULL,
+          clip_id INTEGER NOT NULL,
+          line_id TEXT NOT NULL,
+          audio_sha256 TEXT NOT NULL,
+          voice_id TEXT,
+          speaker_id INTEGER,
+          rate INTEGER,
+          duration_ms INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_key, clip_id, line_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sentence_audio_sha
+          ON sentence_audio(audio_sha256);
+        CREATE INDEX IF NOT EXISTS idx_sentence_audio_clip
+          ON sentence_audio(tenant_key, clip_id);
+        """
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Tenant directory (/data/tenants.json).
 #
 # Tester bearers + the admin label. The file is read on every auth
@@ -811,6 +875,178 @@ def audio_path(sha256: str) -> Path:
     ):
         raise ValueError(f"invalid sha256: {sha256!r}")
     return AUDIO_DIR / f"{sha256}.mp3"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-sentence FLAC cache (#811 / schema v6).
+#
+# Mirrors the audio helpers above. Files live at SENTENCE_DIR/<sha>.flac.
+# The DB layer doesn't encode FLAC — callers hand us encoded bytes from
+# tts.encode.wav_to_flac. This keeps library_db free of an ffmpeg
+# dependency at module-import time.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def store_sentence_audio(flac_bytes: bytes) -> str:
+    """Write `flac_bytes` to SENTENCE_DIR / <sha256>.flac and return the sha.
+
+    Idempotent: if the file already exists the bytes are not rewritten
+    (sha256 collision implies identical content). Tmp-then-rename guards
+    against partial writes leaving a corrupt blob at the canonical name.
+    Caller is responsible for inserting/updating the sentence_audio row.
+    """
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    if not flac_bytes:
+        raise ValueError("flac_bytes is empty")
+    SENTENCE_DIR.mkdir(parents=True, exist_ok=True)
+    sha = hashlib.sha256(flac_bytes).hexdigest()
+    dest = SENTENCE_DIR / f"{sha}.flac"
+    if not dest.exists():
+        tmp = SENTENCE_DIR / f".{sha}.tmp"
+        tmp.write_bytes(flac_bytes)
+        tmp.replace(dest)
+    return sha
+
+
+def sentence_audio_path(sha256: str) -> Path:
+    """Path to a sentence FLAC blob. Caller checks .exists().
+
+    Defensive sha validation matches audio_path() so a path-traversal
+    attempt via the API endpoint can't reach outside SENTENCE_DIR.
+    """
+    if not sha256 or len(sha256) != 64 or any(
+        c not in "0123456789abcdef" for c in sha256.lower()
+    ):
+        raise ValueError(f"invalid sha256: {sha256!r}")
+    return SENTENCE_DIR / f"{sha256}.flac"
+
+
+def record_sentence_audio(
+    tenant_key: str,
+    clip_id: int,
+    line_id: str,
+    *,
+    audio_sha256: str,
+    voice_id: str | None,
+    speaker_id: int | None,
+    rate: int | None,
+    duration_ms: int,
+) -> None:
+    """UPSERT a row into sentence_audio.
+
+    Called by the synth pipeline once per sentence yielded, and by the
+    partial-re-narrate endpoint after a single-sentence resynth. The
+    PRIMARY KEY (tenant_key, clip_id, line_id) collapses duplicate
+    inserts to the latest write.
+    """
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    if not tenant_key:
+        raise ValueError("tenant_key required")
+    if not line_id:
+        raise ValueError("line_id required")
+    if duration_ms < 0:
+        raise ValueError(f"duration_ms must be non-negative, got {duration_ms}")
+    now = _iso_now()
+    with _conn_lock:
+        conn().execute(
+            """
+            INSERT INTO sentence_audio (
+              tenant_key, clip_id, line_id, audio_sha256,
+              voice_id, speaker_id, rate, duration_ms, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_key, clip_id, line_id) DO UPDATE SET
+              audio_sha256 = excluded.audio_sha256,
+              voice_id = excluded.voice_id,
+              speaker_id = excluded.speaker_id,
+              rate = excluded.rate,
+              duration_ms = excluded.duration_ms,
+              created_at = excluded.created_at
+            """,
+            (
+                tenant_key, int(clip_id), line_id, audio_sha256,
+                voice_id, speaker_id, rate, int(duration_ms), now,
+            ),
+        )
+        conn().commit()
+
+
+def list_sentence_audio_for_clip(tenant_key: str, clip_id: int) -> list[dict]:
+    """Return all cached sentences for a clip, as a list of dicts.
+
+    Order is not guaranteed — callers walk the clip's lines_json to
+    place rows in document order. Use this to check coverage before
+    re-stitching: missing line_ids mean a backfill is needed.
+
+    Each dict: {line_id, audio_sha256, voice_id, speaker_id, rate,
+                duration_ms, created_at}.
+    """
+    if not is_enabled():
+        return []
+    with _conn_lock:
+        rows = conn().execute(
+            """
+            SELECT line_id, audio_sha256, voice_id, speaker_id, rate,
+                   duration_ms, created_at
+            FROM sentence_audio
+            WHERE tenant_key = ? AND clip_id = ?
+            """,
+            (tenant_key, int(clip_id)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_sentence_audio_for_clip(tenant_key: str, clip_id: int) -> int:
+    """Delete every cache row for a clip. Returns count deleted.
+
+    Called when a clip is hard-deleted, or when the user toggles per-
+    line storage OFF and accepts losing the cache. Does NOT delete the
+    FLAC files — those go through gc_orphan_sentence_audio so other
+    clips' identical sentences (cross-clip dedup) survive.
+    """
+    if not is_enabled():
+        return 0
+    with _conn_lock:
+        cur = conn().execute(
+            "DELETE FROM sentence_audio WHERE tenant_key = ? AND clip_id = ?",
+            (tenant_key, int(clip_id)),
+        )
+        conn().commit()
+        return cur.rowcount or 0
+
+
+def gc_orphan_sentence_audio() -> int:
+    """Delete FLAC blobs not referenced by any sentence_audio row.
+    Returns count deleted. Mirrors gc_orphan_audio. Same 10-minute
+    grace window for in-flight writes."""
+    if not is_enabled():
+        return 0
+    import time as _time
+
+    referenced = set()
+    with _conn_lock:
+        for row in conn().execute(
+            "SELECT DISTINCT audio_sha256 FROM sentence_audio"
+        ):
+            referenced.add(row["audio_sha256"])
+
+    if not SENTENCE_DIR.exists():
+        return 0
+    now = _time.time()
+    removed = 0
+    for p in SENTENCE_DIR.glob("*.flac"):
+        sha = p.stem
+        if sha in referenced:
+            continue
+        try:
+            if now - p.stat().st_mtime < 600:  # 10 min grace
+                continue
+            p.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def gc_orphan_audio() -> int:

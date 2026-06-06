@@ -744,6 +744,318 @@ def stream_audio(sha256: str):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Per-sentence WAV cache (Phase B / #811 / schema v6).
+#
+# Spike shape (B.2): the client uploads a per-sentence WAV after synth.
+# The server encodes to FLAC, content-addresses it under
+# /data/sentences/, and records a row in sentence_audio keyed by
+# (tenant_key, clip_id, line_id). The clean partial-re-narrate path
+# (B.3) reads these rows to re-stitch the combined MP3 with no seam
+# artifact.
+#
+# This is the SPIKE path. The synth pipeline doesn't write to this
+# cache transparently yet — synth_jobs.py has no notion of clip_id or
+# line_id. That hook is a separate sub-ticket (B.2b) once the spike
+# validates the audio quality. For now, the client uploads each
+# sentence as it receives it over the SSE stream.
+#
+# Endpoint requires the clip to be opted into per-line storage
+# (lines_json != null AND line_id present in lines). Refusing to
+# cache for legacy clips is intentional — splice.py is the path for
+# them. See docs/phase-b-design.md for the full design.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@router.post("/clips/{clip_id}/lines/{line_id}/audio")
+async def upload_sentence_audio(
+    clip_id: int,
+    line_id: str,
+    request: Request,
+    voice_id: str | None = None,
+    speaker_id: int | None = None,
+    rate: int | None = None,
+):
+    """Upload a per-sentence WAV. Body is raw WAV bytes (16-bit PCM).
+
+    Optional query params let the caller override the voice/speaker/rate
+    recorded with this cache entry — useful for partial re-narrate
+    flows where the sentence was synthed with a different voice than
+    the clip's default. Otherwise the clip's default voice settings
+    are recorded.
+
+    Returns: {ok: true, sha256, duration_ms, bytes_in, bytes_out}.
+    """
+    _require_enabled()
+    tk = _tenant(request)
+
+    # Validate the clip exists, isn't deleted, and is opted into per-
+    # line storage. Pull clip defaults too so we can record them when
+    # the caller doesn't override.
+    row = library_db.conn().execute(
+        """
+        SELECT lines_json, voice_id, speaker_id, rate
+        FROM clips
+        WHERE tenant_key = ? AND id = ? AND deleted = 0
+        """,
+        (tk, clip_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="clip not found")
+    lines = library_db.jsload(row["lines_json"]) or []
+    if not lines:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "clip not opted into per-line storage "
+                "(lines_json is empty); use splice.py path instead"
+            ),
+        )
+    if not any(isinstance(l, dict) and l.get("id") == line_id for l in lines):
+        raise HTTPException(
+            status_code=404,
+            detail=f"line_id {line_id!r} not present in clip's lines",
+        )
+
+    # Read the WAV body. Cap at 10 MB to bound memory — a 30s sentence
+    # at 22kHz 16-bit mono is ~1.3 MB, so anything over 10 MB is either
+    # an attack or someone uploading a chapter instead of a sentence.
+    MAX_WAV_BYTES = 10 * 1024 * 1024
+    wav_bytes = await request.body()
+    if not wav_bytes:
+        raise HTTPException(status_code=400, detail="empty body")
+    if len(wav_bytes) > MAX_WAV_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"WAV too large: {len(wav_bytes)} > {MAX_WAV_BYTES} bytes",
+        )
+
+    # Validate + encode. wav_duration_ms reads the header (cheap);
+    # wav_to_flac shells out to ffmpeg. Both raise on malformed input.
+    # tts.encode is imported lazily so the rest of library_api stays
+    # ffmpeg-free at module load.
+    try:
+        from tts.encode import FlacEncodeError, wav_duration_ms, wav_to_flac
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500, detail=f"FLAC encoder unavailable: {e}"
+        )
+
+    try:
+        dur_ms = wav_duration_ms(wav_bytes)
+    except (ValueError, Exception) as e:
+        raise HTTPException(
+            status_code=400, detail=f"invalid WAV header: {e}"
+        )
+
+    try:
+        flac_bytes = wav_to_flac(wav_bytes)
+    except FlacEncodeError as e:
+        raise HTTPException(
+            status_code=500, detail=f"FLAC encode failed: {e}"
+        )
+
+    # Store the file + record the row. store_sentence_audio is
+    # idempotent on content — if the same sentence/voice combo was
+    # uploaded before, the existing file is reused. record is an
+    # UPSERT keyed by (tenant, clip, line) so re-uploads overwrite.
+    sha = library_db.store_sentence_audio(flac_bytes)
+    library_db.record_sentence_audio(
+        tk, clip_id, line_id,
+        audio_sha256=sha,
+        voice_id=voice_id if voice_id is not None else row["voice_id"],
+        speaker_id=(
+            speaker_id if speaker_id is not None else row["speaker_id"]
+        ),
+        rate=rate if rate is not None else row["rate"],
+        duration_ms=dur_ms,
+    )
+
+    return {
+        "ok": True,
+        "sha256": sha,
+        "duration_ms": dur_ms,
+        "bytes_in": len(wav_bytes),
+        "bytes_out": len(flac_bytes),
+    }
+
+
+@router.post("/clips/{clip_id}/restitch")
+async def restitch_clip_audio(clip_id: int, request: Request):
+    """Re-stitch the combined MP3 from cached per-sentence FLACs (B.3).
+
+    Reads sentence_audio rows for this clip, orders them by the
+    clip's lines_json, concats the FLACs via ffmpeg, encodes to MP3,
+    writes the new combined audio to /data/audio/<sha>.mp3, and
+    UPDATEs the clip row's audio_sha256 + duration_sec +
+    sentence_offsets_json.
+
+    Returns 409 with reason="backfill_required" if any line is
+    missing from the cache. The spike refuses to re-stitch from
+    partial coverage — backfill (B.5) is the path that fills the
+    gap. For the spike, callers test against a clip where all lines
+    have been uploaded via the upload endpoint first.
+
+    Body: empty (POST with no payload).
+    Returns: {ok, audio_sha256, duration_sec, sentence_offsets_ms,
+              bytes_out, lines_count}.
+    """
+    _require_enabled()
+    tk = _tenant(request)
+
+    # Pull clip lines + current updated_at (for the LWW write below).
+    row = library_db.conn().execute(
+        """
+        SELECT lines_json, updated_at
+        FROM clips
+        WHERE tenant_key = ? AND id = ? AND deleted = 0
+        """,
+        (tk, clip_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="clip not found")
+    lines = library_db.jsload(row["lines_json"]) or []
+    if not lines:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "clip not opted into per-line storage; nothing to "
+                "restitch"
+            ),
+        )
+
+    # Walk lines_json in order to get the canonical line_id sequence.
+    # Drop dict-shape outliers defensively (a malformed line shouldn't
+    # crash restitch — surface the error explicitly).
+    ordered_line_ids: list[str] = []
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        lid = ln.get("id")
+        if isinstance(lid, str) and lid:
+            ordered_line_ids.append(lid)
+    if not ordered_line_ids:
+        raise HTTPException(
+            status_code=409,
+            detail="clip's lines_json contains no usable line ids",
+        )
+
+    # Look up cache rows for this clip → map line_id → sha.
+    cache_rows = library_db.list_sentence_audio_for_clip(tk, clip_id)
+    sha_by_line: dict[str, str] = {}
+    for r in cache_rows:
+        sha_by_line[r["line_id"]] = r["audio_sha256"]
+
+    # Verify full coverage before doing any work. Partial coverage
+    # means the user opted in mid-stream or migrated an existing
+    # clip — both require backfill (B.5).
+    missing = [lid for lid in ordered_line_ids if lid not in sha_by_line]
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "backfill_required",
+                "missing_line_ids": missing[:20],   # cap for response size
+                "missing_count": len(missing),
+                "total_lines": len(ordered_line_ids),
+                "hint": (
+                    "upload per-sentence WAVs via "
+                    "POST /api/library/clips/{id}/lines/{line_id}/audio "
+                    "for all missing lines before restitch"
+                ),
+            },
+        )
+
+    # Build a line_id → row map so we can pull durations alongside
+    # sha resolution. The duration_ms column is authoritative — it was
+    # written from the source WAV header at upload time, no ffprobe
+    # round trip needed.
+    row_by_line: dict[str, dict] = {r["line_id"]: r for r in cache_rows}
+
+    # Resolve sha → on-disk FLAC paths + durations. sentence_audio_path
+    # validates the sha format; if a row exists but the file was GC'd
+    # or never written, .exists() catches it before ffmpeg sees a bad
+    # path.
+    items: list[tuple] = []
+    total_dur_ms = 0
+    for lid in ordered_line_ids:
+        r = row_by_line[lid]
+        sha = r["audio_sha256"]
+        try:
+            p = library_db.sentence_audio_path(sha)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"cache row {lid} has invalid sha256: {e}",
+            )
+        if not p.exists():
+            # Row points to a missing file → cache integrity bug.
+            # Surface clearly rather than letting ffmpeg fail with a
+            # less informative error.
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"cache integrity: row for line {lid!r} references "
+                    f"sha {sha[:12]}... but file is missing"
+                ),
+            )
+        dur_ms = int(r["duration_ms"])
+        items.append((p, dur_ms))
+        total_dur_ms += dur_ms
+
+    # Lazy-import restitch so library_api stays ffmpeg-free at module
+    # load. Same pattern as the FLAC encoder in upload_sentence_audio.
+    try:
+        from tts.restitch import RestitchError, restitch_clip
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500, detail=f"restitch helper unavailable: {e}"
+        )
+
+    try:
+        mp3_bytes, offsets_ms = restitch_clip(items)
+    except RestitchError as e:
+        raise HTTPException(
+            status_code=500, detail=f"restitch failed: {e}"
+        )
+
+    # Store the combined MP3 (content-addressed → dedup on identical
+    # re-stitches comes for free) and update the clip row.
+    new_sha = library_db.store_audio(mp3_bytes)
+    duration_sec = total_dur_ms / 1000.0
+
+    now = library_db._iso_now()
+    with library_db.write_lock():
+        library_db.conn().execute(
+            """
+            UPDATE clips
+            SET audio_sha256 = ?,
+                duration_sec = ?,
+                sentence_offsets_json = ?,
+                updated_at = ?
+            WHERE tenant_key = ? AND id = ?
+            """,
+            (
+                new_sha,
+                duration_sec,
+                library_db.jsdump(offsets_ms),
+                now,
+                tk, clip_id,
+            ),
+        )
+        library_db.conn().commit()
+
+    return {
+        "ok": True,
+        "audio_sha256": new_sha,
+        "duration_sec": duration_sec,
+        "sentence_offsets_ms": offsets_ms,
+        "bytes_out": len(mp3_bytes),
+        "lines_count": len(ordered_line_ids),
+        "updated_at": now,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Library order — stored as an ordered list, replaced wholesale on PUT.
 # ──────────────────────────────────────────────────────────────────────
 
