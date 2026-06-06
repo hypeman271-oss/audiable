@@ -10155,6 +10155,15 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   font-size: 11.5px;
   height: 28px;
 }
+/* v225v4.16: tighten the icon-only Repeat chip's vertical padding
+   so the 22px SVG fits inside the 28px-tall pill. Text chips need
+   the 4px padding for vertical centering; an icon-only chip needs
+   ~3px each side (22 + 6 = 28). Horizontal padding stays 10px so
+   the pill width feels equivalent to its text-label neighbors. */
+.hero-controls .repeat-btn,
+.hero-controls-float .repeat-btn {
+  padding: 3px 10px;
+}
 
 /* v195: round play button size — shared by hero + float strips. */
 .hero-play-btn { width: 32px; height: 32px; }
@@ -13118,8 +13127,13 @@ html, body {
   border-color: var(--accent);
 }
 .repeat-btn .repeat-svg {
-  width: 18px;
-  height: 18px;
+  /* v225v4.16: bumped from 18px to 22px. Peer chips carry text
+     labels at 11.5px in the hero strip; an icon-only chip needs
+     more visual weight to feel equivalent. 22px gives the loop
+     glyph enough presence to read at a glance. The chip stays at
+     28px tall (matches peers); padding is tightened below. */
+  width: 22px;
+  height: 22px;
   display: block;
 }
 .repeat-btn[data-mode="one"],
