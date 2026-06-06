@@ -29109,7 +29109,19 @@ window.addEventListener("pagehide", () => {
     const node = document.createElement("div");
     node.className = "tooltip-toast";
     node.textContent = text;
-    document.body.appendChild(node);
+    // v225v4.14: if the long-pressed target lives inside an open
+    // <dialog>, append the tooltip to that dialog instead of body.
+    // showModal()-opened dialogs render in the browser's top layer
+    // above everything in body regardless of z-index, so a tooltip
+    // parented to body ends up clipped behind the dialog content.
+    // Reported on the phone Library dialog — long-press on a card
+    // button (Re-narrate, Sync, ✎, ×, etc.) fired the tooltip but
+    // it rendered behind the cards. Walking up via .closest finds
+    // the nearest open dialog ancestor; falling back to body keeps
+    // every non-dialog long-press behaving as before.
+    const host =
+      target.closest("dialog[open]") || document.body;
+    host.appendChild(node);
 
     // Position above the target if there's room, else below.
     const rect = target.getBoundingClientRect();
