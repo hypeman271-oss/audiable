@@ -890,6 +890,35 @@
             </div>
           </div>
 
+          <!-- v225v4.9: Keep screen on during playback. Uses the same
+               Wake Lock API as the bg-queue lock from v220ba/#423.
+               Off by default — opt-in because it costs battery. When
+               on, the player's play event acquires the lock and pause/
+               ended releases. Silently no-op on browsers without
+               navigator.wakeLock (older iOS Safari, Firefox iOS); the
+               radio still flips but nothing happens. -->
+          <div class="settings-row">
+            <div class="settings-toggle-label">
+              <strong>Keep screen on while playing</strong>
+              <span class="settings-toggle-desc">
+                Stops the phone or laptop from sleeping while audio is
+                playing — useful if you're reading along with the
+                narrator. Costs a little battery; off by default.
+                Releases automatically when you pause or the clip ends.
+              </span>
+            </div>
+            <div class="theme-picker" role="radiogroup" aria-label="Keep screen on while playing">
+              <label>
+                <input type="radio" name="keep-screen-on" value="off" />
+                <span>Off</span>
+              </label>
+              <label>
+                <input type="radio" name="keep-screen-on" value="on" />
+                <span>On</span>
+              </label>
+            </div>
+          </div>
+
           <p class="settings-subheader">Book view</p>
 
           <!-- v197 (M2): Book view text size. Re-paginates on the fly
@@ -1471,7 +1500,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v4.8</span>
+            Narrative <span id="settings-version-tag">v225v4.9</span>
             <button
               type="button"
               id="settings-force-update"

@@ -2070,6 +2070,36 @@ document
 // transition after page load respects it.
 _paragraphPauseSec = _readParagraphPauseSec();
 
+// v225v4.9: keep-screen-on-during-playback radios. Off (default) /
+// On. On change: persist + flip the runtime flag; if the user turns
+// it OFF mid-playback, drop the lock immediately so the screen can
+// dim. If they turn it ON mid-playback, acquire right away.
+document
+  .querySelectorAll('input[name="keep-screen-on"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      const isOn = radio.value === "on";
+      _keepScreenOnDuringPlayback = isOn;
+      try {
+        localStorage.setItem(
+          "narrative.keepScreenOnDuringPlayback",
+          isOn ? "1" : "0",
+        );
+      } catch {}
+      _dlog("wake-lock", "playback-pref changed", { on: isOn });
+      const playerIsPlaying = !playerEl.paused && !playerEl.ended;
+      if (isOn && playerIsPlaying) {
+        _acquireScreenWakeLock().catch(() => {});
+      } else if (!isOn && !_bgRunning) {
+        // Turning off, and the bg-queue isn't keeping it alive —
+        // safe to release. If bg-queue is running, leave it; the
+        // queue's done-path will release.
+        _releaseScreenWakeLock().catch(() => {});
+      }
+    });
+  });
+
 // v197 (M2): book-font-size radios. Persist, apply the CSS var, and
 // re-paginate if the user is currently in book view so the change is
 // visible immediately. _bookViewRepaginate is a no-op when book view
@@ -2566,6 +2596,13 @@ settingsBtn.addEventListener("click", () => {
   document
     .querySelectorAll('input[name="paragraph-pause"]')
     .forEach((r) => { r.checked = r.value === _pp; });
+
+  // v225v4.9: mirror keep-screen-on preference into its radios so the
+  // dialog opens reflecting the active value.
+  const _kso = _keepScreenOnDuringPlayback ? "on" : "off";
+  document
+    .querySelectorAll('input[name="keep-screen-on"]')
+    .forEach((r) => { r.checked = r.value === _kso; });
 
   // v220ap: Start-a-new-clip helper visibility. Dismissed → "hide",
   // not-dismissed → "show". First-timers can still toggle; until
@@ -12539,16 +12576,60 @@ async function _releaseScreenWakeLock() {
   _screenWakeLock = null;
 }
 
-// Re-acquire on tab focus IF the bg-queue is still running. Without
-// this, switching tabs once causes the lock to drop and the user
-// has to navigate back to even get screen-on protection.
+// v225v4.9: opt-in "keep screen on while playing" for read-along
+// listeners. Settings → "Keep screen on while playing" (Off / On).
+// Off by default since the lock costs battery; users who want to
+// follow the reading view as audio plays flip it on. Coexists with
+// the bg-queue lock above — _screenWakeLock is a single sentinel,
+// _acquireScreenWakeLock short-circuits when already held, and the
+// player's release skips when _bgRunning to avoid dropping the lock
+// the queue still needs.
+let _keepScreenOnDuringPlayback = false;
+function _readKeepScreenOnPref() {
+  try {
+    return (
+      localStorage.getItem("narrative.keepScreenOnDuringPlayback") === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+_keepScreenOnDuringPlayback = _readKeepScreenOnPref();
+
+playerEl.addEventListener("play", () => {
+  if (_keepScreenOnDuringPlayback) {
+    _acquireScreenWakeLock().catch(() => {});
+  }
+});
+function _maybeReleasePlaybackLock() {
+  // Skip when the bg-queue still needs the lock — its own done-path
+  // will release. This is the "don't drop the shared lock too early"
+  // guard. Wake lock acquire is idempotent; release isn't.
+  if (_keepScreenOnDuringPlayback && !_bgRunning) {
+    _releaseScreenWakeLock().catch(() => {});
+  }
+}
+playerEl.addEventListener("pause", _maybeReleasePlaybackLock);
+playerEl.addEventListener("ended", _maybeReleasePlaybackLock);
+
+// Re-acquire on tab focus IF the bg-queue is still running OR the
+// user has the playback-keep-screen-on pref on and audio is
+// currently playing. Without this, switching tabs once causes the
+// lock to drop and the user has to navigate back to even get
+// screen-on protection.
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (
-      document.visibilityState === "visible" &&
-      _bgRunning &&
-      _screenWakeLockSupported &&
-      !_screenWakeLock
+      document.visibilityState !== "visible" ||
+      !_screenWakeLockSupported ||
+      _screenWakeLock
+    ) {
+      return;
+    }
+    const playerIsPlaying = !playerEl.paused && !playerEl.ended;
+    if (
+      _bgRunning ||
+      (_keepScreenOnDuringPlayback && playerIsPlaying)
     ) {
       _acquireScreenWakeLock().catch(() => {});
     }
