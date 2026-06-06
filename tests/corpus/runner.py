@@ -60,6 +60,53 @@ def _count_sentences(text: str) -> int:
     return len(re.findall(r"[.!?](?:\s|$)", text))
 
 
+# v225v3.74 (#807): catches Standard Ebooks's HTML interstitial
+# ("Your Download Has Started!") and follows the embedded
+# `<meta http-equiv="refresh" content="0; url=…">`. Without this,
+# the .epub URL returns HTML instead of zip bytes, the server 422s
+# on BadZipFile, and the case looks like a "no real EPUB at upstream"
+# failure even though the .epub fetches fine with the right
+# query-string. Generic so we don't hard-code SE.
+_META_REFRESH_RE = re.compile(
+    r'<meta\b[^>]*http-equiv\s*=\s*"refresh"[^>]*content\s*=\s*"\s*\d+\s*;\s*url=([^"]+)"',
+    re.IGNORECASE,
+)
+
+
+def _fetch_bytes_following_meta_refresh(
+    url: str, headers: dict[str, str], max_hops: int = 2
+) -> requests.Response:
+    """GET url; if the body is HTML containing a <meta refresh ...>,
+    follow that URL once (or up to max_hops times). Returns the final
+    Response object. Lets Standard Ebooks's download-interstitial
+    pattern resolve transparently."""
+    from urllib.parse import urljoin
+
+    current_url = url
+    for hop in range(max_hops + 1):
+        r = requests.get(current_url, timeout=TIMEOUT_FETCH,
+                         allow_redirects=True, headers=headers)
+        r.raise_for_status()
+        ctype = (r.headers.get("Content-Type") or "").lower()
+        # Only chase a meta-refresh when the body is HTML-shaped.
+        # Real binary content (EPUB, PDF, zip) will never match the
+        # regex but we skip even trying so a stray "url=" inside a
+        # PDF stream can't trick us.
+        if "html" not in ctype and "xml" not in ctype:
+            return r
+        try:
+            body_head = r.content[:8192].decode("utf-8", "replace")
+        except Exception:
+            return r
+        m = _META_REFRESH_RE.search(body_head)
+        if not m or hop == max_hops:
+            return r
+        next_url = urljoin(current_url, m.group(1).strip())
+        print(f"  meta-refresh -> {next_url}", flush=True)
+        current_url = next_url
+    return r
+
+
 def _ensure_fixture(case: dict[str, Any]) -> Path:
     """Download a file case's bytes if not already cached.
     Returns the local path."""
@@ -71,11 +118,14 @@ def _ensure_fixture(case: dict[str, Any]) -> Path:
         return path
     url = case["download_url"]
     print(f"  fetching {url}", flush=True)
-    r = requests.get(url, timeout=TIMEOUT_FETCH, allow_redirects=True, headers={
+    r = _fetch_bytes_following_meta_refresh(url, headers={
         # Some sites (notably Standard Ebooks) require a UA.
         "User-Agent": "narrative-corpus-runner/1 (https://narrative-alpha.fly.dev)",
+        # Tell content-negotiating servers we want the binary,
+        # not an HTML preview. Standard Ebooks honors this in some
+        # cases; harmless elsewhere.
+        "Accept": "application/epub+zip, application/pdf, */*",
     })
-    r.raise_for_status()
     path.write_bytes(r.content)
     return path
 
