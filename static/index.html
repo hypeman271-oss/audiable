@@ -1471,7 +1471,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v4.2</span>
+            Narrative <span id="settings-version-tag">v225v4.3</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2531,6 +2531,29 @@
             aria-label="Keep current audio"
           >Not now</button>
         </span>
+      </div>
+
+      <!-- v225v4.3 (#814): pre-save "store by sentence" opt-in. Author-mode
+           only. Sticky default via localStorage (narrative.storeByLines.default)
+           so once ticked, future imports remember. When checked AND mode is
+           Author, the post-save augmentation in generate() and _openAsEbook()
+           builds clip.lines + clip.nextLineSeq from the current text so the
+           new clip lands in line storage from the start — no need to
+           re-open Edit and run the conversion (which would drop annotations).
+           Sits right above the action row so it's read as a property of the
+           save, not a footnote. -->
+      <div class="store-by-lines-row author-only">
+        <label class="store-by-lines-label">
+          <input
+            type="checkbox"
+            id="store-by-lines-toggle"
+            class="store-by-lines-check"
+          />
+          <span class="store-by-lines-text">
+            <span class="store-by-lines-title">Store this clip by sentence</span>
+            <span class="store-by-lines-hint">Lets you re-narrate one sentence at a time later (Author).</span>
+          </span>
+        </label>
       </div>
 
       <div class="actions card-actions">

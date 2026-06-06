@@ -813,6 +813,15 @@ async function _openAsEbook() {
     setStatus("Couldn't save the ebook — see console.", true);
     return;
   }
+  // v225v4.3 (#814): if the user ticked "Store by sentence" above
+  // the action row before opening as ebook, write lines + nextLineSeq
+  // onto the just-saved clip via the atomic-tx helper. No-op when the
+  // toggle is off or the mode isn't Author.
+  try {
+    await _maybeApplyLinesToClip(ebookId, text);
+  } catch (e) {
+    console.warn("[ebook] line-storage augmentation failed:", e);
+  }
   // Same as generate's success path: bind the player + textarea state
   // to the new clip, render the library, then load + open book view.
   _currentClipId = ebookId;
@@ -11299,6 +11308,17 @@ async function generate() {
                 // already re-renders cards; _renarratingClipIds is
                 // checked by makeClipCard so the pulse stops naturally.
                 if (regenTargetId) _renarratingClipIds.delete(regenTargetId);
+                // v225v4.3 (#814): fresh-clip branch — if the toggle is on
+                // and we're in Author mode, augment the just-saved clip
+                // with lines + nextLineSeq. Regen branch deliberately
+                // skipped: the existing clip already has its line-storage
+                // state set (via the Edit-dialog toggle or a prior save),
+                // and re-narrate shouldn't second-guess that.
+                if (!regenTargetId) {
+                  _maybeApplyLinesToClip(newClipId, text).catch((e) =>
+                    console.warn("[gen] line-storage augmentation failed:", e),
+                  );
+                }
                 renderLibrary();
                 // For a regen this picks up the existing bookmarks (which
                 // we want to preserve across re-synthesis); for a fresh
@@ -24357,6 +24377,92 @@ async function _openLinesConvertConfirm(clipId) {
   confirmBtn.disabled = sentenceCount === 0;
   if (!dlg.open) dlg.showModal();
 }
+
+// v225v4.3 (#814): pre-save "store by sentence" opt-in. The checkbox
+// lives above the Generate / Open-as-ebook row (HTML in index.html,
+// CSS in styles.css). State is sticky via localStorage so once a user
+// ticks it, every future save in Author mode lands the new clip in
+// line storage without re-asking. Gate: Author mode + checkbox both
+// required — Standard/Simple users never write lines even if the key
+// is stale from a prior Author session.
+const _STORE_BY_LINES_KEY = "narrative.storeByLines.default";
+
+function _isStoreByLinesEnabled() {
+  try {
+    if (typeof getUIMode === "function" && getUIMode() !== "author") {
+      return false;
+    }
+  } catch {}
+  const el = document.getElementById("store-by-lines-toggle");
+  if (!el) return false;
+  return !!el.checked;
+}
+
+// Post-save augmentation. If the toggle is on (gated above), build
+// {lines, nextLineSeq} from the just-saved clip's text and write them
+// back via _mutateClipAtomic so the same sync layer that protects
+// per-line LWW also lands them on the user's other devices. No-op when
+// the toggle is off, mode isn't Author, NS_IDS helpers haven't loaded,
+// or the clip already has lines (fresh save shouldn't, but defensive).
+async function _maybeApplyLinesToClip(clipId, text) {
+  if (clipId == null) return;
+  if (!_isStoreByLinesEnabled()) return;
+  if (!window.NS_IDS || typeof window.NS_IDS.hashText !== "function") {
+    _dlog("store-by-lines", "skip: NS_IDS helpers missing", { clipId });
+    return;
+  }
+  const sentences = splitSentencesClient(text || "");
+  if (sentences.length === 0) {
+    _dlog("store-by-lines", "skip: no sentences", { clipId });
+    return;
+  }
+  try {
+    const hashes = await Promise.all(
+      sentences.map((s) => window.NS_IDS.hashText(s)),
+    );
+    const now = new Date().toISOString();
+    const lines = sentences.map((s, i) => ({
+      id: window.NS_IDS.mintLineId(clipId, i + 1),
+      text: s,
+      hash: hashes[i],
+      updatedAt: now,
+    }));
+    const nextLineSeq = sentences.length + 1;
+    await _mutateClipAtomic(clipId, (c) => {
+      // Defensive — if a save race already wrote lines, leave them.
+      if (Array.isArray(c.lines) && c.lines.length > 0) return;
+      c.lines = lines;
+      c.nextLineSeq = nextLineSeq;
+    });
+    _dlog("store-by-lines", "applied", { clipId, sentences: sentences.length });
+  } catch (e) {
+    console.warn("[store-by-lines] apply failed:", e);
+    _dlog("store-by-lines", "apply failed", {
+      clipId,
+      err: String(e && e.message ? e.message : e),
+    });
+  }
+}
+
+// Boot wiring: restore the toggle's checked state from localStorage,
+// and persist on every change so the choice is sticky across imports
+// and sessions. Runs on load — safe to call even if the toggle isn't
+// in the DOM (Standard / Simple users never hit this path because the
+// HTML row is .author-only and CSS hides it).
+(function _initStoreByLinesToggle() {
+  const el = document.getElementById("store-by-lines-toggle");
+  if (!el) return;
+  try {
+    const stored = localStorage.getItem(_STORE_BY_LINES_KEY);
+    el.checked = stored === "1";
+  } catch {}
+  el.addEventListener("change", () => {
+    try {
+      localStorage.setItem(_STORE_BY_LINES_KEY, el.checked ? "1" : "0");
+    } catch {}
+    _dlog("store-by-lines", "toggle changed", { checked: el.checked });
+  });
+})();
 
 // Run the actual conversion. Atomic: lines + nextLineSeq go in;
 // annotations tombstone (so cross-device sync propagates the delete);
