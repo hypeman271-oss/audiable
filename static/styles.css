@@ -10141,13 +10141,15 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
 .hero-controls .ab-loop-btn,
 .hero-controls .speed-btn,
 .hero-controls .notes-btn,
+.hero-controls .repeat-btn,
 .hero-controls-float .skip-back-btn,
 .hero-controls-float .skip-forward-btn,
 .hero-controls-float .bookmark-add-btn,
 .hero-controls-float .sleep-btn,
 .hero-controls-float .ab-loop-btn,
 .hero-controls-float .speed-btn,
-.hero-controls-float .notes-btn {
+.hero-controls-float .notes-btn,
+.hero-controls-float .repeat-btn {
   margin: 0;
   padding: 4px 10px;
   font-size: 11.5px;
@@ -13091,15 +13093,34 @@ html, body {
    text chips around it — same brightness as the labels — but the
    loop shape still reads as iconographic rather than active until
    it's tinted accent in the one/all modes. */
+/* v225v4.15: .repeat-btn was missing the chip chrome that peer
+   chips (.sleep-btn, .ab-loop-btn, .speed-btn, .notes-btn) have —
+   no background, no border, no padding. On the cream/light theme
+   the icon ended up rendering as thin dark arrows on bg-card,
+   visually unreadable. Give it the same pill chrome they have so
+   the chip reads as a chip, not a floating icon. */
 .repeat-btn {
+  background: var(--bg-card-2);
   color: var(--fg);
-  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.repeat-btn:hover {
+  background: var(--accent-tint-3);
+  border-color: var(--accent);
 }
 .repeat-btn .repeat-svg {
-  width: 22px;
-  height: 22px;
-  vertical-align: middle;
-  display: inline-block;
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 .repeat-btn[data-mode="one"],
 .repeat-btn[data-mode="all"] {
