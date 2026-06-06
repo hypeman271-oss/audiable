@@ -30780,10 +30780,29 @@ function _phonePullupRelocate() {
     document.body.dataset.pullupScrimBound = "1";
     document.addEventListener("click", (e) => {
       if (document.body.dataset.pullup !== "open") return;
+      // v225v4.17: walk the composed event path instead of using
+      // .contains(e.target). Some chips inside the drawer mutate
+      // their own innerHTML during their click handler (e.g.
+      // _paintRepeatBtn swaps the SVG markup on every cycle).
+      // That detaches the original click target from the DOM, so
+      // .contains(e.target) returns false even though the click
+      // genuinely happened inside the drawer — and we'd close it.
+      // composedPath() snapshots the ancestor chain at event
+      // dispatch time, before any mid-handler mutation, so it's
+      // immune to innerHTML swaps. Reported: tapping the Repeat
+      // chip in the pull-up Listening slot closed the drawer.
       const drawer = document.getElementById("phone-pullup");
       const player = document.getElementById("player-card");
-      if (drawer && drawer.contains(e.target)) return;
-      if (player && player.contains(e.target)) return;
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      for (const el of path) {
+        if (el === drawer || el === player) return;
+      }
+      // Fallback for environments without composedPath (very old
+      // browsers): fall back to the original contains check.
+      if (!path.length) {
+        if (drawer && drawer.contains(e.target)) return;
+        if (player && player.contains(e.target)) return;
+      }
       _phonePullupClose();
     });
     // Esc closes too.
