@@ -30643,10 +30643,16 @@ function _phonePullupRelocate() {
   move("speed-btn", playbackSlot);
   move("skip-interval-btn", playbackSlot);
 
-  // Listening: A↔B start/end, sleep timer.
+  // Listening: A↔B start/end, sleep timer, repeat mode.
+  // v225v4.12: repeat-btn was only in the hero chip strip; phone
+  // bypasses the dual-strip pattern (v198), so without this move
+  // the Repeat control was unreachable on phone. Slot it next to
+  // A↔B + Sleep — they're all "how do I want this clip to keep
+  // playing" affordances.
   move("ab-loop-btn", listeningSlot);
   move("ab-loop-clear-btn", listeningSlot);
   move("sleep-btn", listeningSlot);
+  move("repeat-btn", listeningSlot);
 
   // v225.tn43 (#520): if a prior boot had moved annotate-mode-btn
   // or bookmark-add-btn into the Author slot, slide them back to
