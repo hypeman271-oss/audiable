@@ -7207,12 +7207,14 @@ button:disabled {
   line-height: 1.4;
 }
 
-/* v225v4.1 (#812): drag-and-drop file import. Applied to #text-input
-   while a file drag is over the textarea. Accent border + a subtle
-   tint signals "this is a valid drop target." Transition is fast
-   (90ms) so it tracks the cursor without lag; without it the
-   highlight feels laggy on mouse-out. */
-textarea#text-input.file-drop-active {
+/* v225v4.1 (#812): drag-and-drop file import. Applied to the main
+   textarea (#text) while a file drag is over it. Accent border +
+   a subtle tint signals "this is a valid drop target." Transition
+   is fast (90ms) so it tracks the cursor without lag; without it
+   the highlight feels laggy on mouse-out.
+   v225v4.2: selector was textarea#text-input which never matched —
+   the textarea's id is "text", not "text-input". */
+textarea#text.file-drop-active {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-card));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);

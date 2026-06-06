@@ -27434,6 +27434,70 @@ async function _runFileImport(file) {
       try { window.scrollTo(0, 0); } catch {}
     }
 
+    // v225v4.2 (#813): defensive re-pin to override deferred scrolls.
+    // User report: desktop ebook import + a few seconds later the
+    // text window "jumped up" and header icons became unreachable.
+    // Suspect: textEl.focus() above + a deferred layout shift (image
+    // decode, chapter banner mount, scroll anchoring) re-scrolls the
+    // page down to keep the focused textarea in view. Two extra
+    // scrollTo(0,0) calls override that: one after layout settles
+    // (double-rAF), one at +200ms for slower decodes/observers.
+    // Cheap, idempotent — if the page is already at top this is a
+    // no-op. If it later moves on its own (e.g. user scrolled), the
+    // probe below will show that in the log.
+    try {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try { window.scrollTo({ top: 0, behavior: "instant" }); }
+          catch { try { window.scrollTo(0, 0); } catch {} }
+        });
+      });
+      setTimeout(() => {
+        try { window.scrollTo({ top: 0, behavior: "instant" }); }
+        catch { try { window.scrollTo(0, 0); } catch {} }
+      }, 200);
+    } catch {}
+
+    // v225v4.2 (#813): scroll telemetry. Snapshot scrollY +
+    // textarea/preview/banner offsets at intervals to catch what
+    // moves the page between t=0 and "a few seconds later." Plus a
+    // scroll-event listener that records every scroll change during
+    // the 5-second window so a deferred jump leaves a fingerprint.
+    try {
+      const _t0 = performance.now();
+      const _snapshot = (label) => {
+        try {
+          const trect = textEl.getBoundingClientRect();
+          const preview = document.getElementById("import-preview");
+          const previewH = preview && !preview.hidden ? preview.offsetHeight : 0;
+          const banner = document.getElementById("chapter-banner");
+          const bannerH = banner && !banner.hidden ? banner.offsetHeight : 0;
+          _dlog("import-scroll", label, {
+            elapsedMs: Math.round(performance.now() - _t0),
+            scrollY: Math.round(window.scrollY),
+            innerH: window.innerHeight,
+            textTop: Math.round(trect.top),
+            textBottom: Math.round(trect.bottom),
+            previewH,
+            bannerH,
+            activeEl: (document.activeElement && document.activeElement.tagName) || null,
+            activeId: (document.activeElement && document.activeElement.id) || null,
+          });
+        } catch {}
+      };
+      const _onScroll = () => _snapshot("scroll-event");
+      window.addEventListener("scroll", _onScroll, { passive: true });
+      _snapshot("t+0");
+      setTimeout(() => _snapshot("t+50"), 50);
+      setTimeout(() => _snapshot("t+250"), 250);
+      setTimeout(() => _snapshot("t+800"), 800);
+      setTimeout(() => _snapshot("t+2000"), 2000);
+      setTimeout(() => {
+        _snapshot("t+5000");
+        window.removeEventListener("scroll", _onScroll);
+      }, 5000);
+    } catch {}
+
     // v225g1 (#690): if the upload was triggered by the "📖 Read as
     // ebook" empty-state tile (or any other caller that set the flag),
     // skip the "wait for Generate" step and route straight into the
