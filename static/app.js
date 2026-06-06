@@ -15035,6 +15035,30 @@ async function _commitInlineEdit() {
       playerEl.play().catch(() => {});
     }
 
+    // v225v4.7 (#810 step 6): if the clip has per-sentence storage on,
+    // refresh the matching line in c.lines[] alongside the text/audio
+    // update. Splice is 1-sentence-in / 1-sentence-out so the line
+    // count and lineId stay stable — only the line's text, hash, and
+    // updatedAt change. The atomic-tx + sync layer's per-line LWW
+    // merge (#495 + Phase A backend) propagates this to other devices.
+    //
+    // Hash is computed before entering the mutator so a missing
+    // NS_IDS helper fails fast without half-writing. If the clip's
+    // line count somehow disagrees with the new sentence count (which
+    // shouldn't happen on a splice but a stale state could exist),
+    // skip the lines update and dlog it — leaves the lines array as
+    // it was rather than corrupting it.
+    let _newLineHash = null;
+    if (window.NS_IDS && typeof window.NS_IDS.hashText === "function") {
+      try {
+        _newLineHash = await window.NS_IDS.hashText(newText);
+      } catch (e) {
+        _dlog("inline-edit", "hashText failed", {
+          err: String(e && e.message ? e.message : e),
+        });
+      }
+    }
+
     // Persist to IDB + push via sync pipeline. Bookmarks get shifted
     // too so they keep pointing at the right spot in the new audio.
     await _mutateClipAtomic(_currentClipId, (c) => {
@@ -15056,6 +15080,24 @@ async function _commitInlineEdit() {
           }
           return bm;
         });
+      }
+      // Phase A step 6: line storage update.
+      if (Array.isArray(c.lines) && c.lines.length > 0 && _newLineHash) {
+        if (idx >= 0 && idx < c.lines.length && c.lines[idx]) {
+          const now = new Date().toISOString();
+          c.lines[idx] = {
+            ...c.lines[idx],
+            text: newText,
+            hash: _newLineHash,
+            updatedAt: now,
+          };
+        } else {
+          _dlog("inline-edit", "lines index out of range", {
+            idx,
+            linesLen: c.lines.length,
+            sentencesLen: newOffsetsSec.length,
+          });
+        }
       }
     });
 
