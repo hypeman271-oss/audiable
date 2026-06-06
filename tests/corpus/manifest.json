@@ -30,14 +30,14 @@
       "notes": "Single chapter, exercises Wikisource's stripped HTML. Calibrated 6000→4000 after first corpus run measured 4555 — single chapter is shorter than initial guess."
     },
     {
-      "id": "wikisource-sherlock-ch1",
+      "id": "wikisource-yellow-wallpaper",
       "kind": "url",
       "source": "Wikisource",
-      "url": "https://en.wikisource.org/wiki/The_Adventures_of_Sherlock_Holmes/Adventure_1",
-      "min_chars": 25000,
-      "min_sentences": 200,
-      "content_must_contain": ["Sherlock Holmes", "Irene Adler"],
-      "notes": "A Scandal in Bohemia — stable Wikisource chapter. Replaces 404'd Frankenstein_(1818)/Letter_1 (first corpus run)."
+      "url": "https://en.wikisource.org/wiki/The_Yellow_Wallpaper",
+      "min_chars": 24000,
+      "min_sentences": 180,
+      "content_must_contain": ["wallpaper", "John"],
+      "notes": "Charlotte Perkins Gilman, The Yellow Wallpaper — standalone single-page Wikisource story. Replaces v3.71's wikisource-sherlock-ch1 (Adventure_1 URL 404'd) and the original wikisource-frankenstein-ch1 (Letter_1 URL 404'd)."
     },
     {
       "id": "rgl-freeread-de",

@@ -1192,16 +1192,25 @@ def _extract_epub_with_images(data: bytes) -> dict:
         # Two manifest views: spine HTML (id -> href) and images
         # (href -> mime, relative to opf_dir).
         #
-        # v225v3.71 (#802): the old version pinned attribute order to
-        # id → href → media-type, which Gutenberg's EPUB3 violates (it
-        # often writes media-type first, with properties=cover-image
+        # v225v3.71 (#802): the original version pinned attribute order
+        # to id → href → media-type, which Gutenberg's EPUB3 violates
+        # (often emits href first, with properties=cover-image
         # interleaved). That silently dropped every spine item and the
         # response came back as 422 "EPUB contains no readable text".
         # Parse <item ...> attributes order-agnostically.
+        #
+        # v225v3.72 (#802): first v3.71 attempt was `<item\b([^/>]*)/?>`
+        # to stop the body at the self-closing slash — but media-type
+        # values like image/jpeg, text/css, application/xhtml+xml ALL
+        # contain `/`, so the character class bailed mid-attribute and
+        # the whole item failed to match. Drop the `/?>` dance and let
+        # ATTR_RE skip the trailing slash naturally (it isn't a
+        # name="value" pair). Inspect Gutenberg's Alice EPUB confirmed
+        # the bug: 21 items in OPF, 0 matched, 0/15 spine items resolved.
         manifest_html: dict[str, str] = {}
         manifest_images: dict[str, str] = {}
         ATTR_RE = re.compile(r'\b(\w[\w:-]*)\s*=\s*"([^"]*)"')
-        for item in re.finditer(r"<item\b([^/>]*)/?>", opf):
+        for item in re.finditer(r"<item\b([^>]*)>", opf):
             attrs = dict(ATTR_RE.findall(item.group(1)))
             iid = attrs.get("id")
             href = attrs.get("href")
