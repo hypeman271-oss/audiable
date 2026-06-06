@@ -1500,7 +1500,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v4.10</span>
+            Narrative <span id="settings-version-tag">v225v4.11</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2753,6 +2753,14 @@
                Mode persists in localStorage (device-scoped — not a clip
                property). Visible in every UI mode because loop-on-end
                is a basic listening affordance, not a power feature. -->
+          <!-- v225v4.11: SVG icon instead of Unicode 🔁 emoji. Windows
+               Chrome rendered the emoji nearly invisible against the
+               dark theme; SVG renders identically across all platforms
+               and inherits the button's text color via currentColor.
+               JS _paintRepeatBtn swaps to the repeat_one path when
+               mode === "one". Initial markup is repeat-all so there's
+               no flash-of-bare-button before JS runs. Paths are
+               Material Design Icons (Apache 2.0). -->
           <button
             id="repeat-btn"
             type="button"
@@ -2760,7 +2768,7 @@
             aria-label="Repeat — off"
             title="Tap to cycle repeat: Off → Loop this clip → Repeat all"
             data-mode="off"
-          >🔁</button>
+          ><svg class="repeat-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></button>
           <!-- v138: quick-access notes scratchpad. Opens a lightweight
                dialog focused on the current clip's notes so the user
                can jot down a thought while listening without leaving

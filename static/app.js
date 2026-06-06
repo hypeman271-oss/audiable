@@ -6046,14 +6046,29 @@ try {
 } catch {}
 
 const repeatBtn = $("repeat-btn");
+// v225v4.11: SVG paths swap in for the old Unicode 🔁/🔂 emoji. These
+// are Material Design Icons (Apache 2.0) — the same icons Spotify,
+// YouTube Music, Apple Music, Amazon Music, and Tidal all use. They
+// render identically across every OS and inherit the button's text
+// color via currentColor, so the dim/accent state is controlled by
+// CSS on the parent button instead of by opacity tricks.
+const _REPEAT_SVG_ALL =
+  '<svg class="repeat-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+  '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>' +
+  '</svg>';
+const _REPEAT_SVG_ONE =
+  '<svg class="repeat-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+  '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/>' +
+  '</svg>';
 function _paintRepeatBtn() {
   if (!repeatBtn) return;
-  // Different glyph per mode so the icon itself carries meaning:
-  //   off → 🔁 dim   (queue-advance arrows, faded)
-  //   one → 🔂 accent (single-arrow loop)
-  //   all → 🔁 accent (two-arrow loop)
-  const glyph = _repeatMode === "one" ? "🔂" : "🔁";
-  repeatBtn.textContent = glyph;
+  // Different SVG per mode so the icon itself carries meaning:
+  //   off → repeat (two arrows in a loop), color via CSS = --fg-dim
+  //   one → repeat_one (same shape + "1" inset), color via CSS = --accent
+  //   all → repeat (same as off shape), color via CSS = --accent
+  // CSS rule `.repeat-btn[data-mode="one|all"]` switches color from
+  // dim to accent without touching the SVG markup.
+  repeatBtn.innerHTML = _repeatMode === "one" ? _REPEAT_SVG_ONE : _REPEAT_SVG_ALL;
   repeatBtn.dataset.mode = _repeatMode;
   repeatBtn.setAttribute(
     "aria-label",
