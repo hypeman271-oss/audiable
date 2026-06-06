@@ -173,42 +173,46 @@ def restitch_clip(
     # Pass 2: concat via ffmpeg.
     with tempfile.TemporaryDirectory(prefix="narrative-restitch-") as tmpdir:
         tmp = Path(tmpdir)
-        # The concat demuxer needs a text file listing each input.
-        # Format: lines of `file 'path'` (path single-quoted, with
-        # internal single quotes escaped). We write absolute resolved
-        # paths to avoid ambiguity if ffmpeg's CWD differs from ours.
-        listing = tmp / "list.txt"
-        with listing.open("w", encoding="utf-8") as f:
-            for p in flac_paths:
-                # Defensive escape of single quotes — unlikely in
-                # sha256-derived filenames but cheap insurance.
-                quoted = str(p.resolve()).replace("'", r"'\''")
-                f.write(f"file '{quoted}'\n")
-
         out_mp3 = tmp / "out.mp3"
-        # v4.19 (#811): do NOT force `-ar 22050` here. Kokoro emits at
-        # 24kHz; Piper voices vary (LibriTTS at 22.05k, some at 16k).
-        # When inputs aren't already at 22050, ffmpeg's resampler runs
-        # over the concat pipeline and produces a startup transient at
-        # each input-file boundary — audible as a brief click at the
-        # start of each sentence. Splice.py doesn't have this problem
-        # because it operates on the combined MP3 directly (single SR
-        # already), not on per-sentence files. Let ffmpeg pick the
-        # natural rate from the inputs; all sentences in a clip share
-        # one voice today, so the FLACs are uniform.
+
+        # v4.20 (#811): use the concat FILTER, not the concat DEMUXER.
+        # The demuxer (`-f concat -i list.txt`) reads inputs sequentially
+        # and resets the audio decoder at each file boundary. Pipe-
+        # encoded FLACs (which is what wav_to_flac produces) sometimes
+        # lack a complete STREAMINFO block (e.g. no total_samples) which
+        # makes the decoder produce startup transients or drop samples
+        # at each reset — heard as a stutter at the beginning of each
+        # sentence in the concatenated output.
+        #
+        # The filter (`-filter_complex [0:a][1:a]...concat=n=N:v=0:a=1`)
+        # decodes each input into its own filter-graph input, then
+        # concatenates the decoded PCM streams. No per-boundary decoder
+        # reset, no stutter. Same pattern splice.py uses (intentionally,
+        # in retrospect — that's why splice sounds clean).
+        #
+        # Also keep `-ar` unset (v4.19): inputs share a uniform SR for
+        # single-voice clips, so no resample is needed.
         cmd = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "error",
             "-y",
-            "-f", "concat",
-            "-safe", "0",       # allow absolute paths in the listing
-            "-i", str(listing),
+        ]
+        for p in flac_paths:
+            cmd.extend(["-i", str(p.resolve())])
+        # Build the filter graph: [0:a][1:a]...concat=n=N:v=0:a=1[out]
+        labels = "".join(f"[{i}:a]" for i in range(len(flac_paths)))
+        filter_graph = (
+            f"{labels}concat=n={len(flac_paths)}:v=0:a=1[out]"
+        )
+        cmd.extend([
+            "-filter_complex", filter_graph,
+            "-map", "[out]",
             "-c:a", "libmp3lame",
             "-b:a", f"{bitrate_kbps}k",
             "-ac", "1",
             str(out_mp3),
-        ]
+        ])
         try:
             result = subprocess.run(
                 cmd, capture_output=True, timeout=600, check=False,
