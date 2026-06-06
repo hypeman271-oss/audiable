@@ -13893,7 +13893,7 @@ function _cancelParagraphPauseTimer() {
   }
 }
 
-function enterReadingView(text, images, highlights) {
+function enterReadingView(text, images, highlights, lines) {
   if (Array.isArray(highlights)) {
     _readingViewHighlights = highlights;
   }
@@ -13905,6 +13905,32 @@ function enterReadingView(text, images, highlights) {
   const wasInBookView =
     typeof bookView !== "undefined" && bookView && !bookView.hidden;
   const sentences = splitSentencesClient(text);
+  // v225v4.6 (#810 step 5): stamp data-line-id on each sentence span
+  // when the clip has per-sentence storage enabled (clip.lines[] is
+  // populated). The reading view still splits clip.text the same way
+  // it always has — the visible text + word counts + highlight builder
+  // all stay anchored to splitSentencesClient(), so behavior is
+  // unchanged for non-line clips. But spans gain a stable identifier
+  // that survives sentence insertion/deletion, which future Phase B
+  // work (per-sentence WAV cache, partial re-narrate) will key off of.
+  //
+  // Defensive: only stamp when lines.length === sentences.length. If
+  // they disagree, the text has drifted from the stored lines (which
+  // shouldn't happen until step 6 wires inline-edit through lines[],
+  // but a stale state could exist), and stamping a stale ID would
+  // anchor annotations to the wrong sentence. Better to fall through
+  // to index-only spans + log it so we can find the cause.
+  let _useLineIds = false;
+  if (Array.isArray(lines) && lines.length > 0) {
+    if (lines.length === sentences.length) {
+      _useLineIds = true;
+    } else if (typeof _dlog === "function") {
+      _dlog("reading-view", "lines/sentences length mismatch", {
+        sentencesFromText: sentences.length,
+        storedLines: lines.length,
+      });
+    }
+  }
   // v223.tn15 (#479): compute which sentences end a paragraph so the
   // auto-pause at paragraph break has somewhere to fire. Walks the
   // source text, finds each sentence's position, checks the gap to
@@ -13977,6 +14003,12 @@ function enterReadingView(text, images, highlights) {
     const span = document.createElement("span");
     span.className = "sentence";
     span.dataset.index = String(i);
+    // v225v4.6 (#810 step 5): stamp the stored line id when present.
+    // _useLineIds is gated above on lines.length === sentences.length,
+    // so lines[i] is guaranteed to exist when we reach this branch.
+    if (_useLineIds && lines[i] && lines[i].id) {
+      span.dataset.lineId = lines[i].id;
+    }
     // Long-sentence flag. Word count uses the same splitter as the
     // textarea meta line so an Author sees consistent numbers between
     // "247 words" in the meta and "this one's 41" in the reading view.
@@ -25389,7 +25421,14 @@ async function loadClip(id, { autoPlay = true } = {}) {
   enterReadingView(
     clip.text || "",
     Array.isArray(clip.images) ? clip.images : [],
-    Array.isArray(clip.highlights) ? clip.highlights : []
+    Array.isArray(clip.highlights) ? clip.highlights : [],
+    // v225v4.6 (#810 step 5): thread clip.lines so the reading-view
+    // sentence builder can stamp data-line-id on each span. Other
+    // enterReadingView callers (generate / save-text) pass nothing
+    // here — fresh text has no stored lines yet; the post-save
+    // augmentation in _maybeApplyLinesToClip will create them, and
+    // the next loadClip on this row will pick them up.
+    Array.isArray(clip.lines) ? clip.lines : null
   );
   // v223.annotate-1: paint the small accent dot on any sentence span
   // that already has a flagged annotation. enterReadingView rebuilds
