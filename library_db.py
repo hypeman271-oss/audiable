@@ -32,7 +32,7 @@ DB_PATH = DATA_DIR / "narrative.db"
 AUDIO_DIR = DATA_DIR / "audio"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -273,6 +273,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v4(c)
         c.execute("UPDATE schema_version SET version = 4")
         current = 4
+
+    if current < 5:
+        _apply_v5(c)
+        c.execute("UPDATE schema_version SET version = 5")
+        current = 5
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -549,6 +554,45 @@ def _apply_v4(c: sqlite3.Connection) -> None:
         file=sys.stderr, flush=True,
     )
     c.execute("ALTER TABLE clips ADD COLUMN kind TEXT")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Schema v5 — Author-mode per-sentence storage (#810 / #586).
+#
+# Adds two columns to clips, both NULL on legacy rows:
+#   lines_json    JSON array [{id, text, hash, voiceOverride?}, ...]
+#                 When NULL: clip is in the legacy blob model. clips.text
+#                 is authoritative. Reading view / annotations index by
+#                 sentence position.
+#                 When set: line-by-line storage is enabled. clips.text
+#                 becomes a derived view (lines.map(l=>l.text).join).
+#                 Annotations anchor by line.id; reading view renders
+#                 from lines with data-line-id attributes.
+#   next_line_seq INTEGER. Monotonic counter for minting line IDs on
+#                 this clip. id = `c_{clip_id}-{seq:04d}`. Birth-order,
+#                 never reused. NULL until the clip opts in.
+#
+# Both columns are additive ALTERs so the migration is one-way safe and
+# downlevel clients (which don't know the columns exist) reading via
+# library_api just see NULL → emit no `lines` / `nextLineSeq` field in
+# the response, and the existing blob path runs unchanged.
+#
+# See SENTENCE_IDS.md for the ID derivation decision (clip-local
+# counter, not content hash).
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _apply_v5(c: sqlite3.Connection) -> None:
+    """Add lines_json + next_line_seq columns for Author-mode per-
+    sentence storage. Both NULL for legacy clips; populated only when
+    the user opts a clip in via the Edit dialog toggle."""
+    print(
+        "[library_db] migrating to schema v5 (add clips.lines_json + "
+        "next_line_seq for Author-mode per-sentence storage)",
+        file=sys.stderr, flush=True,
+    )
+    c.execute("ALTER TABLE clips ADD COLUMN lines_json TEXT")
+    c.execute("ALTER TABLE clips ADD COLUMN next_line_seq INTEGER")
 
 
 # ──────────────────────────────────────────────────────────────────────

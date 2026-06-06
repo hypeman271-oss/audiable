@@ -1,0 +1,62 @@
+[
+  {
+    "input": "It is a truth universally acknowledged.",
+    "normalize": "It is a truth universally acknowledged.",
+    "hash": "66e515c9ef96"
+  },
+  {
+    "input": "  Leading and trailing space  ",
+    "normalize": "Leading and trailing space",
+    "hash": "d136537fd06f"
+  },
+  {
+    "input": "multi\nline\nstring",
+    "normalize": "multi line string",
+    "hash": "892b5df38715"
+  },
+  {
+    "input": "tab\there",
+    "normalize": "tab here",
+    "hash": "4c4df4a5a875"
+  },
+  {
+    "input": "",
+    "normalize": "",
+    "hash": "e3b0c44298fc"
+  },
+  {
+    "input": "café",
+    "normalize": "café",
+    "hash": "850f7dc43910"
+  },
+  {
+    "input": "café",
+    "normalize": "café",
+    "hash": "850f7dc43910"
+  },
+  {
+    "input": "\"Quoted\" — em-dash",
+    "normalize": "\"Quoted\" — em-dash",
+    "hash": "895820dfe4da"
+  },
+  {
+    "input": "punctuation matters.",
+    "normalize": "punctuation matters.",
+    "hash": "3c3837b60440"
+  },
+  {
+    "input": "punctuation matters?",
+    "normalize": "punctuation matters?",
+    "hash": "80a25a48b62c"
+  },
+  {
+    "input": "NBSP separated",
+    "normalize": "NBSP separated",
+    "hash": "bcac9946f2a0"
+  },
+  {
+    "input": "mixed   \t  whitespace\n  runs",
+    "normalize": "mixed whitespace runs",
+    "hash": "33f33a4709f5"
+  }
+]

@@ -148,6 +148,69 @@ def _merge_annotations(
     return list(by_id.values())
 
 
+# v225v4.0 (#810 / #586): merge for clip.lines on per-sentence-storage
+# clips. Mirrors the annotations merge: per-line LWW by `updatedAt`,
+# concurrent edits at different line IDs both land, deletes propagate
+# only via explicit `deletedAt` tombstone on the line. ORDER preserved
+# from the incoming payload because line order is itself meaningful
+# (it's the reading order). If the client says nothing about lines
+# (incoming is None), we keep the stored value unchanged — a sync
+# from a downlevel client that doesn't know about lines must NOT wipe
+# them on the server. This is the same defense-in-depth pattern that
+# #495 added for annotations.
+def _merge_lines(
+    incoming: list[dict] | None, stored_json: str | None
+) -> list[dict] | None:
+    """Merge lines from an incoming payload with what's stored. Returns
+    None when both sides are absent — the column stays NULL and the
+    clip remains in the legacy blob model.
+
+    Conflict policy: per-line LWW by `updatedAt`. Line identity is
+    `id`. Lines without an id are dropped (can't merge safely).
+    """
+    stored = library_db.jsload(stored_json)
+    if incoming is None and stored is None:
+        return None
+    # If only one side has lines, use that side's order verbatim.
+    if incoming is None:
+        return stored or []
+    if stored is None:
+        return [ln for ln in (incoming or []) if isinstance(ln, dict) and ln.get("id")]
+
+    stored_by_id: dict[str, dict] = {}
+    for ln in stored or []:
+        if isinstance(ln, dict) and ln.get("id") is not None:
+            stored_by_id[str(ln["id"])] = ln
+
+    # Incoming order is authoritative for surviving lines (reading
+    # order is part of the data). We walk the incoming list, merging
+    # per-line; any stored lines NOT in the incoming payload are
+    # appended at the end — they represent lines another device added
+    # that this client didn't know about, and we want them to survive.
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for inc in incoming:
+        if not isinstance(inc, dict):
+            continue
+        lid = inc.get("id")
+        if lid is None:
+            continue
+        key = str(lid)
+        seen.add(key)
+        existing = stored_by_id.get(key)
+        if existing is None:
+            merged.append(inc)
+            continue
+        inc_at = inc.get("updatedAt") or ""
+        ex_at = existing.get("updatedAt") or ""
+        merged.append(inc if inc_at >= ex_at else existing)
+    # Append lines that exist only on the server (other-device adds).
+    for key, ln in stored_by_id.items():
+        if key not in seen:
+            merged.append(ln)
+    return merged
+
+
 def _row_to_clip_dict(row: sqlite3.Row) -> dict:
     """Convert a clips row into the JSON-friendly dict the frontend
     expects. JSON columns get parsed; deleted clips still include
@@ -190,6 +253,29 @@ def _row_to_clip_dict(row: sqlite3.Row) -> dict:
             ) or [])
             if isinstance(a, dict) and not a.get("deletedAt")
         ],
+        # v225v4.0 (#810): per-sentence storage. lines is omitted from
+        # the response when the column is NULL — clients use the
+        # presence of `lines` to detect "this clip is opted in." We
+        # filter out tombstoned lines (deletedAt set) for the same
+        # reason annotations do: storage keeps them so the merge can
+        # recognize them as authoritative deletes, but the UI never
+        # sees them.
+        **(
+            {
+                "lines": [
+                    ln for ln in (
+                        library_db.jsload(
+                            row["lines_json"] if "lines_json" in row.keys() else None
+                        ) or []
+                    )
+                    if isinstance(ln, dict) and not ln.get("deletedAt")
+                ],
+                "nextLineSeq": row["next_line_seq"]
+                if "next_line_seq" in row.keys() else None,
+            }
+            if "lines_json" in row.keys() and row["lines_json"] is not None
+            else {}
+        ),
         "synthOk": bool(row["synth_ok"]),
         "synthSilentSentenceCount": row["synth_silent_sentence_count"] or 0,
         "createdAt": row["created_at"],
@@ -341,6 +427,20 @@ class ClipUpsert(BaseModel):
     # v223.annotate-1.5: phone-native revision annotations.
     # See STRATEGY.md "Phone-native annotation" section.
     annotations: list[dict] = Field(default_factory=list)
+    # v225v4.0 (#810 / #586): Author-mode per-sentence storage. NULL on
+    # legacy clips and on clips the user hasn't opted in; populated on
+    # opt-in with [{id, text, hash, updatedAt, voiceOverride?}, ...].
+    # When set, clip.text is a derived view (lines joined). When NULL,
+    # blob model runs unchanged. See SENTENCE_IDS.md for the design.
+    # Use None-vs-list distinction explicitly — an empty list means
+    # "opted in but no lines" (shouldn't happen in practice, but it's
+    # different from "not opted in"). Downlevel clients omit the field
+    # entirely; the server preserves the stored value via _merge_lines.
+    lines: list[dict] | None = None
+    # Monotonic counter for minting new line IDs on this clip. Persists
+    # across edits so deleted IDs are never reused. NULL when clip is
+    # legacy; integer >=1 when lines is set.
+    nextLineSeq: int | None = None
     synthOk: bool = True
     synthSilentSentenceCount: int = 0
     createdAt: str | None = None
@@ -412,6 +512,29 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
             payload.annotations, existing_annos_json
         )
 
+        # v225v4.0 (#810): same defense-in-depth merge for clip.lines.
+        # If the incoming payload doesn't mention lines (downlevel
+        # client), the stored value is preserved untouched — a v3.74
+        # client mustn't wipe v4.0 sentence storage just by syncing.
+        # The merge returns None when both sides are NULL (clip stays
+        # in legacy blob model).
+        existing_lines_json = (
+            existing["lines_json"]
+            if existing is not None and "lines_json" in existing.keys()
+            else None
+        )
+        merged_lines = _merge_lines(payload.lines, existing_lines_json)
+        # next_line_seq is monotonic: take max(incoming, existing). A
+        # downlevel client sending nextLineSeq=None must not reset the
+        # stored counter to NULL when the clip is opted in.
+        existing_seq = (
+            existing["next_line_seq"]
+            if existing is not None and "next_line_seq" in existing.keys()
+            else None
+        )
+        candidates = [v for v in (payload.nextLineSeq, existing_seq) if v is not None]
+        merged_next_line_seq = max(candidates) if candidates else None
+
         # Decode + store audio if a blob came along, OR validate the
         # sha if the client only sent the reference.
         audio_sha = payload.audioSha256
@@ -443,6 +566,14 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
         # The PRIMARY KEY is (tenant_key, id) so the conflict target
         # has to name both columns — same row in same tenant updates,
         # same id under another tenant is a different row.
+        # v225v4.0 (#810): lines_json is NULL for legacy clips; persisted
+        # JSON when opted in. jsdump(None) returns None (not "null"),
+        # so the column stays SQL NULL — matches the migration's default
+        # and lets _row_to_clip_dict suppress the field in responses.
+        lines_json_value = (
+            library_db.jsdump(merged_lines) if merged_lines is not None else None
+        )
+
         c.execute(
             """
             INSERT INTO clips (
@@ -452,6 +583,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               sentence_offsets_json, bookmarks_json, note, notes,
               tags_json, cover_json, git_ref_json, audio_sha256,
               images_json, annotations_json,
+              lines_json, next_line_seq,
               synth_ok, synth_silent_sentence_count,
               created_at, updated_at, last_synced_at, deleted
             ) VALUES (
@@ -460,6 +592,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               ?, ?, ?,
               ?, ?, ?, ?,
               ?, ?, ?, ?,
+              ?, ?,
               ?, ?,
               ?, ?,
               ?, ?, ?, ?
@@ -485,6 +618,8 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               audio_sha256=excluded.audio_sha256,
               images_json=excluded.images_json,
               annotations_json=excluded.annotations_json,
+              lines_json=excluded.lines_json,
+              next_line_seq=excluded.next_line_seq,
               synth_ok=excluded.synth_ok,
               synth_silent_sentence_count=excluded.synth_silent_sentence_count,
               created_at=excluded.created_at,
@@ -515,6 +650,8 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
                 audio_sha,
                 library_db.jsdump(payload.images),
                 library_db.jsdump(merged_annotations),
+                lines_json_value,
+                merged_next_line_seq,
                 int(payload.synthOk),
                 payload.synthSilentSentenceCount,
                 payload.createdAt or payload.updatedAt,
