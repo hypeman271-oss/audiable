@@ -11806,7 +11806,60 @@ setupMediaSession();
 // physical media keys on desktop. Falls back silently if unsupported.
 
 function makeTitle(text) {
-  const firstLine = (text || "").trim().split(/\r?\n/, 1)[0];
+  const raw = (text || "").trim();
+  if (!raw) return "Narrative";
+  // v225v4.4 (#815): public-domain library packagings (Roy Glashan's
+  // Library is the canonical offender) ship a credit preamble — e.g.
+  // "Roy Glashan's Library  Non sibi sed omnibus  RGL e-Book Cover
+  // The Old Tower of Frankenstein" — that smushes onto the first line
+  // of the extracted text. The old "first 60 chars" rule then used the
+  // brand + motto as the clip title.
+  //
+  // Two-stage cleanup:
+  //   1. STRIP_PREFIX — if a candidate line contains a library-specific
+  //      sentinel ("e-Book Cover" / "Ex Libris"), strip everything up to
+  //      and including the sentinel, so a within-line real title can
+  //      surface. The sentinels are deliberately multi-word and unlikely
+  //      to occur in real book titles, to keep the strip from chewing
+  //      legitimate text.
+  //   2. BOILERPLATE_LINE — even after the prefix strip, some lines are
+  //      pure metadata (the RGL motto, a lone "Cover" / "Contents" / etc.)
+  //      and should be skipped entirely. Walk up to 15 lines looking for
+  //      the first clean one.
+  //
+  // Belt-and-suspenders: if every line in the lookahead window fails the
+  // filter, fall back to the unfiltered first line so we never emit "".
+  const STRIP_PREFIX = /^.*?\b(?:e-?book\s*cover|ex\s*libris)\s*[:—–\-|]*\s*/i;
+  const BOILERPLATE_LINE = new RegExp(
+    [
+      "roy\\s+glashan'?s\\s+library",
+      "non\\s+sibi\\s+sed\\s+omnibus",
+      "project\\s+gutenberg",
+      "^\\s*RGL\\s*$",
+      "^\\s*cover\\s*$",
+      "^\\s*ex\\s*libris\\s*$",
+      "^\\s*frontispiece\\s*$",
+      "^\\s*title\\s*page\\s*$",
+      "^\\s*table\\s*of\\s*contents\\s*$",
+      "^\\s*contents\\s*$",
+    ].join("|"),
+    "i",
+  );
+  const lines = raw.split(/[\r\n]+/);
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
+    let candidate = lines[i].trim();
+    if (!candidate) continue;
+    candidate = candidate.replace(STRIP_PREFIX, "").trim();
+    if (!candidate) continue;
+    if (BOILERPLATE_LINE.test(candidate)) continue;
+    // Strays — single punctuation chars, ordinal stubs.
+    if (candidate.length < 3) continue;
+    const slice = candidate.slice(0, 60).trim();
+    return candidate.length > 60 ? `${slice}…` : slice;
+  }
+  // Defensive: nothing survived the filter. Use the raw first line so
+  // we still produce something the user can rename in Edit.
+  const firstLine = raw.split(/\r?\n/, 1)[0];
   const trimmed = firstLine.slice(0, 60).trim();
   if (!trimmed) return "Narrative";
   return firstLine.length > 60 ? `${trimmed}…` : trimmed;
