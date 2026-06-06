@@ -847,6 +847,47 @@ def fetch_and_extract_url(
     if not text.strip():
         raise ExtractionError("no article text found at URL")
 
+    # v225v3.73 (#806): index-page guard. The original bug a user hit
+    # — pasting https://freeread.de/@RGLibrary/Unknown/Unknown.html
+    # into Import URL — surfaced a class of failure where the page is
+    # a directory listing (alphabetised table of story titles + nav
+    # chrome) with no article prose. Trafilatura dutifully returned
+    # the table cells, and the app saved 9 KB of "Authors | Authors |
+    # Roy Glashan's Library |…" to the user's library. They expected a
+    # story; they got nav.
+    #
+    # Heuristic signals (page must be substantive enough to bother
+    # measuring — the floor is 500 chars):
+    #
+    #   - Sentence density: terminal punctuation per char. Real prose
+    #     runs 1.5–2.5%; index pages run <0.5% because rows are just
+    #     "Title | Author | Year | HTML | EPUB". Threshold 0.005 (~1
+    #     sentence per 200 chars) catches the freeread.de case at
+    #     0.0024 with margin and never trips on normal articles.
+    #
+    #   - Pipe density: `|` characters as a fraction of text. Pipes
+    #     are the markdown-table delimiter trafilatura emits. The RGL
+    #     index runs >10% pipes; the threshold is 5%. Wikipedia
+    #     infobox tables come in at <2% because the body prose
+    #     dominates the page.
+    #
+    # Either signal alone trips the guard — both happen together for
+    # real indexes, but a one-signal trip is still informative and
+    # better than saving chrome to the library.
+    n_sentences = len(SENT_END_RE.findall(text))
+    n_chars = len(text)
+    n_pipes = text.count("|")
+    if n_chars >= 500:
+        sentence_density = n_sentences / n_chars
+        pipe_density = n_pipes / n_chars
+        if sentence_density < 0.005 or pipe_density > 0.05:
+            raise ExtractionError(
+                "this URL looks like a directory/index page, not an "
+                "article — try a specific story or chapter URL instead "
+                f"(sentence density {sentence_density:.3f}, pipe "
+                f"density {pipe_density:.3f})"
+            )
+
     return {
         "filename": parsed.hostname or "url",
         "chars": len(text),

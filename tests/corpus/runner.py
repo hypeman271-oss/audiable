@@ -89,6 +89,43 @@ def _run_url_case(base: str, key: str, case: dict[str, Any]) -> dict[str, Any]:
         resp = requests.post(url, headers=headers, json=body, timeout=TIMEOUT_EXTRACT)
     except requests.RequestException as e:
         return {"ok": False, "reason": f"network: {e}", "elapsed_ms": int((time.time() - t0) * 1000)}
+    # v225v3.73 (#806): negative cases. When a manifest entry sets
+    # expect_status (e.g. 422 for an index page that SHOULD refuse to
+    # extract), the test passes iff the server returned that status,
+    # and optionally if the detail body contains expect_detail_contains.
+    # Lets the harness lock in "this URL is correctly rejected"
+    # without requiring it to come back as a 200 with magic content.
+    expect_status = case.get("expect_status")
+    if expect_status is not None:
+        elapsed_ms = int((time.time() - t0) * 1000)
+        if resp.status_code != expect_status:
+            return {
+                "ok": False,
+                "reason": f"expected HTTP {expect_status}, got {resp.status_code}",
+                "body": resp.text[:300],
+                "elapsed_ms": elapsed_ms,
+            }
+        detail = ""
+        try:
+            detail = (resp.json().get("detail") or "")
+        except ValueError:
+            detail = resp.text or ""
+        wanted = case.get("expect_detail_contains")
+        if wanted and wanted not in detail:
+            return {
+                "ok": False,
+                "reason": f"detail missing {wanted!r}",
+                "body": detail[:300],
+                "elapsed_ms": elapsed_ms,
+            }
+        return {
+            "ok": True,
+            "reason": None,
+            "expected_status": expect_status,
+            "actual_status": resp.status_code,
+            "detail": detail[:200],
+            "elapsed_ms": elapsed_ms,
+        }
     if resp.status_code != 200:
         return {
             "ok": False,

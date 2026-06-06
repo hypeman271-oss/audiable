@@ -44,18 +44,9 @@
       "kind": "url",
       "source": "Roy Glashan's Library",
       "url": "https://freeread.de/@RGLibrary/Unknown/Unknown.html",
-      "min_chars": 1000,
-      "min_sentences": 5,
-      "content_must_contain_one_of": [
-        "Unknown Author",
-        "Roy Glashan",
-        "story",
-        "novel"
-      ],
-      "content_must_not_contain": [
-        "Authors |"
-      ],
-      "notes": "REGRESSION CASE: this URL broke import for the user. First corpus run numerically passed but text_head was navigation index ('Authors | Authors | Roy Glashan's Library'), not the story — exactly the silent-empty class of bug we're trying to catch. content_must_not_contain enforces 'no nav-bar leakage'."
+      "expect_status": 422,
+      "expect_detail_contains": "directory/index page",
+      "notes": "REGRESSION CASE: this URL is genuinely a directory index, NOT story prose. v3.73 (#806) shipped the index-page heuristic — sentence density <0.5% and pipe density >5% both flag it. Test now expects a 422 with our new diagnostic; if the heuristic regresses or the page becomes a real article, this case will fail loudly."
     },
     {
       "id": "standard-ebooks-aesops-fables-epub",
