@@ -20333,6 +20333,16 @@ async function _syncPushClip(clip) {
     // them in clips.annotations_json (schema v3). Empty array when
     // missing so the Pydantic default_factory works either way.
     annotations: Array.isArray(clip.annotations) ? clip.annotations : [],
+    // v225v4.0 (#810): Author-mode per-sentence storage. lines is null
+    // for clips not opted in (server keeps lines_json NULL → blob path
+    // runs unchanged). Sending null is critical: omitting the field
+    // entirely would let the server's defense-in-depth merge preserve
+    // whatever it had stored, which is wrong only in one direction
+    // (a manual "disable" — not supported in Phase A — would silently
+    // fail). For now we always send the current value and let the
+    // server merge handle concurrent edits per-line ID.
+    lines: Array.isArray(clip.lines) ? clip.lines : null,
+    nextLineSeq: typeof clip.nextLineSeq === "number" ? clip.nextLineSeq : null,
     synthOk: clip.synthOk !== false,
     synthSilentSentenceCount: clip.synthSilentSentenceCount || 0,
     createdAt: clip.createdAt || clip.updatedAt,
@@ -20536,6 +20546,14 @@ async function _syncAbsorbServerClip(sc) {
     // column; preserve them on the local IDB row so the receiving
     // device sees the same flags + marker dots without a re-fetch.
     annotations: Array.isArray(sc.annotations) ? sc.annotations : [],
+    // v225v4.0 (#810): per-sentence storage. Server only emits these
+    // fields when the clip is opted in; absent → undefined locally →
+    // clip stays in the legacy blob model on the receiving device. A
+    // cross-device convert thus propagates automatically: device A
+    // converts, syncs, device B's next absorb lands clip.lines and
+    // the reading view starts emitting data-line-id on next load.
+    lines: Array.isArray(sc.lines) ? sc.lines : undefined,
+    nextLineSeq: typeof sc.nextLineSeq === "number" ? sc.nextLineSeq : undefined,
     synthOk: sc.synthOk !== false,
     synthSilentSentenceCount: sc.synthSilentSentenceCount || 0,
     createdAt: sc.createdAt,
@@ -23189,6 +23207,15 @@ async function openClipEdit(clipId) {
   // when the clip has no provenance recorded (pre-v219 clips, or clips
   // generated against an unaudited voice — we don't fabricate).
   _renderProvenanceBlock(clip);
+  // v225v4.0 (#810): paint the line-by-line storage section. CSS
+  // visibility gates on .author-only handle the mode hiding; this
+  // chooses between the OFF (Enable button) and ON (badge + count)
+  // sub-states based on whether clip.lines is populated.
+  try {
+    await _paintLinesEditState(clipId);
+  } catch (e) {
+    console.warn("[clip-edit] lines state paint failed:", e);
+  }
   clipEditDialog.showModal();
   clipEditTitle.focus();
   clipEditTitle.select();
@@ -24221,6 +24248,256 @@ async function _openClearMarksConfirm(clipId) {
   dlg.querySelector("#clear-marks-confirm-btn").disabled = !anyClearable;
   if (!dlg.open) dlg.showModal();
 }
+
+// ───────────────────────────────────────────────────────────────────
+// v225v4.0 (#810): Author-mode per-sentence storage — Phase A.
+// Conversion modal + Edit-dialog status painter. The schema and
+// merge logic live server-side (see library_db.py v5 + _merge_lines
+// in library_api.py); the hash + ID helpers are in
+// static/sentence-ids.js (twin of sentence_ids.py); the design is
+// in SENTENCE_IDS.md. This block is just the UX: clip-level toggle,
+// confirm modal, conversion transaction.
+// ───────────────────────────────────────────────────────────────────
+
+let _linesConvertCurrentClipId = null;
+let _linesConvertWired = false;
+
+function _initLinesConvertDialog() {
+  if (_linesConvertWired) return;
+  _linesConvertWired = true;
+  const dlg = document.getElementById("lines-convert-confirm");
+  if (!dlg) return;
+  const close = () => {
+    _linesConvertCurrentClipId = null;
+    dlg.close();
+  };
+  dlg.querySelector("#lines-convert-close").addEventListener("click", close);
+  dlg.querySelector("#lines-convert-cancel").addEventListener("click", close);
+  // Click outside (on the backdrop) cancels — match #clear-marks-confirm.
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg) close();
+  });
+  const confirmBtn = dlg.querySelector("#lines-convert-confirm-btn");
+  confirmBtn.addEventListener("click", async () => {
+    const clipId = _linesConvertCurrentClipId;
+    if (clipId == null) return;
+    confirmBtn.disabled = true;
+    try {
+      const ok = await _runLinesConversion(clipId, dlg);
+      if (!ok) {
+        // Error already surfaced via setStatus; leave the modal open so
+        // the user can retry or cancel.
+        confirmBtn.disabled = false;
+        return;
+      }
+    } catch (e) {
+      console.warn("[lines-convert] failed:", e);
+      setStatus(`Couldn't enable line-by-line storage — ${e.message || e}`, true);
+      confirmBtn.disabled = false;
+      return;
+    }
+    close();
+  });
+}
+
+async function _openLinesConvertConfirm(clipId) {
+  _initLinesConvertDialog();
+  const dlg = document.getElementById("lines-convert-confirm");
+  if (!dlg) return;
+  let clip;
+  try {
+    clip = await getClip(clipId);
+  } catch (e) {
+    setStatus(`Couldn't read clip — ${e.message || e}`, true);
+    return;
+  }
+  if (!clip) {
+    setStatus("Clip not found.", true);
+    return;
+  }
+  if (Array.isArray(clip.lines) && clip.lines.length > 0) {
+    // Defensive: shouldn't be reachable since the Enable button is
+    // hidden in this state, but avoid double-applying if it is.
+    setStatus("This clip already uses line-by-line storage.");
+    return;
+  }
+  _linesConvertCurrentClipId = clipId;
+  // Sentence count for the headline. Use the same splitter we'll run at
+  // conversion time so the preview matches the result exactly.
+  const sentences = splitSentencesClient(clip.text || "");
+  const sentenceCount = sentences.length;
+  dlg.querySelector("#lines-convert-clip-title").textContent =
+    clip.title || "this clip";
+  dlg.querySelector("#lines-convert-sentence-count").textContent =
+    `${sentenceCount} sentence${sentenceCount === 1 ? "" : "s"}`;
+  // Count what gets dropped. Annotations: live (non-tombstoned) only.
+  // Voice assignments: count keys on the sentenceAssignments object.
+  const annoCount = Array.isArray(clip.annotations)
+    ? clip.annotations.filter((a) => a && !a.deletedAt).length
+    : 0;
+  const assignCount = clip.sentenceAssignments &&
+    typeof clip.sentenceAssignments === "object"
+    ? Object.keys(clip.sentenceAssignments).length
+    : 0;
+  const anyLoss = annoCount > 0 || assignCount > 0;
+  const lossBlock = dlg.querySelector("#lines-convert-loss-block");
+  if (anyLoss) {
+    dlg.querySelector("#lines-convert-count-annotations").textContent =
+      String(annoCount);
+    dlg.querySelector("#lines-convert-count-assignments").textContent =
+      String(assignCount);
+    // Default "Export first" ON when there's something to lose, OFF
+    // when the conversion is trivially safe.
+    dlg.querySelector("#lines-convert-export-first").checked = annoCount > 0;
+    lossBlock.hidden = false;
+  } else {
+    lossBlock.hidden = true;
+  }
+  const confirmBtn = dlg.querySelector("#lines-convert-confirm-btn");
+  confirmBtn.disabled = sentenceCount === 0;
+  if (!dlg.open) dlg.showModal();
+}
+
+// Run the actual conversion. Atomic: lines + nextLineSeq go in;
+// annotations tombstone (so cross-device sync propagates the delete);
+// sentenceAssignments wipes. Returns true on success.
+async function _runLinesConversion(clipId, dlg) {
+  const clip = await getClip(clipId);
+  if (!clip) {
+    setStatus("Clip not found.", true);
+    return false;
+  }
+  if (!window.NS_IDS || typeof window.NS_IDS.hashText !== "function") {
+    setStatus("Sentence-ID helpers missing (page reload required).", true);
+    return false;
+  }
+  const exportFirst = dlg.querySelector("#lines-convert-export-first");
+  const wantsExport = exportFirst && !exportFirst.disabled && exportFirst.checked;
+  if (wantsExport) {
+    const okExport = await _exportClipNotes(clipId);
+    if (!okExport) {
+      // _exportClipNotes set the error status; bail rather than
+      // dropping annotations the user wanted backed up first.
+      return false;
+    }
+  }
+  const sentences = splitSentencesClient(clip.text || "");
+  if (sentences.length === 0) {
+    setStatus("Nothing to index — this clip has no text.", true);
+    return false;
+  }
+  const now = new Date().toISOString();
+  // Hash each sentence (NFC + collapse whitespace, sha256[:12]).
+  // Done outside the mutation so a hash-compute failure doesn't half-
+  // write the clip.
+  const hashes = await Promise.all(
+    sentences.map((s) => window.NS_IDS.hashText(s)),
+  );
+  // Mint IDs c_{clip_id}-0001 .. -NNNN; nextLineSeq lands at N+1 so the
+  // next sentence the user inserts after conversion gets a fresh
+  // counter. Birth order, never reused — see SENTENCE_IDS.md.
+  const lines = sentences.map((text, i) => ({
+    id: window.NS_IDS.mintLineId(clipId, i + 1),
+    text,
+    hash: hashes[i],
+    updatedAt: now,
+  }));
+  const nextLineSeq = sentences.length + 1;
+  let droppedAnno = 0;
+  let droppedAssign = 0;
+  try {
+    await _mutateClipAtomic(clipId, (c) => {
+      c.lines = lines;
+      c.nextLineSeq = nextLineSeq;
+      // Tombstone every live annotation so the server-side merge
+      // recognizes the delete as authoritative and propagates it to
+      // the user's other devices. Mirror _clearClipMarks's pattern.
+      if (Array.isArray(c.annotations)) {
+        const live = c.annotations.filter((a) => a && !a.deletedAt);
+        droppedAnno = live.length;
+        c.annotations = c.annotations.map((a) => {
+          if (!a || a.deletedAt) return a;
+          return { ...a, deletedAt: now, updatedAt: now };
+        });
+      }
+      // Voice assignments are clip-local (no cross-device sync layer
+      // for them yet), so a hard clear is safe.
+      if (c.sentenceAssignments && typeof c.sentenceAssignments === "object") {
+        droppedAssign = Object.keys(c.sentenceAssignments).length;
+        c.sentenceAssignments = {};
+        c.assignmentsDirty = false;
+      }
+    });
+  } catch (e) {
+    console.warn("[lines-convert] mutation failed:", e);
+    setStatus(`Conversion failed — ${e.message || e}`, true);
+    return false;
+  }
+  _dlog("lines-convert", "done", {
+    clipId,
+    sentences: sentences.length,
+    droppedAnno,
+    droppedAssign,
+    exportedFirst: wantsExport,
+  });
+  setStatus(
+    `Enabled line-by-line storage — ${sentences.length} sentence${sentences.length === 1 ? "" : "s"} indexed.`,
+  );
+  // Repaint Edit-dialog status (ON badge + count) so the user sees
+  // the change without closing/re-opening.
+  await _paintLinesEditState(clipId);
+  // Repaint reading-view annotation chips (they're all tombstoned now).
+  try {
+    const refreshed = await getClip(clipId);
+    if (
+      refreshed &&
+      _currentClipId === clipId &&
+      typeof _applyAnnotationMarkers === "function"
+    ) {
+      _applyAnnotationMarkers(refreshed);
+    }
+  } catch {}
+  return true;
+}
+
+// Paint the Edit dialog's lines section to reflect current state.
+// Called from openClipEdit and after a successful conversion.
+async function _paintLinesEditState(clipId) {
+  const offEl = document.getElementById("clip-edit-lines-off");
+  const onEl = document.getElementById("clip-edit-lines-on");
+  if (!offEl || !onEl) return;
+  let clip;
+  try {
+    clip = await getClip(clipId);
+  } catch {
+    return;
+  }
+  const hasLines = clip && Array.isArray(clip.lines) && clip.lines.length > 0;
+  if (hasLines) {
+    offEl.hidden = true;
+    onEl.hidden = false;
+    const countEl = document.getElementById("clip-edit-lines-count");
+    if (countEl) {
+      const n = clip.lines.length;
+      countEl.textContent = `— ${n} sentence${n === 1 ? "" : "s"} indexed`;
+    }
+  } else {
+    offEl.hidden = false;
+    onEl.hidden = true;
+  }
+}
+
+// Wire the Enable button. Lazy lookup of the element since the Edit
+// dialog HTML is parsed at boot but the script runs after.
+(function _wireLinesEnableBtn() {
+  const btn = document.getElementById("clip-edit-lines-enable-btn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (_editingClipId == null) return;
+    _openLinesConvertConfirm(_editingClipId);
+  });
+})();
+
 notesDialogClose.addEventListener("click", () => notesDialog.close());
 notesDialog.addEventListener("close", async () => {
   await _commitNotes();

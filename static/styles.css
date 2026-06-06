@@ -7148,6 +7148,80 @@ button:disabled {
   color: var(--accent);
 }
 
+/* v225v4.0 (#810): Author-mode per-sentence storage toggle section.
+   Shares chrome with .clip-edit-clear-marks above — uppercase head,
+   dim descriptor, neutral button with accent hover. Visually quiet
+   on purpose: it's a one-time, advanced action that authors discover
+   by exploring the dialog, not a primary affordance. */
+.clip-edit-lines {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.clip-edit-lines-head {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.clip-edit-lines-desc {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+.clip-edit-lines-enable-btn {
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.clip-edit-lines-enable-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.clip-edit-lines-enable-btn:active {
+  transform: translateY(1px);
+}
+.clip-edit-lines-on-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-right: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* The conversion-confirm modal shares chrome with .clear-marks-dialog.
+   These extra rules style the "what gets dropped" rationale + lose-
+   ness checkbox the way the clear-marks dialog styles its categories. */
+.clear-marks-loss-head {
+  margin: 6px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.clear-marks-loss-why {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
 /* v225fz5 (#672): restore confirm dialog — extra rules over the
    shared .clear-marks-dialog chrome. Read-only category rows (no
    checkboxes — the backup defines what comes back), an indented

@@ -1471,7 +1471,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v3.70</span>
+            Narrative <span id="settings-version-tag">v225v4.0</span>
             <button
               type="button"
               id="settings-force-update"
@@ -3618,6 +3618,39 @@
                or reading marks, not revision marks). The actual
                destructive step happens in #clear-marks-confirm with
                a counts-preview and an Export-to-Markdown safety net. -->
+          <!-- v225v4.0 (#810): Author-mode per-sentence storage toggle.
+               Hidden in Simple + Standard tiers because the feature is
+               only meaningful for authors revising line-by-line. When
+               the clip is NOT yet opted in, shows the Enable button +
+               explanation. When the clip IS opted in, shows a quiet
+               status row with the sentence count. Phase A ships
+               one-way only (no Disable) — the rare user who wants to
+               undo can clear the clip's annotations + voice
+               assignments, re-import, and start fresh. See
+               SENTENCE_IDS.md for the design. -->
+          <div class="clip-edit-lines author-only">
+            <h3 class="clip-edit-lines-head">Line-by-line storage</h3>
+            <div id="clip-edit-lines-off" class="clip-edit-lines-state">
+              <p class="clip-edit-lines-desc">
+                Snapshot this clip's sentences as stable records so
+                revision marks stay anchored across edits, partial
+                re-narrate can target individual sentences, and edits
+                can be pushed back to the source manuscript.
+              </p>
+              <button
+                id="clip-edit-lines-enable-btn"
+                type="button"
+                class="clip-edit-lines-enable-btn"
+                title="Open the conversion confirmation dialog"
+              >Enable line-by-line storage…</button>
+            </div>
+            <div id="clip-edit-lines-on" class="clip-edit-lines-state" hidden>
+              <p class="clip-edit-lines-desc">
+                <span class="clip-edit-lines-on-badge">✓ Enabled</span>
+                <span id="clip-edit-lines-count">— 0 sentences indexed</span>
+              </p>
+            </div>
+          </div>
           <div class="clip-edit-clear-marks">
             <h3 class="clip-edit-clear-marks-head">Clear &amp; restore</h3>
             <p class="clip-edit-clear-marks-desc">
@@ -3748,6 +3781,94 @@
               type="button"
               class="clear-marks-confirm-btn"
             >Clear</button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- v225v4.0 (#810): conversion confirmation modal for opting a
+           clip into per-sentence storage. Same shape family as
+           #clear-marks-confirm: live count of what gets dropped,
+           Export-first safety net (defaults ON when there's anything
+           to lose, OFF otherwise), explicit warn line. The conversion
+           runs the sentence splitter, mints stable IDs, and drops
+           annotations + per-sentence voice assignments in one atomic
+           clip write. See SENTENCE_IDS.md for the rationale. -->
+      <dialog id="lines-convert-confirm" class="clear-marks-dialog">
+        <div class="clear-marks-head">
+          <h2>Enable line-by-line storage</h2>
+          <button
+            id="lines-convert-close"
+            type="button"
+            class="link-btn"
+            aria-label="Cancel"
+          >Cancel</button>
+        </div>
+        <div class="clear-marks-body">
+          <p class="clear-marks-target">
+            For <strong id="lines-convert-clip-title">this clip</strong>,
+            snapshot
+            <strong id="lines-convert-sentence-count">0 sentences</strong>
+            as stable records.
+          </p>
+          <p class="clear-marks-desc">
+            Each sentence gets a permanent ID. Revision marks made
+            after conversion stay anchored even when you edit other
+            sentences. The audio doesn't change.
+          </p>
+          <div
+            id="lines-convert-loss-block"
+            class="clear-marks-categories"
+            hidden
+          >
+            <p class="clear-marks-loss-head">
+              This will remove from this clip:
+            </p>
+            <div class="clear-marks-cat">
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Annotations</span>
+                <span
+                  id="lines-convert-count-annotations"
+                  class="clear-marks-cat-count"
+                >0</span>
+              </span>
+            </div>
+            <div class="clear-marks-cat">
+              <span class="clear-marks-cat-text">
+                <span class="clear-marks-cat-name">Voice assignments</span>
+                <span
+                  id="lines-convert-count-assignments"
+                  class="clear-marks-cat-count"
+                >0</span>
+              </span>
+            </div>
+            <p class="clear-marks-loss-why">
+              They use position-based anchors that the new storage
+              model can't carry forward — re-create the ones you care
+              about against the new stable IDs after conversion.
+            </p>
+            <label class="clear-marks-export-row">
+              <input
+                id="lines-convert-export-first"
+                type="checkbox"
+                checked
+              />
+              <span>📤 Export annotations to Markdown first</span>
+            </label>
+          </div>
+          <p class="clear-marks-warn">
+            Bookmarks, notes, highlights, and audio stay as they are.
+          </p>
+          <div class="clear-marks-actions">
+            <button
+              id="lines-convert-cancel"
+              type="button"
+              class="link-btn"
+            >Cancel</button>
+            <button
+              id="lines-convert-confirm-btn"
+              type="button"
+              class="clear-marks-confirm-btn"
+            >Convert</button>
           </div>
         </div>
       </dialog>
@@ -3897,6 +4018,11 @@
 
     </main>
 
+    <!-- v225v4.0 (#810): sentence ID helpers (normalize, hashText,
+         mintLineId). MUST stay in lockstep with sentence_ids.py — see
+         tests/sentence_ids_test.js for the cross-impl test. Loaded
+         BEFORE app.js so window.NS_IDS is defined when app code runs. -->
+    <script src="/sentence-ids.js"></script>
     <script src="/app.js"></script>
     <!-- v225v3.16 (#622): overlay tour engine. Exposes window.OverlayTour
          for any caller (Settings "Take the tour", future product-led
