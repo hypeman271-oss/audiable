@@ -13080,8 +13080,14 @@ html, body {
  * Glyph swap (🔁 ↔ 🔂) is done in JS via .textContent in
  * _paintRepeatBtn — the CSS only handles color/weight state.
  */
+/* v225v4.10: off-state opacity bumped 0.55 → 0.85. The old value
+   made the 🔁 chip read as "not present" against dark theme — user
+   couldn't find the Repeat control in the chip row at all. 0.85
+   still tells the off state apart from the active state (which is
+   opacity 1.0 + accent color via the [data-mode="one|all"] rule
+   below), but stays visible. */
 .repeat-btn {
-  opacity: 0.55;
+  opacity: 0.85;
   font-weight: 500;
 }
 .repeat-btn[data-mode="one"],
