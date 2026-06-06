@@ -13082,20 +13082,22 @@ html, body {
  */
 /* v225v4.11: SVG-icon rendering replaces the Unicode emoji from
    v225eu. The chip is now a plain button containing an inline SVG
-   that inherits color via currentColor. Off state takes --fg-dim so
-   the chip reads as present-but-not-active (matching how Spotify,
-   YouTube Music, et al. handle the same control). Active states
-   (one / all) take --accent. No opacity manipulation needed.
-   v225v4.10's opacity-bump heuristic is superseded — the SVG path
-   renders identically on every OS, so we don't need the emoji
-   visibility band-aid. */
+   that inherits color via currentColor. Active states (one / all)
+   take --accent.
+   v225v4.13: bump the icon to 22px and use --fg for the off state.
+   v4.11 used --fg-dim, which made the icon-only chip read as faded
+   chrome next to neighbor text chips (Sleep, 1×, Notes), so users
+   couldn't find it. At --fg the chip's visual weight matches the
+   text chips around it — same brightness as the labels — but the
+   loop shape still reads as iconographic rather than active until
+   it's tinted accent in the one/all modes. */
 .repeat-btn {
-  color: var(--fg-dim);
+  color: var(--fg);
   font-weight: 500;
 }
 .repeat-btn .repeat-svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   vertical-align: middle;
   display: inline-block;
 }
