@@ -138,3 +138,29 @@ def whoami(request: Request):
         "is_admin": getattr(request.state, "is_admin", False),
         "tenant_label": getattr(request.state, "tenant_label", ""),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Pre-deploy guard (v225v4.5 / #795).
+#
+# A rolling `fly deploy` mid-synth has produced duplicate clips in
+# practice (see the v225v4.3 → v225v4.4 incident: bg-queue synth was
+# in flight when v4.4 deployed; the resumption logic added a second
+# clip instead of resuming the first). The pre-deploy guard at
+# scripts/predeploy_check.ps1 hits this endpoint and refuses to run
+# `fly deploy` if any tenant has an active synth job.
+#
+# Admin-only — this surfaces tenant_keys, which testers shouldn't see.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@router.get("/synth-jobs/active")
+def list_active_synth_jobs(request: Request):
+    """List every in-flight synth job across all tenants.
+    Admin-only. Returns {count, active: [...]} where each entry has
+    the job snapshot plus tenant_key + elapsed_sec.
+    """
+    _require_admin(request)
+    import synth_jobs
+    jobs = synth_jobs.list_active_jobs()
+    return {"count": len(jobs), "active": jobs}

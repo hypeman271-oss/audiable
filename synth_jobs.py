@@ -162,6 +162,31 @@ def list_jobs_for_tenant(
     return out
 
 
+def list_active_jobs() -> list[dict[str, Any]]:
+    """Return snapshots of every in-flight job across all tenants.
+    Used by the pre-deploy guard (#795 / scripts/predeploy_check.ps1)
+    to refuse deploys that would interrupt synthesis — a rolling
+    restart mid-synth has produced duplicate clips in practice
+    (see #574 and the v225v4.3 → v225v4.4 incident).
+
+    "Active" means status pending or running. done/failed/cancelled
+    jobs are not blockers — their buffers live in _JOBS until GC, but
+    they're not consuming the synth pipeline. Includes tenant_key and
+    elapsed time so the guard's diagnostic output is actionable
+    ("which tester's job, how long left to wait").
+    """
+    now = time.time()
+    out = []
+    for job in _JOBS.values():
+        if job.status not in ("pending", "running"):
+            continue
+        snap = job.snapshot()
+        snap["tenant_key"] = job.tenant_key
+        snap["elapsed_sec"] = round(now - job.created_at, 1)
+        out.append(snap)
+    return out
+
+
 async def create_job(
     params: JobParams, tenant_key: str | None
 ) -> SynthJob:
