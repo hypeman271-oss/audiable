@@ -1,0 +1,80 @@
+# narrative debug log
+# reason: manual-share
+# version: v225v3.70
+# ua: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36
+# tenant: admin
+# uploaded: 2026-06-06T02:37:58.402370+00:00
+# ---
+2026-06-06T02:36:29.033Z  [tutorial:pointerdown] <author>  pointerdown on empty-state
+  {
+    "pointerType": "mouse",
+    "hasLink": false,
+    "hasCard": true,
+    "targetClass": "empty-state-card"
+  }
+
+2026-06-06T02:36:29.148Z  [tutorial:tap] <author>  click on empty-state region
+  {
+    "phase": 1,
+    "targetTag": "BUTTON",
+    "targetClass": "empty-state-card",
+    "hasLink": false,
+    "linkAnchor": null,
+    "hasCard": true,
+    "cardAction": "file",
+    "sameAncestry": null,
+    "clientX": 820,
+    "clientY": 255,
+    "linkRect": null,
+    "stopped": false
+  }
+
+2026-06-06T02:36:29.149Z  [tutorial:bubble] <author>  bubble click reached card
+  {
+    "eventPhase": 3,
+    "targetClass": "empty-state-card",
+    "cardAction": "file",
+    "defaultPrevented": false,
+    "isTrusted": true
+  }
+
+2026-06-06T02:37:45.637Z  [flag-chip] <author>  rendered + wired
+  {
+    "tag": "pov",
+    "annoId": "a_mq1nd541_b3f30547",
+    "sentenceIdx": 29
+  }
+
+2026-06-06T02:37:45.637Z  [flag-chip] <author>  rendered + wired
+  {
+    "tag": "cut",
+    "annoId": "a_mq1nntav_cdfc749f",
+    "sentenceIdx": 68
+  }
+
+2026-06-06T02:37:45.659Z  [bookmark] <author>  renderBookmarks
+  {
+    "count": 9,
+    "ids": [
+      1780684556961,
+      1780620988436,
+      1780707696449,
+      1780707495666,
+      1780708026323,
+      1780708089242,
+      1780708184426,
+      1780708244799,
+      1780708320832
+    ],
+    "times": [
+      73.986701,
+      77.725075,
+      111.495,
+      187.849203,
+      207.053806,
+      258.575581,
+      278.858,
+      286.574,
+      301.743
+    ]
+  }

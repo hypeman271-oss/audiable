@@ -143,6 +143,47 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.22</span>
+          <span class="release-tagline">Phase B / #811: per-sentence audio cache + clean partial re-narrate (Author opt-in)</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Per-sentence cache populates during synth.</strong>
+            When you generate audio for a clip with
+            <em>Store by sentence</em> enabled (Phase A opt-in from
+            v4.3), the server now writes each sentence's WAV to a
+            content-addressed cache as the engine emits it. No extra
+            wait — it happens during the same synth pass that produces
+            the combined MP3 you hear. To populate the cache for a
+            clip you imported before Phase B, just tap 🔄 Re-narrate
+            on the card; nothing else to do.
+          </li>
+          <li>
+            <strong>Inline single-sentence edit now uses the cache
+            when available.</strong> Edit one sentence with ✎, and
+            the app re-synths just that sentence into the cache, then
+            asks the server to rebuild the combined MP3 by concatenating
+            the cached per-sentence FLACs in order. The result is
+            seamless — no faint crossfade at the cut point that the old
+            PCM-domain splice path occasionally produced. Falls back to
+            the splice path automatically for clips that don't have
+            full cache coverage yet, so existing edit behavior never
+            regresses.
+          </li>
+          <li>
+            <strong>Cache lives on the server, syncs across devices.</strong>
+            Stored under your tenant key (the same scope as your library)
+            as FLAC blobs (about half the bytes of PCM, lossless). A
+            future export feature (#354) will let animation pipelines
+            pull per-sentence WAVs directly — this cache is the
+            foundation for that.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v3.22</span>
           <span class="release-tagline">StPageFlip corner-curl dropped — V3's translateX slide is the page transition</span>
         </div>

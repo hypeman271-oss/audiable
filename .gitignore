@@ -27,3 +27,11 @@ build/
 dist/
 *.spec
 *.egg-info/
+
+# v225v4.29 (#707): Tauri updater signing keys. The PRIVATE key file
+# never lands in git — losing or leaking it means the whole installed
+# user base can't receive signed updates. Public key lives in
+# tauri.conf.json (committed). See UPDATES.md for keypair generation.
+src-tauri/.tauri/
+*.key
+*.key.pub

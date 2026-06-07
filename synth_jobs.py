@@ -72,24 +72,67 @@ _GC_SECONDS = 60 * 60
 
 @dataclass
 class JobParams:
-    """Synth parameters frozen at job creation."""
+    """Synth parameters frozen at job creation.
+
+    `target_clip_id` + `target_line_ids` opt into Phase B per-sentence
+    caching (#811 B.2b). When both are set, the worker writes each
+    sentence's WAV to the sentence_audio cache as it's yielded by the
+    engine. Audio quality matches the combined MP3 because all
+    sentences share a single `synthesize_iter()` call — the engine's
+    warmup is paid once, at sentence 0, then amortized across the rest.
+    (The spike's per-sentence `/api/synthesize` calls failed exactly
+    this assumption — every call paid its own warmup, producing an
+    audible startup transient at the start of every cached WAV.)
+    """
 
     text: str
     voice_id: str
     rate: float
     volume: float
     speaker_id: int | None
+    target_clip_id: int | None = None
+    target_line_ids: list[str] | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> JobParams:
+        # Optional per-sentence cache targets. None on either side
+        # disables caching for this job. We coerce to plain list[str]
+        # so the dataclass round-trips cleanly into the worker.
+        raw_line_ids = d.get("target_line_ids")
+        target_line_ids: list[str] | None = None
+        if raw_line_ids is not None:
+            if not isinstance(raw_line_ids, list):
+                raise ValueError("target_line_ids must be a list")
+            target_line_ids = [str(x) for x in raw_line_ids]
+            if not target_line_ids:
+                target_line_ids = None
+        raw_clip = d.get("target_clip_id")
+        target_clip_id = int(raw_clip) if raw_clip is not None else None
+        # Both-or-neither: a clip_id without line_ids has nothing to
+        # write against; line_ids without a clip_id has nowhere to write.
+        if (target_clip_id is None) != (target_line_ids is None):
+            raise ValueError(
+                "target_clip_id and target_line_ids must be set together"
+            )
+        # Use explicit `is not None` checks instead of dict.get's default
+        # arg, because SynthesizeRequest models rate/volume as
+        # Optional[float] — a caller that omits them sends `None`
+        # through to here, and `get("k", default)` returns None (the
+        # value), not the default. float(None) crashes. (Pre-existing
+        # latent bug; surfaced when v4.21 added a server-side caller
+        # that doesn't always set volume.)
+        rate_raw = d.get("rate")
+        volume_raw = d.get("volume")
         return cls(
             text=str(d.get("text", "")),
             voice_id=str(d.get("voice_id", "")),
-            rate=float(d.get("rate", 180)),
-            volume=float(d.get("volume", 1.0)),
+            rate=float(rate_raw) if rate_raw is not None else 180.0,
+            volume=float(volume_raw) if volume_raw is not None else 1.0,
             speaker_id=(
                 int(d["speaker_id"]) if d.get("speaker_id") is not None else None
             ),
+            target_clip_id=target_clip_id,
+            target_line_ids=target_line_ids,
         )
 
 
@@ -209,6 +252,51 @@ async def create_job(
     return job
 
 
+def _write_sentence_to_cache(
+    wav_b64: str,
+    tenant_key: str,
+    clip_id: int,
+    line_id: str,
+    voice_id: str | None,
+    speaker_id: int | None,
+    rate: int,
+) -> None:
+    """Encode the sentence WAV to FLAC and write the cache row.
+
+    CPU-bound (FLAC encode shells out to ffmpeg); call via
+    `loop.run_in_executor` so the worker's event loop isn't blocked.
+
+    Raises on any failure — the worker catches and fails the job loudly
+    so a partial cache doesn't lurk silently.
+    """
+    import library_db as _ldb
+    from tts.encode import wav_to_flac, wav_duration_ms
+
+    if not _ldb.is_enabled():
+        # No-op when library_db is off — but the worker only enters
+        # this path when both target fields are set, and the
+        # /api/synth/jobs endpoint won't accept those fields unless
+        # library_db is enabled. So this is a defense-in-depth check.
+        raise RuntimeError("library_db not enabled — cannot cache sentences")
+
+    wav_bytes = base64.b64decode(wav_b64)
+    if not wav_bytes:
+        raise ValueError("sentence event carried empty wav_b64")
+    duration_ms = wav_duration_ms(wav_bytes)
+    flac_bytes = wav_to_flac(wav_bytes)
+    audio_sha256 = _ldb.store_sentence_audio(flac_bytes)
+    _ldb.record_sentence_audio(
+        tenant_key,
+        clip_id,
+        line_id,
+        audio_sha256=audio_sha256,
+        voice_id=voice_id,
+        speaker_id=speaker_id,
+        rate=rate,
+        duration_ms=duration_ms,
+    )
+
+
 async def _run_worker(job: SynthJob) -> None:
     """The background worker. Iterates tts.synthesize_iter via the
     thread pool (Piper is sync), appending each event to the job's
@@ -266,6 +354,70 @@ async def _run_worker(job: SynthJob) -> None:
                     job.sentences_total = max(job.sentences_total, int(event["total"]))
                 async with job._condition:
                     job._condition.notify_all()
+
+                # Phase B / #811 B.2b: write this sentence's WAV to the
+                # sentence_audio cache so a future restitch can rebuild
+                # the combined MP3 without re-synthesizing. Gate on both
+                # target_clip_id + target_line_ids set (the caller
+                # opted in) and on tenant_key being present (cache is
+                # tenant-scoped). Engine state is shared across all
+                # yields in this loop, so the cached WAVs sound
+                # identical to the combined result the worker produces
+                # below — that's the whole point of B.2b.
+                if (
+                    job.params.target_clip_id is not None
+                    and job.params.target_line_ids is not None
+                    and job.tenant_key
+                ):
+                    sentence_index = int(event.get("index", -1))
+                    expected = job.params.target_line_ids
+                    if "total" in event:
+                        total = int(event["total"])
+                        if total != len(expected):
+                            await _fail(
+                                job,
+                                f"engine produced {total} sentences but "
+                                f"target_line_ids has {len(expected)} — "
+                                "client and server split the text differently; "
+                                "cache write skipped to avoid corruption",
+                            )
+                            return
+                    if not (0 <= sentence_index < len(expected)):
+                        await _fail(
+                            job,
+                            f"engine yielded sentence index {sentence_index} "
+                            f"outside target_line_ids range "
+                            f"[0, {len(expected)})",
+                        )
+                        return
+                    line_id = expected[sentence_index]
+                    wav_b64 = event.get("wav_b64", "")
+                    try:
+                        await loop.run_in_executor(
+                            None,
+                            _write_sentence_to_cache,
+                            wav_b64,
+                            job.tenant_key,
+                            job.params.target_clip_id,
+                            line_id,
+                            job.params.voice_id,
+                            job.params.speaker_id,
+                            int(job.params.rate),
+                        )
+                    except Exception as exc:
+                        # Failing the whole job on a cache write error
+                        # is the right call: a partial cache means
+                        # restitch will return 409 backfill_required
+                        # later and the user re-synthesizes from
+                        # scratch anyway. Better to surface it now.
+                        import traceback as _tb
+                        print(
+                            f"[synth_jobs] {job.id} sentence cache write failed:",
+                            file=sys.stderr, flush=True,
+                        )
+                        _tb.print_exc()
+                        await _fail(job, f"sentence cache write failed: {exc}")
+                        return
             elif etype == "result":
                 # MP3-encode in the executor (CPU bound). Same hand-off
                 # the old /api/synthesize/stream did.

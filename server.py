@@ -91,6 +91,9 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 app = FastAPI(title="Narrative", version="0.1.0")
 
+# v225v4.30: CORS middleware is registered AFTER require_api_key
+# below (see explanation there). Don't add it here.
+
 # v221.sync-3: server-side library CRUD endpoints. Lives in a separate
 # module so server.py doesn't bloat further; behind /api/library/*.
 # Gracefully degrades to 503 on every endpoint when library_db isn't
@@ -227,6 +230,17 @@ async def require_api_key(request: Request, call_next):
       - /api/github/oauth/* — the OAuth round-trip is hit via redirect,
         not fetch, so the header isn't available. (v180 carve-out.)
     """
+    # v225v4.27 (#704): CORS preflight short-circuit. The browser fires
+    # OPTIONS before any cross-origin /api/* call to ask "are these
+    # headers allowed?" The preflight spec FORBIDS auth headers on the
+    # preflight itself, so X-Narrative-Key won't be there even when the
+    # follow-up GET/POST will carry it. If we return 401 here, the
+    # browser never sends the real request. Let OPTIONS fall through to
+    # CORSMiddleware which has the allow_headers / allow_origins config
+    # and will respond with the right 200 + Access-Control-* headers.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     required_key = os.environ.get("NARRATIVE_KEY", "").strip()
 
     # Local-dev fallthrough. Everything looks like the admin tenant so
@@ -243,6 +257,11 @@ async def require_api_key(request: Request, call_next):
     if path.startswith("/api/voices/sample/"):
         return await call_next(request)
     if path.startswith("/api/github/oauth/"):
+        return await call_next(request)
+    # v225v4.29 (#707): Tauri updater plugin polls this endpoint
+    # without an auth header — it has no concept of NARRATIVE_KEY
+    # and returns only public release metadata anyway.
+    if path.startswith("/api/updates/"):
         return await call_next(request)
 
     provided = request.headers.get("X-Narrative-Key", "")
@@ -281,6 +300,51 @@ async def require_api_key(request: Request, call_next):
     )
 
 
+# v225v4.30: CORS for the Tauri desktop shell. The Tauri app loads
+# index.html from the bundled assets (tauri://localhost on
+# macOS/Linux, https://tauri.localhost on Windows) and hits this
+# server's /api/* cross-origin.
+#
+# ⚠ Order matters. `add_middleware` LAST = OUTERMOST. We need CORS
+# to wrap require_api_key so the 401 it returns gets CORS headers
+# stamped on it on the way out — otherwise the browser blocks the
+# response and the user sees "Failed to fetch" with no diagnostic.
+# (v4.27 had this registration ABOVE the auth decorator, so auth
+# was the outer layer and 401s went out bare. Confirmed via curl:
+# the 401 came back without access-control-allow-origin.)
+#
+# Auth is still required (X-Narrative-Key on every /api/* call), so
+# permissive allow_origins doesn't lower the bar — an unauth'd call
+# gets 401 regardless of origin. allow_credentials is False because
+# we use a custom header rather than cookies; that lets us list
+# specific origins instead of "*" while keeping the app working.
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        # Tauri production webview origins (differ per platform).
+        "tauri://localhost",
+        "https://tauri.localhost",
+        # Local dev — running `tauri dev` against a local Narrative
+        # server (server.py on :8000) or the prod Fly URL.
+        "http://localhost:8000",
+        "http://localhost:1430",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:1430",
+    ],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=[
+        # Headers the existing splice + sentence-offset paths rely on
+        # being readable from cross-origin responses.
+        "X-Narrative-Sentences",
+        "X-Narrative-Audio-Sha256",
+        "X-Audiable-Sentences",
+    ],
+)
+
+
 class SynthesizeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500_000)
     voice_id: str | None = None
@@ -290,6 +354,22 @@ class SynthesizeRequest(BaseModel):
     # Upper bound is enforced by Piper's model at synth time, not here, since
     # the request can target any voice and we don't want to special-case.
     speaker_id: int | None = Field(default=None, ge=0, le=10000)
+
+
+class SynthJobCreateRequest(SynthesizeRequest):
+    """SynthesizeRequest + Phase B per-sentence cache targets (#811 B.2b).
+
+    When both fields are set, the worker writes each sentence's WAV to
+    the sentence_audio cache as it's yielded by the engine. Audio
+    quality matches the combined MP3 (same `synthesize_iter()` call,
+    shared warmup) — which is the whole reason this path exists vs the
+    spike's per-sentence /api/synthesize approach.
+
+    Both-or-neither: the JobParams loader rejects partial sets so we
+    don't need a Pydantic validator here.
+    """
+    target_clip_id: int | None = Field(default=None, ge=1)
+    target_line_ids: list[str] | None = Field(default=None, max_length=10000)
 
 
 class SynthesisSegment(BaseModel):
@@ -562,6 +642,80 @@ async def voices_install_stream(req: InstallVoiceRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ─── v225v4.29 (#707) — Tauri auto-updater manifest endpoint ──────────
+#
+# The Tauri updater plugin polls this URL on launch + when the user
+# clicks Help → Check for updates…. It substitutes {{target}} and
+# {{current_version}} into the endpoint template from tauri.conf.json.
+#
+# Protocol (see https://v2.tauri.app/plugin/updater/):
+#   - 204 No Content  → no update available, plugin stays quiet
+#   - 200 + JSON      → manifest with version + per-target signature
+#
+# To ship a new desktop release:
+#   1. bump LATEST_DESKTOP_VERSION below (and src-tauri/Cargo.toml +
+#      src-tauri/tauri.conf.json to match)
+#   2. cargo tauri build         → produces .msi.zip / .dmg / .AppImage
+#   3. cargo tauri signer sign … → emits .sig file alongside each bundle
+#   4. upload signed bundles to a CDN or our /downloads/ static dir
+#   5. paste base64 signatures into DESKTOP_SIGNATURES below
+#   6. deploy
+#
+# See UPDATES.md at repo root for the full release runbook.
+
+LATEST_DESKTOP_VERSION = "0.1.0"
+
+# target → base64 Ed25519 signature (output of `cargo tauri signer sign`).
+# Empty dict means "no signed bundles yet" — endpoint returns 204 for
+# every target until someone ships an actual release.
+DESKTOP_SIGNATURES: dict[str, str] = {
+    # "windows-x86_64": "...",
+    # "darwin-aarch64": "...",
+    # "darwin-x86_64":  "...",
+    # "linux-x86_64":   "...",
+}
+
+DESKTOP_DOWNLOAD_BASE = "https://narrative-alpha.fly.dev/downloads"
+
+
+def _parse_semver(v: str) -> tuple[int, int, int]:
+    """Naive SemVer parse — handles "0.1.0", "v0.1.0", "0.1.0-beta.1"."""
+    try:
+        head = v.lstrip("v").split("-", 1)[0].split("+", 1)[0]
+        parts = (head.split(".") + ["0", "0", "0"])[:3]
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except (ValueError, AttributeError):
+        return (0, 0, 0)
+
+
+@app.get("/api/updates/latest/{target}/{current_version}")
+def check_for_update(target: str, current_version: str):
+    """Tauri updater manifest endpoint. See LATEST_DESKTOP_VERSION above."""
+    if _parse_semver(current_version) >= _parse_semver(LATEST_DESKTOP_VERSION):
+        return Response(status_code=204)
+
+    sig = DESKTOP_SIGNATURES.get(target)
+    if not sig:
+        # No signed bundle for this target yet. Return 204 so the
+        # plugin stays quiet rather than logging a download failure.
+        return Response(status_code=204)
+
+    return JSONResponse({
+        "version": LATEST_DESKTOP_VERSION,
+        "notes": "See https://narrative-alpha.fly.dev/whats-new.html",
+        "pub_date": "2026-06-06T00:00:00Z",
+        "platforms": {
+            target: {
+                "signature": sig,
+                "url": (
+                    f"{DESKTOP_DOWNLOAD_BASE}/"
+                    f"Narrative_{LATEST_DESKTOP_VERSION}_{target}.zip"
+                ),
+            }
+        },
+    })
 
 
 @app.get("/api/voices/sample/{voice_id}")
@@ -957,20 +1111,85 @@ async def synthesize_stream(req: SynthesizeRequest):
 
 
 @app.post("/api/synth/jobs")
-async def synth_jobs_create(req: SynthesizeRequest, request: Request):
+async def synth_jobs_create(req: SynthJobCreateRequest, request: Request):
     """Create a synth job, kick off its background worker, return id.
 
     Returns immediately with {job_id, sentences_total: 0}. The caller
     follows with GET /api/synth/jobs/{id}/stream to receive events.
     If the stream drops, GET again with ?from=N to resume.
+
+    Optional Phase B cache targets (#811 B.2b): when
+    `target_clip_id` + `target_line_ids` are both provided, the worker
+    writes each sentence's WAV to the per-sentence cache as it's
+    yielded. The clip must exist in this tenant's library, must have
+    `lines_json` set (Phase A opt-in), and `target_line_ids` must
+    match the engine's sentence count exactly — otherwise the job
+    fails fast to avoid corrupting the cache.
     """
     tenant_key = getattr(request.state, "tenant_key", None)
+    # Phase B opt-in validation: if cache targets are set, the clip
+    # must actually exist for this tenant. We surface this as a 400
+    # rather than letting the worker silently fail the job — the
+    # client deserves an immediate "no, that clip isn't yours" rather
+    # than burning a synth pass to find out.
+    if req.target_clip_id is not None or req.target_line_ids is not None:
+        if not library_db.is_enabled():
+            raise HTTPException(
+                status_code=400,
+                detail="per-sentence cache targets require library_db; "
+                "the server is running without it",
+            )
+        if req.target_clip_id is None or not req.target_line_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="target_clip_id and target_line_ids must be "
+                "provided together",
+            )
+        row = library_db.conn().execute(
+            """
+            SELECT lines_json
+            FROM clips
+            WHERE tenant_key = ? AND id = ? AND deleted = 0
+            """,
+            (tenant_key, req.target_clip_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"target_clip_id={req.target_clip_id} not found "
+                "for this tenant",
+            )
+        lines = library_db.jsload(row["lines_json"]) or []
+        if not lines:
+            raise HTTPException(
+                status_code=409,
+                detail=f"target_clip_id={req.target_clip_id} has no "
+                "lines_json — enable Phase A per-sentence storage on "
+                "this clip before requesting per-sentence cache",
+            )
+        # Validate every line_id the caller passed actually exists in
+        # the clip's lines_json. Mismatch here means client and server
+        # disagree about the sentence set — better to refuse than to
+        # let the worker write to ids that won't survive the next
+        # lines_json read.
+        clip_line_ids = {
+            l.get("id") for l in lines
+            if isinstance(l, dict) and l.get("id")
+        }
+        for lid in req.target_line_ids:
+            if lid not in clip_line_ids:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"line_id {lid!r} not present in clip's lines",
+                )
     params = synth_jobs.JobParams.from_dict({
         "text": req.text,
         "voice_id": req.voice_id,
         "rate": req.rate,
         "volume": req.volume,
         "speaker_id": req.speaker_id,
+        "target_clip_id": req.target_clip_id,
+        "target_line_ids": req.target_line_ids,
     })
     try:
         job = await synth_jobs.create_job(params, tenant_key)

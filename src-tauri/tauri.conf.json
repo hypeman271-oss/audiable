@@ -15,7 +15,7 @@
       {
         "title": "Narrative",
         "label": "main",
-        "url": "http://localhost:8000",
+        "url": "index.html",
         "width": 1280,
         "height": 800,
         "minWidth": 720,
@@ -41,6 +41,17 @@
     ],
     "category": "Productivity",
     "shortDescription": "Audiobook tool for writers",
-    "longDescription": "Narrative turns your manuscript into an audiobook — read your draft aloud in any voice, route character dialogue to its own narrator, and revise from the listening session."
+    "longDescription": "Narrative turns your manuscript into an audiobook — read your draft aloud in any voice, route character dialogue to its own narrator, and revise from the listening session.",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://narrative-alpha.fly.dev/api/updates/latest/{{target}}/{{current_version}}"
+      ],
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhDQjk2MjQ4MDU2MDhDQkIKUldTN2pHQUZTR0s1ak1XWGJFNXlmTWZEVXJtd3c0alNUMVNHalNIVnNQT2hqL0RWODIxWjZqeGQK"
+    }
   }
 }

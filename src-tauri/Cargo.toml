@@ -39,6 +39,13 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# v225v4.29 (#707): auto-updater. Plugin polls our manifest endpoint
+# on demand (Help → Check for updates…) and on app launch, downloads
+# the new bundle if available, verifies the Ed25519 signature against
+# the public key embedded at build time, then prompts the user to
+# install + restart. Server-side: /api/updates/latest/{target}/{ver}.
+tauri-plugin-updater = "2"
+
 # Release profile — strip symbols + optimize for size. The desktop
 # installer ships this binary directly; smaller is better for the
 # download size.

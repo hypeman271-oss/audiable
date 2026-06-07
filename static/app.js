@@ -131,17 +131,217 @@ function _promptForApiKey() {
   }
 }
 
+// v225v4.27 (#704): when the page is loaded from the Tauri desktop
+// shell, the window origin is tauri://localhost (Linux/macOS) or
+// https://tauri.localhost (Windows). Relative URLs like /api/foo
+// would resolve against THAT origin and 404, because the API only
+// lives at narrative-alpha.fly.dev. So in Tauri context we rewrite
+// /api/* to the absolute Fly URL. The PWA at narrative-alpha.fly.dev
+// is same-origin — API_ORIGIN stays empty and fetch behavior is
+// unchanged.
+//
+// Detection: __TAURI_INTERNALS__ is the canonical Tauri v2 global,
+// injected before any user JS runs. Belt-and-suspenders, also check
+// the location protocol for `tauri:` and the host for `tauri.` in
+// case some future build doesn't expose the global (Tauri does not
+// guarantee that with withGlobalTauri: false, even though the
+// internals always seem to land).
+const API_ORIGIN = (() => {
+  try {
+    if (typeof window === "undefined") return "";
+    if (window.__TAURI_INTERNALS__) return "https://narrative-alpha.fly.dev";
+    const loc = window.location || {};
+    if (loc.protocol === "tauri:") return "https://narrative-alpha.fly.dev";
+    if (typeof loc.hostname === "string" && /\btauri\.localhost$/.test(loc.hostname)) {
+      return "https://narrative-alpha.fly.dev";
+    }
+  } catch {}
+  return "";
+})();
+
+// v225v4.28 (#706): native menu bridge. Rust dispatches a CustomEvent
+// `narrative:menu` with detail.action when a menu item fires; this
+// listener routes those actions to existing app affordances. Web users
+// never see the event — only the Tauri shell ships a native menu —
+// so the listener is a no-op outside Tauri.
+window.addEventListener("narrative:menu", (e) => {
+  const action = (e && e.detail && e.detail.action) || "";
+  const click = (sel) => {
+    const el = typeof sel === "string" ? document.querySelector(sel) : sel;
+    if (el && typeof el.click === "function") {
+      el.click();
+      return true;
+    }
+    return false;
+  };
+  switch (action) {
+    case "new":
+      click("#clear-btn");
+      break;
+    case "reload":
+      try { window.location.reload(); } catch {}
+      break;
+    case "force-update":
+      click("#settings-trigger") ||
+        click('button[data-action="open-settings"]');
+      // Settings dialog opens asynchronously; defer the inner click
+      // by one frame so the Force-update button has rendered.
+      setTimeout(() => click("#settings-force-update"), 250);
+      break;
+    case "book-view":
+      click("#book-view-toggle");
+      break;
+    case "manual":
+      click('a[href="/manual.html"]');
+      break;
+    case "whats-new":
+      click('a[href="/whats-new.html"]');
+      break;
+    case "about":
+      try {
+        const v =
+          (document.getElementById("settings-version-tag") || {}).textContent ||
+          "";
+        window.alert(
+          "Narrative " + v + "\n\nWrite. Listen. Revise.\n\nThe writer's audiobook tool."
+        );
+      } catch {}
+      break;
+    default:
+      try { console.warn("narrative:menu unknown action", action); } catch {}
+  }
+});
+
+// v225v4.29 (#707): updater feedback. The Rust side fires these three
+// CustomEvents in response to Help → Check for updates…. Keeping the
+// flow Rust-driven means we never have to ship the Tauri updater JS
+// SDK alongside the bundler-less webview.
+window.addEventListener("narrative:update-available", (e) => {
+  const ver = (e && e.detail && e.detail.version) || "(unknown)";
+  try {
+    window.alert(
+      "Update available: v" +
+        ver +
+        "\n\nYour current version stays in place until the new release downloads in the background. You'll be prompted to restart when it's ready."
+    );
+  } catch {}
+});
+window.addEventListener("narrative:update-none", () => {
+  try {
+    window.alert("You're on the latest version of Narrative.");
+  } catch {}
+});
+window.addEventListener("narrative:update-error", (e) => {
+  const msg = (e && e.detail && e.detail.msg) || "Unknown error";
+  try {
+    window.alert("Couldn't check for updates.\n\n" + msg);
+  } catch {}
+});
+
+// v225v4.33: bookmark drawer toggle. Clicking the 🔖 Bookmarks chip in
+// the player action row flips a body data attribute that the CSS uses
+// to slide the fixed-bottom drawer up. Escape closes; clicking the
+// chip again toggles. We intentionally don't use a scrim — the drawer
+// is non-modal so the user can keep listening / editing the textarea
+// while it's open.
+(() => {
+  const setOpen = (open) => {
+    document.body.dataset.bookmarksDrawerOpen = open ? "1" : "0";
+    const toggle = document.getElementById("bookmarks-drawer-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  const toggle = () => {
+    const isOpen = document.body.dataset.bookmarksDrawerOpen === "1";
+    setOpen(!isOpen);
+  };
+  // v225v4.40: dlog instrumentation. The v4.38 head-click-to-close
+   // wasn't working in practice; add tracing on all three drawer
+   // click paths so the debug log shows exactly what's firing (or
+   // not firing) on the next reproduction.
+  const _dl = (event, extras) => {
+    try {
+      if (typeof window._dlog === "function") {
+        window._dlog("bookmark", "drawer", event, extras || {});
+      }
+    } catch {}
+  };
+  const onReady = () => {
+    const toggleBtn = document.getElementById("bookmarks-drawer-toggle");
+    const closeBtn = document.getElementById("bookmarks-drawer-close");
+    const head = document.getElementById("bookmarks-drawer-head");
+    _dl("init", {
+      toggleBtn: !!toggleBtn,
+      closeBtn: !!closeBtn,
+      head: !!head,
+    });
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", () => {
+        _dl("toggle-clicked", {
+          wasOpen: document.body.dataset.bookmarksDrawerOpen === "1",
+        });
+        toggle();
+      });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", () => {
+        _dl("close-btn-clicked", {});
+        setOpen(false);
+      });
+    }
+    // v225v4.38: tapping anywhere in the header bar closes the drawer,
+    // not just the × button. The × keeps its own handler for clarity
+    // but event bubbling means a click on the title text → the head →
+    // setOpen(false) too.
+    if (head) {
+      head.addEventListener("click", (e) => {
+        _dl("head-clicked", {
+          target: (e.target && e.target.tagName) || "?",
+          targetId: (e.target && e.target.id) || "",
+          wasOpen: document.body.dataset.bookmarksDrawerOpen === "1",
+        });
+        setOpen(false);
+      });
+    }
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && document.body.dataset.bookmarksDrawerOpen === "1") {
+        _dl("escape-key", {});
+        setOpen(false);
+      }
+    });
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", onReady, { once: true });
+  } else {
+    onReady();
+  }
+})();
+
 (() => {
   const origFetch = window.fetch.bind(window);
   window.fetch = async (input, options) => {
     options = options ? { ...options } : {};
-    const url =
+    let url =
       typeof input === "string"
         ? input
         : input && typeof input.url === "string"
         ? input.url
         : "";
     const isApi = url.startsWith("/api/");
+
+    // v225v4.27 (#704): rewrite the URL to the absolute Fly origin
+    // when running in Tauri. Done before any header logic so the
+    // request actually reaches the auth middleware. Re-form Request
+    // objects if the caller passed one, since you can't mutate
+    // input.url in place.
+    if (isApi && API_ORIGIN) {
+      const absoluteUrl = API_ORIGIN + url;
+      if (typeof input === "string") {
+        input = absoluteUrl;
+      } else if (input && typeof input.url === "string") {
+        input = new Request(absoluteUrl, input);
+      }
+      url = absoluteUrl;
+    }
 
     if (isApi) {
       const key = getApiKey();
@@ -1098,6 +1298,19 @@ const synthProgress = $("synth-progress");
 // pre-flight: `if (_isOffline()) { ... queue locally ... }`
 function _isOffline() {
   return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+// v225v4.26 (#572): prefix a fetch-failure message with "You're
+// offline — " when the browser knows it's offline. The original
+// message is the action context ("Sync failed", "Import failed",
+// etc.) so the user gets both halves: WHAT failed and the most
+// likely WHY. Idempotent — if the message already mentions offline,
+// don't double-prefix. Centralized here so we don't have to thread
+// _isOffline() checks through every error site individually.
+function _withOfflineHint(msg) {
+  const s = String(msg || "");
+  if (!_isOffline()) return s;
+  if (/offline/i.test(s)) return s;
+  return `You're offline — ${s.charAt(0).toLowerCase()}${s.slice(1)}`;
 }
 const _OFFLINE_PENDING_SYNTH_KEY = "narrative.pendingSynth";
 
@@ -8872,7 +9085,10 @@ speakerPreviewBtn.addEventListener("click", async () => {
   speakerPreviewBtn.classList.add("loading");
   speakerPreviewBtn.textContent = "…";
   _speakerPreviewActive = true;
-  audio.src = `/api/voices/sample/${encodeURIComponent(voiceId)}?speaker=${speakerId}`;
+  // v225v4.27 (#704): prefix with API_ORIGIN so the <audio> resolves
+  // to the Fly server when running in the Tauri shell (where /api/* is
+  // cross-origin). Empty prefix in the PWA → unchanged.
+  audio.src = `${API_ORIGIN}/api/voices/sample/${encodeURIComponent(voiceId)}?speaker=${speakerId}`;
   try {
     await audio.play();
     speakerPreviewBtn.classList.remove("loading");
@@ -8995,7 +9211,10 @@ async function _wizardPlay(speakerId, btn) {
     if (_wizardActiveBtn === btn) _stopWizardPreview();
   };
   audio.addEventListener("ended", onEnded);
-  audio.src = `/api/voices/sample/${encodeURIComponent(voiceId)}?speaker=${speakerId}`;
+  // v225v4.27 (#704): prefix with API_ORIGIN so the <audio> resolves
+  // to the Fly server when running in the Tauri shell (where /api/* is
+  // cross-origin). Empty prefix in the PWA → unchanged.
+  audio.src = `${API_ORIGIN}/api/voices/sample/${encodeURIComponent(voiceId)}?speaker=${speakerId}`;
   try {
     await audio.play();
     btn.classList.remove("loading");
@@ -13284,6 +13503,149 @@ async function _openSynthJobStream(payload, externalController) {
   });
 }
 
+// v225v4.22 (#811 B.7): Phase B partial re-narrate helper.
+// Drives /api/synth/jobs with cache targets for a single sentence,
+// polls until done, then calls /restitch to rebuild the combined MP3
+// from the cache. Returns { blob, offsetsMs, sha256, durationMs } on
+// success or null on any failure (caller falls through to splice.py).
+//
+// Throws on unexpected non-recoverable errors (e.g. network failure
+// after the cache was already updated). The caller catches and falls
+// back.
+//
+// Why this path exists vs splice.py: splice.py decodes the existing
+// MP3, atrims a hole, concats the new sentence PCM, re-encodes.
+// That produces an audible faint crossfade at the cut point on some
+// material. The restitch path concats CLEAN per-sentence FLAC blobs
+// from the cache — no cut, no seam, indistinguishable from a fresh
+// full re-narrate. Validated end-to-end in #824 (v4.21 spike).
+async function _phaseBPartialRenarrate({
+  clipId,
+  lineId,
+  text,
+  voiceId,
+  speakerId,
+  rate,
+  expectedOffsetCount,
+}) {
+  if (!clipId || !lineId || !text) return null;
+
+  // 1. Kick off a single-sentence synth job that writes one cache row.
+  const jobPayload = {
+    text: text,
+    voice_id: voiceId,
+    speaker_id: speakerId,
+    rate: rate,
+    target_clip_id: clipId,
+    target_line_ids: [lineId],
+  };
+  const createRes = await fetch("/api/synth/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jobPayload),
+  });
+  if (!createRes.ok) {
+    let body = "";
+    try { body = await createRes.text(); } catch {}
+    throw new Error(
+      `phaseB synth job create failed (${createRes.status}): ${body.slice(0, 200)}`
+    );
+  }
+  const created = await createRes.json();
+  const jobId = created && created.job_id;
+  if (!jobId) throw new Error("phaseB synth job: no job_id in response");
+
+  // 2. Poll status. Single sentence: usually finishes in a few seconds
+  // (Piper) up to ~60s (Kokoro on Fly CPU). Cap at 5 minutes to avoid
+  // hanging the UI if synth wedges.
+  const deadline = Date.now() + 5 * 60 * 1000;
+  let pollInterval = 800;
+  while (true) {
+    if (Date.now() > deadline) {
+      // Best-effort cancel the wedged job so it doesn't keep eating
+      // resources after we give up on it.
+      try {
+        fetch(`/api/synth/jobs/${jobId}`, { method: "DELETE" }).catch(() => {});
+      } catch {}
+      throw new Error("phaseB synth timed out after 5 minutes");
+    }
+    const sRes = await fetch(`/api/synth/jobs/${jobId}`);
+    if (!sRes.ok) {
+      throw new Error(`phaseB synth status check failed: ${sRes.status}`);
+    }
+    const snap = await sRes.json();
+    if (snap.status === "done") break;
+    if (snap.status === "failed" || snap.status === "cancelled") {
+      throw new Error(
+        `phaseB synth job ${snap.status}: ${snap.error || "(no detail)"}`
+      );
+    }
+    await new Promise((r) => setTimeout(r, pollInterval));
+    // Modest backoff — first poll quickly, then ease off if synth is
+    // taking longer than expected.
+    if (pollInterval < 2000) pollInterval = Math.min(pollInterval + 200, 2000);
+  }
+
+  // 3. Restitch from cache. Returns the new audio_sha256 + offsets.
+  // A 409 here means the clip has lines without cache rows for one
+  // or more sentences (Phase B not fully populated). That's exactly
+  // the case where we want to fall through to splice.py.
+  const rsRes = await fetch(
+    `/api/library/clips/${encodeURIComponent(clipId)}/restitch`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "" }
+  );
+  if (rsRes.status === 409) {
+    // Cache incomplete. Return null so the caller falls through to
+    // splice.py. The synth job we just ran did populate THIS one
+    // sentence's cache, so the user gets incremental progress toward
+    // a fully cached clip — next time they edit, the gap is smaller.
+    return null;
+  }
+  if (!rsRes.ok) {
+    let body = "";
+    try { body = await rsRes.text(); } catch {}
+    throw new Error(`restitch failed (${rsRes.status}): ${body.slice(0, 200)}`);
+  }
+  const rs = await rsRes.json();
+  const sha = rs && rs.audio_sha256;
+  const offsetsMs = rs && Array.isArray(rs.sentence_offsets_ms)
+    ? rs.sentence_offsets_ms
+    : null;
+  const durationMs =
+    rs && typeof rs.duration_sec === "number"
+      ? Math.round(rs.duration_sec * 1000)
+      : null;
+  if (!sha || !offsetsMs) {
+    throw new Error("restitch returned no audio_sha256 / offsets");
+  }
+  if (
+    typeof expectedOffsetCount === "number" &&
+    offsetsMs.length !== expectedOffsetCount
+  ) {
+    // Sentence count drift — engine split text differently than client.
+    // Shouldn't happen on a single-sentence edit because lines_json
+    // didn't change, but guard so we don't corrupt the player state.
+    throw new Error(
+      `restitch offset count ${offsetsMs.length} != expected ${expectedOffsetCount}`
+    );
+  }
+
+  // 4. Download the new combined MP3.
+  const audioRes = await fetch(
+    `/api/library/audio/${encodeURIComponent(sha)}.mp3`
+  );
+  if (!audioRes.ok) {
+    throw new Error(`audio download failed: ${audioRes.status}`);
+  }
+  const blob = await audioRes.blob();
+  if (!blob || blob.size === 0) {
+    throw new Error("audio download returned empty blob");
+  }
+
+  return { blob, offsetsMs, sha256: sha, durationMs };
+}
+
+
 async function _preSynthesizeChapter(chapter, opts) {
   // v220t: bg-queue (silent batch import) shares this function with the
   // foreground lookahead caller. The end-of-chapter sleep check was a
@@ -13322,6 +13684,51 @@ async function _preSynthesizeChapter(chapter, opts) {
   const speakerId = speakerRow.hidden ? null : Number(speakerEl.value || 0);
   const voiceName = voiceEl.selectedOptions[0]?.textContent || voiceEl.value || "";
 
+  // v225v4.22 (#811 B.6): if this synth targets an existing Phase A
+  // opted-in clip (clip.lines is populated), pass the cache targets so
+  // the worker writes each sentence WAV to the per-sentence cache as
+  // it's yielded. This is what unlocks B.7's clean partial re-narrate
+  // path (synth+restitch instead of splice.py PCM cut). Fetched
+  // synchronously here so we don't have to thread async lookups into
+  // the payload-building below.
+  let phaseB_targetClipId = null;
+  let phaseB_targetLineIds = null;
+  if (chapter.targetClipId) {
+    try {
+      const existing = await getClip(chapter.targetClipId);
+      if (
+        existing &&
+        Array.isArray(existing.lines) &&
+        existing.lines.length > 0
+      ) {
+        const ids = existing.lines
+          .map((l) => l && l.id)
+          .filter((id) => typeof id === "string" && id.length > 0);
+        if (ids.length === existing.lines.length) {
+          phaseB_targetClipId = chapter.targetClipId;
+          phaseB_targetLineIds = ids;
+          _dlog("synth", "Phase B cache write enabled", {
+            clipId: chapter.targetClipId,
+            lineCount: ids.length,
+          });
+        } else {
+          _dlog("synth", "Phase B cache write skipped: malformed lines", {
+            clipId: chapter.targetClipId,
+            linesLen: existing.lines.length,
+            validIds: ids.length,
+          });
+        }
+      }
+    } catch (e) {
+      // If we can't read the existing clip for any reason, skip cache
+      // targeting — falls back to the existing path which still works.
+      _dlog("synth", "Phase B cache lookup failed, continuing without it", {
+        clipId: chapter.targetClipId,
+        errMsg: e && e.message,
+      });
+    }
+  }
+
   try {
     // v226 / #512: route through the new resumable-jobs wrapper
     // instead of /api/synthesize/stream directly. The wrapper
@@ -13330,16 +13737,18 @@ async function _preSynthesizeChapter(chapter, opts) {
     // on network drop using _bgSynthSentence as the resume cursor.
     // Caller code below is unchanged — it just gets a Response
     // whose body never quits mid-synth.
-    const res = await _openSynthJobStream(
-      {
-        text: chapter.text,
-        voice_id: voiceId,
-        rate,
-        volume,
-        speaker_id: speakerId,
-      },
-      myController,
-    );
+    const _payload = {
+      text: chapter.text,
+      voice_id: voiceId,
+      rate,
+      volume,
+      speaker_id: speakerId,
+    };
+    if (phaseB_targetClipId && phaseB_targetLineIds) {
+      _payload.target_clip_id = phaseB_targetClipId;
+      _payload.target_line_ids = phaseB_targetLineIds;
+    }
+    const res = await _openSynthJobStream(_payload, myController);
     if (!res.ok) {
       // v177: capture the response body — synthesis errors often
       // include the actual reason (voice not found, OOM, etc.) in
@@ -14330,7 +14739,7 @@ async function saveCurrentClipText() {
     generate();
   } catch (e) {
     console.warn("save text failed:", e);
-    setStatus(`Save failed: ${e.message}`, true);
+    setStatus(_withOfflineHint(`Save failed: ${e.message}`), true);
   } finally {
     saveTextBtn.disabled = false;
     saveTextBtn.textContent = oldLabel;
@@ -15001,6 +15410,16 @@ async function _commitInlineEdit() {
     // a ffmpeg PCM-domain splice, returns the new MP3 plus an
     // updated offset table (sentences after idx shift by Δ where
     // Δ = new sentence duration − old sentence duration).
+    //
+    // v225v4.22 (#811 B.7): when the clip has lines populated (Phase A
+    // opt-in) AND the per-sentence cache is complete, prefer the
+    // Phase B path — synth the one sentence into the cache, then call
+    // /restitch to rebuild the combined MP3 from cached FLACs. The
+    // re-stitch has no PCM cut seam (because there's no cut — we're
+    // re-concatenating clean per-sentence renderings). Falls through
+    // to splice.py automatically on any failure (cache miss → 409,
+    // missing line_id, etc.), so users without Phase B coverage still
+    // get an edit.
     const clip = await getClip(_currentClipId);
     if (!clip || !clip.blob) {
       throw new Error("clip has no audio to splice");
@@ -15023,35 +15442,86 @@ async function _commitInlineEdit() {
       sentence_offsets_ms: offsetsMs,
     };
 
-    const fd = new FormData();
-    fd.append(
-      "audio",
-      new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }),
-    );
-    fd.append("params", JSON.stringify(params));
-
-    const res = await fetch("/api/synthesize/splice", {
-      method: "POST",
-      body: fd,
-    });
-    if (!res.ok) {
-      let detail = res.statusText;
+    // v225v4.22 (#811 B.7): try Phase B first when the clip is
+    // opted-in. Either path produces newBlob + newOffsetsMs + (maybe)
+    // newSha so the rest of the function is identical.
+    let newBlob = null;
+    let newOffsetsMs = null;
+    let newSha = null;
+    let usedPhaseB = false;
+    const lineForIdx =
+      Array.isArray(clip.lines) &&
+      clip.lines.length > idx &&
+      clip.lines[idx] &&
+      typeof clip.lines[idx].id === "string"
+        ? clip.lines[idx].id
+        : null;
+    if (lineForIdx) {
       try {
-        const j = await res.json();
-        if (j && j.detail) detail = j.detail;
-      } catch {}
-      throw new Error(`splice failed (${res.status}): ${detail}`);
+        const r = await _phaseBPartialRenarrate({
+          clipId: _currentClipId,
+          lineId: lineForIdx,
+          text: newText,
+          voiceId: params.voice_id,
+          speakerId: params.speaker_id,
+          rate: params.rate,
+          expectedOffsetCount: offsets.length,
+        });
+        if (r) {
+          newBlob = r.blob;
+          newOffsetsMs = r.offsetsMs;
+          newSha = r.sha256;
+          usedPhaseB = true;
+          _dlog("synth", "Phase B partial re-narrate succeeded", {
+            clipId: _currentClipId,
+            lineId: lineForIdx,
+            newDurMs: r.durationMs,
+          });
+        }
+      } catch (e) {
+        // Falls through to splice.py path below. We log so the debug
+        // pipeline shows whether B.7 attempts are hitting a backfill
+        // gap, a sentence-split mismatch, or an unrelated error.
+        _dlog("synth", "Phase B partial re-narrate failed, falling back", {
+          clipId: _currentClipId,
+          lineId: lineForIdx,
+          errMsg: e && e.message,
+        });
+      }
     }
-    const newBlob = await res.blob();
-    if (!newBlob || newBlob.size === 0) {
-      throw new Error("splice returned empty audio");
+
+    if (!usedPhaseB) {
+      const fd = new FormData();
+      fd.append(
+        "audio",
+        new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }),
+      );
+      fd.append("params", JSON.stringify(params));
+
+      const res = await fetch("/api/synthesize/splice", {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        let detail = res.statusText;
+        try {
+          const j = await res.json();
+          if (j && j.detail) detail = j.detail;
+        } catch {}
+        throw new Error(`splice failed (${res.status}): ${detail}`);
+      }
+      newBlob = await res.blob();
+      if (!newBlob || newBlob.size === 0) {
+        throw new Error("splice returned empty audio");
+      }
+      const newOffsetsHeader = res.headers.get("X-Narrative-Sentences");
+      newOffsetsMs = newOffsetsHeader ? JSON.parse(newOffsetsHeader) : null;
+      newSha = res.headers.get("X-Narrative-Audio-Sha256") || null;
     }
-    const newOffsetsHeader = res.headers.get("X-Narrative-Sentences");
-    const newOffsetsMs = newOffsetsHeader ? JSON.parse(newOffsetsHeader) : null;
+
     if (!Array.isArray(newOffsetsMs) || newOffsetsMs.length !== offsets.length) {
       throw new Error("splice returned malformed offsets");
     }
-    const newSha = res.headers.get("X-Narrative-Audio-Sha256") || null;
     const newOffsetsSec = newOffsetsMs.map((ms) => ms / 1000);
 
     // Compute the playhead/bookmark shift before mutating clip state.
@@ -15209,7 +15679,7 @@ async function _commitInlineEdit() {
     setStatus("Audio updated.");
   } catch (e) {
     console.warn("[inline-edit] save failed:", e);
-    setStatus(`Edit failed — ${e.message || e}. Tap ✎ to retry.`, true);
+    setStatus(_withOfflineHint(`Edit failed — ${e.message || e}. Tap ✎ to retry.`), true);
     span.classList.remove("editing-saving");
     // v225dh: also exit edit mode on failure so the user isn't
     // stranded with a contenteditable sentence and no escape. The
@@ -21378,7 +21848,7 @@ async function syncAllFromGithub() {
       : `${outdatedCount} of ${gitClips.length} clip${gitClips.length === 1 ? "" : "s"} have newer commits on GitHub.`;
     setStatus(errors ? `${summary} (${errors} repo${errors === 1 ? "" : "s"} failed)` : summary);
   } catch (err) {
-    setStatus(`Sync failed: ${err.message}`, true);
+    setStatus(_withOfflineHint(`Sync failed: ${err.message}`), true);
   } finally {
     librarySyncGithubBtn.disabled = false;
     librarySyncGithubBtn.textContent = originalLabel;
@@ -22055,7 +22525,7 @@ function makeClipCard(clip) {
         }
       } catch (err) {
         console.warn("[outdated-banner] per-card refetch failed:", err);
-        setStatus(`Sync failed: ${err.message}`, true);
+        setStatus(_withOfflineHint(`Sync failed: ${err.message}`), true);
         refetchBtn.disabled = false;
       }
     });
@@ -22392,7 +22862,7 @@ async function _libraryRenarrate(clipId) {
   try {
     clip = await getClip(clipId);
   } catch (e) {
-    setStatus(`Re-narrate failed: ${e.message}`, true);
+    setStatus(_withOfflineHint(`Re-narrate failed: ${e.message}`), true);
     return;
   }
   if (!clip || !clip.text) {
@@ -22443,7 +22913,7 @@ async function resetClipProgress(id) {
     setStatus(`Reset "${clip.title || "clip"}" to start.`);
   } catch (e) {
     console.warn("reset progress failed:", e);
-    setStatus(`Reset failed: ${e.message}`, true);
+    setStatus(_withOfflineHint(`Reset failed: ${e.message}`), true);
   }
 }
 
@@ -23524,7 +23994,7 @@ async function saveClipEdit() {
     setStatus(`Updated "${newTitle}"`);
   } catch (e) {
     console.warn("clip edit save failed:", e);
-    setStatus(`Save failed: ${e.message}`, true);
+    setStatus(_withOfflineHint(`Save failed: ${e.message}`), true);
   }
 }
 
@@ -23538,7 +24008,7 @@ clipEditCoverInput.addEventListener("change", async (e) => {
     _setEditCoverPreview(processed.blob);
   } catch (err) {
     console.warn("cover upload failed:", err);
-    setStatus(`Cover upload failed: ${err.message}`, true);
+    setStatus(_withOfflineHint(`Cover upload failed: ${err.message}`), true);
   } finally {
     // Reset so picking the same file again still fires "change".
     clipEditCoverInput.value = "";
@@ -23649,6 +24119,25 @@ async function openNotesDialog(clipId) {
   notesDialogStatus.textContent = "";
   notesDialog.showModal();
   notesDialogText.focus();
+  // v225v4.25 (#373): render the timestamp chip strip + update the
+  // "+ Time" button state immediately so users see existing markers
+  // and know whether stamping is available right now (depends on
+  // whether THIS clip is the one loaded in the player).
+  _notesRenderTimestampChips();
+  _notesUpdateStampButtonState();
+  // Repaint chips every second while the dialog is open so the
+  // "currently-playing" highlight tracks playback in real time. Also
+  // catches the case where the user starts playing AFTER opening the
+  // dialog (e.g. tapped Play in the mini-player while taking notes)
+  // — the stamp button transitions from disabled to enabled without
+  // a manual refresh. Stopped in the close handler.
+  if (_notesTimestampsActiveTracker) {
+    clearInterval(_notesTimestampsActiveTracker);
+  }
+  _notesTimestampsActiveTracker = setInterval(() => {
+    _notesRenderTimestampChips();
+    _notesUpdateStampButtonState();
+  }, 1000);
 }
 
 async function _commitNotes() {
@@ -23672,6 +24161,549 @@ async function _commitNotes() {
     console.warn("notes save failed:", e);
   }
 }
+
+// v225v4.24 (#829): Notes-dialog dictation. Self-contained — doesn't
+// touch _voiceRecorder / annotation state; just records mic, runs
+// Web Speech for a live transcript, falls back to server Whisper on
+// stop, and inserts the resulting text at the textarea's cursor.
+// Cap at 120 seconds (longer than the per-sentence VOICE_NOTE_MAX_SEC
+// because this is a memo, not an inline reaction).
+const NOTES_DICTATE_MAX_SEC = 120;
+let _notesDictateRecorder = null;
+let _notesDictateChunks = [];
+let _notesDictateMime = "";
+let _notesDictateStream = null;
+let _notesDictateStartedAt = 0;
+let _notesDictateTimerInterval = null;
+let _notesDictateAutoStopTimer = null;
+let _notesDictateRecognition = null;
+let _notesDictateTranscriptFinal = "";
+
+function _notesDictateUpdateTimer() {
+  const el = document.getElementById("notes-dictate-timer");
+  if (!el) return;
+  const sec = Math.floor((Date.now() - _notesDictateStartedAt) / 1000);
+  const remaining = Math.max(0, NOTES_DICTATE_MAX_SEC - sec);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  el.textContent = `${m}:${String(s).padStart(2, "0")}`;
+  el.hidden = false;
+  // Last 10 seconds: tint the timer warning so the user knows time is
+  // almost up before the auto-stop fires.
+  if (remaining <= 10) el.dataset.warning = "true";
+  else delete el.dataset.warning;
+}
+
+function _notesDictateSetButtonState(state) {
+  const btn = document.getElementById("notes-dialog-dictate");
+  if (!btn) return;
+  const label = btn.querySelector(".notes-dictate-label");
+  const timer = btn.querySelector(".notes-dictate-timer");
+  if (state === "recording") {
+    btn.dataset.recording = "1";
+    delete btn.dataset.busy;
+    if (label) label.textContent = "Stop";
+    if (timer) timer.hidden = false;
+    btn.setAttribute("aria-label", "Stop dictation");
+  } else if (state === "transcribing") {
+    delete btn.dataset.recording;
+    btn.dataset.busy = "1";
+    if (label) label.textContent = "Transcribing…";
+    if (timer) { timer.hidden = true; timer.textContent = "0:00"; }
+  } else {
+    delete btn.dataset.recording;
+    delete btn.dataset.busy;
+    if (label) label.textContent = "Dictate";
+    if (timer) { timer.hidden = true; timer.textContent = "0:00"; }
+    btn.setAttribute("aria-label", "Dictate notes");
+  }
+}
+
+function _notesDictateSetStatus(text) {
+  const el = document.getElementById("notes-dialog-status");
+  if (el) el.textContent = text || "";
+}
+
+function _notesDictateInsertText(text) {
+  // Insert at the current cursor position, or append if the textarea
+  // hasn't been focused. Preserves what the user has already typed;
+  // adds a leading space if we're appending mid-sentence so the
+  // transcript doesn't run into the existing word.
+  const ta = notesDialogText;
+  if (!ta || !text) return;
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const before = ta.value.slice(0, ta.selectionStart || 0);
+  const after = ta.value.slice(ta.selectionEnd || 0);
+  // Add a space before if there's preceding text on the same line and
+  // it doesn't already end in whitespace.
+  const sep = before && !/\s$/.test(before) ? " " : "";
+  const next = before + sep + trimmed + after;
+  // Respect the 10000-char cap so the maxlength doesn't truncate
+  // mid-word silently. If the new text would overflow, clip the
+  // transcript to fit.
+  const MAX = 10000;
+  if (next.length > MAX) {
+    const allowed = Math.max(0, MAX - before.length - after.length - sep.length);
+    const clipped = trimmed.slice(0, allowed);
+    ta.value = before + sep + clipped + after;
+    _notesDictateSetStatus("Dictated (clipped — notes hit the 10,000-char cap).");
+  } else {
+    ta.value = next;
+    _notesDictateSetStatus(`Dictated ${trimmed.length} chars.`);
+  }
+  // Move caret to end of inserted text + persist via the standard
+  // commit hook so the change isn't lost if the dialog is closed by
+  // tab-switching rather than the Close button.
+  const caret = before.length + sep.length + trimmed.length;
+  try { ta.setSelectionRange(caret, caret); } catch {}
+  ta.focus();
+  // Schedule a save (notes dialog persists on close, but commit now
+  // so we don't lose the dictation if the user navigates away).
+  _commitNotes().catch((e) => console.warn("[notes] dictate commit failed:", e));
+}
+
+function _notesDictateStartRecognition() {
+  // Live transcript via Web Speech API, identical pattern to the
+  // annotation voice notes (#470). Continuous mode + auto-restart on
+  // unexpected end so a long memo stays captured.
+  _notesDictateTranscriptFinal = "";
+  const Recog = typeof SpeechRecognition !== "undefined"
+    ? SpeechRecognition
+    : (typeof webkitSpeechRecognition !== "undefined"
+      ? webkitSpeechRecognition
+      : null);
+  if (!Recog) {
+    _notesDictateRecognition = null;
+    return;
+  }
+  try {
+    _notesDictateRecognition = new Recog();
+  } catch (e) {
+    console.warn("[notes-dictate] SR ctor failed:", e);
+    _notesDictateRecognition = null;
+    return;
+  }
+  _notesDictateRecognition.continuous = true;
+  _notesDictateRecognition.interimResults = true;
+  _notesDictateRecognition.lang = (navigator.language || "en-US");
+  let interimText = "";
+  _notesDictateRecognition.onresult = (event) => {
+    interimText = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      const txt = res[0] && res[0].transcript ? res[0].transcript : "";
+      if (res.isFinal) {
+        _notesDictateTranscriptFinal =
+          (_notesDictateTranscriptFinal + " " + txt).trim();
+      } else {
+        interimText += txt;
+      }
+    }
+    // Surface partial progress in the status line so the user sees
+    // recognition is working before they stop.
+    const preview =
+      _notesDictateTranscriptFinal +
+      (interimText ? " " + interimText.trim() : "");
+    if (preview) {
+      _notesDictateSetStatus(`Listening: "${preview.slice(-60)}"`);
+    }
+  };
+  _notesDictateRecognition.onerror = (e) => {
+    const code = e && e.error ? e.error : "unknown";
+    if (code !== "no-speech" && code !== "aborted") {
+      console.warn("[notes-dictate] SR error:", code, e);
+    }
+  };
+  _notesDictateRecognition.onend = () => {
+    if (_notesDictateRecorder && _notesDictateRecognition) {
+      try { _notesDictateRecognition.start(); } catch {}
+    }
+  };
+  try { _notesDictateRecognition.start(); }
+  catch (e) { console.warn("[notes-dictate] SR start failed:", e); }
+}
+
+function _notesDictateStopRecognition() {
+  if (!_notesDictateRecognition) return;
+  _notesDictateRecognition.onend = null;
+  try { _notesDictateRecognition.stop(); } catch {}
+  _notesDictateRecognition = null;
+}
+
+async function _notesDictateStart() {
+  if (_notesDictateRecorder) {
+    _notesDictateStop();
+    return;
+  }
+  if (typeof MediaRecorder === "undefined" ||
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia) {
+    _notesDictateSetStatus("Dictation needs a browser with mic recording.");
+    return;
+  }
+  try {
+    _notesDictateStream =
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    console.warn("[notes-dictate] mic permission denied:", e);
+    _notesDictateSetStatus("Mic access denied — allow in browser settings.");
+    return;
+  }
+  const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", ""];
+  let mime = "";
+  for (const t of preferred) {
+    if (!t || (typeof MediaRecorder.isTypeSupported === "function" &&
+               MediaRecorder.isTypeSupported(t))) {
+      mime = t;
+      break;
+    }
+  }
+  try {
+    _notesDictateRecorder = mime
+      ? new MediaRecorder(_notesDictateStream, { mimeType: mime })
+      : new MediaRecorder(_notesDictateStream);
+  } catch (e) {
+    console.warn("[notes-dictate] MediaRecorder ctor failed:", e);
+    _notesDictateReleaseStream();
+    _notesDictateSetStatus("Couldn't start recording on this device.");
+    return;
+  }
+  _notesDictateChunks = [];
+  _notesDictateMime = _notesDictateRecorder.mimeType || "audio/webm";
+  _notesDictateRecorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) _notesDictateChunks.push(ev.data);
+  };
+  _notesDictateRecorder.onstop = () => _notesDictateFinalize();
+  _notesDictateRecorder.start();
+  _notesDictateStartedAt = Date.now();
+  _notesDictateSetButtonState("recording");
+  _notesDictateSetStatus("Listening… click Stop or wait for auto-stop.");
+  _notesDictateStartRecognition();
+  _notesDictateTimerInterval = setInterval(_notesDictateUpdateTimer, 250);
+  _notesDictateAutoStopTimer = setTimeout(
+    () => _notesDictateStop(),
+    NOTES_DICTATE_MAX_SEC * 1000,
+  );
+  _notesDictateUpdateTimer();
+}
+
+function _notesDictateStop() {
+  if (_notesDictateTimerInterval) {
+    clearInterval(_notesDictateTimerInterval);
+    _notesDictateTimerInterval = null;
+  }
+  if (_notesDictateAutoStopTimer) {
+    clearTimeout(_notesDictateAutoStopTimer);
+    _notesDictateAutoStopTimer = null;
+  }
+  _notesDictateStopRecognition();
+  if (_notesDictateRecorder && _notesDictateRecorder.state !== "inactive") {
+    try { _notesDictateRecorder.stop(); }
+    catch (e) { console.warn("[notes-dictate] stop:", e); }
+  }
+}
+
+function _notesDictateReleaseStream() {
+  if (_notesDictateStream) {
+    for (const t of _notesDictateStream.getTracks()) {
+      try { t.stop(); } catch {}
+    }
+  }
+  _notesDictateStream = null;
+  _notesDictateRecorder = null;
+  _notesDictateChunks = [];
+  _notesDictateMime = "";
+  _notesDictateStartedAt = 0;
+}
+
+async function _notesDictateFinalize() {
+  // Snapshot what we have BEFORE releasing state so a "Start" tap
+  // during the async work doesn't clobber it.
+  const blob = new Blob(_notesDictateChunks, { type: _notesDictateMime });
+  const mime = _notesDictateMime || "audio/webm";
+  const liveTranscript = (_notesDictateTranscriptFinal || "").trim();
+  _notesDictateTranscriptFinal = "";
+  _notesDictateReleaseStream();
+
+  if (liveTranscript) {
+    // Web Speech got us a transcript — use it directly. Free, instant,
+    // no network round-trip.
+    _notesDictateSetButtonState("idle");
+    _notesDictateInsertText(liveTranscript);
+    return;
+  }
+  if (!blob || blob.size === 0) {
+    _notesDictateSetButtonState("idle");
+    _notesDictateSetStatus("No audio captured.");
+    return;
+  }
+  // No live transcript — fall back to server Whisper. Common case on
+  // Android Chrome where the SR's mic-ownership races with
+  // MediaRecorder, but also kicks in on Firefox (no SR at all).
+  _notesDictateSetButtonState("transcribing");
+  _notesDictateSetStatus("Transcribing audio…");
+  if (_isOffline()) {
+    _notesDictateSetButtonState("idle");
+    _notesDictateSetStatus(
+      "Offline — couldn't transcribe. Try again when you're back online.",
+    );
+    return;
+  }
+  let base64;
+  try {
+    base64 = await _blobToBase64(blob);
+  } catch (e) {
+    console.warn("[notes-dictate] base64 encode failed:", e);
+    _notesDictateSetButtonState("idle");
+    _notesDictateSetStatus("Couldn't encode audio for transcription.");
+    return;
+  }
+  try {
+    const res = await fetch("/api/library/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audioB64: base64, mime: mime }),
+    });
+    if (!res.ok) {
+      _notesDictateSetButtonState("idle");
+      _notesDictateSetStatus(
+        `Couldn't transcribe (HTTP ${res.status}).`,
+      );
+      return;
+    }
+    const body = await res.json();
+    const text = body && body.transcript
+      ? String(body.transcript).trim()
+      : "";
+    _notesDictateSetButtonState("idle");
+    if (text) {
+      _notesDictateInsertText(text);
+    } else {
+      _notesDictateSetStatus("No speech detected.");
+    }
+  } catch (e) {
+    console.warn("[notes-dictate] /transcribe failed:", e);
+    _notesDictateSetButtonState("idle");
+    _notesDictateSetStatus("Transcription failed — try again.");
+  }
+}
+
+// v225v4.25 (#373): Timestamped inline notes. Two halves:
+//
+//   1. Insert button stamps the current playback time into the
+//      textarea at the cursor as [m:ss] or [h:mm:ss]. Disabled when
+//      no clip is playing because there's no time to stamp. Pairs
+//      with Dictate: speak the thought, tap + Time, get a stamped
+//      note.
+//   2. Live parser scans the textarea for [m:ss] / [h:mm:ss] patterns
+//      and renders each as a tappable chip in the strip above the
+//      textarea. Tap a chip → seek the player to that time. If a
+//      different clip is loaded, load this note's clip first so the
+//      seek lands somewhere meaningful.
+//
+// Why chips rather than rewriting the textarea into a contenteditable:
+// the existing edit experience (selection, plain-text paste, undo,
+// dictation, the 10,000-char maxlength) all just work because it's a
+// textarea. A contenteditable would buy click-in-prose links at the
+// cost of breaking those for marginal UX win — the chip strip gives
+// 90% of the value (a tappable index of timestamps) with 5% of the
+// risk.
+const _NOTES_TS_RE = /\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]/g;
+let _notesTimestampsDebounce = 0;
+let _notesTimestampsActiveTracker = null;
+
+function _notesFormatStamp(totalSec, useHours) {
+  totalSec = Math.max(0, Math.floor(totalSec));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (useHours || h > 0) {
+    return `[${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
+  }
+  return `[${m}:${String(s).padStart(2, "0")}]`;
+}
+
+function _notesParseTimestamps(text) {
+  // Returns [{label, sec, start, end}, …]. Validates that minutes <
+  // 60 and seconds < 60 — rejects garbage like [99:99] silently so we
+  // don't render confusing chips that seek to weird positions.
+  if (!text) return [];
+  const out = [];
+  const seen = new Set();
+  _NOTES_TS_RE.lastIndex = 0;
+  let m;
+  while ((m = _NOTES_TS_RE.exec(text)) !== null) {
+    const hRaw = m[1];
+    const mPart = Number(m[2]);
+    const sPart = Number(m[3]);
+    if (sPart >= 60) continue;
+    let sec;
+    let label;
+    if (hRaw != null) {
+      const h = Number(hRaw);
+      if (mPart >= 60) continue;
+      sec = h * 3600 + mPart * 60 + sPart;
+      label = `${h}:${String(mPart).padStart(2, "0")}:${String(sPart).padStart(2, "0")}`;
+    } else {
+      // [m:ss] form — minutes can exceed 60 (e.g. [127:34] for long
+      // clips), so don't reject on mPart range here.
+      sec = mPart * 60 + sPart;
+      label = `${mPart}:${String(sPart).padStart(2, "0")}`;
+    }
+    // Dedupe — repeated [0:32] in the notes only renders once. Sort
+    // happens later when we lay out the strip.
+    const key = sec;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ label, sec, start: m.index, end: m.index + m[0].length });
+  }
+  // Sort by seconds so the chip strip reads in playback order, which
+  // is what makes it useful as an index.
+  out.sort((a, b) => a.sec - b.sec);
+  return out;
+}
+
+function _notesRenderTimestampChips() {
+  const strip = document.getElementById("notes-timestamps-strip");
+  if (!strip) return;
+  const items = _notesParseTimestamps(notesDialogText.value || "");
+  if (!items.length) {
+    strip.hidden = true;
+    strip.innerHTML = "";
+    return;
+  }
+  strip.hidden = false;
+  // Re-render. Small enough that we just rebuild rather than diff.
+  strip.innerHTML = "";
+  const isOwnerCurrent = _notesEditingClipId === _currentClipId;
+  const playerSec = playerEl && isFinite(playerEl.currentTime)
+    ? playerEl.currentTime
+    : 0;
+  for (const item of items) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "notes-timestamp-chip";
+    chip.textContent = item.label;
+    chip.title = isOwnerCurrent
+      ? `Seek to ${item.label}`
+      : `Load this clip and seek to ${item.label}`;
+    if (isOwnerCurrent && Math.abs(playerSec - item.sec) < 1.0) {
+      chip.dataset.active = "1";
+    }
+    chip.addEventListener("click", () => _notesSeekToTimestamp(item.sec));
+    strip.appendChild(chip);
+  }
+}
+
+async function _notesSeekToTimestamp(sec) {
+  if (!isFinite(sec) || sec < 0) return;
+  const targetClipId = _notesEditingClipId;
+  if (!targetClipId) return;
+  // If a different clip is loaded in the player, switch to this one
+  // first so the seek lands on the audio the notes are actually
+  // about. Otherwise the user would expect to hear position X of
+  // chapter_03 and get position X of whatever's loaded.
+  if (_currentClipId !== targetClipId) {
+    try {
+      await loadClip(targetClipId);
+    } catch (e) {
+      console.warn("[notes] seek: loadClip failed:", e);
+      return;
+    }
+  }
+  try {
+    playerEl.currentTime = sec;
+    // Auto-play on tap is intuitive — the user clicked the timestamp
+    // because they want to listen. Best-effort; browsers may refuse
+    // without a recent user gesture (this IS a click, so it usually
+    // succeeds, but autoplay quirks can interfere).
+    playerEl.play().catch(() => {});
+  } catch (e) {
+    console.warn("[notes] seek failed:", e);
+  }
+}
+
+function _notesInsertStampAtCursor() {
+  if (!playerEl) return;
+  const sec = isFinite(playerEl.currentTime) ? playerEl.currentTime : 0;
+  // Choose format based on whether the clip is hour-long (use h:mm:ss
+  // even if the current time is under an hour, so all stamps for the
+  // same clip have a consistent shape).
+  const dur = isFinite(playerEl.duration) ? playerEl.duration : 0;
+  const useHours = dur >= 3600 || sec >= 3600;
+  const stamp = _notesFormatStamp(sec, useHours);
+  const ta = notesDialogText;
+  const before = ta.value.slice(0, ta.selectionStart || 0);
+  const after = ta.value.slice(ta.selectionEnd || 0);
+  const sep = before && !/\s$/.test(before) ? " " : "";
+  const insert = sep + stamp;
+  if (ta.value.length + insert.length > 10000) {
+    _notesDictateSetStatus("Notes are at the 10,000-char cap — clear something first.");
+    return;
+  }
+  ta.value = before + insert + after;
+  const caret = before.length + insert.length;
+  try { ta.setSelectionRange(caret, caret); } catch {}
+  ta.focus();
+  _notesDictateSetStatus(`Inserted ${stamp}`);
+  // Persist + re-render the chip strip so the new timestamp shows
+  // up immediately.
+  _commitNotes().catch((e) => console.warn("[notes] stamp commit failed:", e));
+  _notesRenderTimestampChips();
+}
+
+function _notesUpdateStampButtonState() {
+  const btn = document.getElementById("notes-dialog-stamp");
+  if (!btn) return;
+  // Disabled when there's no live player to read a time from, OR
+  // when the loaded clip isn't the one we're editing notes for (in
+  // that case the stamp would record the wrong audio's position).
+  const hasPlayer = playerEl && isFinite(playerEl.currentTime);
+  const sameClip = _notesEditingClipId === _currentClipId;
+  btn.disabled = !(hasPlayer && sameClip);
+  btn.title = !sameClip && _notesEditingClipId
+    ? "Load this clip in the player to stamp times into its notes"
+    : "Insert [m:ss] at cursor (from player)";
+}
+
+(function _notesTimestampsWire() {
+  const ta = document.getElementById("notes-dialog-text");
+  const stampBtn = document.getElementById("notes-dialog-stamp");
+  if (ta) {
+    ta.addEventListener("input", () => {
+      // Cheap debounce — every keystroke would re-render on every
+      // hold. 120ms feels live without re-renders flooding the DOM
+      // during fast typing or dictation insertions.
+      if (_notesTimestampsDebounce) clearTimeout(_notesTimestampsDebounce);
+      _notesTimestampsDebounce = setTimeout(() => {
+        _notesRenderTimestampChips();
+        _notesUpdateStampButtonState();
+      }, 120);
+    });
+  }
+  if (stampBtn) {
+    stampBtn.addEventListener("click", _notesInsertStampAtCursor);
+  }
+})();
+
+// Wire the button (idempotent — guard against duplicate listeners on
+// hot-reload). Hide the button entirely if the browser doesn't support
+// MediaRecorder so we don't surface a control that can't work.
+(function _notesDictateWire() {
+  const btn = document.getElementById("notes-dialog-dictate");
+  if (!btn) return;
+  if (typeof MediaRecorder === "undefined" ||
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia) {
+    btn.hidden = true;
+    return;
+  }
+  btn.addEventListener("click", () => {
+    if (_notesDictateRecorder) _notesDictateStop();
+    else _notesDictateStart();
+  });
+})();
 
 notesBtn.addEventListener("click", () => {
   if (!_currentClipId) {
@@ -24829,6 +25861,24 @@ async function _paintLinesEditState(clipId) {
 
 notesDialogClose.addEventListener("click", () => notesDialog.close());
 notesDialog.addEventListener("close", async () => {
+  // v225v4.24 (#829): stop dictation cleanly if the dialog is closed
+  // mid-recording. Releases the mic + cancels the timer; the user's
+  // partial transcript (if any) is already in the textarea via the
+  // commit hook in _notesDictateInsertText, so closing mid-record
+  // doesn't lose what they've said so far. The MediaRecorder's
+  // onstop will still fire — _notesDictateFinalize handles the case
+  // where the textarea is no longer the active surface gracefully
+  // (it inserts text anyway; next time you open Notes, you'll see it).
+  if (_notesDictateRecorder) {
+    _notesDictateStop();
+  }
+  _notesDictateSetButtonState("idle");
+  // v225v4.25 (#373): stop the active-chip tracker so we're not
+  // running setInterval forever after the dialog closes.
+  if (_notesTimestampsActiveTracker) {
+    clearInterval(_notesTimestampsActiveTracker);
+    _notesTimestampsActiveTracker = null;
+  }
   await _commitNotes();
   _notesEditingClipId = null;
 });
@@ -25100,7 +26150,7 @@ async function exportLibrary(idsFilter = null) {
     setStatus(`Exported ${manifestClips.length} clip(s) (${mb} MB).`);
   } catch (e) {
     console.warn("export failed:", e);
-    setStatus(`Export failed: ${e.message}`, true);
+    setStatus(_withOfflineHint(`Export failed: ${e.message}`), true);
   } finally {
     exportBtn.disabled = false;
     exportBtn.textContent = "Export";
@@ -25270,7 +26320,7 @@ async function importLibraryFromFile(file) {
     setStatus(parts.join(", ") + ".");
   } catch (e) {
     console.warn("import failed:", e);
-    setStatus(`Import failed: ${e.message}`, true);
+    setStatus(_withOfflineHint(`Import failed: ${e.message}`), true);
   } finally {
     importBtn.disabled = false;
     importBtn.textContent = "Import";
@@ -25394,7 +26444,7 @@ librarySelectDeleteBtn.addEventListener("click", async () => {
     setStatus(`Deleted ${ids.length} clip${ids.length === 1 ? "" : "s"}.`);
   } catch (e) {
     console.warn("bulk delete failed:", e);
-    setStatus(`Bulk delete failed: ${e.message}`, true);
+    setStatus(_withOfflineHint(`Bulk delete failed: ${e.message}`), true);
   }
   _exitMultiSelect();
 });
@@ -25904,7 +26954,7 @@ scrivenerInput.addEventListener("change", async (e) => {
       `Loaded ${data.project_name} · ${data.chapters.length} chapter${data.chapters.length === 1 ? "" : "s"}`
     );
   } catch (err) {
-    setStatus(`Scrivener import failed: ${err.message}`, true);
+    setStatus(_withOfflineHint(`Scrivener import failed: ${err.message}`), true);
   } finally {
     scrivenerInput.value = "";
   }
@@ -25938,7 +26988,7 @@ obsidianInput.addEventListener("change", async (e) => {
       `Loaded ${data.vault_name} · ${data.chapters.length} note${data.chapters.length === 1 ? "" : "s"}`
     );
   } catch (err) {
-    setStatus(`Obsidian import failed: ${err.message}`, true);
+    setStatus(_withOfflineHint(`Obsidian import failed: ${err.message}`), true);
   } finally {
     obsidianInput.value = "";
   }
@@ -26039,7 +27089,7 @@ _gitOutdatedConfirm.addEventListener("click", async () => {
     // via getClip, which now returns the gitRef-updated state.
     generate();
   } catch (err) {
-    setStatus(`Refetch failed: ${err.message}`, true);
+    setStatus(_withOfflineHint(`Refetch failed: ${err.message}`), true);
   }
 });
 
@@ -26760,7 +27810,7 @@ async function openGithubBrowser(repoUrl) {
           setStatus(`Loaded ${f.path} · ${(data.chars || 0).toLocaleString()} chars · ready to Generate`);
           textEl.focus();
         } catch (err) {
-          setStatus(`Fetch failed: ${err.message}`, true);
+          setStatus(_withOfflineHint(`Fetch failed: ${err.message}`), true);
         }
         return;
       }
@@ -27147,7 +28197,7 @@ async function openGistBrowser(gistUrl) {
     meta = await res.json();
   } catch (err) {
     _dlog && _dlog("gist", `meta fetch failed: ${err.message}`, {});
-    setStatus(`Gist fetch failed: ${err.message}`, true);
+    setStatus(_withOfflineHint(`Gist fetch failed: ${err.message}`), true);
     return;
   }
   const files = Array.isArray(meta.files) ? meta.files : [];
@@ -27192,7 +28242,7 @@ async function openGistBrowser(gistUrl) {
       _dlog && _dlog("gist", `single-file fetch failed: ${err.message}`, {
         filename: f.filename,
       });
-      setStatus(`Gist fetch failed: ${err.message}`, true);
+      setStatus(_withOfflineHint(`Gist fetch failed: ${err.message}`), true);
     }
     return;
   }
@@ -27244,7 +28294,7 @@ async function openGistBrowser(gistUrl) {
           _checkForChapters();
           setStatus(`Loaded ${f.filename} · ready to Generate`);
         } catch (err) {
-          setStatus(`Gist fetch failed: ${err.message}`, true);
+          setStatus(_withOfflineHint(`Gist fetch failed: ${err.message}`), true);
         }
         return;
       }
@@ -27645,7 +28695,7 @@ async function fetchFromUrl() {
       try { window.scrollTo(0, 0); } catch {}
     }
   } catch (err) {
-    setStatus(`Fetch failed: ${err.message}`, true);
+    setStatus(_withOfflineHint(`Fetch failed: ${err.message}`), true);
   } finally {
     urlInput.disabled = false;
     urlFetchBtn.disabled = false;
@@ -28883,7 +29933,10 @@ async function togglePreview(voice, btn) {
       // Reached only when the preview-text input is empty — the
       // (custom text + uninstalled) case is intercepted above and
       // routed through _installThenPreview.
-      audio.src = `/api/voices/sample/${encodeURIComponent(voice.id)}`;
+      // v225v4.27 (#704): same Tauri-aware prefix as the other voice
+      // sample sites — <audio src=…> doesn't route through window.fetch
+      // so the cross-origin rewrite has to happen here directly.
+      audio.src = `${API_ORIGIN}/api/voices/sample/${encodeURIComponent(voice.id)}`;
     }
     await audio.play();
     btn.classList.remove("loading");
@@ -30844,15 +31897,24 @@ window.addEventListener("resize", () => {
 // static HTML value if no cache is installed yet (first load) or
 // if the browser doesn't expose the Cache API.
 async function _stampAppVersion() {
-  const el = document.getElementById("settings-version-tag");
-  if (!el) return;
+  // v225v4.23 (#828): also keep the hero #header-version-tag in sync —
+  // it's the same string sourced from the same place (SW cache name),
+  // shown in two surfaces (Settings + header) so the user can read it
+  // off without opening a dialog.
+  const els = [
+    document.getElementById("settings-version-tag"),
+    document.getElementById("header-version-tag"),
+  ].filter(Boolean);
+  if (!els.length) return;
   try {
     if (!("caches" in window)) return;
     const keys = await caches.keys();
     const ours = keys.find((k) => k.startsWith("narrative-shell-"));
     if (ours) {
       const tag = ours.replace("narrative-shell-", "");
-      if (tag && tag !== el.textContent) el.textContent = tag;
+      for (const el of els) {
+        if (tag && tag !== el.textContent) el.textContent = tag;
+      }
     }
   } catch (e) {
     console.info("[version] stamp failed:", e && e.message);

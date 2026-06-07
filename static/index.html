@@ -461,8 +461,24 @@
            card — see app.js. -->
       <header class="hero">
         <div class="hero-row">
-          <div>
-            <h1>Narrative</h1>
+          <div class="hero-brand">
+            <h1>
+              Narrative
+              <!-- v225v4.23 (#828): visible build stamp in the header.
+                   Useful for bug reports (testers can read it off
+                   without opening Settings) and as a quick "is the
+                   SW updated yet?" signal. Click to jump to
+                   whats-new.html. Populated at runtime from the SW
+                   cache name by _stampAppVersion() so it stays in
+                   sync with the actual installed build, not whatever
+                   string the HTML happened to be shipped with. -->
+              <a
+                href="/whats-new.html"
+                id="header-version-tag"
+                class="brand-version"
+                title="What's new in this build"
+              >v225v4.41</a>
+            </h1>
             <p class="tagline">Write. Listen. Revise.</p>
           </div>
           <!-- Inline strip: sits in the hero's empty middle slot
@@ -1500,7 +1516,7 @@
                the report can be correlated with a deploy. JS in app.js
                populates the date stamp at load time. -->
           <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v4.20</span>
+            Narrative <span id="settings-version-tag">v225v4.41</span>
             <button
               type="button"
               id="settings-force-update"
@@ -2791,8 +2807,38 @@
             aria-label="Export notes for this clip"
             title="Export bookmarks + notes + annotations as a Markdown file"
           >📤 Export notes</button>
+          <!-- v225v4.33: trigger for the pull-up bookmarks drawer. On
+               desktop the inline bookmark rows used to crowd the player;
+               this chip lets the user pop them open in a full-width
+               drawer that has real room for editing + scrolling. JS
+               flips body[data-bookmarks-drawer-open] on click. -->
+          <button
+            id="bookmarks-drawer-toggle"
+            type="button"
+            class="notes-btn advanced-only"
+            aria-label="Open bookmarks drawer"
+            title="Open bookmarks drawer (Esc to close)"
+            aria-expanded="false"
+            aria-controls="bookmarks-drawer"
+          >🔖 Bookmarks</button>
         </div>
-        <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
+        <aside
+          id="bookmarks-drawer"
+          class="advanced-only"
+          role="region"
+          aria-label="Bookmarks drawer"
+        >
+          <div id="bookmarks-drawer-head">
+            <h3>Bookmarks</h3>
+            <button
+              type="button"
+              id="bookmarks-drawer-close"
+              aria-label="Close bookmarks drawer"
+              title="Close drawer (Esc)"
+            >×</button>
+          </div>
+          <div id="bookmarks-list" class="bookmarks-list advanced-only" hidden></div>
+        </aside>
       </section>
 
       <!-- v225.tn38 (#515): persistent tag row above the bottom player
@@ -4065,6 +4111,17 @@
             aria-label="Close notes"
           >Close</button>
         </div>
+        <!-- v225v4.25 (#373): live-parsed timestamp chips. Anything
+             matching [m:ss] or [h:mm:ss] in the notes below renders
+             here as a tappable chip. Tap → seek the player; loads the
+             owning clip first if a different one is active. Hidden
+             when no timestamps are present so the textarea has its
+             full visual weight while writing. -->
+        <div
+          id="notes-timestamps-strip"
+          class="notes-timestamps-strip"
+          hidden
+        ></div>
         <textarea
           id="notes-dialog-text"
           rows="14"
@@ -4072,6 +4129,43 @@
           placeholder="Jot anything down — edits to revisit, voice direction, continuity reminders, beat-sheet notes…"
         ></textarea>
         <div class="notes-dialog-foot">
+          <!-- v225v4.24 (#829): voice dictation. Click 🎤 to record;
+               click again (or wait for the 120s cap) to stop. Live
+               transcript via Web Speech API where supported; falls back
+               to server Whisper on stop. Inserted at the textarea's
+               cursor position. Audio is never persisted — only the
+               text. Hidden when mic is not available. -->
+          <button
+            type="button"
+            id="notes-dialog-dictate"
+            class="notes-dictate-btn"
+            aria-label="Dictate notes"
+            title="Record voice → insert as text"
+          >
+            <span class="notes-dictate-icon" aria-hidden="true">🎤</span>
+            <span class="notes-dictate-label">Dictate</span>
+            <span
+              class="notes-dictate-timer"
+              id="notes-dictate-timer"
+              aria-hidden="true"
+              hidden
+            >0:00</span>
+          </button>
+          <!-- v225v4.25 (#373): insert current playback time as a
+               clickable [m:ss] (or [h:mm:ss]) marker at the cursor.
+               Disabled when no clip is playing — there's no "current
+               time" to stamp. Pairs with Dictate: speak the thought,
+               tap + Time to anchor it. -->
+          <button
+            type="button"
+            id="notes-dialog-stamp"
+            class="notes-stamp-btn"
+            aria-label="Insert current playback time as a timestamp"
+            title="Insert [m:ss] at cursor (from player)"
+          >
+            <span class="notes-stamp-icon" aria-hidden="true">⏱</span>
+            <span class="notes-stamp-label">+ Time</span>
+          </button>
           <span id="notes-dialog-status" class="muted"></span>
         </div>
       </dialog>
