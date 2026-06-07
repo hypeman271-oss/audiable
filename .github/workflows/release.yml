@@ -2,7 +2,7 @@
 #
 # Builds Narrative for Windows + macOS + Linux on the appropriate
 # runners, signs the Tauri updater artifacts so existing installs
-# can auto-update, and attaches everything to a GitHub Release.
+# can auto-update, and attaches everything to a single GitHub Release.
 #
 # Why this exists: the Tauri Bundler can emit MSI/NSIS/DMG/AppImage
 # straight from `cargo tauri build`, BUT only on the right OS for
@@ -10,31 +10,27 @@
 # NSIS locally but never DMG. GitHub Actions provides macos-latest
 # runners for free, which closes the gap.
 #
+# Architecture: two-phase. The `build` matrix produces platform-
+# specific bundles + .sig files and uploads them as workflow
+# artifacts. The `release` job then downloads all of them and
+# creates a single GitHub Release with every binary attached.
+# This avoids a race condition we hit in v4.49 where matrix jobs
+# each tried to create the same Release concurrently — one job's
+# artifacts uploaded, the rest got lost.
+#
 # Triggers:
 #   - push of a `v*` tag (eg. `git tag v0.1.1 && git push origin v0.1.1`)
 #   - manual via "Run workflow" button in the Actions tab
 #
-# Required repo secrets (Settings → Secrets and variables → Actions):
+# Required repo secrets:
 #   TAURI_SIGNING_PRIVATE_KEY            — contents of narrative-updater.key
 #                                          (paste the file body as-is)
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   — the password used at signer-generate
-#                                          time (empty string is fine for CI keys)
 #
 # Optional secrets (only needed once Apple Dev + Windows code-sign
 # certs are in hand — see #214):
-#   APPLE_CERTIFICATE                    — base64 of the .p12 Developer ID cert
-#   APPLE_CERTIFICATE_PASSWORD           — password for that .p12
-#   APPLE_SIGNING_IDENTITY               — "Developer ID Application: <name>"
-#   APPLE_ID                             — Apple ID email for notarization
-#   APPLE_PASSWORD                       — app-specific password (NOT iCloud password)
-#   APPLE_TEAM_ID                        — 10-char Apple Team ID
-#   WINDOWS_CERTIFICATE                  — base64 of .pfx
-#   WINDOWS_CERTIFICATE_PASSWORD         — password for that .pfx
-#
-# Without the optional secrets the workflow still produces working
-# binaries — they're just self-signed (macOS Gatekeeper will warn,
-# Windows SmartScreen will warn). Tauri's own updater signing is
-# independent of OS code-signing and uses the TAURI_SIGNING_* pair.
+#   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
+#   APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+#   WINDOWS_CERTIFICATE / WINDOWS_CERTIFICATE_PASSWORD
 
 name: Release desktop bundles
 
@@ -49,34 +45,25 @@ on:
         required: true
         default: "v0.0.0-dev"
 
-# Cancel a previous run on the same branch/tag if a new one starts.
-# Saves runner minutes when the user pushes a fix on top of a failed
-# release attempt.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    permissions:
-      contents: write  # required to create the GitHub Release
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS Apple Silicon (M1+). Modern primary target.
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
             label: "macos-arm64"
-          # macOS Intel (older Macs still in the install base).
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
             label: "macos-x64"
-          # Linux AppImage + .deb. Tauri produces both from one build.
           - platform: ubuntu-22.04
             args: ""
             label: "linux"
-          # Windows MSI + NSIS. Both are emitted from a single build.
           - platform: windows-latest
             args: ""
             label: "windows"
@@ -86,9 +73,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Install platform-specific build deps. Tauri needs webkit2gtk
-      # + GTK on Linux; macOS + Windows runners come with everything
-      # the Bundler needs pre-installed.
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -103,74 +87,106 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          # On macOS we need BOTH Intel and ARM targets installed.
-          # The matrix run picks one via --target above; the runner
-          # itself can host either build.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      # Rust dep cache — saves ~10 min on every run after the first.
-      # Keyed on Cargo.lock so a dep bump invalidates cleanly.
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
           key: ${{ matrix.label }}
 
-      - name: Setup Node (Tauri CLI needs it indirectly via npm scripts)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # The official Tauri Action handles: install tauri-cli, run
-      # `tauri build`, sign updater artifacts, create / update a
-      # GitHub Release, attach the bundles. Single source of truth
-      # for the release manifest format the updater plugin expects.
-      - name: Build + sign + release
+      # Build-only mode: tauri-action without tagName/releaseName
+      # arguments. The action runs `cargo tauri build` and signs the
+      # updater artifacts, but doesn't touch the GitHub Release —
+      # that's the next job's responsibility.
+      - name: Build Tauri bundles
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tauri updater signing — required for auto-update to
-          # work. The plugin will reject an unsigned bundle even
-          # if it downloads cleanly.
+          # Tauri updater signing — required for auto-update.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # OS code-signing env vars are intentionally absent here. When
-          # `APPLE_CERTIFICATE` is mapped (even to "") tauri-cli's macOS
-          # bundler calls `security import` on the empty value and crashes
-          # with `SecKeychainItemImport: parameters not valid`. Same risk
-          # exists for Windows signtool. Until #214 lands real code-sign
-          # certs, leaving these out is the cleanest fix; combined with
-          # `bundle.macOS.signingIdentity = "-"` in tauri.conf.json the
-          # macOS build ad-hoc signs and never touches the keychain.
-          #
-          # When the certs arrive, add the secrets at github.com →
-          # repo Settings → Secrets → Actions, then re-add the env keys
-          # here:
-          #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
-          #   APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
-          #   WINDOWS_CERTIFICATE / WINDOWS_CERTIFICATE_PASSWORD
-          # and bump `bundle.macOS.signingIdentity` to the
-          # "Developer ID Application: <name>" string (or remove it to
-          # let tauri-cli pick from the keychain).
+          # OS code-sign env vars deliberately absent here — see the
+          # extended comment in the v4.49 commit history. Empty-string
+          # APPLE_CERTIFICATE makes the bundler call `security import`
+          # on garbage data and crash. The tauri.conf.json
+          # bundle.macOS.signingIdentity = "-" forces ad-hoc signing
+          # so we never touch the keychain on macOS runners.
         with:
-          # The release defaults to a Draft so we can edit the body
-          # / smoke-test the binaries before publishing. Flip to
-          # false once we trust the pipeline end-to-end.
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "Narrative ${{ github.event.inputs.tag || github.ref_name }}"
-          releaseBody: |
+          projectPath: src-tauri
+          args: ${{ matrix.args }}
+
+      # Each runner has its own bundle layout — Tauri emits to
+      # src-tauri/target/{target}/release/bundle/{format}/. On
+      # macOS with --target, that's a target-prefixed path; on
+      # Linux + Windows it's just target/release/bundle/. The glob
+      # patterns below match all the formats Tauri produces across
+      # platforms; `if-no-files-found: ignore` keeps each runner
+      # from erroring on formats it didn't produce.
+      - name: Upload bundles as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: narrative-bundles-${{ matrix.label }}
+          if-no-files-found: ignore
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi*
+            src-tauri/target/release/bundle/nsis/*.exe*
+            src-tauri/target/release/bundle/deb/*.deb*
+            src-tauri/target/release/bundle/rpm/*.rpm*
+            src-tauri/target/release/bundle/appimage/*.AppImage*
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg*
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz*
+            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg*
+            src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz*
+
+  # Single-instance release job that runs after every matrix build
+  # has uploaded its bundle artifacts. No race condition because
+  # there's only one job creating the release.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # Merge every narrative-bundles-* artifact into one
+          # directory tree. We don't care about the per-platform
+          # subdirectory structure — softprops/action-gh-release
+          # globs across it.
+          pattern: narrative-bundles-*
+          merge-multiple: false
+
+      - name: List collected artifacts (sanity check)
+        run: find artifacts -type f | sort
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: "Narrative ${{ github.event.inputs.tag || github.ref_name }}"
+          draft: true
+          prerelease: false
+          body: |
             Desktop binaries for Narrative ${{ github.event.inputs.tag || github.ref_name }}.
 
             Installers:
-            - **Windows**: `.msi` (recommended) or `.exe` (NSIS) — both signed by GitHub Actions.
+            - **Windows**: `.msi` (recommended) or `.exe` (NSIS).
             - **macOS**: `.dmg` for Apple Silicon and Intel. Open and drag Narrative to Applications.
-            - **Linux**: `.AppImage` (portable) or `.deb` (system install).
+            - **Linux**: `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` (RHEL/Fedora).
 
             The signed `.tar.gz` / `.zip` updater bundles + `.sig` files are also attached;
-            those drive the in-app "Check for updates" flow (#707). Do not delete them.
-          releaseDraft: true
-          prerelease: false
-          # Source the version + bundle layout from src-tauri/. The
-          # action runs `cargo tauri build ${args}` inside that dir.
-          projectPath: src-tauri
-          args: ${{ matrix.args }}
+            those drive the in-app "Check for updates" flow (#707). Do not delete them
+            before pasting the `.sig` contents into `DESKTOP_SIGNATURES` in `server.py`.
+
+            Until #214 lands real code-sign certs, the installers are unsigned: macOS
+            Gatekeeper will require right-click → Open the first time, and Windows
+            SmartScreen will show a "More info → Run anyway" warning. They install fine
+            either way.
+          files: artifacts/**/*
