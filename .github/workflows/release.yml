@@ -134,20 +134,24 @@ jobs:
           # if it downloads cleanly.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS code signing + notarization. These are no-ops on
-          # other runners; on macos-latest the Action picks them up
-          # and runs codesign + notarytool. All optional — see #214.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows code signing. Tauri's Bundler runs signtool when
-          # these env vars are present; otherwise the .msi/.exe ship
-          # unsigned (SmartScreen warning, but installable).
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # OS code-signing env vars are intentionally absent here. When
+          # `APPLE_CERTIFICATE` is mapped (even to "") tauri-cli's macOS
+          # bundler calls `security import` on the empty value and crashes
+          # with `SecKeychainItemImport: parameters not valid`. Same risk
+          # exists for Windows signtool. Until #214 lands real code-sign
+          # certs, leaving these out is the cleanest fix; combined with
+          # `bundle.macOS.signingIdentity = "-"` in tauri.conf.json the
+          # macOS build ad-hoc signs and never touches the keychain.
+          #
+          # When the certs arrive, add the secrets at github.com →
+          # repo Settings → Secrets → Actions, then re-add the env keys
+          # here:
+          #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
+          #   APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+          #   WINDOWS_CERTIFICATE / WINDOWS_CERTIFICATE_PASSWORD
+          # and bump `bundle.macOS.signingIdentity` to the
+          # "Developer ID Application: <name>" string (or remove it to
+          # let tauri-cli pick from the keychain).
         with:
           # The release defaults to a Draft so we can edit the body
           # / smoke-test the binaries before publishing. Flip to

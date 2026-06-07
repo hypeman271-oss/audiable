@@ -42,7 +42,10 @@
     "category": "Productivity",
     "shortDescription": "Audiobook tool for writers",
     "longDescription": "Narrative turns your manuscript into an audiobook — read your draft aloud in any voice, route character dialogue to its own narrator, and revise from the listening session.",
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "signingIdentity": "-"
+    }
   },
   "plugins": {
     "updater": {
