@@ -399,19 +399,24 @@
           <div class="dap-empty" hidden>Load a clip to see flags, bookmarks, and notes here.</div>
           <!-- v225ew: voice identity. Sits at the top — voice answers
                "what is this clip" before flags/bookmarks/notes answer
-               "what's IN this clip". Tap the row to open the voice
-               drawer (same as the 🎤 hero icon).  -->
+               "what's IN this clip".
+               v4.54: passive display row. Earlier the row had a
+               "Change…" button that opened the voice browser. That
+               became vestigial once #647 relocated the voice browser
+               INTO the top of this same pane — the button opened an
+               empty modal (voice browser body had moved away), and
+               even when it had worked, it only changed the DEFAULT
+               voice, not this clip's voice. To actually re-narrate
+               this clip with a new voice the user picks a new default
+               above + taps the 🔄 Re-narrate chip on the library card.
+               So we keep the read-out ("this clip used voice X") and
+               drop the misleading button. -->
           <section class="dap-section dap-section-voice" hidden>
             <h3>Voice</h3>
-            <button
-              type="button"
-              class="dap-voice-row"
-              aria-label="Change voice"
-            >
+            <div class="dap-voice-row">
               <span class="dap-voice-name"></span>
               <span class="dap-voice-speaker" hidden></span>
-              <span class="dap-voice-change">Change…</span>
-            </button>
+            </div>
           </section>
           <section class="dap-section dap-section-flags" hidden>
             <h3>Flags <span class="dap-count" data-dap-count="flags"></span></h3>
@@ -625,7 +630,18 @@
 
       <dialog id="settings-dialog" class="settings-dialog">
         <div class="voice-browser-head">
-          <h2>Settings</h2>
+          <!-- v4.63 (#854): the back button replaces the title in phone
+               drill-down view. CSS hides it on desktop and in phone
+               category-list view; JS toggles a body data attribute
+               that flips visibility when entering a pane. -->
+          <button
+            id="settings-back-btn"
+            type="button"
+            class="settings-back-btn link-btn"
+            aria-label="Back to settings categories"
+            hidden
+          >← Back</button>
+          <h2 id="settings-dialog-title">Settings</h2>
           <button
             id="settings-close"
             type="button"
@@ -633,676 +649,803 @@
             aria-label="Close settings"
           >Close</button>
         </div>
-        <div class="settings-body">
-          <!-- v220f: Settings menu reordered. App / Player / Book view
-               groups first (most-used config), then Help & docs cluster
-               with Help & manual PROMOTED to top, then Listen stats
-               (display-only, demoted below the help links), then Tester
-               tools (Replay tips + Debug log), then GitHub config, then
-               version stamp at the bottom. Quiet subheaders group rows
-               so the long list reads as structure not a scroll. -->
+        <div class="settings-body settings-hybrid">
+          <!-- v4.63 (#854): Settings refactored from a long-scroll list
+               (the old v220f layout had 6 quiet subheaders + ~20 rows
+               in one column) into a sidebar + 6 panes + per-pane
+               Advanced disclosures + pinned search bar. Phone gets a
+               drill-down: category list → tap → pane view with ← Back
+               to return. Every existing id/name/class is preserved so
+               the JS event listeners that bind by id (theme radios,
+               sync radios, GitHub token field, maintenance form, etc.)
+               keep working unchanged. -->
 
-          <p class="settings-subheader">App</p>
-
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Mode</strong>
-              <span class="settings-toggle-desc">
-                <strong>Simple</strong>: just listen — pared-down controls.
-                <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools, annotations &amp; voice notes.
-                <strong>Author</strong>: writing-craft tools (word count,
-                long-sentence + filler-word callouts, character voices).
-              </span>
-            </div>
-            <div class="theme-picker mode-picker" role="radiogroup" aria-label="UI mode">
-              <label>
-                <input type="radio" name="ui-mode" value="simple" />
-                <span>Simple</span>
-              </label>
-              <label>
-                <input type="radio" name="ui-mode" value="standard" />
-                <span>Standard</span>
-              </label>
-              <label>
-                <input type="radio" name="ui-mode" value="author" />
-                <span>Author</span>
-              </label>
-            </div>
-            <!-- v150: dynamic "+ unlocks" hint. JS sets the text based
-                 on the current mode so a Simple-mode user sees what
-                 Standard / Author would gain them. Hidden when the
-                 user is already on Author (nothing left to unlock). -->
-            <p id="mode-unlock-hint" class="mode-unlock-hint" hidden></p>
+          <div class="settings-search-row">
+            <input
+              id="settings-search"
+              class="settings-search"
+              type="search"
+              placeholder="Search settings…"
+              aria-label="Search settings"
+              autocomplete="off"
+              spellcheck="false"
+            />
           </div>
 
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Theme</strong>
-              <span class="settings-toggle-desc">
-                Auto follows your device setting. Light mode uses a warm
-                cream palette tuned for outdoor or daytime reading.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Theme">
-              <label>
-                <input type="radio" name="theme" value="auto" />
-                <span>Auto</span>
-              </label>
-              <label>
-                <input type="radio" name="theme" value="dark" />
-                <span>Dark</span>
-              </label>
-              <label>
-                <input type="radio" name="theme" value="light" />
-                <span>Light</span>
-              </label>
-            </div>
-            <!-- v225.tn59 (#542): Auto-resolution status line. Reports
-                 what the OS is telling us right now so the user can
-                 see whether Auto is detecting their system theme
-                 correctly. Hidden when Dark/Light is explicit. -->
-            <p
-              id="theme-auto-status"
-              class="settings-section-hint theme-auto-status"
-            ></p>
-          </div>
+          <p
+            id="settings-search-empty"
+            class="settings-section-hint settings-search-empty"
+            hidden
+          ></p>
 
-          <!-- v221.sync-5: cross-device library sync. Off by default;
-               flipping on enables Path B sync (server-side SQLite +
-               audio blobs on the Fly volume). Existing local clips
-               sync on next save; full migration of existing library
-               lands in #430. Per-device flag — flipping on desktop
-               doesn't auto-enable phone. -->
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Sync library across devices</strong>
-              <span class="settings-toggle-desc">
-                Stores your library on the Narrative server so you can
-                edit on your desktop and listen on your phone. New
-                saves push as you go; pulls happen when you open the
-                library. Off by default — flip on per device.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Library sync">
-              <label>
-                <input type="radio" name="sync-enabled" value="off" />
-                <span>Off</span>
-              </label>
-              <label>
-                <input type="radio" name="sync-enabled" value="on" />
-                <span>On</span>
-              </label>
-            </div>
-            <!-- v223.tn1: manual sync trigger. Pushes every local clip,
-                 then pulls server state. Useful after editing offline,
-                 before swapping devices, or when the 60s auto-pull
-                 timer is too slow for the user's workflow. -->
-            <div class="settings-inline-row">
-              <button
-                type="button"
-                id="sync-now-btn"
-                class="ghost-btn"
-                aria-describedby="sync-status-line"
-              >Sync now</button>
-            </div>
-            <p id="sync-status-line" class="settings-section-hint"></p>
-          </div>
+          <div class="settings-layout">
 
-          <!-- v220ap: visibility toggle for the "Start a new clip" helper
-               above the textarea. Returning users can dismiss the helper
-               in-place; this row brings it back. First-time users (no
-               saved clips) always see the helper regardless of this
-               setting — they need the discovery prompt. -->
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Start-a-new-clip helper</strong>
-              <span class="settings-toggle-desc">
-                The four-tile helper above the textarea (Paste URL /
-                Upload file / Browse GitHub / Try sample text). Hide it
-                once you know the moves; bring it back any time.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Start-a-new-clip helper visibility">
-              <label>
-                <input type="radio" name="empty-state-visibility" value="show" />
-                <span>Show</span>
-              </label>
-              <label>
-                <input type="radio" name="empty-state-visibility" value="hide" />
-                <span>Hide</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- v225fz11.panes (#685): desktop side-panel visibility. Two
-               rows mirror the × close + 📚/📝 reopen pill flow but
-               surface the toggle for users who don't know about them.
-               Only meaningful at ≥1280px (panes don't render below);
-               below that the radios still work but are inert because
-               the layout function gates on viewport AND the hidden
-               flag. settings-desktop-only class hides the rows on
-               phones where the underlying feature is irrelevant. -->
-          <div class="settings-row settings-desktop-only">
-            <div class="settings-toggle-label">
-              <strong>Library pane (desktop)</strong>
-              <span class="settings-toggle-desc">
-                The Library list pinned to the left edge on screens 1280px
-                and wider. Hide for a wider center column when you don't
-                need quick clip-switching. Re-open from the 📚 pill at
-                the left edge, this toggle, or ⌘K → "Show library pane".
-              </span>
-            </div>
-            <div
-              class="theme-picker"
-              role="radiogroup"
-              aria-label="Library pane visibility"
+            <nav
+              class="settings-sidebar"
+              id="settings-sidebar"
+              aria-label="Settings categories"
             >
-              <label>
-                <input type="radio" name="pane-visibility-library" value="show" />
-                <span>Show</span>
-              </label>
-              <label>
-                <input type="radio" name="pane-visibility-library" value="hide" />
-                <span>Hide</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="settings-row settings-desktop-only">
-            <div class="settings-toggle-label">
-              <strong>Notes pane (desktop)</strong>
-              <span class="settings-toggle-desc">
-                The right-side pane that holds Voice + the "This clip"
-                summary (flags, bookmarks, notes). Hide for more reading
-                room. Re-open from the 📝 pill at the right edge, this
-                toggle, or ⌘K → "Show notes pane".
-              </span>
-            </div>
-            <div
-              class="theme-picker"
-              role="radiogroup"
-              aria-label="Notes pane visibility"
-            >
-              <label>
-                <input type="radio" name="pane-visibility-author" value="show" />
-                <span>Show</span>
-              </label>
-              <label>
-                <input type="radio" name="pane-visibility-author" value="hide" />
-                <span>Hide</span>
-              </label>
-            </div>
-          </div>
-
-          <p class="settings-subheader">Player</p>
-
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Skip interval</strong>
-              <span class="settings-toggle-desc">
-                How far the ↶ and ↷ chips jump. Default is 5 seconds.
-                Smaller for re-listening tricky sentences; larger for
-                skipping past sections you already heard.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Skip interval">
-              <label>
-                <input type="radio" name="skip-interval" value="2" />
-                <span>2s</span>
-              </label>
-              <label>
-                <input type="radio" name="skip-interval" value="5" />
-                <span>5s</span>
-              </label>
-              <label>
-                <input type="radio" name="skip-interval" value="10" />
-                <span>10s</span>
-              </label>
-              <label>
-                <input type="radio" name="skip-interval" value="15" />
-                <span>15s</span>
-              </label>
-              <label>
-                <input type="radio" name="skip-interval" value="30" />
-                <span>30s</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- v223.tn15 (#479): auto-pause at paragraph break.
-               Gives the listener a beat to process what they just
-               heard — and on the phone, time to tap-flag in annotate
-               mode without the narrator racing past. Off (0) means
-               continuous playback; 2/4/6 seconds adds a breath after
-               every paragraph. The pause is cancelled if the user
-               presses play or skips. -->
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Pause after paragraph</strong>
-              <span class="settings-toggle-desc">
-                Auto-pause for a beat at the end of each paragraph so
-                you can process what you heard — and tap to flag it
-                in annotate mode. Resumes automatically; press play to
-                skip the wait.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Pause after paragraph">
-              <label>
-                <input type="radio" name="paragraph-pause" value="0" />
-                <span>Off</span>
-              </label>
-              <label>
-                <input type="radio" name="paragraph-pause" value="2" />
-                <span>2s</span>
-              </label>
-              <label>
-                <input type="radio" name="paragraph-pause" value="4" />
-                <span>4s</span>
-              </label>
-              <label>
-                <input type="radio" name="paragraph-pause" value="6" />
-                <span>6s</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- v225v4.9: Keep screen on during playback. Uses the same
-               Wake Lock API as the bg-queue lock from v220ba/#423.
-               Off by default — opt-in because it costs battery. When
-               on, the player's play event acquires the lock and pause/
-               ended releases. Silently no-op on browsers without
-               navigator.wakeLock (older iOS Safari, Firefox iOS); the
-               radio still flips but nothing happens. -->
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Keep screen on while playing</strong>
-              <span class="settings-toggle-desc">
-                Stops the phone or laptop from sleeping while audio is
-                playing — useful if you're reading along with the
-                narrator. Costs a little battery; off by default.
-                Releases automatically when you pause or the clip ends.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Keep screen on while playing">
-              <label>
-                <input type="radio" name="keep-screen-on" value="off" />
-                <span>Off</span>
-              </label>
-              <label>
-                <input type="radio" name="keep-screen-on" value="on" />
-                <span>On</span>
-              </label>
-            </div>
-          </div>
-
-          <p class="settings-subheader">Book view</p>
-
-          <!-- v197 (M2): Book view text size. Re-paginates on the fly
-               if the user is currently in book view, so the change
-               is immediately visible. Persists to localStorage. -->
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Text size</strong>
-              <span class="settings-toggle-desc">
-                How large the body text reads when the book view is
-                open. Larger sizes mean more pages but less squinting.
-                Re-paginates instantly when you change it.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Book view text size">
-              <label>
-                <input type="radio" name="book-font-size" value="small" />
-                <span>Small</span>
-              </label>
-              <label>
-                <input type="radio" name="book-font-size" value="medium" />
-                <span>Medium</span>
-              </label>
-              <label>
-                <input type="radio" name="book-font-size" value="large" />
-                <span>Large</span>
-              </label>
-              <label>
-                <input type="radio" name="book-font-size" value="xlarge" />
-                <span>X-Large</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- v199 (M3.1): Book view theme. Picks the typographic
-               personality — paperback (default, serif single-column,
-               justified), magazine (sans-serif, 2-column body on
-               desktop), manuscript (monospace, looser line-height,
-               left-aligned for the typewritten-draft look). Re-
-               paginates on change so page breaks match the new font
-               metrics. Independent of the app-wide Dark/Light theme. -->
-          <div class="settings-row">
-            <div class="settings-toggle-label">
-              <strong>Typography</strong>
-              <span class="settings-toggle-desc">
-                <strong>Paperback</strong>: classic serif, single column.
-                <strong>Magazine</strong>: sans-serif, two columns on
-                desktop. <strong>Manuscript</strong>: monospace, looser
-                lines, left-aligned — reads like a typewritten draft.
-              </span>
-            </div>
-            <div class="theme-picker" role="radiogroup" aria-label="Book view theme">
-              <label>
-                <input type="radio" name="book-theme" value="paperback" />
-                <span>Paperback</span>
-              </label>
-              <label>
-                <input type="radio" name="book-theme" value="magazine" />
-                <span>Magazine</span>
-              </label>
-              <label>
-                <input type="radio" name="book-theme" value="manuscript" />
-                <span>Manuscript</span>
-              </label>
-            </div>
-          </div>
-
-          <p class="settings-subheader">Help &amp; docs</p>
-
-          <!-- v220f: Help &amp; manual PROMOTED to first in the link
-               cluster. Testers consistently miss the gear; if they DO
-               open it looking for docs, this is the first thing they
-               should see. -->
-          <a
-            href="/manual.html"
-            target="_blank"
-            rel="noopener"
-            class="settings-help-link"
-          >Help &amp; manual →</a>
-          <a
-            id="settings-whats-new-link"
-            href="/whats-new.html"
-            target="_blank"
-            rel="noopener"
-            class="settings-help-link"
-          >What's new <span class="whats-new-badge" hidden>NEW</span> →</a>
-          <!-- v152: discoverable entry point for the shortcuts dialog
-               so testers who don't know "?" opens it can still find
-               the list. -->
-          <a
-            id="settings-shortcuts-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="Open keyboard shortcuts"
-          >Keyboard shortcuts →</a>
-          <a
-            id="settings-feedback-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="Send feedback via your default mail app"
-          >Send feedback (mail app) →</a>
-          <a
-            id="settings-feedback-gmail-link"
-            href="#"
-            target="_blank"
-            rel="noopener"
-            class="settings-help-link"
-            aria-label="Send feedback via Gmail"
-          >Send feedback (Gmail) →</a>
-          <!-- v225v3.38 (#769): manual push of the debug log to the
-               private narrative-debug-logs repo. Downloads locally too
-               (so the user still has a copy). Hidden by JS until the
-               server confirms the push pipeline is enabled — keeps
-               local-dev installs from showing a button that can't work. -->
-          <a
-            id="settings-push-debug-log-link"
-            href="#"
-            class="settings-help-link"
-            hidden
-            aria-label="Push debug log to the debugger's private repo"
-          >Push debug log to debugger →</a>
-          <span
-            id="settings-push-debug-log-status"
-            class="settings-toggle-desc"
-            hidden
-          ></span>
-
-          <p class="settings-subheader">Stats</p>
-
-          <!-- Listen statistics. Read-only summary populated by app.js
-               every time the Settings dialog opens. v220f: moved BELOW
-               the help links — it's a display block, not a setting, so
-               it shouldn't push the help cluster down. -->
-          <div class="settings-row advanced-only" id="stats-row">
-            <div class="settings-toggle-label">
-              <strong>Listen stats</strong>
-              <span class="settings-toggle-desc" id="stats-empty" hidden>
-                No listening yet. Play a clip and come back.
-              </span>
-            </div>
-            <div class="stats-grid" id="stats-grid">
-              <div class="stats-cell">
-                <div class="stats-label">Today</div>
-                <div class="stats-value" id="stats-today">0 min</div>
-              </div>
-              <div class="stats-cell">
-                <div class="stats-label">This week</div>
-                <div class="stats-value" id="stats-week">0 min</div>
-              </div>
-              <div class="stats-cell">
-                <div class="stats-label">All-time</div>
-                <div class="stats-value" id="stats-total">0 min</div>
-              </div>
-            </div>
-            <div class="stats-extras" id="stats-extras">
-              <div class="stats-extra-row">
-                <span class="stats-extra-label">Top voice</span>
-                <span class="stats-extra-value" id="stats-top-voice">—</span>
-              </div>
-              <div class="stats-extra-row">
-                <span class="stats-extra-label">Most listened</span>
-                <span class="stats-extra-value" id="stats-top-clip">—</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              id="stats-reset"
-              class="link-btn stats-reset-btn"
-              aria-label="Reset listen statistics"
-            >Reset stats</button>
-          </div>
-
-          <p class="settings-subheader">Tester tools</p>
-
-          <!-- v174: replay the discoverability tips. Clears every
-               narrative.hintSeen.*, voice-favorites tip dismissal,
-               drag-hint dismissal, speaker-audition tip flags, and
-               the first-clip tour flag. Useful after dismissing a
-               tip by accident, or while developing/testing the
-               onboarding flow. -->
-          <a
-            id="settings-reset-hints-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="Replay onboarding tips and first-tap hints"
-          >Replay onboarding tips →</a>
-          <!-- v225v3.16 (#622): "Take the tour" launches the overlay
-               tour engine with a guided walkthrough of the live UI.
-               Sits next to Replay onboarding tips since it's the same
-               meta-onboarding bucket.
-               v225v3.17 (#623): split into two tours — first-tour for
-               basic onboarding and author-tour for the Author tier
-               features (gates via _bodyMode === "author" check in JS). -->
-          <a
-            id="settings-take-tour-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="Open a guided tour of the main UI"
-          >Take the tour →</a>
-          <a
-            id="settings-author-tour-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="Open a guided tour of Author-tier features"
-          >Author features tour →</a>
-          <!-- v177: in-app debug log viewer. Surfaces the _debugLog
-               ring buffer in a modal with Copy / Download / Clear
-               buttons. Most useful when chasing "chapter X keeps
-               failing to synthesize" reports — every GitHub fetch,
-               queue enqueue, synth attempt, and error writes a
-               timestamped entry. -->
-          <a
-            id="settings-debug-log-link"
-            href="#"
-            class="settings-help-link"
-            aria-label="View the in-app debug log"
-          >View debug log →</a>
-
-          <!-- v221.maint: admin form for scheduling a server-side
-               maintenance window. Hidden by JS unless an API key is
-               present (NARRATIVE_KEY identifies the admin in
-               single-tenant alpha). Hidden in normal user sessions
-               so testers never see the controls. -->
-          <div
-            id="settings-maintenance-section"
-            class="settings-section"
-            hidden
-          >
-            <label class="settings-section-label">
-              Schedule maintenance
-            </label>
-            <p class="settings-section-hint">
-              Sets a warning banner that every connected tester sees.
-              Useful before deploys, restarts, or any window where
-              re-narrates may fail.
-            </p>
-            <textarea
-              id="maintenance-message"
-              class="settings-input"
-              rows="2"
-              placeholder="e.g. Restarting at 18:30 UTC — re-narrates in progress will be killed."
-              maxlength="500"
-            ></textarea>
-            <div class="maintenance-form-row">
-              <label class="maintenance-form-field">
-                <span>Starts at</span>
-                <input
-                  id="maintenance-starts-at"
-                  type="datetime-local"
-                  class="settings-input"
-                />
-              </label>
-              <label class="maintenance-form-field">
-                <span>Duration (min)</span>
-                <input
-                  id="maintenance-duration-min"
-                  type="number"
-                  min="1"
-                  max="240"
-                  value="10"
-                  class="settings-input"
-                />
-              </label>
-            </div>
-            <div class="maintenance-form-actions">
               <button
-                id="maintenance-save-btn"
                 type="button"
-                class="link-btn"
-              >Save warning</button>
+                class="settings-sidebar-item is-active"
+                data-cat="account"
+              >Account</button>
               <button
-                id="maintenance-clear-btn"
                 type="button"
-                class="link-btn"
-              >Clear active warning</button>
-              <span
-                id="maintenance-form-status"
-                class="settings-section-hint"
-              ></span>
-            </div>
-          </div>
+                class="settings-sidebar-item"
+                data-cat="appearance"
+              >Appearance</button>
+              <button
+                type="button"
+                class="settings-sidebar-item"
+                data-cat="mode"
+              >Mode</button>
+              <button
+                type="button"
+                class="settings-sidebar-item"
+                data-cat="playback"
+              >Playback</button>
+              <button
+                type="button"
+                class="settings-sidebar-item"
+                data-cat="help"
+              >Help</button>
+              <button
+                type="button"
+                class="settings-sidebar-item"
+                data-cat="about"
+              >About</button>
+            </nav>
 
-          <!-- v221.tenants-5: admin tenant management. Mint per-tester
-               bearers, list them, revoke. Hidden by JS unless the
-               current bearer matches NARRATIVE_KEY (whoami.is_admin
-               === true). Testers never see this section even if they
-               find it in the DOM via dev tools — the underlying POST
-               and DELETE both 403 without admin. -->
-          <div
-            id="settings-tenants-section"
-            class="settings-section"
-            hidden
-          >
-            <label class="settings-section-label">
-              Tester keys
-            </label>
-            <p class="settings-section-hint">
-              Each tester needs their own opaque key so their library
-              stays isolated from everyone else's. Mint one here, then
-              share it with the tester out-of-band — the key is shown
-              once and never re-emitted.
-            </p>
-            <div class="tenants-mint-row">
-              <input
-                id="tenants-new-label"
-                type="text"
-                class="settings-input"
-                placeholder="e.g. alice — beta@gmail.com"
-                maxlength="80"
-              />
-              <button
-                id="tenants-mint-btn"
-                type="button"
-                class="link-btn"
-              >Mint key</button>
-            </div>
-            <div
-              id="tenants-just-minted"
-              class="tenants-just-minted"
-              hidden
-            >
-              <div class="tenants-just-minted-row">
-                <span class="tenants-just-minted-label"
-                  >New tester key — copy this now:</span>
-                <button
-                  id="tenants-just-minted-copy"
-                  type="button"
-                  class="link-btn"
-                >Copy</button>
-              </div>
-              <code
-                id="tenants-just-minted-key"
-                class="tenants-just-minted-key"
-              ></code>
-              <p class="settings-section-hint">
-                This is the only time the key is shown. Share it with
-                the tester via Signal, email, or paper. After this you
-                can only see the tenant_key sha (below).
-              </p>
-            </div>
-            <div class="tenants-list-row">
-              <span class="settings-section-label settings-section-label-inline"
-                >Existing testers</span>
-              <button
-                id="tenants-refresh-btn"
-                type="button"
-                class="link-btn"
-              >Refresh</button>
-            </div>
-            <ul
-              id="tenants-list"
-              class="tenants-list"
-            ></ul>
-            <p
-              id="tenants-form-status"
-              class="settings-section-hint"
-              aria-live="polite"
-            ></p>
-          </div>
+            <div class="settings-content" id="settings-content">
 
-          <!-- GitHub section: paste a Personal Access Token so URL
-               fetch can pull from private repos. Token is stored only
-               in localStorage on this device. The /api/extract/url
-               endpoint forwards it to GitHub hosts only. -->
-          <div class="settings-section">
-            <label for="settings-github-token" class="settings-section-label">
-              GitHub
-            </label>
+              <!-- ============================================================
+                   ACCOUNT — sync, API key, admin (admin-only)
+                   ============================================================ -->
+              <section class="settings-pane is-active" data-cat="account">
+                <h3 class="settings-pane-title">Account</h3>
+
+                <!-- v221.sync-5: cross-device library sync. Off by default;
+                     flipping on enables Path B sync (server-side SQLite +
+                     audio blobs on the Fly volume). Existing local clips
+                     sync on next save; full migration of existing library
+                     lands in #430. Per-device flag — flipping on desktop
+                     doesn't auto-enable phone. -->
+                <div
+                  class="settings-row"
+                  data-search="sync library cross device server cloud refresh pull push force devices"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Sync library across devices</strong>
+                    <span class="settings-toggle-desc">
+                      Stores your library on the Narrative server so you can
+                      edit on your desktop and listen on your phone. New
+                      saves push as you go; pulls happen when you open the
+                      library. Off by default — flip on per device.
+                    </span>
+                  </div>
+                  <div class="theme-picker" role="radiogroup" aria-label="Library sync">
+                    <label>
+                      <input type="radio" name="sync-enabled" value="off" />
+                      <span>Off</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="sync-enabled" value="on" />
+                      <span>On</span>
+                    </label>
+                  </div>
+                  <!-- v223.tn1 (original) / v4.59 (#489 split): the manual sync
+                       trigger lives here. Previously a single "Sync now" button
+                       ran push-then-pull. Split into two buttons: Pull is the
+                       safe everyday "refresh from server" (default-styled); Force-push
+                       is the destructive "make server match local" (ghost, warned,
+                       confirmed). The 60s auto-pull timer covers most cases —
+                       these buttons exist for "I just changed devices, fix it
+                       NOW" moments. -->
+                  <div class="settings-inline-row sync-buttons-row">
+                    <button
+                      type="button"
+                      id="sync-pull-btn"
+                      aria-describedby="sync-status-line"
+                      title="Fetch the newest clips, presets, and annotations from the server. Safe — your local edits are kept."
+                    >Pull now</button>
+                    <button
+                      type="button"
+                      id="sync-push-btn"
+                      class="ghost-btn"
+                      aria-describedby="sync-push-hint"
+                      title="Push every local clip to the server, overwriting newer remote changes."
+                    >Force-push to server</button>
+                  </div>
+                  <p id="sync-status-line" class="settings-section-hint"></p>
+                  <p id="sync-push-hint" class="settings-section-hint sync-push-hint">
+                    <strong>Force-push is one-way.</strong> Use it only when this
+                    device has the truth and other devices are out of date — it
+                    overwrites anything newer on the server. Most of the time
+                    you want Pull instead.
+                  </p>
+                </div>
+
+                <!-- v225.tn31 (#505) — Switch key. Relocated to Account top in
+                     v4.63 (used to live in the footer next to Force update).
+                     The button signs out and clears local state so a tester
+                     sharing a machine can paste a different X-Narrative-Key
+                     without bleeding the previous tester's library into the
+                     new session. -->
+                <div
+                  class="settings-row"
+                  data-search="switch key api narrative-key signout sign out logout log out account authentication tester bearer"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>API key</strong>
+                    <span class="settings-toggle-desc">
+                      Switch keys when sharing a device with another tester —
+                      clears the saved X-Narrative-Key and local library, then
+                      reloads so you can paste a fresh key.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    id="settings-switch-key"
+                    class="settings-force-update"
+                    title="Sign out and paste a different X-Narrative-Key — use if you're sharing a device with another tester"
+                  >Switch key</button>
+                </div>
+
+                <!-- v4.63 (#854): admin chrome (maintenance form + tester key
+                     management) tucks into Advanced. The OUTER details is
+                     visible to everyone; the INNER admin sections stay
+                     `hidden` until whoami.is_admin === true. That keeps the
+                     Advanced affordance discoverable without exposing admin
+                     UI to regular testers. -->
+                <details
+                  class="settings-advanced"
+                  data-search="advanced admin maintenance tester keys mint deploy schedule warning"
+                >
+                  <summary>Advanced</summary>
+
+                  <!-- v221.maint: admin form for scheduling a server-side
+                       maintenance window. Hidden by JS unless an API key is
+                       present (NARRATIVE_KEY identifies the admin in
+                       single-tenant alpha). Hidden in normal user sessions
+                       so testers never see the controls. -->
+                  <div
+                    id="settings-maintenance-section"
+                    class="settings-section"
+                    data-search="maintenance schedule warning admin server deploy banner"
+                    hidden
+                  >
+                    <label class="settings-section-label">
+                      Schedule maintenance
+                    </label>
+                    <p class="settings-section-hint">
+                      Sets a warning banner that every connected tester sees.
+                      Useful before deploys, restarts, or any window where
+                      re-narrates may fail.
+                    </p>
+                    <textarea
+                      id="maintenance-message"
+                      class="settings-input"
+                      rows="2"
+                      placeholder="e.g. Restarting at 18:30 UTC — re-narrates in progress will be killed."
+                      maxlength="500"
+                    ></textarea>
+                    <div class="maintenance-form-row">
+                      <label class="maintenance-form-field">
+                        <span>Starts at</span>
+                        <input
+                          id="maintenance-starts-at"
+                          type="datetime-local"
+                          class="settings-input"
+                        />
+                      </label>
+                      <label class="maintenance-form-field">
+                        <span>Duration (min)</span>
+                        <input
+                          id="maintenance-duration-min"
+                          type="number"
+                          min="1"
+                          max="240"
+                          value="10"
+                          class="settings-input"
+                        />
+                      </label>
+                    </div>
+                    <div class="maintenance-form-actions">
+                      <button
+                        id="maintenance-save-btn"
+                        type="button"
+                        class="link-btn"
+                      >Save warning</button>
+                      <button
+                        id="maintenance-clear-btn"
+                        type="button"
+                        class="link-btn"
+                      >Clear active warning</button>
+                      <span
+                        id="maintenance-form-status"
+                        class="settings-section-hint"
+                      ></span>
+                    </div>
+                  </div>
+
+                  <!-- v221.tenants-5: admin tenant management. Mint per-tester
+                       bearers, list them, revoke. Hidden by JS unless the
+                       current bearer matches NARRATIVE_KEY (whoami.is_admin
+                       === true). Testers never see this section even if they
+                       find it in the DOM via dev tools — the underlying POST
+                       and DELETE both 403 without admin. -->
+                  <div
+                    id="settings-tenants-section"
+                    class="settings-section"
+                    data-search="tester keys mint tenant admin team alpha beta share onboard"
+                    hidden
+                  >
+                    <label class="settings-section-label">
+                      Tester keys
+                    </label>
+                    <p class="settings-section-hint">
+                      Each tester needs their own opaque key so their library
+                      stays isolated from everyone else's. Mint one here, then
+                      share it with the tester out-of-band — the key is shown
+                      once and never re-emitted.
+                    </p>
+                    <div class="tenants-mint-row">
+                      <input
+                        id="tenants-new-label"
+                        type="text"
+                        class="settings-input"
+                        placeholder="e.g. alice — beta@gmail.com"
+                        maxlength="80"
+                      />
+                      <button
+                        id="tenants-mint-btn"
+                        type="button"
+                        class="link-btn"
+                      >Mint key</button>
+                    </div>
+                    <div
+                      id="tenants-just-minted"
+                      class="tenants-just-minted"
+                      hidden
+                    >
+                      <div class="tenants-just-minted-row">
+                        <span class="tenants-just-minted-label"
+                          >New tester key — copy this now:</span>
+                        <button
+                          id="tenants-just-minted-copy"
+                          type="button"
+                          class="link-btn"
+                        >Copy</button>
+                      </div>
+                      <code
+                        id="tenants-just-minted-key"
+                        class="tenants-just-minted-key"
+                      ></code>
+                      <p class="settings-section-hint">
+                        This is the only time the key is shown. Share it with
+                        the tester via Signal, email, or paper. After this you
+                        can only see the tenant_key sha (below).
+                      </p>
+                    </div>
+                    <div class="tenants-list-row">
+                      <span class="settings-section-label settings-section-label-inline"
+                        >Existing testers</span>
+                      <button
+                        id="tenants-refresh-btn"
+                        type="button"
+                        class="link-btn"
+                      >Refresh</button>
+                    </div>
+                    <ul
+                      id="tenants-list"
+                      class="tenants-list"
+                    ></ul>
+                    <p
+                      id="tenants-form-status"
+                      class="settings-section-hint"
+                      aria-live="polite"
+                    ></p>
+                  </div>
+                </details>
+              </section>
+
+              <!-- ============================================================
+                   APPEARANCE — theme, pane visibility, book view typography
+                   ============================================================ -->
+              <section class="settings-pane" data-cat="appearance" hidden>
+                <h3 class="settings-pane-title">Appearance</h3>
+
+                <div
+                  class="settings-row"
+                  data-search="theme dark light auto appearance color palette"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Theme</strong>
+                    <span class="settings-toggle-desc">
+                      Auto follows your device setting. Light mode uses a warm
+                      cream palette tuned for outdoor or daytime reading.
+                    </span>
+                  </div>
+                  <div class="theme-picker" role="radiogroup" aria-label="Theme">
+                    <label>
+                      <input type="radio" name="theme" value="auto" />
+                      <span>Auto</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="theme" value="dark" />
+                      <span>Dark</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="theme" value="light" />
+                      <span>Light</span>
+                    </label>
+                  </div>
+                  <!-- v225.tn59 (#542): Auto-resolution status line. Reports
+                       what the OS is telling us right now so the user can
+                       see whether Auto is detecting their system theme
+                       correctly. Hidden when Dark/Light is explicit. -->
+                  <p
+                    id="theme-auto-status"
+                    class="settings-section-hint theme-auto-status"
+                  ></p>
+                </div>
+
+                <!-- v225fz11.panes (#685): desktop side-panel visibility. Two
+                     rows mirror the × close + 📚/📝 reopen pill flow but
+                     surface the toggle for users who don't know about them.
+                     Only meaningful at ≥1280px (panes don't render below);
+                     below that the radios still work but are inert because
+                     the layout function gates on viewport AND the hidden
+                     flag. settings-desktop-only class hides the rows on
+                     phones where the underlying feature is irrelevant. -->
+                <div
+                  class="settings-row settings-desktop-only"
+                  data-search="library pane desktop visibility hide show side panel"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Library pane (desktop)</strong>
+                    <span class="settings-toggle-desc">
+                      The Library list pinned to the left edge on screens 1280px
+                      and wider. Hide for a wider center column when you don't
+                      need quick clip-switching. Re-open from the 📚 pill at
+                      the left edge, this toggle, or ⌘K → "Show library pane".
+                    </span>
+                  </div>
+                  <div
+                    class="theme-picker"
+                    role="radiogroup"
+                    aria-label="Library pane visibility"
+                  >
+                    <label>
+                      <input type="radio" name="pane-visibility-library" value="show" />
+                      <span>Show</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="pane-visibility-library" value="hide" />
+                      <span>Hide</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div
+                  class="settings-row settings-desktop-only"
+                  data-search="notes pane desktop visibility hide show side panel author this clip"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Notes pane (desktop)</strong>
+                    <span class="settings-toggle-desc">
+                      The right-side pane that holds Voice + the "This clip"
+                      summary (flags, bookmarks, notes). Hide for more reading
+                      room. Re-open from the 📝 pill at the right edge, this
+                      toggle, or ⌘K → "Show notes pane".
+                    </span>
+                  </div>
+                  <div
+                    class="theme-picker"
+                    role="radiogroup"
+                    aria-label="Notes pane visibility"
+                  >
+                    <label>
+                      <input type="radio" name="pane-visibility-author" value="show" />
+                      <span>Show</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="pane-visibility-author" value="hide" />
+                      <span>Hide</span>
+                    </label>
+                  </div>
+                </div>
+
+                <details
+                  class="settings-advanced"
+                  data-search="advanced book view text size typography paperback magazine manuscript font serif sans"
+                >
+                  <summary>Advanced (Book view)</summary>
+
+                  <!-- v197 (M2): Book view text size. Re-paginates on the fly
+                       if the user is currently in book view, so the change
+                       is immediately visible. Persists to localStorage. -->
+                  <div
+                    class="settings-row"
+                    data-search="text size font book view paginate small medium large"
+                  >
+                    <div class="settings-toggle-label">
+                      <strong>Text size</strong>
+                      <span class="settings-toggle-desc">
+                        How large the body text reads when the book view is
+                        open. Larger sizes mean more pages but less squinting.
+                        Re-paginates instantly when you change it.
+                      </span>
+                    </div>
+                    <div class="theme-picker" role="radiogroup" aria-label="Book view text size">
+                      <label>
+                        <input type="radio" name="book-font-size" value="small" />
+                        <span>Small</span>
+                      </label>
+                      <label>
+                        <input type="radio" name="book-font-size" value="medium" />
+                        <span>Medium</span>
+                      </label>
+                      <label>
+                        <input type="radio" name="book-font-size" value="large" />
+                        <span>Large</span>
+                      </label>
+                      <label>
+                        <input type="radio" name="book-font-size" value="xlarge" />
+                        <span>X-Large</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- v199 (M3.1): Book view theme. Picks the typographic
+                       personality — paperback (default, serif single-column,
+                       justified), magazine (sans-serif, 2-column body on
+                       desktop), manuscript (monospace, looser line-height,
+                       left-aligned for the typewritten-draft look). Re-
+                       paginates on change so page breaks match the new font
+                       metrics. Independent of the app-wide Dark/Light theme. -->
+                  <div
+                    class="settings-row"
+                    data-search="typography book view paperback magazine manuscript serif sans monospace font"
+                  >
+                    <div class="settings-toggle-label">
+                      <strong>Typography</strong>
+                      <span class="settings-toggle-desc">
+                        <strong>Paperback</strong>: classic serif, single column.
+                        <strong>Magazine</strong>: sans-serif, two columns on
+                        desktop. <strong>Manuscript</strong>: monospace, looser
+                        lines, left-aligned — reads like a typewritten draft.
+                      </span>
+                    </div>
+                    <div class="theme-picker" role="radiogroup" aria-label="Book view theme">
+                      <label>
+                        <input type="radio" name="book-theme" value="paperback" />
+                        <span>Paperback</span>
+                      </label>
+                      <label>
+                        <input type="radio" name="book-theme" value="magazine" />
+                        <span>Magazine</span>
+                      </label>
+                      <label>
+                        <input type="radio" name="book-theme" value="manuscript" />
+                        <span>Manuscript</span>
+                      </label>
+                    </div>
+                  </div>
+                </details>
+              </section>
+
+              <!-- ============================================================
+                   MODE — Simple / Standard / Author UI tier picker
+                   ============================================================ -->
+              <section class="settings-pane" data-cat="mode" hidden>
+                <h3 class="settings-pane-title">Mode</h3>
+
+                <div
+                  class="settings-row"
+                  data-search="mode simple standard author tier ui level unlocks"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>UI tier</strong>
+                    <span class="settings-toggle-desc">
+                      <strong>Simple</strong>: just listen — pared-down controls.
+                      <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools, annotations &amp; voice notes.
+                      <strong>Author</strong>: writing-craft tools (word count,
+                      long-sentence + filler-word callouts, character voices).
+                    </span>
+                  </div>
+                  <div class="theme-picker mode-picker" role="radiogroup" aria-label="UI mode">
+                    <label>
+                      <input type="radio" name="ui-mode" value="simple" />
+                      <span>Simple</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="ui-mode" value="standard" />
+                      <span>Standard</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="ui-mode" value="author" />
+                      <span>Author</span>
+                    </label>
+                  </div>
+                  <!-- v150: dynamic "+ unlocks" hint. JS sets the text based
+                       on the current mode so a Simple-mode user sees what
+                       Standard / Author would gain them. Hidden when the
+                       user is already on Author (nothing left to unlock). -->
+                  <p id="mode-unlock-hint" class="mode-unlock-hint" hidden></p>
+                </div>
+              </section>
+
+              <!-- ============================================================
+                   PLAYBACK — skip / pause / wake-lock
+                   ============================================================ -->
+              <section class="settings-pane" data-cat="playback" hidden>
+                <h3 class="settings-pane-title">Playback</h3>
+
+                <div
+                  class="settings-row"
+                  data-search="skip interval seconds player playback rewind forward jump"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Skip interval</strong>
+                    <span class="settings-toggle-desc">
+                      How far the ↶ and ↷ chips jump. Default is 5 seconds.
+                      Smaller for re-listening tricky sentences; larger for
+                      skipping past sections you already heard.
+                    </span>
+                  </div>
+                  <div class="theme-picker" role="radiogroup" aria-label="Skip interval">
+                    <label>
+                      <input type="radio" name="skip-interval" value="2" />
+                      <span>2s</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="skip-interval" value="5" />
+                      <span>5s</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="skip-interval" value="10" />
+                      <span>10s</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="skip-interval" value="15" />
+                      <span>15s</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="skip-interval" value="30" />
+                      <span>30s</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- v223.tn15 (#479): auto-pause at paragraph break.
+                     Gives the listener a beat to process what they just
+                     heard — and on the phone, time to tap-flag in annotate
+                     mode without the narrator racing past. Off (0) means
+                     continuous playback; 2/4/6 seconds adds a breath after
+                     every paragraph. The pause is cancelled if the user
+                     presses play or skips. -->
+                <div
+                  class="settings-row"
+                  data-search="pause paragraph break breath annotate flag rhythm"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Pause after paragraph</strong>
+                    <span class="settings-toggle-desc">
+                      Auto-pause for a beat at the end of each paragraph so
+                      you can process what you heard — and tap to flag it
+                      in annotate mode. Resumes automatically; press play to
+                      skip the wait.
+                    </span>
+                  </div>
+                  <div class="theme-picker" role="radiogroup" aria-label="Pause after paragraph">
+                    <label>
+                      <input type="radio" name="paragraph-pause" value="0" />
+                      <span>Off</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="paragraph-pause" value="2" />
+                      <span>2s</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="paragraph-pause" value="4" />
+                      <span>4s</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="paragraph-pause" value="6" />
+                      <span>6s</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- v225v4.9: Keep screen on during playback. Uses the same
+                     Wake Lock API as the bg-queue lock from v220ba/#423.
+                     Off by default — opt-in because it costs battery. When
+                     on, the player's play event acquires the lock and pause/
+                     ended releases. Silently no-op on browsers without
+                     navigator.wakeLock (older iOS Safari, Firefox iOS); the
+                     radio still flips but nothing happens. -->
+                <div
+                  class="settings-row"
+                  data-search="keep screen on wake lock playback battery sleep prevent"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Keep screen on while playing</strong>
+                    <span class="settings-toggle-desc">
+                      Stops the phone or laptop from sleeping while audio is
+                      playing — useful if you're reading along with the
+                      narrator. Costs a little battery; off by default.
+                      Releases automatically when you pause or the clip ends.
+                    </span>
+                  </div>
+                  <div class="theme-picker" role="radiogroup" aria-label="Keep screen on while playing">
+                    <label>
+                      <input type="radio" name="keep-screen-on" value="off" />
+                      <span>Off</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="keep-screen-on" value="on" />
+                      <span>On</span>
+                    </label>
+                  </div>
+                </div>
+              </section>
+
+              <!-- ============================================================
+                   HELP — manual / whats-new / shortcuts / feedback + Advanced
+                   (Start-helper, tours, GitHub config)
+                   ============================================================ -->
+              <section class="settings-pane" data-cat="help" hidden>
+                <h3 class="settings-pane-title">Help</h3>
+
+                <!-- v220f: Help &amp; manual PROMOTED to first in the link
+                     cluster. Testers consistently miss the gear; if they DO
+                     open it looking for docs, this is the first thing they
+                     should see. -->
+                <a
+                  href="/manual.html"
+                  target="_blank"
+                  rel="noopener"
+                  class="settings-help-link"
+                  data-search="help manual docs documentation"
+                >Help &amp; manual →</a>
+                <a
+                  id="settings-whats-new-link"
+                  href="/whats-new.html"
+                  target="_blank"
+                  rel="noopener"
+                  class="settings-help-link"
+                  data-search="whats new changelog release notes news"
+                >What's new <span class="whats-new-badge" hidden>NEW</span> →</a>
+                <!-- v152: discoverable entry point for the shortcuts dialog
+                     so testers who don't know "?" opens it can still find
+                     the list. -->
+                <a
+                  id="settings-shortcuts-link"
+                  href="#"
+                  class="settings-help-link"
+                  aria-label="Open keyboard shortcuts"
+                  data-search="keyboard shortcuts hotkeys keys"
+                >Keyboard shortcuts →</a>
+                <a
+                  id="settings-feedback-link"
+                  href="#"
+                  class="settings-help-link"
+                  aria-label="Send feedback via your default mail app"
+                  data-search="feedback send email mail mailto contact support"
+                >Send feedback (mail app) →</a>
+                <a
+                  id="settings-feedback-gmail-link"
+                  href="#"
+                  target="_blank"
+                  rel="noopener"
+                  class="settings-help-link"
+                  aria-label="Send feedback via Gmail"
+                  data-search="feedback send gmail contact support email"
+                >Send feedback (Gmail) →</a>
+
+                <details
+                  class="settings-advanced"
+                  data-search="advanced start helper onboarding tour tours github pat token oauth"
+                >
+                  <summary>Advanced</summary>
+
+                  <!-- v220ap: visibility toggle for the "Start a new clip" helper
+                       above the textarea. Returning users can dismiss the helper
+                       in-place; this row brings it back. First-time users (no
+                       saved clips) always see the helper regardless of this
+                       setting — they need the discovery prompt. -->
+                  <div
+                    class="settings-row"
+                    data-search="start clip helper empty state tiles paste url upload github sample"
+                  >
+                    <div class="settings-toggle-label">
+                      <strong>Start-a-new-clip helper</strong>
+                      <span class="settings-toggle-desc">
+                        The four-tile helper above the textarea (Paste URL /
+                        Upload file / Browse GitHub / Try sample text). Hide it
+                        once you know the moves; bring it back any time.
+                      </span>
+                    </div>
+                    <div class="theme-picker" role="radiogroup" aria-label="Start-a-new-clip helper visibility">
+                      <label>
+                        <input type="radio" name="empty-state-visibility" value="show" />
+                        <span>Show</span>
+                      </label>
+                      <label>
+                        <input type="radio" name="empty-state-visibility" value="hide" />
+                        <span>Hide</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- v174: replay the discoverability tips. Clears every
+                       narrative.hintSeen.*, voice-favorites tip dismissal,
+                       drag-hint dismissal, speaker-audition tip flags, and
+                       the first-clip tour flag. Useful after dismissing a
+                       tip by accident, or while developing/testing the
+                       onboarding flow. -->
+                  <a
+                    id="settings-reset-hints-link"
+                    href="#"
+                    class="settings-help-link"
+                    aria-label="Replay onboarding tips and first-tap hints"
+                    data-search="replay onboarding tips hints tour first tap discoverability"
+                  >Replay onboarding tips →</a>
+                  <!-- v225v3.16 (#622): "Take the tour" launches the overlay
+                       tour engine with a guided walkthrough of the live UI.
+                       Sits next to Replay onboarding tips since it's the same
+                       meta-onboarding bucket.
+                       v225v3.17 (#623): split into two tours — first-tour for
+                       basic onboarding and author-tour for the Author tier
+                       features (gates via _bodyMode === "author" check in JS). -->
+                  <a
+                    id="settings-take-tour-link"
+                    href="#"
+                    class="settings-help-link"
+                    aria-label="Open a guided tour of the main UI"
+                    data-search="take tour guided overlay walkthrough first onboarding"
+                  >Take the tour →</a>
+                  <a
+                    id="settings-author-tour-link"
+                    href="#"
+                    class="settings-help-link"
+                    aria-label="Open a guided tour of Author-tier features"
+                    data-search="tour author features guided walkthrough power user"
+                  >Author features tour →</a>
+
+                  <!-- GitHub section: paste a Personal Access Token so URL
+                       fetch can pull from private repos. Token is stored only
+                       in localStorage on this device. The /api/extract/url
+                       endpoint forwards it to GitHub hosts only. -->
+                  <div
+                    class="settings-section"
+                    data-search="github pat personal access token oauth import private repo signin authentication"
+                  >
+                    <label for="settings-github-token" class="settings-section-label">
+                      GitHub
+                    </label>
             <!-- v140: token status moved to the TOP of the section so
                  the user sees "Token saved" right where they're
                  looking after pasting, instead of below the field
@@ -1495,41 +1638,135 @@
                 aria-label="Clear stored token"
               >Clear</button>
             </div>
-            <!-- v225.tn50 (#527): "Test token" probes GitHub /user
-                 with the saved token and reports whether GitHub
-                 accepts it. Disambiguates "token not on this device"
-                 from "token rejected by GitHub" — both currently
-                 surface as the same opaque 401 in the picker. -->
-            <div class="settings-token-row settings-token-test-row">
-              <button
-                id="settings-github-token-test"
-                type="button"
-                class="settings-token-test"
-                hidden
-                aria-label="Verify this device's saved token with GitHub"
-              >Test token</button>
-            </div>
-          </div>
+                    <!-- v225.tn50 (#527): "Test token" probes GitHub /user
+                         with the saved token and reports whether GitHub
+                         accepts it. Disambiguates "token not on this device"
+                         from "token rejected by GitHub" — both currently
+                         surface as the same opaque 401 in the picker. -->
+                    <div class="settings-token-row settings-token-test-row">
+                      <button
+                        id="settings-github-token-test"
+                        type="button"
+                        class="settings-token-test"
+                        hidden
+                        aria-label="Verify this device's saved token with GitHub"
+                      >Test token</button>
+                    </div>
+                  </div>
+                </details>
+              </section>
 
-          <!-- v220f: version stamp at the bottom of Settings. Lets
-               testers reporting bugs say "I'm on Narrative v220f" so
-               the report can be correlated with a deploy. JS in app.js
-               populates the date stamp at load time. -->
-          <p id="settings-version" class="settings-version">
-            Narrative <span id="settings-version-tag">v225v4.41</span>
-            <button
-              type="button"
-              id="settings-force-update"
-              class="settings-force-update"
-              title="Wipe local cache and reload — use if a new version isn't showing"
-            >Force update</button>
-            <button
-              type="button"
-              id="settings-switch-key"
-              class="settings-force-update"
-              title="Sign out and paste a different X-Narrative-Key — use if you're sharing a device with another tester"
-            >Switch key</button>
-          </p>
+              <!-- ============================================================
+                   ABOUT — version stamp, stats, diagnostics advanced
+                   ============================================================ -->
+              <section class="settings-pane" data-cat="about" hidden>
+                <h3 class="settings-pane-title">About</h3>
+
+                <!-- v220f: version stamp. Was the footer in the old layout;
+                     moved into About in v4.63. Force update sits next to it
+                     because the most common reason to hit Force update is
+                     "I'm not on the version I expect" — pair the diagnostic
+                     and the fix. Switch key moved to the Account pane. -->
+                <p id="settings-version" class="settings-version">
+                  Narrative <span id="settings-version-tag">v225v4.64</span>
+                  <button
+                    type="button"
+                    id="settings-force-update"
+                    class="settings-force-update"
+                    title="Wipe local cache and reload — use if a new version isn't showing"
+                    data-search="force update cache reload service worker refresh"
+                  >Force update</button>
+                </p>
+
+                <!-- Listen statistics. Read-only summary populated by app.js
+                     every time the Settings dialog opens. .advanced-only
+                     hides this in Simple mode (mode gating, distinct from
+                     the disclosure gating). -->
+                <div
+                  class="settings-row advanced-only"
+                  id="stats-row"
+                  data-search="listen stats statistics time today week total top voice clip reset"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Listen stats</strong>
+                    <span class="settings-toggle-desc" id="stats-empty" hidden>
+                      No listening yet. Play a clip and come back.
+                    </span>
+                  </div>
+                  <div class="stats-grid" id="stats-grid">
+                    <div class="stats-cell">
+                      <div class="stats-label">Today</div>
+                      <div class="stats-value" id="stats-today">0 min</div>
+                    </div>
+                    <div class="stats-cell">
+                      <div class="stats-label">This week</div>
+                      <div class="stats-value" id="stats-week">0 min</div>
+                    </div>
+                    <div class="stats-cell">
+                      <div class="stats-label">All-time</div>
+                      <div class="stats-value" id="stats-total">0 min</div>
+                    </div>
+                  </div>
+                  <div class="stats-extras" id="stats-extras">
+                    <div class="stats-extra-row">
+                      <span class="stats-extra-label">Top voice</span>
+                      <span class="stats-extra-value" id="stats-top-voice">—</span>
+                    </div>
+                    <div class="stats-extra-row">
+                      <span class="stats-extra-label">Most listened</span>
+                      <span class="stats-extra-value" id="stats-top-clip">—</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    id="stats-reset"
+                    class="link-btn stats-reset-btn"
+                    aria-label="Reset listen statistics"
+                  >Reset stats</button>
+                </div>
+
+                <details
+                  class="settings-advanced"
+                  data-search="advanced diagnostics debug log push view debugger"
+                >
+                  <summary>Diagnostics</summary>
+
+                  <!-- v225v3.38 (#769): manual push of the debug log to the
+                       private narrative-debug-logs repo. Downloads locally too
+                       (so the user still has a copy). Hidden by JS until the
+                       server confirms the push pipeline is enabled — keeps
+                       local-dev installs from showing a button that can't work. -->
+                  <a
+                    id="settings-push-debug-log-link"
+                    href="#"
+                    class="settings-help-link"
+                    hidden
+                    aria-label="Push debug log to the debugger's private repo"
+                    data-search="push debug log debugger diagnostics submit report"
+                  >Push debug log to debugger →</a>
+                  <span
+                    id="settings-push-debug-log-status"
+                    class="settings-toggle-desc"
+                    hidden
+                  ></span>
+                  <!-- v177: in-app debug log viewer. Surfaces the _debugLog
+                       ring buffer in a modal with Copy / Download / Clear
+                       buttons. Most useful when chasing "chapter X keeps
+                       failing to synthesize" reports — every GitHub fetch,
+                       queue enqueue, synth attempt, and error writes a
+                       timestamped entry. -->
+                  <a
+                    id="settings-debug-log-link"
+                    href="#"
+                    class="settings-help-link"
+                    aria-label="View the in-app debug log"
+                    data-search="view debug log diagnostics console errors trace"
+                  >View debug log →</a>
+                </details>
+              </section>
+
+            </div><!-- /.settings-content -->
+          </div><!-- /.settings-layout -->
         </div>
       </dialog>
 
@@ -3661,7 +3898,11 @@
                clips. Surfaces the source path + the short commit SHA
                so the user can confirm "yes this clip is the chapter
                I just pushed" without leaving the dialog. Tooltip on
-               the SHA chip shows the full hash. -->
+               the SHA chip shows the full hash.
+               v4.60 (#538): Push to GitHub button lives in the same
+               block so it inherits the GitHub-only gating for free.
+               Clicking it writes clip.text back to the source file
+               with a commit message and updates clip.gitRef.sha. -->
           <p id="clip-edit-gitref" class="clip-edit-gitref" hidden>
             <span class="clip-edit-gitref-label">From GitHub:</span>
             <span id="clip-edit-gitref-path" class="clip-edit-gitref-path"></span>
@@ -3671,6 +3912,12 @@
               class="clip-edit-gitref-sha"
               title="Full commit SHA"
             ></code>
+            <button
+              id="clip-edit-push-github-btn"
+              type="button"
+              class="clip-edit-gitref-push"
+              title="Commit the revised text back to this file on GitHub"
+            >⇡ Push to GitHub</button>
           </p>
           <!-- v219: voice provenance. Shows which voice + license were
                in effect when this clip was generated. Read-only. Lets

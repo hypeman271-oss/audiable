@@ -2470,6 +2470,19 @@
             → full hash in the tooltip.</td>
         </tr>
         <tr>
+          <td>Push to GitHub (v4.60)</td>
+          <td>In the same Edit dialog row, the <em>⇡ Push to GitHub</em>
+            button on the right edge commits the clip's current text
+            back to the source file. Opens a prompt with the default
+            commit message (<em>"Revised in Narrative: &lt;title&gt;"</em>);
+            edit and OK to push, cancel to abort. Refuses with a clear
+            error if the source has moved on GitHub since you imported
+            (use the per-card ↻ Sync chip to Pull first). Only the clip
+            text is pushed — bookmarks, annotations, voice presets, and
+            YAML frontmatter all stay Narrative-side (frontmatter
+            preservation tracked as a follow-up).</td>
+        </tr>
+        <tr>
           <td>Voice favorites + audition</td>
           <td>Open the Voice dialog; star a couple of voices.
             They appear as a <em>★ Favorites</em> optgroup at the
@@ -2769,6 +2782,20 @@
         field is also editable from ✎ Edit → Notes, and it travels
         through Export / Import along with bookmarks and tags.
       </p>
+      <p>
+        <strong>🎤 Dictate button.</strong> The Notes dialog has a 🎤
+        button next to the textarea — tap it to record a memo. The
+        transcript inserts at the textarea's cursor (or appends if the
+        textarea hasn't been focused) when you tap Stop. Recording
+        auto-stops at <strong>2 minutes</strong>; the timer in the
+        button counts down and tints red in the last 10 seconds so you
+        know the cap is coming. The audio itself isn't saved — only
+        the resulting text. The Notes field holds up to 10,000
+        characters total; if a long dictation would overflow, the
+        transcript gets clipped and the status line tells you. For
+        longer memos, stop, let the transcript insert, then tap 🎤
+        again to record the next 2-minute chunk.
+      </p>
       <div class="tip">
         Distinct from the one-line <strong>Note</strong> field on
         ✎ Edit: that one acts as a card subtitle (chapter number,
@@ -3032,9 +3059,9 @@
 
       <h3>Theme + text size (Settings)</h3>
       <p>
-        <strong>Settings → Book view theme</strong> picks the
-        typographic personality of the pages, independent of the
-        app-wide Dark/Light theme:
+        <strong>Settings → Appearance → Advanced (Book view) →
+        Typography</strong> picks the typographic personality of the
+        pages, independent of the app-wide Dark/Light theme:
       </p>
       <ul>
         <li><strong>Paperback</strong> (default): serif, single column, justified — classic novel look.</li>
@@ -3042,12 +3069,12 @@
         <li><strong>Manuscript</strong>: monospace, looser line-height, left-aligned (not justified) — the typewritten-draft look.</li>
       </ul>
       <p>
-        <strong>Settings → Book view text size</strong>
-        (Small / Medium / Large / X-Large = 14 / 16 / 18 / 20px)
-        controls the body font size. Changing it re-paginates on
-        the fly and anchors the new spread on the same sentence
-        you were reading — no jumping forty pages because the page
-        breaks shifted.
+        <strong>Settings → Appearance → Advanced (Book view) → Text
+        size</strong> (Small / Medium / Large / X-Large = 14 / 16 /
+        18 / 20px) controls the body font size. Changing it
+        re-paginates on the fly and anchors the new spread on the
+        same sentence you were reading — no jumping forty pages
+        because the page breaks shifted.
       </p>
 
       <h3>Bookmarks + highlights</h3>
@@ -3527,16 +3554,81 @@
       <!-- ============================================================= -->
       <h2 id="settings">8. Settings &amp; modes</h2>
       <p>
-        The <strong>⚙</strong> at the top right opens Settings. The
-        headline control is the <strong>Mode</strong> picker — pick
-        how much UI you want.
+        The <strong>⚙</strong> at the top right opens Settings.
+        The dialog is a sidebar layout: six categories on the left,
+        a pinned search bar at the top, and the active category's
+        rows on the right. Click a category to switch panes. On
+        phone, Settings opens to the category list — tap one to
+        drill into the pane, <strong>← Back</strong> to return.
       </p>
+
+      <h3>The six categories</h3>
+      <p>From top to bottom:</p>
+      <ul>
+        <li>
+          <strong>Account</strong> — sync library across devices,
+          Switch key, and (admin-only) maintenance schedule + tester
+          key management.
+        </li>
+        <li>
+          <strong>Appearance</strong> — theme (Auto / Dark / Light),
+          desktop side-pane visibility (Library / Notes), and the
+          book view's text size + typography under Advanced.
+        </li>
+        <li>
+          <strong>Mode</strong> — Simple / Standard / Author tier
+          picker. This is the headline control of the whole app; the
+          rest of this section is about it.
+        </li>
+        <li>
+          <strong>Playback</strong> — skip interval, auto-pause after
+          paragraph, keep-screen-on toggle.
+        </li>
+        <li>
+          <strong>Help</strong> — Help &amp; manual, What's new,
+          Keyboard shortcuts, Send feedback. Power-user chrome
+          (start-helper toggle, tour replays, GitHub PAT setup) lives
+          under Advanced.
+        </li>
+        <li>
+          <strong>About</strong> — version stamp + Force update,
+          Listen stats, debug-log push / view under Advanced
+          (Diagnostics).
+        </li>
+      </ul>
+
+      <h3>Search + Advanced disclosures</h3>
+      <p>
+        The <strong>search bar</strong> at the top of the dialog
+        filters rows across every category. Type <code>sync</code>,
+        <code>theme</code>, <code>github</code>, <code>skip</code> —
+        the matching rows surface, the active pane jumps to the first
+        match, and matches that live inside an <em>Advanced</em>
+        disclosure auto-expand so you don't have to click twice.
+      </p>
+      <p>
+        Each pane has its own <strong>Advanced ▸</strong> disclosure
+        for power-user rows that would clutter the top level: the
+        admin sections in Account, Book view typography in Appearance,
+        tour replays + GitHub setup in Help, and debug-log tools in
+        About. Tap the disclosure to expand; it collapses again next
+        time you reopen Settings.
+      </p>
+      <div class="tip">
+        <strong>Deep links.</strong> External links (and the command
+        palette) can route directly to a category via
+        <code>#settings/help</code>, <code>#settings/account</code>,
+        etc. Settings also remembers the last category you visited
+        on this device, so reopening lands you where you were.
+      </div>
+
+      <h3>Mode is the headline control</h3>
 
       <figure>
         <div class="manual-demo">
           <div class="settings-row">
             <div class="settings-toggle-label">
-              <strong>Mode</strong>
+              <strong>UI tier</strong>
               <span class="settings-toggle-desc">
                 <strong>Simple</strong>: just listen — pared-down controls.
                 <strong>Standard</strong>: bookmarks, sleep, A↔B loop, library tools, annotations &amp; voice notes.
@@ -3551,10 +3643,10 @@
             </div>
           </div>
         </div>
-        <figcaption>The Mode picker in Settings — three tiers, pick one.</figcaption>
+        <figcaption>The Mode picker (Settings → Mode) — three tiers, pick one.</figcaption>
       </figure>
 
-      <h3>What each mode shows</h3>
+      <h4>What each mode shows</h4>
       <table>
         <tr>
           <th>Mode</th>
@@ -3615,17 +3707,166 @@
         missing" first-tester problem.
       </div>
 
-      <h3>Other Settings rows</h3>
+      <h3>Where things live</h3>
+      <p>
+        A row-by-row inventory grouped by category. Use this as a
+        lookup when you remember a control exists but not where it
+        sits — or use the search bar at the top of Settings.
+      </p>
+
+      <h4>Account</h4>
+      <ul>
+        <li>
+          <strong>Sync library across devices</strong> — Off / On.
+          Stores your library on the Narrative server so you can
+          edit on desktop and listen on phone. Below the toggle:
+          <strong>Pull now</strong> (safe — fetches newest clips,
+          presets, annotations) and <strong>Force-push to server</strong>
+          (destructive — opens a confirm dialog with a diff summary
+          before overwriting the server with this device's library).
+        </li>
+        <li>
+          <strong>API key — Switch key</strong> button — clears the
+          saved <code>X-Narrative-Key</code> + local library, then
+          reloads so you can paste a fresh key. Use when sharing a
+          device with another tester.
+        </li>
+        <li>
+          <strong>Advanced (admin-only)</strong> — Schedule maintenance
+          form + Tester keys management. Hidden by the JS that gates
+          on <code>whoami.is_admin</code>; testers never see these
+          even if they expand Advanced.
+        </li>
+      </ul>
+
+      <h4>Appearance</h4>
       <ul>
         <li>
           <strong>Theme</strong> — Auto / Dark / Light. Auto follows
           your device; Light uses a warm cream palette tuned for
-          daytime / outdoor reading.
+          daytime / outdoor reading. A small status line under the
+          radios reports what Auto is currently resolving to (handy
+          for diagnosing "why is it dark when my OS is light").
         </li>
+        <li>
+          <strong>Library pane (desktop)</strong> + <strong>Notes pane
+          (desktop)</strong> — Show / Hide. Only meaningful at
+          ≥1280px; the toggles still flip below that but the panes
+          don't render at narrower widths. Mirror the × close + 📚 /
+          📝 reopen pills on the page edges.
+        </li>
+        <li>
+          <strong>Advanced (Book view)</strong>:
+          <ul>
+            <li>
+              <strong>Text size</strong> — Small / Medium / Large /
+              X-Large. Re-paginates on the fly.
+            </li>
+            <li>
+              <strong>Typography</strong> — Paperback (serif, single
+              column) / Magazine (sans, two-column on desktop) /
+              Manuscript (monospace, looser line-height, left-aligned).
+              Independent of the app-wide Dark / Light theme.
+            </li>
+          </ul>
+        </li>
+      </ul>
+
+      <h4>Mode</h4>
+      <p>
+        Just the Simple / Standard / Author picker, covered above
+        with the figure + table + + unlocks hint.
+      </p>
+
+      <h4>Playback</h4>
+      <ul>
         <li>
           <strong>Skip interval</strong> — 2 / 5 / 10 / 15 / 30 seconds.
           Controls the ↶ / ↷ chips in the player; their labels update
           live to match.
+        </li>
+        <li>
+          <strong>Pause after paragraph</strong> — Off / 2s / 4s / 6s.
+          Auto-pauses for a beat at every paragraph break so you can
+          process what you heard — and on phone, tap-flag in annotate
+          mode without the narrator racing past. Press play or skip
+          to cancel the pause.
+        </li>
+        <li>
+          <strong>Keep screen on while playing</strong> — Off / On.
+          Acquires a Wake Lock during playback so the phone or laptop
+          doesn't sleep mid-listen. Costs a little battery; off by
+          default. Releases automatically on pause or clip end. No-op
+          on browsers without <code>navigator.wakeLock</code>.
+        </li>
+      </ul>
+
+      <h4>Help</h4>
+      <ul>
+        <li>
+          <strong>Help &amp; manual →</strong> — this page.
+        </li>
+        <li>
+          <strong>What's new →</strong> — the changelog page. The
+          "NEW" pill stays until you've opened it once per release.
+        </li>
+        <li>
+          <strong>Keyboard shortcuts →</strong> — opens the shortcuts
+          dialog (also bound to <kbd>?</kbd>).
+        </li>
+        <li>
+          <strong>Send feedback (mail app) →</strong> — opens your
+          default mail handler with the address, subject, and an
+          auto-context block (build version, current clip, screen
+          size) pre-filled.
+        </li>
+        <li>
+          <strong>Send feedback (Gmail) →</strong> — same but opens
+          Gmail compose in a browser tab, for testers whose OS
+          default isn't what they actually use.
+        </li>
+      </ul>
+
+      <p>Under <strong>Advanced</strong> in Help:</p>
+      <ul>
+        <li>
+          <strong>Start-a-new-clip helper</strong> — Show / Hide. The
+          four-tile helper above the textarea (Paste URL / Upload file
+          / Browse GitHub / Try sample text). Hide it once you know
+          the moves; first-time users always see it regardless.
+        </li>
+        <li>
+          <strong>Replay onboarding tips →</strong> — clears every
+          once-per-device hint flag (first-clip tour, confetti, voice
+          favorites tip, drag handle hint, audition banner, every
+          first-tap chip hint) so you can see them all again. Resets
+          the internal counter that gates the confetti burst, so a
+          click here followed by a save of any clip re-fires the
+          celebration. Useful when you dismissed something by accident
+          or want to walk a new tester through the onboarding flow
+          on your machine.
+        </li>
+        <li>
+          <strong>Take the tour →</strong> (v225v3.17) — launches the
+          overlay tour: a Shepherd-style guided walk through the live
+          UI (Voice picker, textarea, Generate, Library, Help). Six
+          steps, ← / → / Esc to navigate. Auto-fires once on first
+          launch when your library is empty; this link replays it
+          anytime. Spotlight dims everything except the highlighted
+          control, and the tooltip auto-flips if it would clip the
+          viewport. Targets that aren't on the current viewport (e.g.
+          a desktop-only icon when you're on phone) are skipped
+          silently. Tour completion or skip is saved per device so
+          you don't get pestered on every load.
+        </li>
+        <li>
+          <strong>Author features tour →</strong> (v225v3.17) — second
+          overlay tour for the Author-tier features: Mode picker, 🔖
+          bookmark while listening, ✎ inline-edit a sentence, cross-clip
+          bookmark timeline, ⌘K command palette. Seven steps, opt-in
+          only. Useful after you've used Narrative for a bit and want
+          to see what unlocks in Author mode without hunting through
+          the manual.
         </li>
         <li>
           <strong>GitHub</strong> — two ways to authenticate. Both
@@ -3672,38 +3913,33 @@
           <em>Contents → Read-only</em> + <em>Metadata → Read-only</em>
           for the import + Sync flows.
         </li>
+      </ul>
+
+      <h4>About</h4>
+      <ul>
         <li>
-          <strong>Replay onboarding tips →</strong> — clears every
-          once-per-device hint flag (first-clip tour, confetti, voice
-          favorites tip, drag handle hint, audition banner, every
-          first-tap chip hint) so you can see them all again. Resets
-          the internal counter that gates the confetti burst, so a
-          click here followed by a save of any clip re-fires the
-          celebration. Useful when you dismissed something by accident
-          or want to walk a new tester through the onboarding flow
-          on your machine.
+          <strong>Version stamp</strong> — Narrative <code>vXXX</code>
+          + <strong>Force update</strong> button next to it. Force
+          update wipes the local Service Worker cache and reloads —
+          use if a new version doesn't seem to be showing up after
+          a deploy.
         </li>
         <li>
-          <strong>Take the tour →</strong> (v225v3.17) — launches the
-          overlay tour: a Shepherd-style guided walk through the live
-          UI (Voice picker, textarea, Generate, Library, Help). Six
-          steps, ← / → / Esc to navigate. Auto-fires once on first
-          launch when your library is empty; this link replays it
-          anytime. Spotlight dims everything except the highlighted
-          control, and the tooltip auto-flips if it would clip the
-          viewport. Targets that aren't on the current viewport (e.g.
-          a desktop-only icon when you're on phone) are skipped
-          silently. Tour completion or skip is saved per device so
-          you don't get pestered on every load.
+          <strong>Listen stats</strong> (Standard / Author only) —
+          Today / This week / All-time playback time, top voice, most-
+          listened clip. Reset stats is tap-twice-to-confirm.
         </li>
+      </ul>
+
+      <p>Under <strong>Advanced (Diagnostics)</strong> in About:</p>
+      <ul>
         <li>
-          <strong>Author features tour →</strong> (v225v3.17) — second
-          overlay tour for the Author-tier features: Mode picker, 🔖
-          bookmark while listening, ✎ inline-edit a sentence, cross-clip
-          bookmark timeline, ⌘K command palette. Seven steps, opt-in
-          only. Useful after you've used Narrative for a bit and want
-          to see what unlocks in Author mode without hunting through
-          the manual.
+          <strong>Push debug log to debugger →</strong> — pushes the
+          current debug-log ring buffer to the private
+          <code>narrative-debug-logs</code> GitHub repo so the
+          maintainer can pull it directly. Hidden until the server
+          confirms the push pipeline is enabled (local-dev installs
+          don't show it).
         </li>
         <li>
           <strong>View debug log →</strong> — opens an in-app modal
@@ -3717,29 +3953,6 @@
           to <em>"here's exactly why"</em> in one tap. Mirrored to
           the browser console at <code>info</code> level too for
           DevTools users.
-        </li>
-        <li>
-          <strong>Listen stats</strong> (Standard / Author only) —
-          Today / This week / All-time playback time, top voice, most-
-          listened clip. Reset stats is tap-twice-to-confirm.
-        </li>
-        <li>
-          <strong>What's new →</strong> — the changelog page. The
-          "NEW" pill stays until you've opened it once per release.
-        </li>
-        <li>
-          <strong>Help &amp; manual →</strong> — this page.
-        </li>
-        <li>
-          <strong>Send feedback (mail app) →</strong> — opens your
-          default mail handler with the address, subject, and an
-          auto-context block (build version, current clip, screen
-          size) pre-filled.
-        </li>
-        <li>
-          <strong>Send feedback (Gmail) →</strong> — same but opens
-          Gmail compose in a browser tab, for testers whose OS
-          default isn't what they actually use.
         </li>
       </ul>
 
@@ -3813,7 +4026,7 @@ She set both hands flat on the table.</pre>
 
       <h3 id="sync">Cross-device sync (v221+)</h3>
       <p>
-        Settings → App → <strong>Sync library across devices</strong>
+        Settings → Account → <strong>Sync library across devices</strong>
         ties your library to the Narrative server so you can edit on
         a desktop and listen on a phone without exporting/importing.
         <strong>Off by default.</strong> Flip on per device.
@@ -3821,7 +4034,7 @@ She set both hands flat on the table.</pre>
       <ol>
         <li>
           <strong>On the device that should push:</strong> Settings →
-          App → Sync library across devices → <strong>On</strong>.
+          Account → Sync library across devices → <strong>On</strong>.
           From now on, every saved clip pushes to the server in the
           background as you go.
         </li>
@@ -3837,6 +4050,31 @@ She set both hands flat on the table.</pre>
         pulled 2 min ago."</em> Sync pulls run on library open and
         every 60 seconds while the app is foreground.
       </p>
+      <p>
+        <strong>Two manual sync buttons.</strong> Below the toggle:
+      </p>
+      <ul>
+        <li>
+          <strong>Pull now</strong> — the safe everyday button.
+          Fetches the newest clips, voice presets, and annotations
+          from the server. Your local edits are kept (last-write-wins
+          decides per item). Use this 99% of the time you want to
+          force a sync — when you just swapped devices, when the 60s
+          auto-pull feels slow, after editing on another device.
+        </li>
+        <li>
+          <strong>Force-push to server</strong> — the rare,
+          destructive button (warning-tinted on purpose). Pushes
+          every local clip and preset to the server, overwriting
+          anything newer on the server. A confirm dialog summarizes
+          what you're about to upload before it fires. Use this only
+          when this device has the truth and other devices are out
+          of date (e.g. after a long offline editing session, or
+          before retiring a phone). The command palette has the
+          same two entries: <em>"Pull from server"</em> and
+          <em>"Force-push to server"</em>.
+        </li>
+      </ul>
       <p>
         <strong>What's on the server:</strong> clip text, voice
         choice, bookmarks, notes, tags, cover, progress, character
@@ -4051,8 +4289,11 @@ She set both hands flat on the table.</pre>
             Two ways to flag: tap a tag, then tap a sentence
             (arm-then-tap); or tap a sentence to select it, then
             tap a tag (sentence-first). Tap or hold 🎤 to record
-            a voice note on the current sentence. One annotation
-            per sentence — re-tagging swaps the icon in place.
+            a voice note on the current sentence — auto-stops at
+            <strong>30 seconds</strong> (short and Audible-bookmark-shaped
+            by design; for longer memos use 📝 Notes dictation
+            instead). One annotation per sentence — re-tagging swaps
+            the icon in place.
           </td>
         </tr>
       </table>
@@ -4183,7 +4424,7 @@ She set both hands flat on the table.</pre>
 
       <h4>Modes on phone</h4>
       <p>
-        The phone respects your Mode pick (Settings → App → Mode).
+        The phone respects your Mode pick (Settings → Mode).
       </p>
       <ul>
         <li>
@@ -5003,7 +5244,7 @@ She set both hands flat on the table.</pre>
       <p>What's searchable:</p>
       <ul>
         <li><strong>Clips</strong> — every entry in your library; selecting one loads it.</li>
-        <li><strong>Actions</strong> — Play/pause, Skip back/forward, Add bookmark, Generate audio, Sync now (player actions only when a clip is loaded).</li>
+        <li><strong>Actions</strong> — Play/pause, Skip back/forward, Add bookmark, Generate audio, Pull from server, Force-push to server (player actions only when a clip is loaded).</li>
         <li><strong>Modes</strong> — Simple / Standard / Author (✓ on the active one).</li>
         <li><strong>Navigation</strong> — Library, Voice, Settings, Manual, Tutorials, What's new, Keyboard shortcuts.</li>
         <li><strong>Theme</strong> — Light / Dark / Auto.</li>
@@ -5342,16 +5583,17 @@ She set both hands flat on the table.</pre>
           in the outer bottom corner.
         </li>
         <li>
-          Open <strong>Settings</strong>. Try
-          <em>Book view theme → Magazine</em>: page body becomes
-          sans-serif + two columns (on desktop ≥720px wide). Close
-          Settings. Pagination has been re-run; you'll land on the
-          spread covering the same sentence you were reading.
-          Switch to <em>Manuscript</em>: monospace, looser lines,
+          Open <strong>Settings</strong>. Go to
+          <em>Appearance → Advanced (Book view) → Typography →
+          Magazine</em>: page body becomes sans-serif + two columns
+          (on desktop ≥720px wide). Close Settings. Pagination has
+          been re-run; you'll land on the spread covering the same
+          sentence you were reading. Switch to <em>Manuscript</em>:
+          monospace, looser lines,
           left-aligned. Switch back to <em>Paperback</em>.
         </li>
         <li>
-          Settings → <em>Book view text size → Large</em>. Pages
+          Settings → Appearance → Advanced (Book view) → <em>Text size → Large</em>. Pages
           re-paginate; anchor sentence stays put. Indicator's
           total-spread count grows because each page now holds
           fewer sentences.

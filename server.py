@@ -203,6 +203,237 @@ async def _await_kokoro_warmup(timeout_sec: float = 25.0):
         pass
 
 
+# ──────────────────────────────────────────────────────────────────────
+# v4.58 (#823): server-side wedge instrumentation.
+#
+# Failure mode we lived through on 2026-06-07: Fly machine showed
+# "started" with the VM process alive, but uvicorn was no longer bound
+# to :8000. Every request 503'd ("could not find a good candidate") and
+# we had no visibility from outside the box — no app stdout, no proper
+# health endpoint, no metric we could grep.
+#
+# This block adds four cheap pieces of telemetry:
+#
+#   1. /healthz — rich JSON status (uptime, DB ok, WAL size, active
+#      synth jobs, active SSE conns, RSS). Unauthenticated so external
+#      monitoring + curl-from-shell both work without bearer juggling.
+#   2. Heartbeat log — every 30s a single line "[heartbeat] uptime=… …"
+#      hits stdout. When the line stops appearing in Fly logs we know
+#      EXACTLY when the wedge started. Replaces "we have no idea when
+#      the process died".
+#   3. WAL checkpoint — every 5 min PRAGMA wal_checkpoint(TRUNCATE).
+#      SQLite in WAL mode grows the -wal file forever without an
+#      explicit checkpoint when no writer is active. On a 1 GB volume
+#      a runaway WAL is a real crash vector.
+#   4. SSE accounting — global counter incremented when an SSE
+#      generator starts and decremented in its finally block. Catches
+#      "client disconnected but the generator never exited" leaks.
+#
+# Deferred to a follow-up so we don't change Fly's restart triggers in
+# the same change:
+#   - Updating fly.toml [[services.http_checks]] to hit /healthz with a
+#     stricter timeout so Fly restarts the machine when /healthz takes
+#     >5s (catches wedges within minutes instead of "I noticed because
+#     something else broke")
+#   - A watchdog thread that kills the process if the heartbeat thread
+#     hasn't fired in 2 minutes
+# ──────────────────────────────────────────────────────────────────────
+
+import time as _wedge_time
+
+_WEDGE_PROCESS_STARTED_AT = _wedge_time.time()
+_WEDGE_HEARTBEAT_COUNT = 0
+_WEDGE_SSE_ACTIVE = 0
+_WEDGE_LAST_WAL_CHECKPOINT_AT = 0.0
+_WEDGE_LAST_WAL_SIZE_BYTES = 0
+
+
+def _wedge_sse_begin():
+    """Call when an SSE generator starts (before the first yield)."""
+    global _WEDGE_SSE_ACTIVE
+    _WEDGE_SSE_ACTIVE += 1
+
+
+def _wedge_sse_end():
+    """Call when an SSE generator exits (in a finally block)."""
+    global _WEDGE_SSE_ACTIVE
+    if _WEDGE_SSE_ACTIVE > 0:
+        _WEDGE_SSE_ACTIVE -= 1
+
+
+def _wedge_get_rss_bytes() -> int:
+    """Resident set size of the current process in bytes, or 0 if
+    psutil/resource isn't available. Linux-friendly fallback."""
+    try:
+        import resource as _res
+        # ru_maxrss is in KB on Linux, bytes on macOS — Fly runs Linux.
+        return int(_res.getrusage(_res.RUSAGE_SELF).ru_maxrss) * 1024
+    except Exception:
+        return 0
+
+
+def _wedge_get_wal_size_bytes() -> int:
+    """Size of the SQLite -wal file in bytes, or 0 if missing."""
+    try:
+        import library_db
+        wal = str(library_db.DATA_DIR / "library.db-wal")
+        import os
+        if os.path.exists(wal):
+            return os.path.getsize(wal)
+    except Exception:
+        pass
+    return 0
+
+
+def _wedge_db_ok() -> bool:
+    """Single-shot DB round-trip. Returns False if anything in the
+    chain (library_db disabled, connection refused, query fails) is
+    sideways."""
+    try:
+        import library_db
+        if not library_db.is_enabled():
+            return False
+        library_db.conn().execute("SELECT 1").fetchone()
+        return True
+    except Exception:
+        return False
+
+
+@app.on_event("startup")
+async def _schedule_wedge_heartbeat():
+    """Background heartbeat: one stdout line every 30 seconds. Gives
+    us grep-able evidence the process was alive at time T."""
+    import asyncio
+    import sys as _sys
+
+    async def _loop():
+        global _WEDGE_HEARTBEAT_COUNT
+        while True:
+            try:
+                await asyncio.sleep(30)
+                _WEDGE_HEARTBEAT_COUNT += 1
+                uptime = int(_wedge_time.time() - _WEDGE_PROCESS_STARTED_AT)
+                rss_mb = _wedge_get_rss_bytes() // (1024 * 1024)
+                # synth_jobs may not have imported on cold boot; guard.
+                try:
+                    import synth_jobs as _sj
+                    active_jobs = len(_sj.list_active_jobs())
+                except Exception:
+                    active_jobs = -1
+                print(
+                    f"[heartbeat] tick={_WEDGE_HEARTBEAT_COUNT} "
+                    f"uptime={uptime}s jobs={active_jobs} "
+                    f"sse={_WEDGE_SSE_ACTIVE} rss={rss_mb}MB",
+                    file=_sys.stderr, flush=True,
+                )
+            except Exception as e:
+                # Heartbeat itself must not crash the task — log and
+                # continue. If it crashes anyway, the watchdog (future
+                # work) catches the gap.
+                print(
+                    f"[heartbeat] error: {type(e).__name__}: {e}",
+                    file=_sys.stderr, flush=True,
+                )
+
+    asyncio.create_task(_loop())
+
+
+@app.on_event("startup")
+async def _schedule_wedge_wal_checkpoint():
+    """Background SQLite WAL checkpoint every 5 minutes. Without this,
+    a busy server in WAL mode grows library.db-wal until the disk
+    fills up. The (TRUNCATE) variant zeroes the WAL file when no
+    reader is holding it open."""
+    import asyncio
+    import sys as _sys
+
+    async def _loop():
+        global _WEDGE_LAST_WAL_CHECKPOINT_AT, _WEDGE_LAST_WAL_SIZE_BYTES
+        while True:
+            try:
+                await asyncio.sleep(300)
+                import library_db
+                if not library_db.is_enabled():
+                    continue
+                wal_before = _wedge_get_wal_size_bytes()
+                # PRAGMA wal_checkpoint returns 3 ints: busy, log frames,
+                # checkpointed frames. We don't use them — just need
+                # the truncate side-effect.
+                library_db.conn().execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                _WEDGE_LAST_WAL_CHECKPOINT_AT = _wedge_time.time()
+                _WEDGE_LAST_WAL_SIZE_BYTES = _wedge_get_wal_size_bytes()
+                # Only log if the WAL was big enough to be interesting
+                # (>1 MB) — keeps logs quiet on a healthy server.
+                if wal_before > 1024 * 1024:
+                    print(
+                        f"[wal-checkpoint] truncated "
+                        f"before={wal_before // 1024}KB "
+                        f"after={_WEDGE_LAST_WAL_SIZE_BYTES // 1024}KB",
+                        file=_sys.stderr, flush=True,
+                    )
+                # Loud warning if WAL is unexpectedly large after
+                # truncation (means a long-running reader is holding
+                # the snapshot open and blocking the truncate).
+                if _WEDGE_LAST_WAL_SIZE_BYTES > 64 * 1024 * 1024:
+                    print(
+                        f"[wal-checkpoint] WARN: WAL still "
+                        f"{_WEDGE_LAST_WAL_SIZE_BYTES // (1024*1024)}MB "
+                        f"after TRUNCATE — long-running reader?",
+                        file=_sys.stderr, flush=True,
+                    )
+            except Exception as e:
+                print(
+                    f"[wal-checkpoint] error: {type(e).__name__}: {e}",
+                    file=_sys.stderr, flush=True,
+                )
+
+    asyncio.create_task(_loop())
+
+
+@app.get("/healthz")
+def healthz():
+    """Rich health endpoint for external monitoring + wedge debugging.
+
+    Unauthenticated by design — checks that DON'T require the key tell
+    us the box is alive even when the auth path is wedged. The data
+    inside is operational telemetry, not user data.
+    """
+    import os as _os
+    uptime = int(_wedge_time.time() - _WEDGE_PROCESS_STARTED_AT)
+    # Active synth jobs guarded — synth_jobs module may not be
+    # importable in some boot states.
+    try:
+        import synth_jobs as _sj
+        active_jobs = len(_sj.list_active_jobs())
+    except Exception:
+        active_jobs = -1
+
+    return {
+        "ok": True,
+        "uptime_sec": uptime,
+        "heartbeat_count": _WEDGE_HEARTBEAT_COUNT,
+        "process": {
+            "rss_bytes": _wedge_get_rss_bytes(),
+        },
+        "db": {
+            "ok": _wedge_db_ok(),
+            "wal_size_bytes": _wedge_get_wal_size_bytes(),
+            "last_checkpoint_at": _WEDGE_LAST_WAL_CHECKPOINT_AT,
+        },
+        "synth": {
+            "active_jobs": active_jobs,
+        },
+        "sse": {
+            "active_connections": _WEDGE_SSE_ACTIVE,
+        },
+        "fly": {
+            "machine_id": _os.environ.get("FLY_MACHINE_ID", ""),
+            "region": _os.environ.get("FLY_REGION", ""),
+            "app_name": _os.environ.get("FLY_APP_NAME", ""),
+        },
+    }
+
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     """Shared-secret auth on /api/* + multi-tenant bearer resolution.
@@ -675,19 +906,47 @@ async def voices_install_stream(req: InstallVoiceRequest):
 #
 # See UPDATES.md at repo root for the full release runbook.
 
-LATEST_DESKTOP_VERSION = "0.1.0"
+LATEST_DESKTOP_VERSION = "0.1.2"
 
 # target → base64 Ed25519 signature (output of `cargo tauri signer sign`).
 # Empty dict means "no signed bundles yet" — endpoint returns 204 for
 # every target until someone ships an actual release.
+#
+# v4.65 (#858): empty for v0.1.2 *until* CI finishes building. The
+# release workflow signs each bundle and writes a .sig file next to it
+# in the draft GH Release; we copy the contents in by hand and
+# redeploy. Until then, the endpoint correctly returns 204 for every
+# target because of the `if not sig: return 204` guard below — so the
+# updater plugin stays quiet even though LATEST_DESKTOP_VERSION moved.
 DESKTOP_SIGNATURES: dict[str, str] = {
-    # "windows-x86_64": "...",
+    # "windows-x86_64": "<paste .sig content here after CI builds v0.1.2>",
     # "darwin-aarch64": "...",
     # "darwin-x86_64":  "...",
     # "linux-x86_64":   "...",
 }
 
-DESKTOP_DOWNLOAD_BASE = "https://narrative-alpha.fly.dev/downloads"
+# v4.65 (#858): switched from Fly /downloads to GitHub Releases. Pros:
+# free hosting, version-immutable, no Fly bandwidth quota. The full URL
+# the Tauri updater plugin fetches is built per-target below since
+# Tauri 2 produces DIFFERENT bundle filenames for each platform — the
+# old `Narrative_{version}_{target}.zip` generic template never
+# actually matched what Tauri emits.
+DESKTOP_DOWNLOAD_BASE = "https://github.com/hypeman271-oss/audiable/releases/download"
+
+# v4.65 (#858): per-target bundle filename templates. Tauri 2 emits
+# these names from `cargo tauri build` — confirmed against the v0.1.1
+# local build + the v4.49/v4.50 CI workflow. The {ver} placeholder is
+# replaced with LATEST_DESKTOP_VERSION. A target missing from this
+# dict falls back to returning 204 (no update for that platform).
+DESKTOP_BUNDLE_NAMES: dict[str, str] = {
+    # NSIS .exe installer (preferred over MSI for in-place updates
+    # because Tauri's updater plugin can drive NSIS silent-install
+    # cleanly; MSI swap mid-process is fussier).
+    "windows-x86_64": "Narrative_{ver}_x64-setup.exe.zip",
+    "darwin-aarch64": "Narrative_{ver}_aarch64.app.tar.gz",
+    "darwin-x86_64":  "Narrative_{ver}_x64.app.tar.gz",
+    "linux-x86_64":   "Narrative_{ver}_amd64.AppImage.tar.gz",
+}
 
 
 def _parse_semver(v: str) -> tuple[int, int, int]:
@@ -712,16 +971,24 @@ def check_for_update(target: str, current_version: str):
         # plugin stays quiet rather than logging a download failure.
         return Response(status_code=204)
 
+    # v4.65 (#858): pick the per-target bundle name; fall back to 204
+    # if Tauri doesn't emit a bundle for this target (we only support
+    # Windows + macOS + Linux today).
+    bundle_template = DESKTOP_BUNDLE_NAMES.get(target)
+    if not bundle_template:
+        return Response(status_code=204)
+    bundle_name = bundle_template.format(ver=LATEST_DESKTOP_VERSION)
+
     return JSONResponse({
         "version": LATEST_DESKTOP_VERSION,
         "notes": "See https://narrative-alpha.fly.dev/whats-new.html",
-        "pub_date": "2026-06-06T00:00:00Z",
+        "pub_date": "2026-06-07T00:00:00Z",
         "platforms": {
             target: {
                 "signature": sig,
                 "url": (
                     f"{DESKTOP_DOWNLOAD_BASE}/"
-                    f"Narrative_{LATEST_DESKTOP_VERSION}_{target}.zip"
+                    f"v{LATEST_DESKTOP_VERSION}/{bundle_name}"
                 ),
             }
         },
@@ -1464,6 +1731,144 @@ async def github_branches_endpoint(req: GithubBranchesRequest):
     except extract.ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return result
+
+
+# v4.60 (#538 Phase 1A): GitHub push-back of revised clip text. Closes
+# the revise-as-you-listen loop — the writer's edits in Narrative land
+# back in the source file as a real commit, without leaving the app.
+#
+# Phase 1A scope: GitHub only, text only, conflict-aware (refuses if
+# the remote SHA has moved since the clip was imported, prompting a
+# Pull-first workflow). The endpoint takes the user's PAT/OAuth token,
+# encodes the text as base64, and calls GitHub's Contents API
+# (PUT /repos/{owner}/{repo}/contents/{path}). Returns the new commit
+# SHA + new blob SHA on success so the client can stash gitRef.sha.
+#
+# Phase 1B (deferred): preserve YAML frontmatter on push. Right now if
+# the source had `---\nauthor: kmythers\n---` at the top and the user
+# imported it (frontmatter was stripped per v220as), pushing back will
+# replace the file body with just the clip text — frontmatter is lost.
+# Tracked as a follow-up; pragmatically rare for the bulk of writers
+# who don't use frontmatter.
+class GithubPushFileRequest(BaseModel):
+    # GitHub Bearer token — PAT (classic or fine-grained) or OAuth.
+    # Same 300-char cap as other endpoints (fine-grained PATs ~93 chars).
+    github_token: str = Field(..., min_length=1, max_length=300)
+    # The repo's URL as the user typed it — same shape as gitRef.repoUrl
+    # we extract from on import. We parse owner/repo out of it.
+    repo_url: str = Field(..., min_length=8, max_length=2048)
+    # Branch to push to. Required (no inference) so the call is
+    # explicit — pushing to main when the user thought they were on
+    # feature/draft is exactly the kind of accident this layer should
+    # not facilitate.
+    branch: str = Field(..., min_length=1, max_length=200)
+    # File path within the repo, e.g. "chapters/01-opening.md".
+    path: str = Field(..., min_length=1, max_length=2048)
+    # The full new file content as a UTF-8 string. Server base64-encodes
+    # before sending to GitHub. Capped at 5 MB to match GitHub's own
+    # blob-size limits with headroom for unicode expansion.
+    content: str = Field(..., min_length=0, max_length=5_000_000)
+    # Commit message. Default constructed client-side from the clip
+    # title; the user sees + can edit it in the confirm dialog.
+    message: str = Field(..., min_length=1, max_length=500)
+    # The SHA of the blob we expect to be overwriting. GitHub uses this
+    # for the optimistic-concurrency check — if the file has moved
+    # since this SHA, the PUT fails with 409 and we surface that to
+    # the user as "Pull first."
+    expected_sha: str = Field(..., min_length=1, max_length=64)
+    # Optional Enterprise host override — same as other GitHub endpoints.
+    host: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/github/push-file")
+async def github_push_file_endpoint(req: GithubPushFileRequest):
+    """PUT a single file back to a GitHub repo with the revised content."""
+    import asyncio
+    import base64
+    import functools
+    import json
+    import urllib.error
+    import urllib.request
+
+    owner, repo = extract._parse_github_repo_url(req.repo_url)
+    if not owner or not repo:
+        raise HTTPException(
+            status_code=400,
+            detail="not a GitHub repo URL — expected github.com/owner/repo",
+        )
+
+    def _push():
+        api_base = extract._github_api_base(req.host)
+        # Path needs URL-quoting per segment (slashes preserved) so a
+        # file like "chapters/01 — opening.md" doesn't break the URL.
+        # GitHub's Contents API accepts the raw path with %20 etc.
+        import urllib.parse
+        quoted_path = urllib.parse.quote(req.path, safe="/")
+        url = f"{api_base}/repos/{owner}/{repo}/contents/{quoted_path}"
+        body = {
+            "message": req.message,
+            "content": base64.b64encode(req.content.encode("utf-8")).decode("ascii"),
+            "sha": req.expected_sha,
+            "branch": req.branch,
+        }
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "Narrative/0.1",
+            "Authorization": f"Bearer {req.github_token}",
+            "Content-Type": "application/json",
+        }
+        r = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="PUT",
+        )
+        try:
+            with urllib.request.urlopen(r, timeout=30) as resp:
+                data = json.load(resp)
+                # GitHub returns { content: {sha, ...}, commit: {sha, ...} }
+                new_blob_sha = (data.get("content") or {}).get("sha") or ""
+                new_commit_sha = (data.get("commit") or {}).get("sha") or ""
+                return {
+                    "ok": True,
+                    "blob_sha": new_blob_sha,
+                    "commit_sha": new_commit_sha,
+                }
+        except urllib.error.HTTPError as e:
+            # 409 = SHA mismatch ("file out of date"); surface as a
+            # structured response so the client can suggest Pull-first
+            # rather than dumping a raw HTTP error on the user.
+            # 404 = path doesn't exist on this branch (probably wrong
+            # branch in the gitRef).
+            # 401/403 = auth issue.
+            try:
+                err_body = json.load(e)
+                err_msg = err_body.get("message") or str(e)
+            except Exception:
+                err_msg = str(e)
+            reason = (
+                "stale_sha" if e.code == 409
+                else "not_found" if e.code == 404
+                else "auth" if e.code in (401, 403)
+                else "http_error"
+            )
+            return {
+                "ok": False,
+                "status": e.code,
+                "reason": reason,
+                "message": err_msg,
+            }
+        except urllib.error.URLError as e:
+            return {
+                "ok": False,
+                "status": 0,
+                "reason": "network",
+                "message": str(e.reason if hasattr(e, "reason") else e),
+            }
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _push)
 
 
 # ---- GitHub OAuth ------------------------------------------------------

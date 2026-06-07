@@ -366,6 +366,33 @@ pub fn run() {
                     sidecar_path
                 );
             }
+            // v4.58 (#707 follow-up): startup auto-poll for updates.
+            // Until this lands, the auto-updater plugin only fires when
+            // the user manually triggers Help → Check for updates… —
+            // which is great for power users but invisible to everyone
+            // else. With the popup-on-launch pattern that most desktop
+            // apps use, a fresh release reaches the user the next time
+            // they open Narrative without them having to ask.
+            //
+            // We sleep 4 seconds first so we don't compete with first-
+            // paint network traffic (loading the embedded shell, voice
+            // catalog, library sync). The plugin handles the dialog +
+            // download + install + restart itself when
+            // tauri.conf.json plugins.updater.dialog = true (flipped
+            // in v4.58). On failure (server down, no signed bundle for
+            // this target, network gremlins) it stays silent — no
+            // intrusive error dialog from a background check.
+            //
+            // Desktop-only: mobile updates ride Fly directly (the
+            // navigate above) and Android uses the Play Store flow.
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    check_for_updates(handle).await;
+                });
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {

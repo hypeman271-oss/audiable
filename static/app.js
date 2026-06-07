@@ -3167,6 +3167,280 @@ settingsBtn.addEventListener("click", () => {
 
 settingsClose.addEventListener("click", () => settingsDialog.close());
 
+// ===== v4.63 (#854): Settings hybrid wiring ==========================
+// Sidebar item clicks switch active pane; search input filters rows
+// across all panes; phone drill-down uses data-settings-view on the
+// dialog. localStorage persists the active category so reopening
+// lands you where you were. URL hash (#settings/<cat>) deep-links.
+// ===================================================================
+const _SETTINGS_CAT_KEY = "narrative.settingsCat";
+const _SETTINGS_CATS = ["account", "appearance", "mode", "playback", "help", "about"];
+let _settingsActiveCat = "account";
+let _settingsSearchTimer = null;
+
+// Pane switching — called on sidebar click, hash change, and on open.
+function _settingsSwitchCat(cat, opts) {
+  if (!_SETTINGS_CATS.includes(cat)) cat = "account";
+  _settingsActiveCat = cat;
+  // Sidebar item active state
+  document.querySelectorAll(".settings-sidebar-item").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.cat === cat);
+  });
+  // Pane visibility
+  document.querySelectorAll(".settings-pane").forEach((sec) => {
+    const match = sec.dataset.cat === cat;
+    sec.hidden = !match;
+    sec.classList.toggle("is-active", match);
+  });
+  // Persist for next open (skip when restoring at open-time so we
+  // don't churn the write on every dialog open).
+  if (!opts || !opts.skipPersist) {
+    try { localStorage.setItem(_SETTINGS_CAT_KEY, cat); } catch {}
+  }
+  // URL hash. Skip if the change came from a hashchange event (to
+  // avoid a loop) or if the user is in the middle of typing (search).
+  if (!opts || !opts.skipHash) {
+    try {
+      const want = `#settings/${cat}`;
+      if (location.hash !== want) location.hash = want;
+    } catch {}
+  }
+  // Phone drill-down: switching to a pane shows the pane view, which
+  // surfaces the back button.
+  _settingsSetView("pane");
+}
+
+// Toggle between phone category-list view and pane view. Desktop
+// ignores this (CSS only reads it below 768px). Back button visibility
+// follows.
+function _settingsSetView(view) {
+  if (!settingsDialog) return;
+  if (view === "pane") {
+    settingsDialog.dataset.settingsView = "pane";
+  } else {
+    delete settingsDialog.dataset.settingsView;
+  }
+  const back = document.getElementById("settings-back-btn");
+  if (back) {
+    // Back is only meaningful on phone in pane view. CSS handles the
+    // desktop case (always hidden via @media), but we also flip the
+    // hidden attribute for screen readers.
+    const isPhone = window.matchMedia("(max-width: 767px)").matches;
+    back.hidden = !(isPhone && view === "pane");
+  }
+}
+
+// Search filter. Each row carries a data-search keyword soup. The
+// search matches against that + the row's <strong> label text. Empty
+// query restores normal view.
+function _settingsApplySearch(query) {
+  const q = (query || "").trim().toLowerCase();
+  const body = settingsDialog.querySelector(".settings-body");
+  if (!body) return;
+  const empty = document.getElementById("settings-search-empty");
+
+  if (!q) {
+    // Restore normal view: clear hidden flags from rows/links/sections
+    // we may have toggled, collapse <details> we may have auto-opened,
+    // re-show the sidebar items.
+    body.querySelectorAll("[data-search-hidden]").forEach((el) => {
+      el.hidden = false;
+      delete el.dataset.searchHidden;
+    });
+    body.querySelectorAll(".settings-advanced[data-search-opened]").forEach((d) => {
+      d.open = false;
+      delete d.dataset.searchOpened;
+    });
+    body.querySelectorAll(".settings-sidebar-item").forEach((b) => {
+      if (b.dataset.searchHidden) {
+        b.hidden = false;
+        delete b.dataset.searchHidden;
+      }
+    });
+    if (empty) {
+      empty.hidden = true;
+      empty.textContent = "";
+    }
+    // Re-show the active pane (search may have hidden all of its rows).
+    document.querySelectorAll(".settings-pane").forEach((sec) => {
+      const match = sec.dataset.cat === _settingsActiveCat;
+      sec.hidden = !match;
+    });
+    return;
+  }
+
+  // Match. For every searchable element (rows, links, sections), build
+  // a haystack from data-search + the element's own visible label text.
+  let totalMatches = 0;
+  const perCatMatch = Object.fromEntries(_SETTINGS_CATS.map((c) => [c, 0]));
+
+  body.querySelectorAll("[data-search]").forEach((el) => {
+    const labelEl = el.querySelector("strong");
+    const labelText = labelEl ? labelEl.textContent : el.textContent;
+    const haystack = (
+      (el.dataset.search || "") + " " + (labelText || "")
+    ).toLowerCase();
+    const match = haystack.includes(q);
+    el.hidden = !match;
+    if (match) {
+      el.dataset.searchHidden = ""; // marker for clear() — actually for the hidden state we set above
+      // Find which pane this element lives in to bump that pane's count
+      const pane = el.closest(".settings-pane");
+      if (pane && perCatMatch[pane.dataset.cat] !== undefined) {
+        perCatMatch[pane.dataset.cat]++;
+        totalMatches++;
+      }
+      // If the matched element is inside a <details class="settings-advanced">,
+      // auto-open the disclosure so the match is visible.
+      const adv = el.closest(".settings-advanced");
+      if (adv && !adv.open) {
+        adv.open = true;
+        adv.dataset.searchOpened = "";
+      }
+    } else {
+      el.dataset.searchHidden = "";
+    }
+  });
+
+  // Show only panes that have at least one match. Empty panes get
+  // hidden so the user doesn't see a heading with nothing under it.
+  document.querySelectorAll(".settings-pane").forEach((sec) => {
+    const matchCount = perCatMatch[sec.dataset.cat] || 0;
+    sec.hidden = matchCount === 0;
+  });
+
+  // If the active pane has no matches but another does, auto-switch.
+  // Gives the search bar a "jump to result" feel.
+  if ((perCatMatch[_settingsActiveCat] || 0) === 0) {
+    const firstWithMatches = _SETTINGS_CATS.find((c) => (perCatMatch[c] || 0) > 0);
+    if (firstWithMatches) {
+      _settingsSwitchCat(firstWithMatches, { skipPersist: true, skipHash: true });
+      // The switchCat un-hides the chosen pane above; the row-filter
+      // we just ran already hid the non-matching rows inside it.
+    }
+  }
+
+  // Dim sidebar entries with zero matches so the user can see at a
+  // glance which categories the search found something in.
+  document.querySelectorAll(".settings-sidebar-item").forEach((btn) => {
+    const cat = btn.dataset.cat;
+    if ((perCatMatch[cat] || 0) === 0) {
+      btn.hidden = true;
+      btn.dataset.searchHidden = "";
+    } else {
+      btn.hidden = false;
+      delete btn.dataset.searchHidden;
+    }
+  });
+
+  // No matches anywhere → show the empty-state message.
+  if (empty) {
+    if (totalMatches === 0) {
+      empty.hidden = false;
+      empty.textContent = `No settings match "${query}".`;
+    } else {
+      empty.hidden = true;
+      empty.textContent = "";
+    }
+  }
+  // While searching, force phone into pane view so the filtered rows
+  // are visible without an extra tap on the category list.
+  _settingsSetView("pane");
+}
+
+// Sidebar click handlers.
+document.querySelectorAll(".settings-sidebar-item").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    _settingsSwitchCat(btn.dataset.cat);
+  });
+});
+
+// Back button → return to category list on phone. On desktop the
+// button is hidden by CSS, but clicking it still works (no-op visually).
+const _settingsBackBtn = document.getElementById("settings-back-btn");
+if (_settingsBackBtn) {
+  _settingsBackBtn.addEventListener("click", () => {
+    _settingsSetView("list");
+  });
+}
+
+// Search input.
+const _settingsSearchEl = document.getElementById("settings-search");
+if (_settingsSearchEl) {
+  _settingsSearchEl.addEventListener("input", (e) => {
+    const val = e.target.value;
+    if (_settingsSearchTimer) clearTimeout(_settingsSearchTimer);
+    _settingsSearchTimer = setTimeout(() => {
+      _settingsApplySearch(val);
+    }, 150);
+  });
+}
+
+// URL hash deep-link: external links can <a href="#settings/help"> to
+// open Settings directly to a category. The hashchange listener picks
+// up route changes while the dialog is open.
+function _settingsParseHash() {
+  const hash = location.hash || "";
+  const m = hash.match(/^#settings\/([a-z]+)/);
+  return (m && _SETTINGS_CATS.includes(m[1])) ? m[1] : null;
+}
+window.addEventListener("hashchange", () => {
+  if (!settingsDialog.open) return;
+  const cat = _settingsParseHash();
+  if (cat && cat !== _settingsActiveCat) {
+    _settingsSwitchCat(cat, { skipHash: true });
+  }
+});
+
+// On open, restore the last-active category (or the hash-specified one
+// if a deep-link route was clicked). Also reset search + collapse all
+// Advanced disclosures so the dialog opens in a clean state. Hooked
+// into the existing showModal call path via the dialog "open" listener
+// on the same dialog element below.
+function _settingsHybridOnOpen() {
+  // Pick category: hash > localStorage > default
+  let cat = _settingsParseHash();
+  if (!cat) {
+    try { cat = localStorage.getItem(_SETTINGS_CAT_KEY); } catch {}
+  }
+  if (!_SETTINGS_CATS.includes(cat)) cat = "account";
+  _settingsSwitchCat(cat, { skipPersist: true });
+  // Reset search to empty
+  if (_settingsSearchEl) {
+    _settingsSearchEl.value = "";
+    _settingsApplySearch("");
+  }
+  // Collapse all Advanced disclosures (per definition-of-done: dialog
+  // opens to a clean state). EXCEPT the GitHub help disclosure, which
+  // has its own open-by-default-when-no-token rule (see openSettings).
+  document.querySelectorAll(".settings-advanced").forEach((d) => {
+    d.open = false;
+    delete d.dataset.searchOpened;
+  });
+  // Phone defaults to category-list view; desktop ignores.
+  const isPhone = window.matchMedia("(max-width: 767px)").matches;
+  if (isPhone) {
+    _settingsSetView("list");
+  } else {
+    _settingsSetView("pane");
+  }
+}
+
+// The dialog dispatches a "show" listener via showModal; the safer
+// hook is just to monkey-patch our own behavior into the existing
+// open code path. We can't add a "show" event listener (dialogs only
+// fire "close"), so we wrap showModal once.
+if (settingsDialog && !settingsDialog._hybridWrapped) {
+  const _origShowModal = settingsDialog.showModal.bind(settingsDialog);
+  settingsDialog.showModal = function () {
+    _origShowModal();
+    try { _settingsHybridOnOpen(); } catch (e) {
+      console.warn("[settings-hybrid] onOpen failed:", e);
+    }
+  };
+  settingsDialog._hybridWrapped = true;
+}
+
 // v220h: open /manual.html in an in-app dialog instead of a new tab.
 //
 // Problem: on a phone PWA, target=_blank opens a new tab and the OS
@@ -3766,14 +4040,11 @@ function _renderAuthorPane() {
               voiceSpeaker.textContent = "";
             }
           }
-          // Wire the click once; subsequent _renderAuthorPane calls
-          // would attach duplicate listeners otherwise. Using onclick
-          // (vs addEventListener) is the same trick we use for the
-          // notes-preview row below — single handler, replace-on-set.
-          voiceRow.onclick = () => {
-            const trigger = document.getElementById("voice-trigger");
-            if (trigger) trigger.click();
-          };
+          // v4.54: dropped the onclick that opened the voice browser.
+          // The browser was relocated INTO this same pane by #647, so
+          // the click opened an empty modal. The row is now a passive
+          // display — voice picker above changes the default; 🔄
+          // Re-narrate chip on the library card changes THIS clip.
         } else {
           voiceSection.hidden = true;
         }
@@ -4957,13 +5228,26 @@ document.addEventListener("keydown", (e) => {
         if (typeof generate === "function") generate();
       },
     });
+    // v4.59 (#489): Sync now → split into Pull (safe, primary) and
+    // Force-push (destructive, warned).
     out.push({
       group: "Actions",
       icon: "↻",
-      label: "Sync now",
-      key: "act:sync",
+      label: "Pull from server",
+      key: "act:sync-pull",
       run: () => {
-        const btn = document.getElementById("sync-now-btn");
+        const btn = document.getElementById("sync-pull-btn")
+          || document.getElementById("sync-now-btn"); // legacy fallback
+        if (btn) btn.click();
+      },
+    });
+    out.push({
+      group: "Actions",
+      icon: "⇡",
+      label: "Force-push to server",
+      key: "act:sync-push",
+      run: () => {
+        const btn = document.getElementById("sync-push-btn");
         if (btn) btn.click();
       },
     });
@@ -9216,7 +9500,12 @@ async function _queueClipsForRenarrate(clipIds, label) {
       // _libraryRenarrate runs through the silent bg-queue (v220az).
       // We await sequentially so the queue isn't flooded, but the
       // function itself returns quickly — the synth happens in BG.
-      await _libraryRenarrate(id);
+      //
+      // v4.58 (#846): explicit usePickerVoice=true. The voice-apply
+      // picker's whole purpose is "apply the current voice picker
+      // selection to these clips" — that's the only path where we
+      // WANT the new chip default ("preserve clip voice") overridden.
+      await _libraryRenarrate(id, { usePickerVoice: true });
       queued++;
     } catch (err) {
       console.warn("voice-apply: queue failed for", id, err);
@@ -14155,6 +14444,20 @@ async function _preSynthesizeChapter(chapter, opts) {
             _bgSynthSentence = (event.index || 0) + 1;
             _bgSynthTotal = event.total || 0;
             _updateChapterQueueUI();
+            // v4.61 (#844): also paint the matching library card's
+            // progress bar so it advances in lockstep with the
+            // "3/174 sentences" counter in the bg-queue panel.
+            // Imperative DOM update (not a full renderLibrary) so a
+            // 200-sentence chapter doesn't trigger 200 list rebuilds.
+            try {
+              _paintBgSyncProgressOnCard(
+                _bgSyncingActiveClipId,
+                _bgSynthSentence,
+                _bgSynthTotal,
+              );
+            } catch (e) {
+              console.warn("[sync-progress] paint failed:", e);
+            }
           }
           // v225.tn33 (#509): record sentence progress regardless of
           // queue mode so the OK telemetry knows how far the stream
@@ -21137,8 +21440,23 @@ async function _syncMigrate() {
   const total = clips.length;
 
   // Empty-library short-circuit: nothing to migrate, no need to ask.
-  // Just stamp the flag and let the caller enable sync silently.
+  // Stamp the migrated flag AND flip SYNC_ENABLED_KEY on so the caller
+  // can finish wiring the status line / pull. v4.56 fix: the previous
+  // version only stamped migrated and skipped SYNC_ENABLED_KEY, which
+  // meant the very first On click on a brand-new (empty-library)
+  // device looked like a no-op — the radio went visually checked but
+  // _syncIsEnabled() stayed false, so the status line still read
+  // "Sync is off. Your library stays on this device only." Toggling
+  // Off → On a second time hit the _syncIsMigrated() branch in the
+  // change handler (the migrated flag DID get set), which correctly
+  // called _syncSetEnabled(true). User reported as "doesn't take on
+  // the first click — have to click off and then re-click on" on
+  // 2026-06-07. Non-empty libraries weren't affected because the
+  // push-all path below sets SYNC_ENABLED_KEY before pushing.
   if (total === 0) {
+    try {
+      localStorage.setItem(SYNC_ENABLED_KEY, "1");
+    } catch {}
     _syncMarkMigrated();
     return true;
   }
@@ -21658,11 +21976,20 @@ async function _syncPushAll() {
     _updateSyncStatusLine();
   } finally {
     _syncPushAllInFlight = false;
-    const btn = document.getElementById("sync-now-btn");
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "Sync now";
-    }
+    // v4.59 (#489): the legacy `sync-now-btn` was split into a Pull
+    // (`sync-pull-btn`) and a Force-push (`sync-push-btn`). Restore
+    // BOTH if they exist (only one is in flight at a time, but the
+    // legacy button id is also tolerated so older shells still work).
+    const _restore = (id, label) => {
+      const b = document.getElementById(id);
+      if (b) {
+        b.disabled = false;
+        b.textContent = label;
+      }
+    };
+    _restore("sync-now-btn", "Sync now");
+    _restore("sync-push-btn", "Force-push to server");
+    _restore("sync-pull-btn", "Pull now");
   }
 }
 
@@ -21714,20 +22041,119 @@ document
       );
     });
   });
+// v4.59 (#489): Sync now is now two distinct buttons.
+//
+//   Pull now (sync-pull-btn) — calls _syncPull(force=true) +
+//     _syncPullPresets. Safe everyday "refresh from server" action.
+//     Local state is preserved via LWW on the server side.
+//
+//   Force-push to server (sync-push-btn) — calls _syncPushAll, which
+//     pushes every local clip + preset to the server, then re-pulls.
+//     This is the destructive operation: anything edited on another
+//     device since that device last synced will be CLOBBERED by this
+//     device's state. Guarded by a confirm dialog with a diff
+//     summary (clip count + preset count).
+//
+// Both buttons stay disabled while the in-flight op runs so a fat-finger
+// can't fan out a second push wave overlapping the first.
 {
-  // v223.tn1: Sync now button. Disabled while in-flight so a rapid
-  // double-tap can't fan out a second push wave overlapping the first.
-  const btn = document.getElementById("sync-now-btn");
-  if (btn) {
-    btn.addEventListener("click", async () => {
-      if (btn.disabled) return;
-      btn.disabled = true;
-      btn.textContent = "Syncing…";
+  const pullBtn = document.getElementById("sync-pull-btn");
+  if (pullBtn) {
+    pullBtn.addEventListener("click", async () => {
+      if (pullBtn.disabled) return;
+      if (!_syncIsEnabled()) {
+        setStatus("Turn on sync above before pulling.", true);
+        return;
+      }
+      pullBtn.disabled = true;
+      pullBtn.textContent = "Pulling…";
+      try {
+        await _syncPull(/*force*/ true);
+        // v225fz8 (#674) parity: presets sync alongside clips. The
+        // legacy Sync now button pulled both; preserve that here so
+        // users mash Pull after saving a preset on phone and see it
+        // on desktop.
+        if (typeof _syncPullPresets === "function") {
+          await _syncPullPresets().catch(() => {});
+        }
+        _syncStatusText = "Pulled just now.";
+        _updateSyncStatusLine();
+      } catch (e) {
+        console.warn("[sync] pull failed:", e);
+        _syncStatusText = `Pull failed: ${e.message}`;
+        _updateSyncStatusLine();
+      } finally {
+        pullBtn.disabled = false;
+        pullBtn.textContent = "Pull now";
+      }
+    });
+  }
+
+  const pushBtn = document.getElementById("sync-push-btn");
+  if (pushBtn) {
+    pushBtn.addEventListener("click", async () => {
+      if (pushBtn.disabled) return;
+      if (!_syncIsEnabled()) {
+        setStatus("Turn on sync above before force-pushing.", true);
+        return;
+      }
+      // Build a short diff summary BEFORE confirming so the user knows
+      // exactly what they're about to upload. Counts are cheap; we
+      // already have listClips and the in-memory presets list.
+      let clipCount = 0;
+      let presetCount = 0;
+      try {
+        const clips = await listClips();
+        clipCount = (clips || []).length;
+      } catch {}
+      try {
+        if (typeof _loadPresets === "function") {
+          presetCount = (_loadPresets() || []).length;
+        }
+      } catch {}
+      const ok = window.confirm(
+        `Force-push to server?\n\n` +
+        `This will overwrite the server with this device's library:\n` +
+        `  • ${clipCount} clip${clipCount === 1 ? "" : "s"}\n` +
+        `  • ${presetCount} voice preset${presetCount === 1 ? "" : "s"}\n\n` +
+        `Anything edited on another device since that device's last ` +
+        `pull will be REPLACED by this device's version.\n\n` +
+        `If you just want the latest from the server, cancel this and ` +
+        `use Pull now instead.`
+      );
+      if (!ok) {
+        _syncStatusText = "Force-push cancelled.";
+        _updateSyncStatusLine();
+        return;
+      }
+      pushBtn.disabled = true;
+      pushBtn.textContent = "Pushing…";
       try {
         await _syncPushAll();
       } finally {
-        btn.disabled = false;
-        btn.textContent = "Sync now";
+        // _syncPushAll's finally already restores button labels; this
+        // is belt-and-suspenders for the path where the function
+        // throws before reaching its own finally.
+        pushBtn.disabled = false;
+        pushBtn.textContent = "Force-push to server";
+      }
+    });
+  }
+
+  // Backward compat: if a hot-loaded older index.html still has the
+  // legacy `sync-now-btn`, wire it to the old behavior so nothing
+  // visibly breaks during the SW swap window.
+  const legacyBtn = document.getElementById("sync-now-btn");
+  if (legacyBtn) {
+    legacyBtn.addEventListener("click", async () => {
+      if (legacyBtn.disabled) return;
+      legacyBtn.disabled = true;
+      legacyBtn.textContent = "Syncing…";
+      try {
+        await _syncPushAll();
+      } finally {
+        legacyBtn.disabled = false;
+        legacyBtn.textContent = "Sync now";
       }
     });
   }
@@ -22148,11 +22574,32 @@ async function _refetchAndQueueClipFromGithub(id, token) {
   // Drop it into the background queue. _bgRunWorker will pick it
   // up, _preSynthesizeChapter will overwrite the existing clip
   // because targetClipId is set.
+  //
+  // v4.58 (#846): preserve the clip's existing voice on refetch.
+  // This path's intent is "the source moved, redo the narration" —
+  // voice is not part of what changed. Previously _enqueueBg fell
+  // back to voiceEl.value (current picker), which silently swapped
+  // the voice whenever the user had changed their default picker
+  // since the clip was originally narrated. Fall back to picker
+  // ONLY for legacy clips that predate voice provenance (v219).
   _enqueueBg([{
     title: clip.title,
     text: (data.text || "").trim(),
     targetClipId: clip.id,
     gitRef: data.gitRef || clip.gitRef,
+    voiceId: clip.voiceId || voiceEl.value,
+    voiceName:
+      clip.voiceName ||
+      (voiceEl.selectedOptions[0]?.textContent || voiceEl.value || ""),
+    speakerId:
+      typeof clip.speakerId === "number"
+        ? clip.speakerId
+        : (speakerRow.hidden ? null : Number(speakerEl.value || 0)),
+    rate: typeof clip.rate === "number" ? clip.rate : Number(rateEl.value),
+    volume:
+      typeof clip.volume === "number"
+        ? clip.volume
+        : Number(volumeEl.value) / 100,
   }]);
   return true;
 }
@@ -22369,16 +22816,35 @@ function makeClipCard(clip) {
   const isSyncingNow = _bgSyncingActiveClipId === clip.id;
   const isSyncingQueued =
     !isSyncingNow && _bgSyncingClipIds.has(clip.id);
+  // v4.61 (#844): if this card is the active sync AND we've already
+  // received at least one sentence event for it, mark the card so
+  // the CSS picks the determinate progress bar over the indeterminate
+  // comet. The CSS variable carries the 0..1 fraction; CSS does
+  // `width: calc(var(--clip-progress) * 100%)`.
+  const hasSyncProgress =
+    isSyncingNow
+    && _bgSyncProgress.clipId === clip.id
+    && _bgSyncProgress.fraction > 0;
   item.className =
     "clip" +
     (clip.id === _currentClipId ? " current" : "") +
     (_libraryMultiSelect && isSelected ? " selected" : "") +
     (isOutdated ? " outdated" : "") +
     (isSyncingNow ? " syncing-now" : "") +
-    (isSyncingQueued ? " syncing-queued" : "");
+    (isSyncingQueued ? " syncing-queued" : "") +
+    (hasSyncProgress ? " has-sync-progress" : "");
   // Stamp the clip id onto the DOM node so the drag-commit pass can read
   // the visual order without looking anything up.
   item.dataset.clipId = String(clip.id);
+  // v4.61 (#844): restore the in-flight progress fraction onto the
+  // freshly rendered card so a re-render mid-sync (filter change,
+  // tag toggle, sort flip) doesn't reset the bar to 0.
+  if (hasSyncProgress) {
+    item.style.setProperty(
+      "--clip-progress",
+      String(_bgSyncProgress.fraction),
+    );
+  }
   // Libby-style per-card accent (v125). Derived from the uploaded
   // cover's dominant color, or the title-hash if no cover. Two CSS
   // custom properties: --clip-accent (solid for borders if needed)
@@ -22817,17 +23283,70 @@ function makeClipCard(clip) {
     renarrateBtn.classList.add("busy");
   }
   renarrateBtn.type = "button";
+  // v4.58 (#846): the chip's contract changed. Short-tap = reuse the
+  // clip's own voice (the most common case — "the audio sounds stale
+  // because I just edited the text, give me fresh narration in the
+  // SAME voice"). Long-press = override with the current voice picker
+  // (the rare case — "I'm intentionally swapping voices on this
+  // clip"). Reflect both in the aria-label + tooltip.
   renarrateBtn.setAttribute(
     "aria-label",
-    `Re-narrate ${clip.title} with the currently selected voice`
+    `Re-narrate ${clip.title} in this clip's voice (long-press for current voice picker)`
   );
   renarrateBtn.title = _renarrateInFlight
     ? "Re-narrating in the background…"
-    : "Re-narrate with current voice (in the background)";
+    : "Re-narrate (in the background) — tap: same voice · long-press: current picker";
   renarrateBtn.textContent = "🔄";
+
+  // Long-press detection via Pointer Events. ~500ms threshold matches
+  // the platform convention (Android context-menu / iOS tap-and-hold).
+  // We set _longPressed inside the timer and check it in the click
+  // handler to suppress the synthetic click that follows a long-press.
+  let _lpTimer = null;
+  let _longPressed = false;
+  const LP_MS = 500;
+  const _cancelLongPress = () => {
+    if (_lpTimer) {
+      clearTimeout(_lpTimer);
+      _lpTimer = null;
+    }
+  };
+  renarrateBtn.addEventListener("pointerdown", (e) => {
+    _longPressed = false;
+    _cancelLongPress();
+    _lpTimer = setTimeout(() => {
+      _longPressed = true;
+      _lpTimer = null;
+      // Fire immediately on the long-press threshold so the user gets
+      // feedback without having to release. Stop the chip from being
+      // re-tappable until the queue acks via _bgSyncingClipIds.
+      _libraryRenarrate(clip.id, { usePickerVoice: true });
+    }, LP_MS);
+  });
+  // Any movement that turns the press into a drag, or a cancel
+  // event (scroll, touch-leave), aborts the long-press timer.
+  renarrateBtn.addEventListener("pointermove", _cancelLongPress);
+  renarrateBtn.addEventListener("pointercancel", _cancelLongPress);
+  renarrateBtn.addEventListener("pointerleave", _cancelLongPress);
+  renarrateBtn.addEventListener("pointerup", _cancelLongPress);
   renarrateBtn.addEventListener("click", (e) => {
     e.stopPropagation();
+    // If the long-press timer already fired, swallow the click —
+    // otherwise we'd re-narrate twice (once with picker, once with
+    // clip voice).
+    if (_longPressed) {
+      _longPressed = false;
+      return;
+    }
     _libraryRenarrate(clip.id);
+  });
+  // Right-click on desktop = also "use picker voice" (mirror the
+  // long-press semantic for mouse users who don't long-click).
+  renarrateBtn.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    _cancelLongPress();
+    _libraryRenarrate(clip.id, { usePickerVoice: true });
   });
 
   const editBtn = document.createElement("button");
@@ -23050,11 +23569,50 @@ function _bgUnmarkSyncing(clipId) {
   if (!clipId) return;
   const changed = _bgSyncingClipIds.delete(clipId);
   if (_bgSyncingActiveClipId === clipId) _bgSyncingActiveClipId = null;
+  // v4.61 (#844): also drop progress state so a re-render after the
+  // job finishes doesn't repaint a stale 0.94 fill on the next card
+  // that happens to enter syncing-now.
+  if (_bgSyncProgress.clipId === clipId) {
+    _bgSyncProgress = { clipId: null, fraction: 0 };
+  }
   if (changed && typeof renderLibrary === "function") renderLibrary();
 }
 function _bgSetSyncingActive(clipId) {
   _bgSyncingActiveClipId = clipId || null;
+  // v4.61 (#844): new sync target → reset progress so the previous
+  // job's final fraction doesn't briefly flash on the new card.
+  _bgSyncProgress = { clipId: null, fraction: 0 };
   if (typeof renderLibrary === "function") renderLibrary();
+}
+
+// v4.61 (#844): per-clip sync progress for the library card bar.
+// Tracks the most recently observed sentence/total pair from the SSE
+// stream so renderLibrary can stamp the same value back on the card
+// when it re-renders (e.g. after the user changes filters mid-sync).
+// `clipId === null` means "no progress yet" — the card falls back to
+// the indeterminate comet animation in that case.
+let _bgSyncProgress = { clipId: null, fraction: 0 };
+
+// Imperative paint: called from the SSE sentence handler so the live
+// card advances on every sentence without round-tripping through
+// renderLibrary (which would relayout the whole list 200 times for
+// a long chapter). renderLibrary handles the steady-state case where
+// the card re-renders for an unrelated reason (filter change, tab
+// switch) — it reads _bgSyncProgress and re-applies the class + var.
+function _paintBgSyncProgressOnCard(clipId, sentence, total) {
+  if (!clipId || !total || total <= 0) return;
+  const fraction = Math.max(0, Math.min(1, sentence / total));
+  _bgSyncProgress = { clipId, fraction };
+  // querySelector scoped to the active library list — the card lives
+  // under .clip with data-clip-id stamped by renderLibrary. Returns
+  // null if the user happens to have the library closed; that's fine,
+  // the next renderLibrary will re-apply from _bgSyncProgress.
+  const card = document.querySelector(
+    `.clip[data-clip-id="${CSS.escape(String(clipId))}"]`
+  );
+  if (!card) return;
+  card.classList.add("has-sync-progress");
+  card.style.setProperty("--clip-progress", String(fraction));
 }
 
 // v220n: re-narrate a library clip with the current voice picker state,
@@ -23073,7 +23631,7 @@ function _bgSetSyncingActive(clipId) {
 // User reported "double of the new voice + pause stops and goes" —
 // classic two-parallel-streams symptom. Use a separate flag set
 // synchronously at function entry.
-async function _libraryRenarrate(clipId) {
+async function _libraryRenarrate(clipId, opts) {
   // v220az: route the per-card 🔄 chip through the silent bg-queue
   // instead of the foreground synth path.
   //
@@ -23095,7 +23653,22 @@ async function _libraryRenarrate(clipId) {
   //     to be listening to the SAME clip mid-re-narrate, their
   //     current playerEl.src stays bound to the old blob URL until
   //     they next load the clip — no audio glitch
+  //
+  // v4.58 (#846): voice-source is now explicit. Default behavior is
+  // "preserve the clip's existing voice" — short-tapping 🔄 just
+  // refreshes the audio with whatever voice the clip was last
+  // narrated with. This was the user's mental model all along:
+  // "I keep re-narrating with the wrong voice when I want to reuse
+  // my current voice." Previously the chip always used voiceEl.value
+  // (the picker), so changing your default voice silently swapped
+  // every subsequent re-narrate. Now it doesn't.
+  //
+  // Pass { usePickerVoice: true } to opt INTO the old behavior —
+  // either via long-press on the chip (escape hatch when you DO
+  // want to swap voices) or via the Voice Apply picker (whose whole
+  // purpose is "apply the current picker voice to these clips").
   if (!clipId) return;
+  const usePickerVoice = !!(opts && opts.usePickerVoice);
 
   // Skip re-taps on a clip that's already in the queue or being
   // synth'd. _bgSyncingClipIds is the canonical "this clip has work
@@ -23103,11 +23676,6 @@ async function _libraryRenarrate(clipId) {
   // worker on success or cancel).
   if (_bgSyncingClipIds.has(clipId)) {
     setStatus(`Already re-narrating that clip — watch the queue panel.`);
-    return;
-  }
-
-  if (!voiceEl.value) {
-    setStatus("Pick a voice before re-narrating.", true);
     return;
   }
 
@@ -23123,26 +23691,50 @@ async function _libraryRenarrate(clipId) {
     return;
   }
 
-  // _enqueueBg snapshots the current voice picker state (voice,
-  // rate, volume, speaker) into the queue item — so the re-narrate
-  // honors "what I have selected RIGHT NOW", which is the whole
-  // point of the chip. Preserves clip.gitRef so post-synth saveClip
-  // doesn't drop the GitHub provenance.
+  // Pick the voice source. Default = clip's existing voice; picker
+  // is the explicit opt-in.
+  const clipHasVoice = !!clip.voiceId;
+  const wantPicker = usePickerVoice || !clipHasVoice;
+  if (wantPicker && !voiceEl.value) {
+    setStatus("Pick a voice before re-narrating.", true);
+    return;
+  }
+
+  // Build the per-job voice snapshot. _enqueueBg's fallback logic
+  // (line ~12837) only fires for missing fields, so explicit values
+  // here are honored.
+  const voiceId = wantPicker ? voiceEl.value : clip.voiceId;
+  const voiceName = wantPicker
+    ? (voiceEl.selectedOptions[0]?.textContent || voiceEl.value || "")
+    : (clip.voiceName || clip.voiceId || "");
+  const speakerId = wantPicker
+    ? (speakerRow.hidden ? null : Number(speakerEl.value || 0))
+    : (typeof clip.speakerId === "number" ? clip.speakerId : null);
+  const rate = wantPicker
+    ? Number(rateEl.value)
+    : (typeof clip.rate === "number" ? clip.rate : Number(rateEl.value));
+  const volume = wantPicker
+    ? Number(volumeEl.value) / 100
+    : (typeof clip.volume === "number" ? clip.volume : Number(volumeEl.value) / 100);
+
   _enqueueBg([{
     title: clip.title,
     text: clip.text,
     targetClipId: clip.id,
     gitRef: clip.gitRef || null,
+    voiceId,
+    voiceName,
+    speakerId,
+    rate,
+    volume,
   }]);
 
-  const voiceLabelRaw =
-    (voiceEl.selectedOptions[0] && voiceEl.selectedOptions[0].textContent) ||
-    voiceEl.value ||
-    "the current voice";
+  const voiceLabelRaw = voiceName || voiceId || "the current voice";
   const voiceLabel = _displayVoiceName(voiceLabelRaw) || voiceLabelRaw;
+  const source = wantPicker ? "current picker voice" : "this clip's voice";
   setStatus(
-    `Re-narrating "${clip.title}" in the background with ${voiceLabel} — ` +
-    `keep listening.`
+    `Re-narrating "${clip.title}" in the background with ${voiceLabel} ` +
+    `(${source}) — keep listening.`
   );
 }
 
@@ -24275,6 +24867,174 @@ clipEditCoverRemove.addEventListener("click", () => {
 clipEditClose.addEventListener("click", closeClipEdit);
 clipEditSave.addEventListener("click", saveClipEdit);
 clipEditDialog.addEventListener("close", () => { _editingClipId = null; });
+
+// v4.60 (#538 Phase 1A): Push-to-GitHub button. Closes the
+// revise-as-you-listen loop — write the clip's current text back to
+// the source file on GitHub with a real commit. Only available for
+// clips imported from GitHub (the gitRef block hides itself otherwise,
+// taking the button with it).
+//
+// Flow:
+//   1. User opens Edit dialog for a GitHub-sourced clip.
+//   2. User taps "⇡ Push to GitHub".
+//   3. window.confirm shows the commit-message preview (default:
+//      "Revised in Narrative: <title>") + the target path/branch.
+//   4. POST /api/github/push-file with the current clip.text +
+//      stored gitRef.sha (for optimistic-concurrency check).
+//   5a. On success: server returns the new blob SHA. We stash it
+//       into clip.gitRef.sha so the "outdated" detector (#234) sees
+//       parity with the remote.
+//   5b. On 409 (stale SHA): the source moved on GitHub since we
+//       imported. Tell the user to Pull first (using the per-card
+//       Sync chip or Settings → Pull now), then re-open Edit, then
+//       try Push again.
+//   5c. On 401/403: token issue. Send user to Settings → GitHub token.
+//
+// Phase 1B (deferred): preserve YAML frontmatter on push. Right now
+// the entire file body becomes clip.text — frontmatter is lost. If
+// the source had `---\nauthor: ...\n---` at the top, importing
+// (v220as) stripped it and pushing back replaces the whole file
+// with just the body. Tracked as a follow-up.
+const _clipEditPushGithubBtn = document.getElementById("clip-edit-push-github-btn");
+if (_clipEditPushGithubBtn) {
+  _clipEditPushGithubBtn.addEventListener("click", async () => {
+    if (_clipEditPushGithubBtn.disabled) return;
+    if (!_editingClipId) return;
+    const clip = await getClip(_editingClipId);
+    if (!clip) {
+      setStatus("Couldn't read that clip.", true);
+      return;
+    }
+    if (!clip.gitRef || !clip.gitRef.repoUrl || !clip.gitRef.path || !clip.gitRef.sha) {
+      setStatus("This clip isn't linked to a GitHub source.", true);
+      return;
+    }
+    const token = getGithubToken();
+    if (!token) {
+      setStatus(
+        "Set a GitHub token in Settings before pushing.",
+        true,
+      );
+      return;
+    }
+    const text = (clip.text || "").trim();
+    if (!text) {
+      setStatus("Nothing to push — clip text is empty.", true);
+      return;
+    }
+
+    // Build the default commit message + show confirm with the
+    // target path/branch so the user can't get confused about which
+    // file they're about to overwrite.
+    const branch = clip.gitRef.branch || "main";
+    const defaultMessage = `Revised in Narrative: ${clip.title || "(untitled)"}`;
+    const previewMessage = window.prompt(
+      `Push to GitHub?\n\n` +
+      `  Repo:   ${clip.gitRef.repoUrl}\n` +
+      `  Branch: ${branch}\n` +
+      `  File:   ${clip.gitRef.path}\n` +
+      `  SHA:    ${clip.gitRef.sha.slice(0, 7)} (your imported version)\n\n` +
+      `Edit the commit message below, then OK to push.\n` +
+      `Cancel keeps everything local.`,
+      defaultMessage,
+    );
+    if (previewMessage === null) {
+      setStatus("Push cancelled.");
+      return;
+    }
+    const message = previewMessage.trim() || defaultMessage;
+
+    _clipEditPushGithubBtn.disabled = true;
+    const _origLabel = _clipEditPushGithubBtn.textContent;
+    _clipEditPushGithubBtn.textContent = "Pushing…";
+    try {
+      const res = await fetch("/api/github/push-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          github_token: token,
+          repo_url: clip.gitRef.repoUrl,
+          branch,
+          path: clip.gitRef.path,
+          content: clip.text || "",
+          message,
+          expected_sha: clip.gitRef.sha,
+          host: clip.gitRef.host || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      _dlog("github-push", `result for ${clip.gitRef.path}`, {
+        httpStatus: res.status,
+        ok: data && data.ok,
+        reason: data && data.reason,
+        blobSha: data && data.blob_sha ? String(data.blob_sha).slice(0, 7) : null,
+        commitSha: data && data.commit_sha ? String(data.commit_sha).slice(0, 7) : null,
+      });
+      if (!res.ok || !data || data.ok === false) {
+        const reason = (data && data.reason) || "http_error";
+        if (reason === "stale_sha") {
+          setStatus(
+            `GitHub source has moved since you imported. Pull first ` +
+            `(per-card ↻ Sync chip or Settings → Pull now), then re-open ` +
+            `Edit and try Push again.`,
+            true,
+          );
+        } else if (reason === "not_found") {
+          setStatus(
+            `File not found on GitHub: ${clip.gitRef.path} @ ${branch}. ` +
+            `Check the branch in Edit.`,
+            true,
+          );
+        } else if (reason === "auth") {
+          setStatus(
+            "GitHub rejected the push — token may not have write access. " +
+            "Settings → GitHub → Test token to diagnose.",
+            true,
+          );
+        } else if (reason === "network") {
+          setStatus(_withOfflineHint("Network error pushing to GitHub."), true);
+        } else {
+          const msg = (data && data.message) || `HTTP ${res.status}`;
+          setStatus(`Push failed: ${msg}`, true);
+        }
+        return;
+      }
+
+      // Success: stash the new blob SHA into clip.gitRef.sha so the
+      // outdated detector (#234) sees parity again, and the next time
+      // the user opens Edit it shows the new short SHA in the chip.
+      const newSha = data.blob_sha || "";
+      if (newSha) {
+        try {
+          await _mutateClipAtomic(clip.id, (c) => {
+            if (c.gitRef) c.gitRef.sha = newSha;
+          });
+        } catch (e) {
+          console.warn("[github-push] post-push SHA update failed:", e);
+        }
+        // Repaint the SHA chip in the open Edit dialog so the user
+        // sees the new short SHA without having to close + re-open.
+        const shaEl = document.getElementById("clip-edit-gitref-sha");
+        if (shaEl) {
+          shaEl.textContent = newSha.slice(0, 7);
+          shaEl.title = `Full commit SHA: ${newSha}`;
+        }
+      }
+      const commitShort = data.commit_sha
+        ? String(data.commit_sha).slice(0, 7)
+        : "(no SHA returned)";
+      setStatus(
+        `Pushed "${clip.title || "clip"}" to GitHub — commit ${commitShort}.`
+      );
+    } catch (e) {
+      console.warn("[github-push] threw:", e);
+      setStatus(_withOfflineHint(`Push failed: ${e.message}`), true);
+    } finally {
+      _clipEditPushGithubBtn.disabled = false;
+      _clipEditPushGithubBtn.textContent = _origLabel;
+    }
+  });
+}
 
 // v225fz3 (#670): "Clear marks…" button in the Edit clip dialog opens
 // the confirm modal scoped to whichever clip the Edit dialog is

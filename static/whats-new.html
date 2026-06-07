@@ -143,6 +143,185 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.63</span>
+          <span class="release-tagline">Settings dialog — sidebar + 6 categories + pinned search bar. The long scroll is gone.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Six categories, not one scroll.</strong> Settings is
+            now a sidebar layout: <em>Account</em> (sync + API key) ·
+            <em>Appearance</em> (theme + side panes + book-view) ·
+            <em>Mode</em> (Simple / Standard / Author) · <em>Playback</em>
+            (skip / pause / wake lock) · <em>Help</em> (manual, what's
+            new, shortcuts, feedback, tours, GitHub) · <em>About</em>
+            (version + listen stats + diagnostics).
+          </li>
+          <li>
+            <strong>Search settings.</strong> Pinned search bar at the
+            top — type "sync", "theme", "github", "skip", whatever.
+            Rows from every category filter live, and matches inside
+            an <em>Advanced</em> disclosure auto-expand so you never
+            have to click twice to see what you typed.
+          </li>
+          <li>
+            <strong>Phone drill-down.</strong> Settings opens to the
+            category list — tap one to drill in, ← Back to return.
+          </li>
+          <li>
+            <strong>Less prominent power-user chrome.</strong> Tour
+            replays, GitHub PAT setup, debug-log push, and admin tester
+            keys all tuck into per-category <em>Advanced</em>
+            disclosures.
+          </li>
+          <li>
+            <strong>Deep links.</strong>
+            <code>#settings/help</code>, <code>#settings/account</code>,
+            etc. route straight to a category. Settings remembers the
+            last category you visited on this device.
+          </li>
+          <li>
+            <strong>Nothing moved out, nothing moved in.</strong> Every
+            setting that was there is still there — only the layout
+            changed. Switch key moved from the footer to Account top;
+            Force update moved to About; version stamp moved to About
+            top.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v225v4.61</span>
+          <span class="release-tagline">Library card progress bar now reflects real synth progress — the amber bar fills in lockstep with the 3/174 counter</span>
+        </div>
+        <ul>
+          <li>
+            <strong>The bar is honest now.</strong> Until now the
+            amber bar at the bottom of a syncing library card was an
+            indeterminate "comet" animation — pretty, but it told you
+            nothing about how far along the synth was. Now it's a real
+            progress fill driven by the same SSE sentence counter the
+            queue panel shows (3/174). 174 sentences in a long chapter
+            tick visibly across the bar as they synth.
+          </li>
+          <li>
+            <strong>Comet still shows briefly at the start</strong>
+            (between "job submitted" and "first sentence streamed")
+            so the card doesn't look stuck during that ~2-second
+            warmup. Once the first sentence event arrives, the bar
+            switches to determinate fill.
+          </li>
+          <li>
+            <strong>Queued cards (in the bg-queue but not running yet)
+            stay indeterminate</strong> on their muted amber border —
+            they have no per-clip progress to report until they
+            become the active job.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v225v4.60</span>
+          <span class="release-tagline">Push revised text back to GitHub — Edit dialog → "⇡ Push to GitHub" closes the revise-as-you-listen loop</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Closing the loop.</strong> Until now, edits you made
+            in Narrative (single-sentence ✎ edits, full-clip text changes
+            in the Edit dialog) lived only inside Narrative. The source
+            file on GitHub stayed exactly as you imported it, which meant
+            copy-pasting the edits back by hand if you wanted them in
+            your manuscript repo. Now there's a <strong>⇡ Push to GitHub</strong>
+            button in the Edit dialog's "From GitHub:" row that commits
+            the current clip text back to the file, with a real commit
+            message you can edit before it fires.
+          </li>
+          <li>
+            <strong>Safe by default.</strong> Push uses GitHub's
+            optimistic-concurrency SHA — if anyone else (you on another
+            device, or a co-writer) edited the file on GitHub since
+            you imported it, Push refuses and tells you to <em>Pull
+            first, then re-edit, then push</em>. No silent overwrites.
+          </li>
+          <li>
+            <strong>What gets pushed:</strong> the clip's current text,
+            UTF-8 encoded. <em>What doesn't:</em> bookmarks, annotations,
+            voice presets, cover art — those live in Narrative because
+            they have nowhere to land in a plain markdown file.
+            <strong>Known limitation:</strong> if your source file had
+            YAML frontmatter (<code>---</code> at the top), it'll be
+            replaced by just the body text — frontmatter preservation
+            is a follow-up.
+          </li>
+          <li>
+            <strong>Where to find it:</strong> tap a library card's ✎
+            Edit button. If the clip came from GitHub, you'll see the
+            "From GitHub: chapters/01.md @ a3b9c2f" row and the
+            <strong>⇡ Push to GitHub</strong> chip at the right edge.
+            (Non-GitHub clips don't show the row at all, so the button
+            stays hidden.)
+          </li>
+          <li>
+            <strong>Scrivener and Obsidian aren't here yet.</strong>
+            GitHub is Phase 1 because the round-trip is clean (commit
+            API, token, SHA-based conflict detection). Scrivener and
+            Obsidian round-trips require either filesystem access or
+            a re-download-patch dance — design TBD.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
+          <span class="release-version">v225v4.59</span>
+          <span class="release-tagline">Sync now → Pull (safe primary) + Force-push (warned, confirmed). Re-narrate preserves the clip's own voice.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Pull now.</strong> The everyday button. Fetches the
+            newest clips, voice presets, and annotations from the
+            server. Your local edits are kept (last-write-wins on the
+            server side decides per item). This is what you want 99% of
+            the time you mash a sync button.
+          </li>
+          <li>
+            <strong>Force-push to server.</strong> Sitting next to Pull
+            with a quieter, warning-tinted button. Tapping it opens a
+            confirm dialog summarizing what you're about to upload
+            (<em>"Overwrite the server with N clips and M presets?"</em>)
+            because this action is destructive — anything edited on
+            another device since that device's last pull will be
+            REPLACED by this device's version. Use it after a long
+            offline session or before retiring a device, not as your
+            daily sync.
+          </li>
+          <li>
+            <strong>Command palette (Cmd/Ctrl+K) carries both.</strong>
+            "Pull from server" replaces the old "Sync now" entry;
+            "Force-push to server" is a new entry. Both fire the same
+            handlers as the Settings buttons, including the confirm
+            dialog for Force-push.
+          </li>
+          <li>
+            <strong>Re-narrate stays in the clip's own voice.</strong>
+            Tap 🔄 on a library card and the clip re-narrates in
+            whatever voice it was last narrated with — not whatever
+            happens to be selected in your voice picker. Long-press 🔄
+            (or right-click on desktop) when you DO want to swap
+            voices. The same fix applies to GitHub Sync's per-card ↻
+            chip and "Re-narrate outdated": refetching the source
+            updates the text, not the voice.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.22</span>
           <span class="release-tagline">Phase B / #811: per-sentence audio cache + clean partial re-narrate (Author opt-in)</span>
         </div>

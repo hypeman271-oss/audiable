@@ -1823,6 +1823,260 @@ dialog.manual-dialog:not([open]) {
   opacity: 0.6;
 }
 
+/* ===== v4.63 (#854): hybrid Settings dialog =====================
+   Replaces the old long-scroll layout (.settings-body > .settings-subheader
+   + 20 .settings-row in one column) with a sidebar + 6 panes + pinned
+   search bar + per-pane <details> Advanced disclosures. Phone uses a
+   drill-down: the sidebar IS the page, taps slide to the pane, ← Back
+   returns. Driven by `data-settings-view="pane"` on the dialog body —
+   JS toggles it; CSS reads it.
+
+   Existing .settings-row, .settings-toggle-label, .settings-toggle-desc,
+   .settings-section, .settings-help-link, .theme-picker, .stats-grid,
+   .settings-pat-scope-*, .ghm-* etc. all still apply UNCHANGED inside
+   the new panes — only the container chrome is new.
+
+   .settings-subheader is now dead but left in CSS as a no-op for any
+   forgotten reference. The old top-border-stripping rule for
+   :first-child still works.
+   ============================================================== */
+
+/* The body itself becomes the search + flex layout container. */
+.settings-body.settings-hybrid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* The body scrolls naturally when a pane overflows; sidebar +
+     search row stay above the fold via flex-shrink:0 below. */
+}
+
+/* Pinned search bar at the top of the dialog. */
+.settings-search-row {
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+.settings-search {
+  width: 100%;
+  padding: 9px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.settings-search:focus {
+  border-color: var(--accent);
+}
+.settings-search::placeholder {
+  color: var(--fg-dim);
+}
+/* "No settings match" message shown when search filters everything
+   out. JS toggles hidden. */
+.settings-search-empty {
+  text-align: center;
+  padding: 16px 8px;
+  font-style: italic;
+}
+.settings-search-empty[hidden] {
+  display: none;
+}
+
+/* The two-column layout. Sidebar fixed width, content fills the rest. */
+.settings-layout {
+  display: flex;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0; /* lets the content area scroll independently */
+}
+
+/* Sidebar category list. */
+.settings-sidebar {
+  flex: 0 0 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  border-right: 1px solid var(--border-soft);
+}
+.settings-sidebar-item {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  padding: 9px 14px 9px 12px;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-dim);
+  cursor: pointer;
+  border-radius: 6px 0 0 6px;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.settings-sidebar-item:hover {
+  background: var(--accent-tint);
+  color: var(--fg);
+}
+.settings-sidebar-item.is-active {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+/* JS hides a sidebar item with [hidden] when search filters out all
+   matching rows in that category. */
+.settings-sidebar-item[hidden] {
+  display: none;
+}
+
+/* Content area: holds the panes, scrolls independently. */
+.settings-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px; /* room for the scrollbar without clipping focus rings */
+}
+
+/* Individual pane. Only one is visible at a time (hidden on the others). */
+.settings-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-pane[hidden] {
+  display: none;
+}
+.settings-pane-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* <details> "Advanced" disclosure inside a pane. Designed to read as
+   a quiet secondary section so it doesn't compete with the top-level
+   rows. The summary is a button-shaped chip with a chevron. */
+.settings-advanced {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+.settings-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--bg-card-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  transition: color 0.12s ease;
+}
+.settings-advanced > summary::-webkit-details-marker { display: none; }
+.settings-advanced > summary::before {
+  content: "▸";
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.settings-advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+.settings-advanced > summary:hover {
+  color: var(--accent);
+}
+.settings-advanced > *:not(summary) {
+  /* Disclosed content sits indented + spaced from the summary chip. */
+  margin-top: 12px;
+}
+.settings-advanced > *:not(summary) + *:not(summary) {
+  margin-top: 14px;
+}
+
+/* Back button. Lives in the dialog head next to the title. Hidden on
+   desktop and in the phone category-list view; shown only when a pane
+   is open on phone (data-settings-view="pane" on the dialog body). */
+.settings-back-btn {
+  margin-right: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-back-btn:hover {
+  color: var(--accent);
+}
+.settings-back-btn[hidden] {
+  display: none;
+}
+
+/* --------- Phone layout: drill-down (categories ⇄ pane) ----------
+   Below 768px the sidebar IS the page; tap → slide to the pane view.
+   We don't actually animate — just swap visibility — because dialogs
+   on phone are already entering with a backdrop transition; an inner
+   slide adds latency without adding clarity. */
+@media (max-width: 767px) {
+  .settings-layout {
+    flex-direction: column;
+    gap: 0;
+  }
+  .settings-sidebar {
+    flex: 1 1 auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 4px 0;
+  }
+  .settings-sidebar-item {
+    padding: 12px 16px;
+    border-left: none;
+    border-radius: 8px;
+    /* Big tap target + chevron at the right edge for the drill-down
+       affordance. The chevron is a pseudo-element so we don't bloat the
+       HTML with phone-only chrome. */
+    position: relative;
+  }
+  .settings-sidebar-item::after {
+    content: "›";
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--fg-dim);
+    font-size: 18px;
+  }
+  .settings-sidebar-item.is-active {
+    border-left: none;
+  }
+  /* In category-list view (default): show sidebar, hide content. */
+  .settings-content {
+    display: none;
+    padding-right: 0;
+  }
+  /* In pane view: hide sidebar, show content. */
+  .settings-dialog[data-settings-view="pane"] .settings-sidebar {
+    display: none;
+  }
+  .settings-dialog[data-settings-view="pane"] .settings-content {
+    display: block;
+  }
+  /* Search bar: when actively searching, force pane-view so the
+     filtered results are visible without an extra tap. JS sets
+     data-settings-view="pane" on search input. */
+  .settings-dialog[data-settings-view="pane"] .settings-sidebar-item::after {
+    /* No chevrons in the pane view — sidebar's hidden anyway, but if
+       a future feature wants the sidebar as a swipe-revealed drawer
+       this rule is the right surface to flip. */
+  }
+}
+
 /* Settings section — visual grouping for things like the GitHub PAT
    input. A thin top border separates it from the feedback links
    above. */
@@ -1911,6 +2165,29 @@ dialog.manual-dialog:not([open]) {
   gap: 8px;
   align-items: center;
   margin-top: 4px;
+}
+/* v4.59 (#489): two-button sync row (Pull primary + Force-push warned).
+   On narrow viewports the buttons stack so neither truncates; on
+   wider screens they sit side by side. flex-wrap is enough — no
+   media query needed. */
+.sync-buttons-row {
+  flex-wrap: wrap;
+}
+.sync-buttons-row > button {
+  min-width: 0;
+}
+/* v4.59 (#489): warning copy for Force-push. Sits below the button row
+   in a slightly tinted background so the destructive-action warning
+   visually separates from the rest of the section's neutral copy. */
+.sync-push-hint {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn, #e0a040) 12%, transparent);
+  border-left: 3px solid var(--warn, #e0a040);
+}
+.sync-push-hint strong {
+  color: var(--fg);
 }
 .settings-section-hint a {
   color: var(--accent);
@@ -5048,6 +5325,27 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 
+/* v4.55 / v4.57: tablet + wide-desktop one-row action layout. At
+   ≥768px the four buttons (Generate / Open as ebook / Download /
+   Queue silently) fit on a single line, with Generate taking 2fr
+   to stay visually primary. Phone (<768px) still has the 2×2 grid
+   from the default rule below — but phone hides .actions.card-actions
+   entirely via the @media (max-width: 767px) clip-actions rule
+   further down in this file, since phone gets its own fixed-bottom
+   phone-gen-bar instead. See DEVICES.md → "Common change scopes"
+   → action buttons.
+
+   v4.57 caveat: at the narrowest tablet width (~768px with no side
+   panes), the secondary buttons get ~134px each, which is tight
+   for "Open as ebook" (12 chars + emoji) and "Queue silently →"
+   (16 chars + arrow). If reports come back with clipping, drop
+   Generate from 2fr to 1fr (equal columns) OR raise the breakpoint
+   to 900px. */
+@media (min-width: 768px) {
+  .actions.card-actions {
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+  }
+}
 .actions {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -6649,6 +6947,30 @@ button:disabled {
     opacity: 0.6;
   }
 }
+/* v4.61 (#844): once the first sentence event arrives, switch from
+   the indeterminate comet to a determinate progress fill. JS adds
+   .has-sync-progress and stamps --clip-progress (0..1) onto the card
+   on every SSE sentence event. Width is in calc() so an exact
+   3/174 → 1.72% bar appears. The comet rule above still serves as
+   the fallback for the brief window between "synth started" and
+   "first sentence streamed." */
+.clip.syncing-now.has-sync-progress::after {
+  background: var(--working);
+  background-size: auto;
+  background-position: 0 0;
+  animation: none;
+  width: calc(var(--clip-progress, 0) * 100%);
+  right: auto;
+  /* Subtle width transition so 174-sentence chapters tick visibly
+     instead of snapping by 0.57% per event. Kept short so the user
+     doesn't read "lag" when the synth speeds up. */
+  transition: width 0.4s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .clip.syncing-now.has-sync-progress::after {
+    transition: none;
+  }
+}
 .clip.syncing-queued {
   border-color: var(--working-tint-2, var(--working-tint));
 }
@@ -7128,6 +7450,30 @@ button:disabled {
   background: var(--accent-tint);
   color: var(--accent);
   letter-spacing: 0.02em;
+}
+/* v4.60 (#538): Push-to-GitHub button in the gitRef block. Pushed
+   to the right edge so it visually owns the "action" half of the
+   row (label/path/sha on left = identity, button on right = verb). */
+.clip-edit-gitref-push {
+  margin-left: auto;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.clip-edit-gitref-push:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.clip-edit-gitref-push:disabled {
+  opacity: 0.55;
+  cursor: progress;
 }
 
 /* v219: voice-provenance block in the Edit dialog. Read-only display
@@ -13584,19 +13930,20 @@ html, body {
   background: var(--bg-card-2);
   border: 1px solid var(--border);
   border-radius: 8px;
-  cursor: pointer;
+  /* v4.54: passive display row, not a button — drop the cursor + hover
+     hint that previously suggested clicking would do something. The
+     Change… click target was removed (see #647 vestigial-shortcut note
+     in app.js / index.html). */
   font-family: inherit;
   font-size: 14px;
   color: var(--text);
   text-align: left;
   transition: background 120ms ease, border-color 120ms ease;
 }
-.desktop-author-pane .dap-voice-row:hover,
-.desktop-author-pane .dap-voice-row:focus-visible {
-  background: var(--hover-soft);
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
-  outline: none;
-}
+/* v4.54: hover/focus state removed — the row is no longer a button.
+   Pre-v4.54 it was a button that opened the voice browser; the browser
+   has lived inside this same pane since #647, so the click became a
+   no-op opening an empty modal. Now a passive display row. */
 .desktop-author-pane .dap-voice-name {
   flex: 1;
   min-width: 0;
@@ -13613,13 +13960,8 @@ html, body {
   border-radius: 4px;
   background: var(--bg-page);
 }
-.desktop-author-pane .dap-voice-change {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--accent);
-  opacity: 0.9;
-}
+/* v4.54: .dap-voice-change rule removed — the span no longer exists.
+   See the matching HTML/JS notes for the rationale (vestigial post-#647). */
 
 /* v225ey: per-card outdated banner.
  *
