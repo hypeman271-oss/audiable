@@ -5726,6 +5726,92 @@ button:disabled {
   padding: 8px 14px;
   font-size: 14px;
 }
+
+/* v4.51 (#562 follow-up): API key prompt dialog. Replaces window.prompt()
+   which Tauri WebView2 on Windows silently suppresses, leaving Switch
+   key / fresh-install / key-rotation flows broken. Uses the native
+   <dialog> showModal() so it works in every webview we ship to (PWA,
+   Tauri WebView2 on Windows, Tauri WKWebView on macOS, Android WebView). */
+.key-prompt-dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: 380px;
+  width: calc(100% - 32px);
+}
+.key-prompt-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.key-prompt-card {
+  background: color-mix(in srgb, var(--bg-card) 96%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 18px 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.key-prompt-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.key-prompt-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg-dim);
+}
+.key-prompt-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--hover-soft);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--fg);
+}
+#key-prompt-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  background: var(--bg-page, var(--bg-card));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+}
+#key-prompt-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+.key-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 2px;
+}
+#key-prompt-save {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: var(--accent-on, #fff);
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#key-prompt-cancel {
+  padding: 8px 14px;
+  font-size: 14px;
+}
 /* v225.tn61 (#534): just-added highlight. Brief accent-tinted pulse
    on the row after the phone 🔖 button saved a new bookmark, so
    the author can spot it immediately when the drawer opens. */

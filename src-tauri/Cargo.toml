@@ -35,7 +35,13 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# v4.53: `devtools` feature enabled so release builds expose right-click
+# → Inspect Element. We're chasing a "Failed to fetch" inside WebView2
+# that doesn't reproduce from PowerShell/Edge, so we need the Console
+# + Network tab to see the actual error reason. Remove this feature
+# once the network bug is diagnosed — DevTools in production bloats
+# the binary slightly and exposes inspectability to end users.
+tauri = { version = "2", features = ["devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

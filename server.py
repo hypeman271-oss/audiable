@@ -322,8 +322,18 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        # Tauri production webview origins (differ per platform).
+        # Tauri production webview origins (differ per platform AND
+        # per Tauri version). Tauri v2 on Windows uses the HTTP variant
+        # `http://tauri.localhost` — confirmed via DevTools on a real
+        # v4.53 install: every /api/* fetch sent
+        #   Origin: http://tauri.localhost
+        # and got blocked by CORS because we only listed the HTTPS
+        # variant. The HTTPS one (Tauri v1 on Windows) and the bare
+        # tauri:// scheme (macOS/Linux) stay for backward compat. Cost
+        # of listing all three: zero — the bearer key check still gates
+        # every endpoint, so allow-origin breadth doesn't lower the bar.
         "tauri://localhost",
+        "http://tauri.localhost",
         "https://tauri.localhost",
         # Local dev — running `tauri dev` against a local Narrative
         # server (server.py on :8000) or the prod Fly URL.

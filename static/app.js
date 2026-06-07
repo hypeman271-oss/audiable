@@ -260,26 +260,97 @@ function setApiKey(key) {
   } catch {}
 }
 
-let _keyPromptInFlight = false;
+// v4.51 (#562 follow-up): prompt for the API key via a real <dialog>
+// element instead of window.prompt(). Tauri WebView2 on Windows
+// silently suppresses window.prompt() — the dialog never opens and
+// the call returns null. Switch key then looked broken: confirm()
+// fires, page reloads, fetch wrapper 401s, _promptForApiKey() returns
+// null with no UI, no key is stored, /api/voices stays in retry loop
+// forever. A real <dialog> works in every webview we ship to.
+//
+// Returns a Promise that resolves with the trimmed key string, or
+// null if the user cancelled / hit Esc. Re-entrant: concurrent 401s
+// share the same in-flight promise so we never stack prompts.
+let _keyPromptInFlight = null;
 function _promptForApiKey() {
-  // Re-entrant guard so concurrent 401s don't stack up half a dozen
-  // prompts on top of each other while the user types.
-  if (_keyPromptInFlight) return null;
-  _keyPromptInFlight = true;
-  try {
-    const k = window.prompt(
-      "This Narrative server requires an API key.\n\n" +
-      "Paste your X-Narrative-Key value (set by the server admin):",
-      getApiKey()
-    );
-    if (k && k.trim()) {
-      setApiKey(k.trim());
-      return k.trim();
-    }
-    return null;
-  } finally {
-    _keyPromptInFlight = false;
+  if (_keyPromptInFlight) return _keyPromptInFlight;
+
+  const dlg = document.getElementById("key-prompt-dialog");
+  if (!dlg || typeof dlg.showModal !== "function") {
+    // Fallback: dialog markup missing or <dialog> unsupported.
+    // window.prompt works on regular browsers — just not in Tauri
+    // WebView2 — so we still try it as a last resort.
+    try {
+      const k = window.prompt(
+        "Paste your X-Narrative-Key value:",
+        getApiKey()
+      );
+      if (k && k.trim()) {
+        setApiKey(k.trim());
+        return Promise.resolve(k.trim());
+      }
+    } catch {}
+    return Promise.resolve(null);
   }
+
+  _keyPromptInFlight = new Promise((resolve) => {
+    const input = document.getElementById("key-prompt-input");
+    const cancelBtn = document.getElementById("key-prompt-cancel");
+    const form = dlg.querySelector("form");
+
+    if (input) input.value = getApiKey() || "";
+
+    let settled = false;
+    const finish = (key) => {
+      if (settled) return;
+      settled = true;
+      _keyPromptInFlight = null;
+      try { dlg.close(); } catch {}
+      resolve(key);
+    };
+
+    const onCancel = (e) => {
+      e.preventDefault();
+      finish(null);
+    };
+    const onSubmit = (e) => {
+      const k = (input && input.value || "").trim();
+      if (k) {
+        setApiKey(k);
+        finish(k);
+      } else {
+        // Empty submit treated as cancel — caller will re-prompt on
+        // the next 401 if they need another shot.
+        finish(null);
+      }
+    };
+    const onClose = () => {
+      // Esc key closes the native dialog without firing submit. We
+      // resolve here so the caller always gets a verdict.
+      finish(null);
+    };
+
+    cancelBtn && cancelBtn.addEventListener("click", onCancel, { once: true });
+    form && form.addEventListener("submit", onSubmit, { once: true });
+    dlg.addEventListener("close", onClose, { once: true });
+
+    try {
+      dlg.showModal();
+      if (input) {
+        // requestAnimationFrame so the field is painted before focus,
+        // otherwise some webviews skip the autofocus.
+        requestAnimationFrame(() => {
+          try { input.focus(); input.select(); } catch {}
+        });
+      }
+    } catch (e) {
+      console.warn("[key-prompt] showModal failed:", e);
+      _keyPromptInFlight = null;
+      resolve(null);
+    }
+  });
+
+  return _keyPromptInFlight;
 }
 
 // v225v4.27 (#704): when the page is loaded from the Tauri desktop
@@ -506,12 +577,33 @@ window.addEventListener("narrative:update-error", (e) => {
     let res = await origFetch(input, options);
 
     if (isApi && res.status === 401) {
-      const newKey = _promptForApiKey();
-      if (newKey) {
+      // v4.52: before opening a NEW prompt, check whether the stored
+      // key changed since we sent this request. Concurrent 401s with
+      // a slow Fly cold-start cause this: fast requests trigger ONE
+      // dialog, user pastes, fast retries succeed; then a slow request
+      // finally 401s and would normally pop a SECOND dialog (user
+      // already pasted, key is in localStorage) just to click OK
+      // again. By comparing what we SENT vs what's stored NOW, we can
+      // silently retry on stale-send and only prompt on a real 401.
+      const sentKey =
+        options && options.headers
+          ? new Headers(options.headers).get("X-Narrative-Key") || ""
+          : "";
+      const currentKey = getApiKey();
+      if (currentKey && currentKey !== sentKey) {
         const h = new Headers(options.headers || {});
-        h.set("X-Narrative-Key", newKey);
+        h.set("X-Narrative-Key", currentKey);
         options.headers = h;
         res = await origFetch(input, options);
+      } else {
+        // v4.51: _promptForApiKey is async — await the dialog.
+        const newKey = await _promptForApiKey();
+        if (newKey) {
+          const h = new Headers(options.headers || {});
+          h.set("X-Narrative-Key", newKey);
+          options.headers = h;
+          res = await origFetch(input, options);
+        }
       }
     }
     return res;

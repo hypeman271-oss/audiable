@@ -3182,6 +3182,54 @@
         </div>
       </div>
 
+      <!-- v4.51 (#562 follow-up): API key prompt as a real <dialog>
+           element instead of window.prompt(). Tauri WebView2 on Windows
+           silently swallows window.prompt() — the dialog never opens and
+           the call returns null. Switch key then looks broken: confirm()
+           fires, page reloads, fetch wrapper 401s, _promptForApiKey()
+           returns null, no key is stored, /api/voices stays in retry
+           loop forever. Using a real <dialog> sidesteps the suppressed
+           native prompt and gives us a single render surface that works
+           on every platform we ship to. -->
+      <dialog
+        id="key-prompt-dialog"
+        class="key-prompt-dialog"
+        aria-labelledby="key-prompt-title"
+      >
+        <form method="dialog" class="key-prompt-card">
+          <header class="key-prompt-head">
+            <h3 id="key-prompt-title">🔑 API key</h3>
+          </header>
+          <p class="key-prompt-body">
+            This Narrative server requires an API key. Paste your
+            <code>X-Narrative-Key</code> value below — your server admin
+            issued it when they invited you.
+          </p>
+          <input
+            id="key-prompt-input"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Paste key here"
+            aria-label="API key"
+          />
+          <div class="key-prompt-actions">
+            <button
+              type="button"
+              id="key-prompt-cancel"
+              class="link-btn"
+              value="cancel"
+            >Cancel</button>
+            <button
+              type="submit"
+              id="key-prompt-save"
+              class="primary"
+              value="save"
+            >Save key</button>
+          </div>
+        </form>
+      </dialog>
+
       <!-- v225et: command palette. Centered floating panel, top-third
            of viewport. Opens via Cmd/Ctrl+K (or the ⌘K hint in the
            hero icon rail). Search input fuzzy-matches against a flat
