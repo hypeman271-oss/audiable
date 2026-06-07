@@ -48,6 +48,64 @@ Two failure modes the design protects against:
 
 ## Releasing a new desktop version
 
+Two paths: **automated** (recommended, uses GitHub Actions to build
+Windows + macOS + Linux from one tag push — see #708 and
+`.github/workflows/release.yml`) and **manual** (build locally on a
+single OS, for one-off patch testing).
+
+### Path A — automated multi-platform release (recommended)
+
+Prerequisites (one-time):
+
+1. In repo Settings → Secrets and variables → Actions, add:
+   - `TAURI_SIGNING_PRIVATE_KEY`           — paste the contents of
+     `narrative-updater.key` (the file body, not its filesystem path).
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`  — the password used at
+     `signer generate` time. Empty string if you used `--ci`.
+2. Optional (only matters once #214 lands real code-sign certs):
+   `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+   `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`,
+   `APPLE_TEAM_ID`, `WINDOWS_CERTIFICATE`,
+   `WINDOWS_CERTIFICATE_PASSWORD`. Without these the binaries still
+   build but will trip Gatekeeper / SmartScreen warnings on first
+   launch. Tauri's own updater signing is independent of OS code
+   signing and uses only the `TAURI_SIGNING_*` pair.
+
+Per-release flow:
+
+1. Bump versions to match across:
+   - `src-tauri/Cargo.toml`              → `version = "0.1.1"`
+   - `src-tauri/tauri.conf.json`         → `"version": "0.1.1"`
+   - `server.py` `LATEST_DESKTOP_VERSION` → `"0.1.1"`
+2. Commit and tag:
+   ```powershell
+   git commit -am "Release v0.1.1"
+   git tag v0.1.1
+   git push origin main --tags
+   ```
+3. Watch the run at github.com/<owner>/<repo>/actions. About 15-20
+   minutes (Windows + Linux take ~10 min each, macOS ~15 min, all
+   parallel). The Action creates a **draft** GitHub Release with all
+   bundles attached.
+4. Download one binary per platform from the draft release and smoke-
+   test (`adb install` style for desktop: just run the installer on
+   a clean VM or your own machine).
+5. Edit the release body if you want richer notes, then click
+   **Publish**.
+6. Update `DESKTOP_SIGNATURES` in `server.py` with the `.sig`
+   contents from the published release (download each `.sig` file,
+   paste the base64 body into the map). Then deploy Fly:
+   ```powershell
+   & E:\audiable\scripts\deploy.ps1
+   ```
+7. Verify from an existing installed copy: Help → Check for
+   updates… should now prompt to install v0.1.1.
+
+### Path B — manual single-platform build (legacy)
+
+Use this when you need a quick local test build or GitHub Actions
+is down. Only produces binaries for the OS you run it on.
+
 1. Bump versions to match across:
    - `src-tauri/Cargo.toml`              → `version = "0.1.1"`
    - `src-tauri/tauri.conf.json`         → `"version": "0.1.1"`

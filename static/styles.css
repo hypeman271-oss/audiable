@@ -11663,6 +11663,50 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     display: none;
   }
 
+  /* v225v4.46 (#709 follow-up): hide the inline #status paragraph on
+     phone once a clip is loaded. The status sits in normal DOM flow
+     ABOVE the text card, but when the text card becomes a
+     position:fixed reading-view (above), both elements compute to the
+     same top=56px and the status overlays the reading view's title
+     row. Confirmed via v4.45 layout probe: `status ∩ reading-view`
+     overlap with both at t=56.
+     The status is a desktop-leaning affordance (inline error / load
+     messages); on phone we already surface "Back online — syncing",
+     "Synthesizing…", etc. through the pull-up drawer's Listening
+     slot and the bg-queue chip. Errors still toast via setStatus on
+     desktop but stay invisible here. Worst case (a fetch error during
+     listening) the user just retries — far better than the banner
+     stomping the first sentence of the chapter every time the SW
+     reconnects. Keeping .error visible for hard failures. */
+  body:has(#player-card:not([hidden])) #status:not(.error),
+  /* v225v4.47 (#709 follow-up): :has() fallback. v4.46 rule wasn't
+     winning on at least one Android Chrome build despite shipping
+     correctly — probe still showed status display:block. Adding a
+     parallel selector keyed on body[data-clip-kind] (set by JS when
+     a clip loads, confirmed in the v4.45 probe dataset) so we hit the
+     same intent without :has(). !important to settle any future
+     specificity surprise — the status banner overlapping the chapter
+     title is severe enough to deserve the nuke. */
+  body[data-clip-kind] #status:not(.error) {
+    display: none !important;
+  }
+
+  /* v225v4.48 (#709 follow-up): hide the desktop bookmark-drawer
+     <aside> on phone entirely. The element is in the DOM on every
+     viewport — added in v4.33 next to the bookmarks toggle — but its
+     positioning CSS is gated to @media (min-width: 1280px). On phone
+     it falls back to default <aside> rendering: a block element with
+     a visible h3 ("Bookmarks") and × close button sitting wherever
+     the DOM dropped it, which produced the mystery × bottom-left
+     reported on the Galaxy A16 and Samsung S-series. The desktop
+     drawer is a desktop-only affordance — phone has its own
+     bookmarks panel inside the pull-up Author section, so we lose
+     nothing by hiding this aside outright at narrow viewports. */
+  #bookmarks-drawer,
+  #bookmarks-drawer-toggle {
+    display: none !important;
+  }
+
   /* v225.tn84 (#566): stale-audio banner on phone.
      The git-outdated-banner (and re-narrate banner) live OUTSIDE
      the fixed-positioned .card.card-text in the DOM, which means

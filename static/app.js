@@ -55,6 +55,157 @@ function _dlog(category, message, data) {
   } catch {}
 }
 
+// v225v4.45 (#709 follow-up): layout probe. Capture viewport + bounding
+// rects + computed visibility for every element that contributes to
+// phone bottom-stack / status-banner layout. Two-Android-phone bug
+// (#709) shows tag row + player + sync banner + a mystery × stacked
+// when a library card opens — but existing dlogs don't capture layout,
+// so we couldn't see which CSS rule was misbehaving. This probe runs
+// once after loadClip's first paint, plus on-demand from the Force
+// Update / Push Debug button so it picks up any later state.
+//
+// IMPORTANT: read getBoundingClientRect() lazily inside a try/catch —
+// if an element is hidden via [hidden] attr the rect is all zeros (not
+// an error), but a missing element returns null from getElementById and
+// would NPE on .getBoundingClientRect(). Belt-and-suspenders.
+function _dlogLayoutProbe(label) {
+  try {
+    const probe = {
+      label: label || "load",
+      // Viewport + DPR. visualViewport is what the WebView ACTUALLY
+      // paints into (excluding system bars on Android); innerHeight is
+      // the layout viewport. Bug is likely in the gap between the two.
+      viewport: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        outerWidth: window.outerWidth,
+        outerHeight: window.outerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        vv: window.visualViewport
+          ? {
+              w: Math.round(window.visualViewport.width),
+              h: Math.round(window.visualViewport.height),
+              ot: Math.round(window.visualViewport.offsetTop),
+              ol: Math.round(window.visualViewport.offsetLeft),
+              scale: window.visualViewport.scale,
+            }
+          : null,
+        // CSS safe-area-inset-bottom (Android gesture bar / iOS home
+        // indicator). Read from a probe div with env() so we get the
+        // resolved pixel value. Falls back to root padding if no probe.
+        safeBottom: (() => {
+          try {
+            const d = document.createElement("div");
+            d.style.cssText =
+              "position:fixed;left:0;bottom:0;height:env(safe-area-inset-bottom,0px);visibility:hidden;";
+            document.body.appendChild(d);
+            const h = d.getBoundingClientRect().height;
+            d.remove();
+            return Math.round(h);
+          } catch {
+            return -1;
+          }
+        })(),
+      },
+      // body data-* drives every CSS gate (mode, clip loaded, drawer
+      // open, ebook kind, etc.). A wrong attr = wrong selector wins.
+      body: {
+        dataset: { ...(document.body.dataset || {}) },
+        classes: document.body.className,
+      },
+    };
+
+    // Per-element snapshot. Order = visual stack from top to bottom on
+    // phone. Adding new fixed-position elements? Add them here too.
+    const ids = [
+      "phone-header",
+      "status",
+      "mini-player",
+      "reading-view",
+      "player-card",
+      "phone-tag-row",
+      "phone-pullup",
+      "phone-pullup-scrim",
+      "phone-menu",
+      "phone-menu-scrim",
+      "bookmark-editor",
+      "annotate-palette",
+      "first-clip-tour",
+    ];
+    probe.elements = {};
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (!el) {
+        probe.elements[id] = "missing";
+        continue;
+      }
+      const r = el.getBoundingClientRect();
+      const cs = window.getComputedStyle(el);
+      probe.elements[id] = {
+        rect: {
+          t: Math.round(r.top),
+          l: Math.round(r.left),
+          r: Math.round(r.right),
+          b: Math.round(r.bottom),
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+        },
+        display: cs.display,
+        visibility: cs.visibility,
+        opacity: cs.opacity,
+        position: cs.position,
+        zIndex: cs.zIndex,
+        // padding-bottom matters on #reading-view because text needs
+        // clearance for the tag row + player. If this is 0, that's the
+        // bug.
+        paddingBottom: cs.paddingBottom,
+        hidden: el.hasAttribute("hidden"),
+        ariaHidden: el.getAttribute("aria-hidden"),
+        // Trim classList to first ~6 entries to keep log compact.
+        classes: (el.className || "").toString().split(/\s+/).slice(0, 8).join(" "),
+      };
+    }
+
+    // Overlap detection. For each pair of visible elements, see if
+    // their rects intersect. This is the "self-diagnosing" payload —
+    // the rogue × stacking the player will show up here as a pair.
+    const visible = Object.entries(probe.elements)
+      .filter(
+        ([, v]) =>
+          v &&
+          typeof v === "object" &&
+          v.display !== "none" &&
+          v.visibility !== "hidden" &&
+          parseFloat(v.opacity || "1") > 0.01 &&
+          !v.hidden &&
+          v.rect.w > 0 &&
+          v.rect.h > 0,
+      );
+    probe.overlaps = [];
+    for (let i = 0; i < visible.length; i++) {
+      for (let j = i + 1; j < visible.length; j++) {
+        const [aId, a] = visible[i];
+        const [bId, b] = visible[j];
+        const ar = a.rect;
+        const br = b.rect;
+        const overlaps =
+          ar.l < br.r && br.l < ar.r && ar.t < br.b && br.t < ar.b;
+        if (overlaps) {
+          probe.overlaps.push(`${aId} ∩ ${bId}`);
+        }
+      }
+    }
+
+    _dlog("layout", "probe", probe);
+  } catch (e) {
+    // Never let the probe break loadClip. Log the failure so we know
+    // the instrumentation itself misfired.
+    try {
+      _dlog("layout", "probe-error", { err: String(e && e.message) });
+    } catch {}
+  }
+}
+
 // v225eg (#624): cross-frame dlog bridge for the manual's walkthrough
 // engine (§10 Tutorials). The manual.html iframe wtlog() helper
 // postMessages diagnostic entries here; we re-emit them through the
@@ -5411,6 +5562,16 @@ if (settingsPushDebugLogLink) {
       settingsPushDebugLogStatus.hidden = false;
       settingsPushDebugLogStatus.textContent = "Pushing…";
     }
+    // v225v4.45 (#709 follow-up): snap a layout probe BEFORE serializing
+    // the log so whatever the user is currently looking at gets captured.
+    // The loadClip probe fires on initial paint, but if the bug surfaces
+    // later (rotation, drawer open, sync banner appears mid-read), that
+    // fresh probe is the one we need.
+    try {
+      if (typeof _dlogLayoutProbe === "function") {
+        _dlogLayoutProbe("manual-share");
+      }
+    } catch {}
     // _autoDownloadDebugLog handles both: local download AND server push.
     // We do it through the same path so the user gets the local copy
     // even if their network drops mid-push.
@@ -26723,6 +26884,21 @@ async function loadClip(id, { autoPlay = true } = {}) {
   if (clip.gitRef && clip.gitRef.repoUrl && clip.gitRef.path && getGithubToken()) {
     _checkGitSourceFreshness(clip);
   }
+
+  // v225v4.45 (#709 follow-up): layout probe after the reading view
+  // has painted. Two requestAnimationFrames so we read AFTER the
+  // CSS transitions for #status banner, tag row, pull-up etc. have
+  // settled. The clip-load is where the user reported the stacked-
+  // controls bug — that's the snapshot we want.
+  try {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (typeof _dlogLayoutProbe === "function") {
+          _dlogLayoutProbe(`loadClip:${id}`);
+        }
+      });
+    });
+  } catch {}
 }
 
 libraryClearBtn.addEventListener("click", async () => {
