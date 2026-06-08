@@ -6703,6 +6703,14 @@ function _autoDownloadDebugLog(reason) {
 // v225v3.38 (#768): background push of a debug log payload to
 // /api/debug-log. Resolves to {ok, path?, sha?, html_url?, reason?}.
 // Auth flows through the window.fetch monkey-patch (X-Narrative-Key).
+//
+// v4.73: dlog-instrumented. Earlier we relied on console.warn for
+// failure surfacing, which doesn't end up in the log that the debugger
+// reads — so when a Tauri desktop push silently failed (CORS preflight,
+// network drop, or whatever), the user saw the "Log pushed" status text
+// and we saw nothing arrive in narrative-debug-logs. Now every phase
+// writes a dlog entry, so the NEXT log captures the failure mode in the
+// log itself.
 async function _pushDebugLogToServer(reason, text) {
   const ver = _currentAppVersion();
   const payload = {
@@ -6711,23 +6719,47 @@ async function _pushDebugLogToServer(reason, text) {
     version: ver,
     ua: navigator.userAgent || "",
   };
-  const res = await fetch("/api/debug-log", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+  _dlog("debug-log-push", "start", {
+    reason: payload.reason,
+    version: ver,
+    logBytes: text ? text.length : 0,
+    origin: typeof location !== "undefined" ? location.origin : "",
+    apiOrigin: API_ORIGIN || "(same-origin)",
   });
+  let res;
+  try {
+    res = await fetch("/api/debug-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    // Network-level failure: CORS preflight blocked, connection refused,
+    // DNS, abort. Tauri WebView2 surfaces these as TypeError. This is
+    // the case we were missing before — the user thought the push went
+    // through but the fetch itself never resolved.
+    _dlog("debug-log-push", "fetch threw", {
+      name: (e && e.name) || "Error",
+      msg: (e && e.message) || String(e),
+    });
+    return { ok: false, reason: "fetch_failed" };
+  }
   if (!res.ok) {
-    // Server returns 200 with ok=false on the normal failure modes,
-    // so a non-2xx here is something structurally wrong (404 wrong
-    // route, 5xx server crash). Log loudly so it's findable.
-    console.warn(
-      "[debug-log] server returned",
-      res.status,
-      "for /api/debug-log push"
-    );
+    _dlog("debug-log-push", "non-2xx", { status: res.status });
     return { ok: false, reason: `http_${res.status}` };
   }
-  return await res.json().catch(() => ({ ok: false, reason: "bad_json" }));
+  const body = await res.json().catch(() => null);
+  if (!body) {
+    _dlog("debug-log-push", "bad json");
+    return { ok: false, reason: "bad_json" };
+  }
+  _dlog("debug-log-push", "ok", {
+    serverOk: body.ok,
+    path: body.path || null,
+    sha: body.sha ? String(body.sha).slice(0, 8) : null,
+    reason: body.reason || null,
+  });
+  return body;
 }
 if (debugLogClear) {
   debugLogClear.addEventListener("click", () => {
@@ -17559,6 +17591,32 @@ if (readingViewEl) {
       if (!span) return;
       const idx = Number(span.dataset.index);
       if (!isFinite(idx)) return;
+
+      // v4.73: short-circuit on the inline voice-note control buttons so
+      // they keep working when annotate-mode is on. The ▶ / ↻ / × buttons
+      // render INSIDE the sentence span (so the user can act on a note
+      // without dropping out of reading flow). Without this guard, this
+      // capture-phase handler calls preventDefault + stopPropagation
+      // BELOW and the buttons' own click handlers never run — symptom
+      // diagnosed from the 2026-06-08 desktop debug log where the user
+      // clicked ▶ 20+ times, ↻ 15+ times, × 10+ times in annotate-mode
+      // and every click logged "[annotate] reading-view click" without
+      // ever firing the underlying button. Phone has #551's auto-disarm
+      // for this; desktop has no escape hatch until now. We also pass on
+      // any other button.annotate-voice-* class in case future inline
+      // voice-note controls get added (cluster is action-prefixed by
+      // convention).
+      const inlineVoiceCtrl = event.target.closest(
+        "button.annotate-voice-play, button.annotate-voice-retry, " +
+          "button.annotate-voice-delete, button[class*=\"annotate-voice-\"]"
+      );
+      if (inlineVoiceCtrl) {
+        _dlog("annotate", "skip — inline voice-note control click", {
+          idx,
+          cls: inlineVoiceCtrl.className,
+        });
+        return; // bubble through to the button's own handler
+      }
 
       const isPhone = window.matchMedia("(max-width: 767px)").matches;
       const hasArmedTag =
