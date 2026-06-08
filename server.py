@@ -928,11 +928,18 @@ LATEST_DESKTOP_VERSION = "0.1.3"
 # the same Narrative.app.tar.gz name during upload). The endpoint
 # correctly returns 204 for those targets because of the `if not sig`
 # guard below.
+#
+# v4.66 (#867) DIAGNOSED FROM FLY LOGS 2026-06-08: the Tauri 2 updater
+# plugin substitutes {{target}} → OS-only ("windows", "darwin", "linux")
+# NOT the per-arch form ("windows-x86_64", etc) we'd been assuming. The
+# v0.1.2 desktop was hitting /api/updates/latest/windows/0.1.2 and our
+# dict.get("windows") returned None → 204 → plugin said "no update."
+# Server keys now match what the plugin actually sends. macOS still
+# needs the per-arch bundle naming fix before its sig can be pasted.
 DESKTOP_SIGNATURES: dict[str, str] = {
-    "windows-x86_64": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akhKdDB2WVZHWDNndWc2czRic0w5S1Z1Z2tpUzlVSjRnZjI5WFRhV21Yb1p2WlZWSm5JYlloejZSR3RHdlNmZVVXSXBwYVRZcFViYTROTFZpbUNNemdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwODkwNDA3CWZpbGU6TmFycmF0aXZlXzAuMS4zX3g2NC1zZXR1cC5leGUKNHZBL2MrTHhxV2RaUUZDRlpvUE95cStwU1JRY0VSd2xxYloyem83bk92RnM5MnExU0V4citsZGw4N2ROa0FMc2laWFdYWXVPK3hxRnJXU1RtSExRQVE9PQo=",
-    # "darwin-aarch64": "...",  # blocked on per-arch filename fix
-    # "darwin-x86_64":  "...",  # blocked on per-arch filename fix
-    # "linux-x86_64":   "...",  # add after smoke-test on a Linux install
+    "windows": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akhKdDB2WVZHWDNndWc2czRic0w5S1Z1Z2tpUzlVSjRnZjI5WFRhV21Yb1p2WlZWSm5JYlloejZSR3RHdlNmZVVXSXBwYVRZcFViYTROTFZpbUNNemdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwODkwNDA3CWZpbGU6TmFycmF0aXZlXzAuMS4zX3g2NC1zZXR1cC5leGUKNHZBL2MrTHhxV2RaUUZDRlpvUE95cStwU1JRY0VSd2xxYloyem83bk92RnM5MnExU0V4citsZGw4N2ROa0FMc2laWFdYWXVPK3hxRnJXU1RtSExRQVE9PQo=",
+    # "darwin": "...",  # blocked on per-arch filename fix (both archs overwrite)
+    # "linux":  "...",  # add after smoke-test on a Linux install
 }
 
 # v4.65 (#858): switched from Fly /downloads to GitHub Releases. Pros:
@@ -959,10 +966,10 @@ DESKTOP_BUNDLE_NAMES: dict[str, str] = {
     # NSIS .exe installer (preferred over MSI for in-place updates
     # because Tauri's updater plugin can drive NSIS silent-install
     # cleanly; MSI swap mid-process is fussier).
-    "windows-x86_64": "Narrative_{ver}_x64-setup.exe",
-    "darwin-aarch64": "Narrative.app.tar.gz",
-    "darwin-x86_64":  "Narrative.app.tar.gz",
-    "linux-x86_64":   "Narrative_{ver}_amd64.AppImage",
+    # v4.66 (#867): keys are OS-only to match what the plugin sends.
+    "windows": "Narrative_{ver}_x64-setup.exe",
+    "darwin":  "Narrative.app.tar.gz",
+    "linux":   "Narrative_{ver}_amd64.AppImage",
 }
 
 
