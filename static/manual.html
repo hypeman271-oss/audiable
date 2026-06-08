@@ -2472,15 +2472,36 @@
         <tr>
           <td>Push to GitHub (v4.60)</td>
           <td>In the same Edit dialog row, the <em>⇡ Push to GitHub</em>
-            button on the right edge commits the clip's current text
-            back to the source file. Opens a prompt with the default
-            commit message (<em>"Revised in Narrative: &lt;title&gt;"</em>);
-            edit and OK to push, cancel to abort. Refuses with a clear
-            error if the source has moved on GitHub since you imported
-            (use the per-card ↻ Sync chip to Pull first). Only the clip
-            text is pushed — bookmarks, annotations, voice presets, and
-            YAML frontmatter all stay Narrative-side (frontmatter
-            preservation tracked as a follow-up).</td>
+            button on the right edge commits the clip's current
+            <strong>text</strong> back to the source file. Opens a prompt
+            with the default commit message
+            (<em>"Revised in Narrative: &lt;title&gt;"</em>); edit and OK
+            to push, cancel to abort. Refuses with a clear error if the
+            source has moved on GitHub since you imported (use the
+            per-card ↻ Sync chip to Pull first). Only the prose body is
+            pushed — voice presets and YAML frontmatter still stay
+            Narrative-side (frontmatter preservation tracked as a
+            follow-up). For notes / bookmarks / annotations see the
+            <em>📝 Push notes</em> button below.</td>
+        </tr>
+        <tr>
+          <td>Push notes to GitHub (v4.76)</td>
+          <td>Companion to ⇡ Push to GitHub, sitting next to it in the
+            same Edit dialog row. The <em>📝 Push notes</em> button
+            commits the full Markdown export — free-form notes,
+            bookmarks with timecodes, and sentence-anchored annotations
+            (tags + voice-note transcripts) — to a sibling
+            <code>.notes.md</code> file in the same repo and branch.
+            Example: <code>chapters/04.md</code> →
+            <code>chapters/04.notes.md</code>. The confirm prompt shows
+            the derived path so you can't mistake which file you're
+            about to write. First push creates the file; subsequent
+            pushes update it in place (the server auto-resolves the
+            current blob SHA before each commit). Independent of the
+            prose push so you can revise text and capture commentary
+            on separate commit cycles. Refuses with <em>"Nothing to
+            push — this clip has no notes, bookmarks, or annotations
+            yet"</em> rather than committing an empty stub.</td>
         </tr>
         <tr>
           <td>Voice favorites + audition</td>
@@ -2850,6 +2871,18 @@
         exports of the same clip don't collide:
         <code>chapter-00-draft-notes-2026-06-03.md</code>.
       </p>
+      <div class="tip">
+        <strong>Skip the download — push notes straight to GitHub.</strong>
+        For GitHub-sourced clips, the Edit dialog has a
+        <em>📝 Push notes</em> button (v4.76) that commits this same
+        Markdown to a sibling <code>.notes.md</code> file in the source
+        repo (e.g. <code>chapters/04.md</code> →
+        <code>chapters/04.notes.md</code>). First push creates the file;
+        later pushes update it. The local download still works whenever
+        you want a one-off file you can drop into Scrivener, Notion, or
+        an email — the GitHub button is just the round-trip path for
+        people who already keep their manuscript in a repo.
+      </div>
 
       <h3>📝 + 🔖 in practice — the author editing workflow</h3>
       <p>
