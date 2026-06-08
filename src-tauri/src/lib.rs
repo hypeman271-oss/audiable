@@ -190,6 +190,32 @@ async fn check_for_updates<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                         v
                     ),
                 );
+                // v0.1.4: actually download + install + restart. In v0.1.3
+                // and earlier we relied on tauri.conf.json plugins.updater
+                // .dialog = true to make the plugin do this automatically —
+                // that was a Tauri 1 behavior that no longer exists in
+                // Tauri 2. Without this explicit call the plugin detects
+                // the update, fires our "available" event, and then sits
+                // idle. We now drive the download ourselves.
+                //
+                // The two closures are progress callbacks
+                // (on_chunk + on_finish). Both no-ops for now — wiring them
+                // to a real progress UI is a follow-up. The plugin handles
+                // signature verification + NSIS silent-install + restart
+                // on success. On failure we dispatch an error event.
+                if let Err(e) =
+                    update.download_and_install(|_chunk, _total| {}, || {}).await
+                {
+                    eprintln!("[narrative] install failed: {}", e);
+                    let msg = escape(&e.to_string());
+                    dispatch(
+                        &app,
+                        &format!(
+                            "window.dispatchEvent(new CustomEvent('narrative:update-error',{{detail:{{msg:'{}'}}}}))",
+                            msg
+                        ),
+                    );
+                }
             }
             Ok(None) => {
                 dispatch(
