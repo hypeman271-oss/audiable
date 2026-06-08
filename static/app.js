@@ -1456,32 +1456,45 @@ function _paintSelectedSentence(nextIdx) {
   if (typeof _inlineEditingIdx === "number"
       && _inlineEditingIdx >= 0
       && _inlineEditingIdx !== nextIdx) {
-    try {
-      const editingSpan = sentenceSpans[_inlineEditingIdx];
-      const currentText = editingSpan
-        ? (editingSpan.textContent || "").trim()
-        : "";
-      const changed = currentText.length > 0
-        && currentText !== _inlineEditOriginalText;
+    // v4.77 (#878 follow-up): if a commit is already in flight, skip
+    // this path entirely. The in-flight _commitInlineEdit will reach
+    // _exitInlineEdit on its own. Without the guard, every tap during
+    // the splice round-trip queued another concurrent commit.
+    if (_inlineCommitInFlight) {
       if (typeof _dlog === "function") {
-        _dlog("inline-edit", "auto-close-on-reselect", {
+        _dlog("inline-edit", "auto-close-on-reselect: commit in flight, skipping", {
           editingIdx: _inlineEditingIdx,
           nextIdx,
-          changed,
         });
       }
-      if (changed) {
-        // Fire-and-forget — the new selection should paint without
-        // waiting on the server splice round-trip.
-        _commitInlineEdit();
-      } else {
-        _exitInlineEdit();
+    } else {
+      try {
+        const editingSpan = sentenceSpans[_inlineEditingIdx];
+        const currentText = editingSpan
+          ? (editingSpan.textContent || "").trim()
+          : "";
+        const changed = currentText.length > 0
+          && currentText !== _inlineEditOriginalText;
+        if (typeof _dlog === "function") {
+          _dlog("inline-edit", "auto-close-on-reselect", {
+            editingIdx: _inlineEditingIdx,
+            nextIdx,
+            changed,
+          });
+        }
+        if (changed) {
+          // Fire-and-forget — the new selection should paint without
+          // waiting on the server splice round-trip.
+          _commitInlineEdit();
+        } else {
+          _exitInlineEdit();
+        }
+      } catch (e) {
+        // Worst case: leave the edit state stuck. The ✎ button is
+        // still an explicit save/cancel gesture so the user has a
+        // recovery path.
+        try { _dlog("inline-edit", "auto-close error", { msg: String(e) }); } catch {}
       }
-    } catch (e) {
-      // Worst case: leave the edit state stuck. The ✎ button is
-      // still an explicit save/cancel gesture so the user has a
-      // recovery path.
-      try { _dlog("inline-edit", "auto-close error", { msg: String(e) }); } catch {}
     }
   }
   if (_selectedSentenceIdx >= 0 && sentenceSpans[_selectedSentenceIdx]) {
@@ -15977,6 +15990,15 @@ function highlightCurrentSentence() {
 // hours into ffmpeg + PCM math).
 let _inlineEditingIdx = -1;
 let _inlineEditOriginalText = "";
+// v4.77 (#878 follow-up): single-flight guard for the splice/Phase-B
+// round-trip inside _commitInlineEdit. The async commit can take 10–20 s
+// on phone, and the 06-08 15:59 debug log showed every tap during that
+// window — sentence reselect (via _paintSelectedSentence's auto-close),
+// or a second ✎ tap (via _onEditTextClick's toggle-while-editing) —
+// fired ANOTHER concurrent _commitInlineEdit. ~9 redundant commits
+// stacked in 21 s before the first one resolved. Now the second and
+// later attempts short-circuit until the in-flight commit lands.
+let _inlineCommitInFlight = false;
 
 function _onEditTextClick() {
   // v225dk: instrument every branch so the next debug log shows
@@ -16002,6 +16024,21 @@ function _onEditTextClick() {
   // snapshot taken at entry. The user no longer needs to remember
   // "did I edit or not" — the button does the right thing both ways.
   if (typeof _inlineEditingIdx === "number" && _inlineEditingIdx >= 0) {
+    // v4.77 (#878 follow-up): if a commit is already in flight, the ✎
+    // tap shouldn't queue another splice — surface a "saving" status
+    // and let the in-flight one finish. The phone log showed the user
+    // tapping ✎ a second time mid-commit and queuing a duplicate
+    // server round-trip, which is what made the first save feel
+    // unresponsive.
+    if (_inlineCommitInFlight) {
+      if (typeof _dlog === "function") {
+        _dlog("inline-edit", "toggle-while-editing skipped — commit in flight", {
+          editingIdx: _inlineEditingIdx,
+        });
+      }
+      setStatus("Still saving the previous edit…");
+      return;
+    }
     const editingSpan = sentenceSpans[_inlineEditingIdx];
     const currentText = editingSpan
       ? (editingSpan.textContent || "").trim()
@@ -16138,6 +16175,17 @@ function _enterInlineEdit(idx) {
 
 async function _commitInlineEdit() {
   if (_inlineEditingIdx < 0) return;
+  // v4.77 (#878 follow-up): single-flight guard. Belt-and-suspenders —
+  // _paintSelectedSentence and _onEditTextClick already gate on this,
+  // but any future call site gets the same protection for free here.
+  if (_inlineCommitInFlight) {
+    if (typeof _dlog === "function") {
+      _dlog("inline-edit", "_commitInlineEdit skipped — already in flight", {
+        editingIdx: _inlineEditingIdx,
+      });
+    }
+    return;
+  }
   const idx = _inlineEditingIdx;
   const span = sentenceSpans[idx];
   if (!span) { _exitInlineEdit(); return; }
@@ -16172,6 +16220,10 @@ async function _commitInlineEdit() {
   // Mark the span as in-flight so the user sees something happening.
   span.classList.add("editing-saving");
   setStatus("Re-synthesizing edited sentence…");
+  // v4.77: set the single-flight gate AFTER all early-return guards but
+  // BEFORE the first await. Cleared in finally so we never strand it
+  // on an unexpected throw.
+  _inlineCommitInFlight = true;
 
   try {
     // v592 Phase 2 (#585): real splice via /api/synthesize/splice.
@@ -16459,6 +16511,12 @@ async function _commitInlineEdit() {
     // ✎ to try again. Without this, a failed splice left the
     // user permanently stuck per the 2026-06-03 debug log.
     _cancelInlineEdit();
+  } finally {
+    // v4.77: release the single-flight gate so the next ✎ tap or
+    // sentence reselect can fire a fresh commit. Must clear on BOTH
+    // success and failure paths — a stuck gate would lock the user
+    // out of all future edits in this session.
+    _inlineCommitInFlight = false;
   }
 }
 

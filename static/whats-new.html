@@ -143,6 +143,27 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.77</span>
+          <span class="release-tagline">Inline-edit hardening — no more rapid-tap "stuck saving" while the splice is in flight.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Single-flight commit guard on inline edits.</strong> Tapping
+            another sentence (or tapping ✎ a second time) while the previous
+            inline-sentence edit was still synthesizing used to queue another
+            full splice request — and another, and another — for every tap.
+            A phone debug log caught 9 redundant commits stacked in 21 seconds,
+            each hitting the server for the same edit. Now the first commit
+            wins; later taps surface a "Still saving the previous edit…" hint
+            and wait. The trailing "auto-close" dlog spam is gone, and the
+            edit actually feels responsive on a slow network.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.76</span>
           <span class="release-tagline">📝 Push notes — commit your notes, bookmarks, and annotations to GitHub alongside the source file.</span>
         </div>
