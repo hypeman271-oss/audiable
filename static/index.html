@@ -812,6 +812,229 @@
                   >Switch key</button>
                 </div>
 
+                <!-- v4.68 (#869): GitHub PAT + OAuth moved here from Help's
+                     Advanced. GitHub credentials are identity-bearing, same
+                     class as the X-Narrative-Key and the sync toggle above —
+                     they belong in Account, not buried under Help → Advanced.
+                     The block keeps its full structure (status, OAuth button,
+                     PAT paste, copy-from-GitHub mock, scope audit, Test
+                     button) so nothing in JS that targets these IDs has to
+                     change. -->
+                <div
+                  class="settings-section"
+                  data-search="github pat personal access token oauth import private repo signin authentication"
+                >
+                  <label for="settings-github-token" class="settings-section-label">
+                    GitHub
+                  </label>
+                  <!-- v140: token status moved to the TOP of the section so
+                       the user sees "Token saved" right where they're
+                       looking after pasting, instead of below the field
+                       they just emptied. .settings-token-status is the
+                       banner; data-state controls the styling (saved vs
+                       empty vs cleared). -->
+                  <p
+                    id="settings-github-status"
+                    class="settings-token-status"
+                    data-state="empty"
+                    aria-live="polite"
+                  ></p>
+                  <!-- v180: Sign in with GitHub via OAuth. Lit up only when
+                       the server reports OAuth is configured (GITHUB_CLIENT_ID
+                       + GITHUB_CLIENT_SECRET set). When unconfigured the
+                       button stays visible but disabled with a tooltip
+                       pointing the operator at OAUTH_SETUP.md. PAT paste
+                       below is retained as the fallback. -->
+                  <div id="settings-github-oauth-row" class="settings-github-oauth-row">
+                    <button
+                      id="settings-github-oauth-btn"
+                      type="button"
+                      class="settings-github-oauth-btn"
+                      disabled
+                      title="Loading…"
+                    >
+                      <span class="settings-github-oauth-icon" aria-hidden="true">⌥</span>
+                      <span class="settings-github-oauth-label">Sign in with GitHub</span>
+                    </button>
+                    <p
+                      id="settings-github-oauth-note"
+                      class="settings-github-oauth-note"
+                    ></p>
+                  </div>
+                  <p class="settings-section-hint">
+                    Or paste a Personal Access Token (works for fine-grained
+                    tokens, GitHub Enterprise, or if your operator hasn't
+                    configured OAuth). Token stays on this device.
+                    <a
+                      href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Narrative"
+                      target="_blank"
+                      rel="noopener"
+                    >Create one →</a>
+                  </p>
+                  <!-- v143: collapsible visual guide. The "Create one →" link
+                       above drops you on GitHub's PAT page with scope=repo
+                       pre-selected, but testers still got confused at the
+                       final step — the token is shown ONCE on a green row
+                       with a quick copy icon, then never again. This mock
+                       shows that screen faithfully so the user knows
+                       exactly what to look for. -->
+                  <details class="settings-github-help" id="settings-github-help">
+                    <summary>
+                      <span class="settings-github-help-show">Show me what to copy from GitHub →</span>
+                      <span class="settings-github-help-hide">↑ Hide GitHub help</span>
+                    </summary>
+                    <div class="settings-github-help-body">
+                      <ol class="settings-github-steps">
+                        <li>
+                          Click <strong>Create one →</strong> above
+                          — opens GitHub with the right scope already
+                          ticked.
+                        </li>
+                        <li>
+                          Scroll to the bottom and hit the green
+                          <strong>Generate token</strong> button.
+                        </li>
+                        <li>
+                          GitHub shows your token <strong>once</strong>
+                          on a screen like the one below. Click the
+                          copy icon, then paste it into the field below
+                          this guide.
+                        </li>
+                      </ol>
+                      <figure class="github-mock" aria-label="Mock of the GitHub Personal Access Tokens success screen">
+                        <div class="ghm-header">Personal access tokens (classic)</div>
+                        <div class="ghm-callout">
+                          <span class="ghm-bell" aria-hidden="true">🔔</span>
+                          <span>Make sure to copy your personal access token now. You won't be able to see it again!</span>
+                        </div>
+                        <div class="ghm-token-row">
+                          <span class="ghm-check" aria-hidden="true">✓</span>
+                          <code class="ghm-token">ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>
+                          <span class="ghm-copy" aria-hidden="true">⧉</span>
+                          <span class="ghm-delete">Delete</span>
+                        </div>
+                        <figcaption class="ghm-caption">
+                          ↑ Copy the whole string starting with
+                          <code>ghp_</code>. That's what goes in the
+                          field below.
+                        </figcaption>
+                      </figure>
+                      <!-- v181: PAT scope audit. Spells out per-scope what
+                           Narrative actually uses the token for, what it
+                           does NOT touch, and which scopes can be safely
+                           dropped if you only need public-repo access. -->
+                      <div class="settings-pat-scope-audit">
+                        <h4 class="settings-pat-scope-heading">
+                          Which scopes does Narrative actually use?
+                        </h4>
+                        <p class="settings-pat-scope-intro">
+                          The <em>Create one →</em> link pre-ticks
+                          <code>repo</code> because that's what most writers
+                          need (private drafts). Here's what each scope
+                          grants and what Narrative does with it.
+                        </p>
+                        <table class="settings-pat-scope-table" aria-label="PAT scope audit">
+                          <thead>
+                            <tr>
+                              <th scope="col">Scope</th>
+                              <th scope="col">Narrative uses it for</th>
+                              <th scope="col">Recommended?</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td><code>repo</code></td>
+                              <td>
+                                Reading files from private repos via
+                                <em>Import → GitHub</em> + the per-clip
+                                GitHub URL fetch.
+                              </td>
+                              <td>
+                                <strong>Yes</strong> if you import private
+                                drafts. <em>Skip</em> if you only read
+                                public books — use <code>public_repo</code>.
+                              </td>
+                            </tr>
+                            <tr>
+                              <td><code>public_repo</code></td>
+                              <td>
+                                Reading files from public repos. Subset of
+                                <code>repo</code>.
+                              </td>
+                              <td>
+                                <strong>Yes</strong> if your manuscripts are
+                                public (or you only read other people's
+                                public repos). Strictly safer than
+                                <code>repo</code>.
+                              </td>
+                            </tr>
+                            <tr>
+                              <td><code>read:user</code></td>
+                              <td>
+                                Showing <em>"Signed in as @yourhandle"</em>
+                                in this Settings dialog (cosmetic only).
+                              </td>
+                              <td>
+                                Optional. Without it the section reads
+                                <em>"Token saved"</em> instead of your
+                                handle — still works.
+                              </td>
+                            </tr>
+                            <tr>
+                              <td><em>everything else</em></td>
+                              <td>
+                                <em>Not touched.</em> Narrative never
+                                calls write, admin, gist (mutate), pages,
+                                workflow, or organization scopes.
+                              </td>
+                              <td>
+                                <strong>Skip.</strong> If GitHub's PAT page
+                                has them ticked, untick them.
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        <p class="settings-pat-scope-note">
+                          Fine-grained PATs work too — pick the exact repos
+                          you want Narrative to see, then grant
+                          <em>Contents → Read-only</em>. Sync GitHub +
+                          re-narrate need <em>Metadata → Read-only</em>
+                          too.
+                        </p>
+                      </div>
+                    </div>
+                  </details>
+                  <div class="settings-token-row">
+                    <input
+                      id="settings-github-token"
+                      type="password"
+                      placeholder="ghp_… or github_pat_…"
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                    <button
+                      id="settings-github-token-clear"
+                      type="button"
+                      class="settings-token-clear"
+                      aria-label="Clear stored token"
+                    >Clear</button>
+                  </div>
+                  <!-- v225.tn50 (#527): "Test token" probes GitHub /user
+                       with the saved token and reports whether GitHub
+                       accepts it. Disambiguates "token not on this device"
+                       from "token rejected by GitHub" — both currently
+                       surface as the same opaque 401 in the picker. -->
+                  <div class="settings-token-row settings-token-test-row">
+                    <button
+                      id="settings-github-token-test"
+                      type="button"
+                      class="settings-token-test"
+                      hidden
+                      aria-label="Verify this device's saved token with GitHub"
+                    >Test token</button>
+                  </div>
+                </div>
+
                 <!-- v4.63 (#854): admin chrome (maintenance form + tester key
                      management) tucks into Advanced. The OUTER details is
                      visible to everyone; the INNER admin sections stay
@@ -1314,7 +1537,8 @@
 
               <!-- ============================================================
                    HELP — manual / whats-new / shortcuts / feedback + Advanced
-                   (Start-helper, tours, GitHub config)
+                   (Start-helper, tours). GitHub credentials live under
+                   Account now (v4.68 #869).
                    ============================================================ -->
               <section class="settings-pane" data-cat="help" hidden>
                 <h3 class="settings-pane-title">Help</h3>
@@ -1367,7 +1591,7 @@
 
                 <details
                   class="settings-advanced"
-                  data-search="advanced start helper onboarding tour tours github pat token oauth"
+                  data-search="advanced start helper onboarding tour tours"
                 >
                   <summary>Advanced</summary>
 
@@ -1435,224 +1659,6 @@
                     data-search="tour author features guided walkthrough power user"
                   >Author features tour →</a>
 
-                  <!-- GitHub section: paste a Personal Access Token so URL
-                       fetch can pull from private repos. Token is stored only
-                       in localStorage on this device. The /api/extract/url
-                       endpoint forwards it to GitHub hosts only. -->
-                  <div
-                    class="settings-section"
-                    data-search="github pat personal access token oauth import private repo signin authentication"
-                  >
-                    <label for="settings-github-token" class="settings-section-label">
-                      GitHub
-                    </label>
-            <!-- v140: token status moved to the TOP of the section so
-                 the user sees "Token saved" right where they're
-                 looking after pasting, instead of below the field
-                 they just emptied. .settings-token-status is the
-                 banner; data-state controls the styling (saved vs
-                 empty vs cleared). -->
-            <p
-              id="settings-github-status"
-              class="settings-token-status"
-              data-state="empty"
-              aria-live="polite"
-            ></p>
-            <!-- v180: Sign in with GitHub via OAuth. Lit up only when
-                 the server reports OAuth is configured (GITHUB_CLIENT_ID
-                 + GITHUB_CLIENT_SECRET set). When unconfigured the
-                 button stays visible but disabled with a tooltip
-                 pointing the operator at OAUTH_SETUP.md. PAT paste
-                 below is retained as the fallback. -->
-            <div id="settings-github-oauth-row" class="settings-github-oauth-row">
-              <button
-                id="settings-github-oauth-btn"
-                type="button"
-                class="settings-github-oauth-btn"
-                disabled
-                title="Loading…"
-              >
-                <span class="settings-github-oauth-icon" aria-hidden="true">⌥</span>
-                <span class="settings-github-oauth-label">Sign in with GitHub</span>
-              </button>
-              <p
-                id="settings-github-oauth-note"
-                class="settings-github-oauth-note"
-              ></p>
-            </div>
-            <p class="settings-section-hint">
-              Or paste a Personal Access Token (works for fine-grained
-              tokens, GitHub Enterprise, or if your operator hasn't
-              configured OAuth). Token stays on this device.
-              <a
-                href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Narrative"
-                target="_blank"
-                rel="noopener"
-              >Create one →</a>
-            </p>
-            <!-- v143: collapsible visual guide. The "Create one →" link
-                 above drops you on GitHub's PAT page with scope=repo
-                 pre-selected, but testers still got confused at the
-                 final step — the token is shown ONCE on a green row
-                 with a quick copy icon, then never again. This mock
-                 shows that screen faithfully so the user knows
-                 exactly what to look for. -->
-            <details class="settings-github-help" id="settings-github-help">
-              <summary>
-                <span class="settings-github-help-show">Show me what to copy from GitHub →</span>
-                <span class="settings-github-help-hide">↑ Hide GitHub help</span>
-              </summary>
-              <div class="settings-github-help-body">
-                <ol class="settings-github-steps">
-                  <li>
-                    Click <strong>Create one →</strong> above
-                    — opens GitHub with the right scope already
-                    ticked.
-                  </li>
-                  <li>
-                    Scroll to the bottom and hit the green
-                    <strong>Generate token</strong> button.
-                  </li>
-                  <li>
-                    GitHub shows your token <strong>once</strong>
-                    on a screen like the one below. Click the
-                    copy icon, then paste it into the field below
-                    this guide.
-                  </li>
-                </ol>
-                <figure class="github-mock" aria-label="Mock of the GitHub Personal Access Tokens success screen">
-                  <div class="ghm-header">Personal access tokens (classic)</div>
-                  <div class="ghm-callout">
-                    <span class="ghm-bell" aria-hidden="true">🔔</span>
-                    <span>Make sure to copy your personal access token now. You won't be able to see it again!</span>
-                  </div>
-                  <div class="ghm-token-row">
-                    <span class="ghm-check" aria-hidden="true">✓</span>
-                    <code class="ghm-token">ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>
-                    <span class="ghm-copy" aria-hidden="true">⧉</span>
-                    <span class="ghm-delete">Delete</span>
-                  </div>
-                  <figcaption class="ghm-caption">
-                    ↑ Copy the whole string starting with
-                    <code>ghp_</code>. That's what goes in the
-                    field below.
-                  </figcaption>
-                </figure>
-                <!-- v181: PAT scope audit. Spells out per-scope what
-                     Narrative actually uses the token for, what it
-                     does NOT touch, and which scopes can be safely
-                     dropped if you only need public-repo access. -->
-                <div class="settings-pat-scope-audit">
-                  <h4 class="settings-pat-scope-heading">
-                    Which scopes does Narrative actually use?
-                  </h4>
-                  <p class="settings-pat-scope-intro">
-                    The <em>Create one →</em> link pre-ticks
-                    <code>repo</code> because that's what most writers
-                    need (private drafts). Here's what each scope
-                    grants and what Narrative does with it.
-                  </p>
-                  <table class="settings-pat-scope-table" aria-label="PAT scope audit">
-                    <thead>
-                      <tr>
-                        <th scope="col">Scope</th>
-                        <th scope="col">Narrative uses it for</th>
-                        <th scope="col">Recommended?</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><code>repo</code></td>
-                        <td>
-                          Reading files from private repos via
-                          <em>Import → GitHub</em> + the per-clip
-                          GitHub URL fetch.
-                        </td>
-                        <td>
-                          <strong>Yes</strong> if you import private
-                          drafts. <em>Skip</em> if you only read
-                          public books — use <code>public_repo</code>.
-                        </td>
-                      </tr>
-                      <tr>
-                        <td><code>public_repo</code></td>
-                        <td>
-                          Reading files from public repos. Subset of
-                          <code>repo</code>.
-                        </td>
-                        <td>
-                          <strong>Yes</strong> if your manuscripts are
-                          public (or you only read other people's
-                          public repos). Strictly safer than
-                          <code>repo</code>.
-                        </td>
-                      </tr>
-                      <tr>
-                        <td><code>read:user</code></td>
-                        <td>
-                          Showing <em>"Signed in as @yourhandle"</em>
-                          in this Settings dialog (cosmetic only).
-                        </td>
-                        <td>
-                          Optional. Without it the section reads
-                          <em>"Token saved"</em> instead of your
-                          handle — still works.
-                        </td>
-                      </tr>
-                      <tr>
-                        <td><em>everything else</em></td>
-                        <td>
-                          <em>Not touched.</em> Narrative never
-                          calls write, admin, gist (mutate), pages,
-                          workflow, or organization scopes.
-                        </td>
-                        <td>
-                          <strong>Skip.</strong> If GitHub's PAT page
-                          has them ticked, untick them.
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <p class="settings-pat-scope-note">
-                    Fine-grained PATs work too — pick the exact repos
-                    you want Narrative to see, then grant
-                    <em>Contents → Read-only</em>. Sync GitHub +
-                    re-narrate need <em>Metadata → Read-only</em>
-                    too.
-                  </p>
-                </div>
-              </div>
-            </details>
-            <div class="settings-token-row">
-              <input
-                id="settings-github-token"
-                type="password"
-                placeholder="ghp_… or github_pat_…"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button
-                id="settings-github-token-clear"
-                type="button"
-                class="settings-token-clear"
-                aria-label="Clear stored token"
-              >Clear</button>
-            </div>
-                    <!-- v225.tn50 (#527): "Test token" probes GitHub /user
-                         with the saved token and reports whether GitHub
-                         accepts it. Disambiguates "token not on this device"
-                         from "token rejected by GitHub" — both currently
-                         surface as the same opaque 401 in the picker. -->
-                    <div class="settings-token-row settings-token-test-row">
-                      <button
-                        id="settings-github-token-test"
-                        type="button"
-                        class="settings-token-test"
-                        hidden
-                        aria-label="Verify this device's saved token with GitHub"
-                      >Test token</button>
-                    </div>
-                  </div>
                 </details>
               </section>
 
@@ -1668,7 +1674,7 @@
                      "I'm not on the version I expect" — pair the diagnostic
                      and the fix. Switch key moved to the Account pane. -->
                 <p id="settings-version" class="settings-version">
-                  Narrative <span id="settings-version-tag">v225v4.68</span>
+                  Narrative <span id="settings-version-tag">v225v4.69</span>
                   <button
                     type="button"
                     id="settings-force-update"
