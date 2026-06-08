@@ -6938,7 +6938,12 @@ button:disabled {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 3px;
+  /* v4.85: bumped 3px → 7px and added a soft upward glow. At 3px the
+     bar was visually fused with the amber outline (border-color
+     identical, edge adjacent) and users were missing it entirely. 7px
+     reads as its own band, the upward shadow lifts it off the card
+     edge so it doesn't look like outline overflow. */
+  height: 7px;
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -6949,6 +6954,7 @@ button:disabled {
   background-repeat: no-repeat;
   background-position: -40% 0;
   animation: clipSyncingProgress 1.6s linear infinite;
+  box-shadow: 0 -2px 6px -1px color-mix(in srgb, var(--working) 55%, transparent);
   pointer-events: none;
 }
 @keyframes clipSyncingProgress {
