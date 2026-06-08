@@ -2714,6 +2714,14 @@
         you can see at a glance which actions will use the selection.
         Tap 🔖 with no selection and it falls back to the playhead.
       </p>
+      <div class="tip">
+        <strong>Bookmark the line you're hearing right now.</strong>
+        Tap the currently-playing sentence to select it (playback
+        keeps going), then tap 🔖 — the bookmark lands at that
+        sentence's start, not wherever the playhead happens to be by
+        the time you've finished tapping. Useful for capturing the
+        exact line that just struck you without pausing your listen.
+      </div>
 
       <h4>The editor</h4>
       <p>
@@ -2955,29 +2963,36 @@
         Sentence taps follow a <strong>tap-then-confirm</strong>
         model — the first tap selects a sentence (visible dashed
         ring) without moving the playhead, the second tap commits.
-        That way you can tap a recently-passed sentence to mark or
-        annotate it without yanking the narrator back to it.
+        Same rule whether the sentence is idle, playing right now,
+        or anywhere else in the clip — every tap is a select-tap. That
+        way you can tap a recently-passed sentence, the line you're
+        hearing this second, or one further ahead to mark or annotate
+        it without yanking the narrator. <strong>Pause</strong> has
+        its own affordance — <span class="kbd">Space</span> or
+        <span class="kbd">K</span> on desktop, the player's Play /
+        Pause chip on phone.
       </p>
       <table>
         <tr><th>You tap…</th><th>What happens</th></tr>
         <tr>
-          <td>An idle sentence (1st time)</td>
-          <td>Dashed ring appears. <em>No seek.</em> No playback change.</td>
+          <td>Any sentence (1st time)</td>
+          <td>
+            Dashed ring appears. <em>No seek.</em> No playback change.
+            Works on idle sentences <em>and</em> the one currently
+            playing — playback continues uninterrupted under the
+            selection ring.
+          </td>
         </tr>
         <tr>
           <td>The same selected sentence (2nd time)</td>
-          <td>Seek there + play.</td>
+          <td>
+            Seek there + play. (If it was already the active sentence,
+            the seek lands at the same position — effectively a no-op,
+            no playback gap.)
+          </td>
         </tr>
         <tr>
-          <td>The currently-playing sentence</td>
-          <td>Pause.</td>
-        </tr>
-        <tr>
-          <td>The currently-paused sentence (the one with the active highlight)</td>
-          <td>Resume — no seek.</td>
-        </tr>
-        <tr>
-          <td>A different idle sentence (while one is already selected)</td>
+          <td>A different sentence (while one is already selected)</td>
           <td>The ring moves to the new sentence.</td>
         </tr>
         <tr>
@@ -4257,8 +4272,10 @@ She set both hands flat on the table.</pre>
         (top-left of cluster), 🔖 Bookmark (top-right), and the tag
         row (bottom) — all wake up with the same accent fill. That's
         your at-a-glance answer to "which of these will act on this
-        selection." Tap the sentence again to deselect; all three go
-        neutral.
+        selection." To deselect without committing, tap outside any
+        sentence (paragraph gap, image area) or press
+        <span class="kbd">Esc</span> on desktop. A second tap on the
+        same sentence is the seek-and-play commit, not a deselect.
       </div>
 
       <h4>Bottom edges</h4>
@@ -4359,23 +4376,29 @@ She set both hands flat on the table.</pre>
       <table>
         <tr><th>Gesture</th><th>What happens</th></tr>
         <tr>
-          <td>Tap an idle sentence (1st time)</td>
+          <td>Tap any sentence (1st time)</td>
           <td>
             Selects it — dashed ring appears. <em>No seek, no
-            playback change.</em>
+            playback change.</em> Includes the currently-playing
+            sentence: tap it to select for bookmark/annotation,
+            playback continues uninterrupted.
           </td>
         </tr>
         <tr>
           <td>Tap the same selected sentence again</td>
-          <td>Seek there + play.</td>
+          <td>
+            Seek there + play. (On the active sentence the seek
+            position is unchanged — playback just keeps going.)
+          </td>
         </tr>
         <tr>
-          <td>Tap the currently-playing sentence</td>
-          <td>Pause.</td>
-        </tr>
-        <tr>
-          <td>Tap the currently-paused sentence</td>
-          <td>Resume (no seek).</td>
+          <td>Pause / resume playback</td>
+          <td>
+            <span class="kbd">Space</span> or <span class="kbd">K</span>
+            on desktop; Play / Pause chip in the player card or
+            phone pull-up. (Tapping a sentence no longer toggles
+            play/pause — every tap is a select-tap.)
+          </td>
         </tr>
         <tr>
           <td>Tap a sentence (selects it) → tap a tag chip</td>
