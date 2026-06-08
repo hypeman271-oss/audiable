@@ -2365,6 +2365,55 @@ async function _fetchWhoami({ force = false } = {}) {
   }
 }
 
+// v4.78 (#880): session-scoped escape hatch — 5 taps on the version pill
+// in About flips this true and the Admin pane appears in the sidebar.
+// In-memory only; cleared on reload so the default is always "hidden."
+// Lets a tester (non-admin) reach Force update / Push debug log when
+// support says "tap your version 5 times, then push your debug log."
+let _diagnosticsUnlocked = false;
+
+function _isAdminPaneVisible() {
+  return (_whoamiCache && !!_whoamiCache.is_admin) || _diagnosticsUnlocked;
+}
+
+// v4.78 (#880): on Settings dialog open, lift the admin elements out of
+// their original homes (About → version row, About → Diagnostics
+// disclosure, Account → Advanced) and into the new Admin pane slots.
+// Done at runtime so the source markup stays simple and the existing
+// event handlers, search index entries, and `hidden` toggles all keep
+// targeting the original IDs unchanged. The move is idempotent — if
+// the element is already in its slot, the appendChild is a no-op.
+function _relocateAdminContent() {
+  const moves = [
+    { fromId: "settings-force-update",         toId: "admin-update-row" },
+    { fromId: "settings-push-debug-log-link",  toId: "admin-diagnostics-row", containerSel: ".admin-diagnostics-links" },
+    { fromId: "settings-push-debug-log-status", toId: "admin-diagnostics-row", containerSel: ".admin-diagnostics-links" },
+    { fromId: "settings-debug-log-link",       toId: "admin-diagnostics-row", containerSel: ".admin-diagnostics-links" },
+    { fromId: "settings-maintenance-section",  toId: "admin-maintenance-slot" },
+    { fromId: "settings-tenants-section",      toId: "admin-tenants-slot" },
+  ];
+  for (const m of moves) {
+    const el = document.getElementById(m.fromId);
+    if (!el) continue;
+    const targetWrap = document.getElementById(m.toId);
+    if (!targetWrap) continue;
+    const target = m.containerSel
+      ? targetWrap.querySelector(m.containerSel) || targetWrap
+      : targetWrap;
+    if (el.parentElement === target) continue;
+    target.appendChild(el);
+  }
+  // The Account → Advanced disclosure becomes empty after the moves.
+  // Hide it so non-admins don't see a "Advanced" affordance that opens
+  // to an empty body. Admins also don't need it anymore — the same
+  // content is in the Admin pane.
+  const acctAdv = document.getElementById("settings-account-advanced");
+  if (acctAdv) {
+    const hasChildren = acctAdv.querySelector(":scope > :not(summary)");
+    acctAdv.hidden = !hasChildren;
+  }
+}
+
 async function _refreshAdminSectionsVisibility() {
   // Multi-tenant rule: maintenance + tenants forms require is_admin,
   // not just "has a key" (since testers also have keys). Falling back
@@ -2374,6 +2423,21 @@ async function _refreshAdminSectionsVisibility() {
   const showAdmin = !!me.is_admin;
   if (_maintSection) _maintSection.hidden = !showAdmin;
   if (_tenantsSection) _tenantsSection.hidden = !showAdmin;
+  // v4.78 (#880): the whole Admin pane (sidebar item + content) is
+  // gated on admin OR session unlock. The two existing form-level
+  // `hidden`s above remain — they keep non-admins from seeing the
+  // forms even if they unlock the pane (the tap escape hatch is for
+  // dev tools, not for letting testers mint tenant keys).
+  const paneVisible = (showAdmin || _diagnosticsUnlocked);
+  const sidebarBtn = document.getElementById("settings-sidebar-admin");
+  const pane = document.querySelector('.settings-pane[data-cat="admin"]');
+  if (sidebarBtn) sidebarBtn.hidden = !paneVisible;
+  if (pane) pane.hidden = !paneVisible || (_settingsActiveCat !== "admin");
+  // If the user is currently on Admin and just lost visibility (rare —
+  // mostly relevant if we ever add a "lock" gesture), fall back to Account.
+  if (_settingsActiveCat === "admin" && !paneVisible) {
+    _settingsSwitchCat("account", { skipPersist: true, skipHash: true });
+  }
 }
 
 async function _renderTenantsList() {
@@ -3063,6 +3127,10 @@ settingsBtn.addEventListener("click", () => {
   // last open. _refreshAdminSectionsVisibility re-fetches whoami if
   // the cache is empty (initial open) but otherwise uses the cache.
   _whoamiCache = null; // bust so a key change is reflected on next open
+  // v4.78 (#880): move admin elements into the new Admin pane on first
+  // open (idempotent — re-runs are no-ops after the move). Done before
+  // _refreshAdminSectionsVisibility so the pane has content to gate.
+  _relocateAdminContent();
   _refreshAdminSectionsVisibility().then(() => {
     if (_whoamiCache && _whoamiCache.is_admin) {
       _populateMaintenanceForm();
@@ -3241,13 +3309,21 @@ settingsClose.addEventListener("click", () => settingsDialog.close());
 // lands you where you were. URL hash (#settings/<cat>) deep-links.
 // ===================================================================
 const _SETTINGS_CAT_KEY = "narrative.settingsCat";
-const _SETTINGS_CATS = ["account", "appearance", "mode", "playback", "help", "about"];
+// v4.78 (#880): "admin" pane added between "help" and "about". Visible
+// only when whoami.is_admin === true OR the session has been unlocked
+// via 5 taps on the About version pill (_diagnosticsUnlocked).
+const _SETTINGS_CATS = ["account", "appearance", "mode", "playback", "help", "admin", "about"];
 let _settingsActiveCat = "account";
 let _settingsSearchTimer = null;
 
 // Pane switching — called on sidebar click, hash change, and on open.
 function _settingsSwitchCat(cat, opts) {
   if (!_SETTINGS_CATS.includes(cat)) cat = "account";
+  // v4.78 (#880): defense in depth — the Admin sidebar item is hidden
+  // for non-admins so they can't click in, but a stale hash or a
+  // search auto-jump could still pass "admin" here. Bounce to account
+  // if the user isn't allowed in.
+  if (cat === "admin" && !_isAdminPaneVisible()) cat = "account";
   _settingsActiveCat = cat;
   // Sidebar item active state
   document.querySelectorAll(".settings-sidebar-item").forEach((btn) => {
@@ -3341,7 +3417,20 @@ function _settingsApplySearch(query) {
   let totalMatches = 0;
   const perCatMatch = Object.fromEntries(_SETTINGS_CATS.map((c) => [c, 0]));
 
+  // v4.78 (#880): cache the admin visibility check once per search call
+  // so we don't re-evaluate per element. Search elements inside the
+  // Admin pane are skipped for non-admin (and non-unlocked) sessions —
+  // otherwise typing "force update" would unhide the pane via the
+  // pane-show-if-matches loop below.
+  const adminVisible = _isAdminPaneVisible();
+
   body.querySelectorAll("[data-search]").forEach((el) => {
+    const elPane = el.closest(".settings-pane");
+    if (elPane && elPane.dataset.cat === "admin" && !adminVisible) {
+      // Hide and don't count — invisible to non-admin search.
+      el.hidden = true;
+      return;
+    }
     const labelEl = el.querySelector("strong");
     const labelText = labelEl ? labelEl.textContent : el.textContent;
     const haystack = (
@@ -33424,6 +33513,41 @@ async function _stampAppVersion() {
     console.info("[version] stamp failed:", e && e.message);
   }
 }
+// v4.78 (#880): tap-to-unlock on the version pill. 5 taps within 3 s
+// flips _diagnosticsUnlocked true and reveals the Admin pane for the
+// rest of the session (clears on reload — in-memory only). Matches the
+// Android "tap build number to enable developer options" gesture.
+// Targets the *parent* of #settings-version-tag (the <p#settings-version>)
+// so the whole "Narrative v225v4.78" line is the hit area, not just the
+// pill — easier on touch, especially on phone where the pill is small.
+//
+// Why session-scoped, not persistent: persisting would let a tester
+// accidentally unlock during exploration and then have Force update +
+// Push debug log forever in their Settings sidebar. The default state
+// every reload is "tools hidden" — explicit each time.
+(function _wireVersionTapToUnlock() {
+  const versionRow = document.getElementById("settings-version");
+  if (!versionRow) return;
+  let taps = 0;
+  let resetTimer = null;
+  versionRow.addEventListener("click", () => {
+    if (_diagnosticsUnlocked) return; // already unlocked, no-op
+    taps += 1;
+    if (resetTimer) clearTimeout(resetTimer);
+    resetTimer = setTimeout(() => { taps = 0; }, 3000);
+    if (taps >= 5) {
+      _diagnosticsUnlocked = true;
+      taps = 0;
+      setStatus(
+        "Diagnostics unlocked for this session. " +
+        "Admin pane is in the sidebar — Force update, debug log push, and view live there.",
+      );
+      // Repaint sidebar + pane visibility now that the gate is true.
+      // Fire and forget; the whoami fetch is cached so this is fast.
+      _refreshAdminSectionsVisibility();
+    }
+  });
+})();
 // Run once at boot, then again ~3s later in case the SW installed
 // asynchronously after the first read. Cheap (a single Cache API
 // call) and means the stamp updates within a few seconds of a SW

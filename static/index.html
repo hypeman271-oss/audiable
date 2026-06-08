@@ -710,6 +710,20 @@
                 class="settings-sidebar-item"
                 data-cat="help"
               >Help</button>
+              <!-- v4.78 (#880): Admin pane gates on whoami.is_admin OR
+                   session tap-to-unlock (5 taps on the version pill in
+                   About). Hidden for non-admins by JS in
+                   _refreshAdminSectionsVisibility — the button is in the
+                   DOM so admins always see it without a layout reflow,
+                   but `hidden` keeps non-admin testers from ever
+                   seeing it. -->
+              <button
+                type="button"
+                class="settings-sidebar-item"
+                data-cat="admin"
+                id="settings-sidebar-admin"
+                hidden
+              >Admin</button>
               <button
                 type="button"
                 class="settings-sidebar-item"
@@ -1040,9 +1054,18 @@
                      visible to everyone; the INNER admin sections stay
                      `hidden` until whoami.is_admin === true. That keeps the
                      Advanced affordance discoverable without exposing admin
-                     UI to regular testers. -->
+                     UI to regular testers.
+
+                     v4.78 (#880): on Settings dialog open, JS moves the two
+                     inner sections (Maintenance + Tenants) into the new
+                     Admin sidebar pane (data-cat="admin"). The Advanced
+                     <details> becomes empty after the move and is hidden
+                     via the .settings-advanced[data-empty="1"] CSS rule.
+                     The relocation runs once per page load — non-destructive,
+                     reversible. -->
                 <details
                   class="settings-advanced"
+                  id="settings-account-advanced"
                   data-search="advanced admin maintenance tester keys mint deploy schedule warning"
                 >
                   <summary>Advanced</summary>
@@ -1663,6 +1686,90 @@
               </section>
 
               <!-- ============================================================
+                   ADMIN — relocated home for destructive / diagnostic
+                   controls. Gated on whoami.is_admin OR session
+                   tap-to-unlock (5 taps on the version pill in About).
+                   Adopted children get appended here on Settings open by
+                   _relocateAdminContent() in app.js:
+                     • Force update (from About → version row)
+                     • View debug log (from About → Diagnostics)
+                     • Push debug log to debugger (from About → Diagnostics)
+                     • Maintenance form (from Account → Advanced)
+                     • Tester keys form (from Account → Advanced)
+                   Originals are referenced by ID so existing event
+                   handlers, search index, and the JS that flips
+                   .hidden = !is_admin all keep working unchanged.
+                   ============================================================ -->
+              <section class="settings-pane" data-cat="admin" hidden>
+                <h3 class="settings-pane-title">Admin</h3>
+                <p
+                  class="settings-section-hint"
+                  data-search="admin destructive diagnostic dangerous"
+                >
+                  Destructive and diagnostic controls.
+                  Visible only to admins and to sessions where the
+                  version pill in About has been tapped 5 times.
+                </p>
+
+                <!-- Update row — relocation target for the Force update
+                     button. The button lives at #settings-force-update in
+                     About's version stamp at page-load; on Settings open,
+                     JS lifts it into this row so admins find it in one
+                     spot with the other dangerous actions. -->
+                <div
+                  class="settings-row"
+                  id="admin-update-row"
+                  data-search="force update cache reload service worker refresh admin"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Force update</strong>
+                    <span class="settings-toggle-desc">
+                      Wipe the local Service Worker cache and reload — use
+                      if a deploy shipped but Settings still shows an old
+                      version stamp. On Tauri desktop this won't pick up
+                      newer web bundles (those ship with the next .msi).
+                    </span>
+                  </div>
+                  <!-- #settings-force-update appended here at runtime -->
+                </div>
+
+                <!-- Diagnostics row — relocation target for View / Push
+                     debug log links. The Push link is itself further
+                     gated by JS on whether the server side push pipeline
+                     is enabled. -->
+                <div
+                  class="settings-row"
+                  id="admin-diagnostics-row"
+                  data-search="diagnostics debug log push view debugger submit report"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Diagnostics</strong>
+                    <span class="settings-toggle-desc">
+                      Surface the in-app debug log buffer, or push it to
+                      the private debugger repo. Every fetch, queue
+                      enqueue, synth attempt, and error writes a
+                      timestamped entry — useful when chasing
+                      "X intermittently fails" reports.
+                    </span>
+                  </div>
+                  <div class="admin-diagnostics-links">
+                    <!-- #settings-push-debug-log-link, #settings-push-debug-log-status,
+                         and #settings-debug-log-link appended here at runtime -->
+                  </div>
+                </div>
+
+                <!-- Maintenance section relocates here from
+                     Account → Advanced. Container only — the form itself
+                     (#settings-maintenance-section) gets moved in by JS. -->
+                <div id="admin-maintenance-slot"></div>
+
+                <!-- Tenant management section relocates here from
+                     Account → Advanced. Same pattern: empty slot, JS
+                     moves #settings-tenants-section in on Settings open. -->
+                <div id="admin-tenants-slot"></div>
+              </section>
+
+              <!-- ============================================================
                    ABOUT — version stamp, stats, diagnostics advanced
                    ============================================================ -->
               <section class="settings-pane" data-cat="about" hidden>
@@ -1674,7 +1781,7 @@
                      "I'm not on the version I expect" — pair the diagnostic
                      and the fix. Switch key moved to the Account pane. -->
                 <p id="settings-version" class="settings-version">
-                  Narrative <span id="settings-version-tag">v225v4.77</span>
+                  Narrative <span id="settings-version-tag">v225v4.78</span>
                   <button
                     type="button"
                     id="settings-force-update"

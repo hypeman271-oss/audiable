@@ -143,6 +143,38 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.78</span>
+          <span class="release-tagline">Settings cleanup — admin-only tools (Force update, debug log) tuck behind a new Admin pane.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Admin pane.</strong> Settings has a new <em>Admin</em>
+            sidebar entry that gathers the destructive and diagnostic
+            controls in one place: Force update, View debug log, Push debug
+            log to debugger, Schedule maintenance, and Tester key
+            management. Only visible if you're signed in as the admin —
+            regular testers see a Settings dialog without these rows.
+          </li>
+          <li>
+            <strong>Tap-to-unlock escape hatch.</strong> Need a tester to
+            push a debug log without giving them an admin key? Tell them
+            to open Settings → About and tap the version pill five times.
+            Same Admin pane shows up for that session only; gone on
+            reload. Mirrors the Android "tap build number" gesture.
+          </li>
+          <li>
+            <strong>Account simplified.</strong> The <em>Advanced</em>
+            disclosure on Account (which used to hide Maintenance + Tester
+            keys for testers) is gone — its contents moved to the new
+            Admin pane. Account now only holds identity rows: sync, API
+            key, GitHub credentials.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.77</span>
           <span class="release-tagline">Inline-edit hardening — no more rapid-tap "stuck saving" while the splice is in flight.</span>
         </div>
