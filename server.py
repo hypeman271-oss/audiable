@@ -906,7 +906,7 @@ async def voices_install_stream(req: InstallVoiceRequest):
 #
 # See UPDATES.md at repo root for the full release runbook.
 
-LATEST_DESKTOP_VERSION = "0.1.2"
+LATEST_DESKTOP_VERSION = "0.1.3"
 
 # target → base64 Ed25519 signature (output of `cargo tauri signer sign`).
 # Empty dict means "no signed bundles yet" — endpoint returns 204 for
@@ -929,7 +929,7 @@ LATEST_DESKTOP_VERSION = "0.1.2"
 # correctly returns 204 for those targets because of the `if not sig`
 # guard below.
 DESKTOP_SIGNATURES: dict[str, str] = {
-    "windows-x86_64": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akNUY2RiSnQzWDB3RFMyS3BJSHczQ1ZWN2x3U0FhVjQ3YmVEZjlZQzJpdFZCVUg4eWRMK0diM04wc3hpMStIOTAxRHJUb2ZTVE91OUIzRnM5WThOUVFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwODczOTQ0CWZpbGU6TmFycmF0aXZlXzAuMS4yX3g2NC1zZXR1cC5leGUKbC9IZE5Ed2VwZmorSDViRlkvaTRoUjVxMkVSejgxa0JBZDdOWVN5YjIramR0N1ZRUFBJMyt4MjdRU0xDSHJ0NjlOcm9SMWYzdTVEakp0bkpYUkFYREE9PQo=",
+    "windows-x86_64": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akhKdDB2WVZHWDNndWc2czRic0w5S1Z1Z2tpUzlVSjRnZjI5WFRhV21Yb1p2WlZWSm5JYlloejZSR3RHdlNmZVVXSXBwYVRZcFViYTROTFZpbUNNemdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwODkwNDA3CWZpbGU6TmFycmF0aXZlXzAuMS4zX3g2NC1zZXR1cC5leGUKNHZBL2MrTHhxV2RaUUZDRlpvUE95cStwU1JRY0VSd2xxYloyem83bk92RnM5MnExU0V4citsZGw4N2ROa0FMc2laWFdYWXVPK3hxRnJXU1RtSExRQVE9PQo=",
     # "darwin-aarch64": "...",  # blocked on per-arch filename fix
     # "darwin-x86_64":  "...",  # blocked on per-arch filename fix
     # "linux-x86_64":   "...",  # add after smoke-test on a Linux install
