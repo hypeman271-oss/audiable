@@ -143,6 +143,36 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.82</span>
+          <span class="release-tagline">Foreground synth no longer hangs forever on a stalled server — same split-budget watchdog the bg-queue had.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Foreground Generate watchdog.</strong>
+            If Fly's proxy drops or the server crashes mid-synth, the
+            foreground Generate flow used to hang on a frozen progress
+            bar until you tapped Cancel. Now it gives the server 90s
+            to deliver the first byte (cold-start engine warmup) and
+            30s of steady-state silence after that before declaring
+            the connection lost — same budgets the background chapter
+            queue has had since v225.tn86. Watchdog pauses while the
+            tab is hidden so phone backgrounding still doesn't kill a
+            live synth.
+          </li>
+          <li>
+            <strong>Cleanup.</strong> Removed a vestigial
+            <code>SSE_WATCHDOG_MS</code> constant in the bg-queue
+            watchdog (unused since the first-byte / steady-state
+            split). Fixed a stale comment that said "restart with a
+            fresh 30s window" — it's now 90s pre-first-byte, 30s
+            after.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.81</span>
           <span class="release-tagline">Manual: frontmatter examples for ⇡ Push to GitHub — exact shapes the parser accepts.</span>
         </div>

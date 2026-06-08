@@ -12131,9 +12131,74 @@ async function generate() {
     const decoder = new TextDecoder();
     let buf = "";
 
+    // v4.82 (#566) — same split-budget watchdog the bg-queue path uses
+    // (v225.tn86 / #568). Cold-start synth on a fresh chapter can take
+    // 45-90s to deliver the first byte (engine warmup + first sentence
+    // WAV); after that the server emits a keepalive comment every 15s
+    // so 30s steady-state with 2x slack is safe. Without a watchdog at
+    // all, a stalled proxy or crashed server leaves the foreground UI
+    // hanging on a frozen progress bar with no way to recover except
+    // tapping Cancel. With it, the user sees "connection lost" after
+    // the budget expires and can retry.
+    let _fgWatchdogFired = false;
+    let _fgWatchdogTimer = null;
+    let _fgGotFirstByte = false;
+    const _FG_FIRST_BYTE_MS = 90000;
+    const _FG_STEADY_MS = 30000;
+    const _fgIsVisible = () =>
+      typeof document === "undefined" || document.visibilityState !== "hidden";
+    const _fgResetWatchdog = () => {
+      if (_fgWatchdogTimer) clearTimeout(_fgWatchdogTimer);
+      // v216 pattern: don't schedule abort while the tab is hidden —
+      // mobile browsers throttle background tabs and would kill the
+      // synth the user is happily waiting on.
+      if (!_fgIsVisible()) return;
+      const ms = _fgGotFirstByte ? _FG_STEADY_MS : _FG_FIRST_BYTE_MS;
+      _fgWatchdogTimer = setTimeout(() => {
+        _fgWatchdogFired = true;
+        try { _synthController.abort(); } catch {}
+      }, ms);
+    };
+    const _fgOnVisibility = () => {
+      if (!_fgIsVisible()) {
+        if (_fgWatchdogTimer) {
+          clearTimeout(_fgWatchdogTimer);
+          _fgWatchdogTimer = null;
+        }
+      } else {
+        _fgResetWatchdog();
+      }
+    };
+    document.addEventListener("visibilitychange", _fgOnVisibility);
+    _fgResetWatchdog();
+
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      let _readResult;
+      try {
+        _readResult = await reader.read();
+      } catch (err) {
+        if (_fgWatchdogTimer) clearTimeout(_fgWatchdogTimer);
+        document.removeEventListener("visibilitychange", _fgOnVisibility);
+        if (_fgWatchdogFired) {
+          const budgetMs = _fgGotFirstByte ? _FG_STEADY_MS : _FG_FIRST_BYTE_MS;
+          _dlog && _dlog("synth", `foreground SSE watchdog timeout — no bytes for ${budgetMs / 1000}s`, {
+            phase: _fgGotFirstByte ? "steady" : "first-byte",
+          });
+          throw new Error(
+            "connection lost — server may be restarting or unreachable"
+          );
+        }
+        throw err;
+      }
+      const { done, value } = _readResult;
+      if (done) {
+        if (_fgWatchdogTimer) clearTimeout(_fgWatchdogTimer);
+        document.removeEventListener("visibilitychange", _fgOnVisibility);
+        break;
+      }
+      // Any bytes (including the keepalive comment lines) tick the wire.
+      if (!_fgGotFirstByte) _fgGotFirstByte = true;
+      _fgResetWatchdog();
       buf += decoder.decode(value, { stream: true });
       // SSE events are terminated by \n\n
       const blocks = buf.split("\n\n");
@@ -14651,7 +14716,6 @@ async function _preSynthesizeChapter(chapter, opts) {
     const SSE_WATCHDOG_FIRST_BYTE_MS = 90000;
     const SSE_WATCHDOG_STEADY_MS = 30000;
     let _watchdogGotFirstByte = false;
-    const SSE_WATCHDOG_MS = SSE_WATCHDOG_FIRST_BYTE_MS;
     // v216: pause the watchdog while the tab is hidden. Mobile
     // browsers throttle background tabs — JS execution slows or
     // halts, so incoming SSE bytes don't get processed, the
@@ -14688,9 +14752,11 @@ async function _preSynthesizeChapter(chapter, opts) {
           _watchdogTimer = null;
         }
       } else {
-        // Coming back — restart with a fresh 30s window. Any
-        // server-side keepalive that piled up while we were
-        // hidden will tick the wire soon and reset us again.
+        // Coming back — restart with a fresh budget (90s if we
+        // haven't seen first byte yet, 30s once the stream's
+        // been delivering). Any server-side keepalive that piled
+        // up while we were hidden will tick the wire soon and
+        // reset us again.
         _resetWatchdog();
       }
     };
