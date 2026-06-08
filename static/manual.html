@@ -2470,7 +2470,7 @@
             → full hash in the tooltip.</td>
         </tr>
         <tr>
-          <td>Push to GitHub (v4.60)</td>
+          <td>Push to GitHub (v4.60, frontmatter preserved as of v4.80)</td>
           <td>In the same Edit dialog row, the <em>⇡ Push to GitHub</em>
             button on the right edge commits the clip's current
             <strong>text</strong> back to the source file. Opens a prompt
@@ -2478,10 +2478,15 @@
             (<em>"Revised in Narrative: &lt;title&gt;"</em>); edit and OK
             to push, cancel to abort. Refuses with a clear error if the
             source has moved on GitHub since you imported (use the
-            per-card ↻ Sync chip to Pull first). Only the prose body is
-            pushed — voice presets and YAML frontmatter still stay
-            Narrative-side (frontmatter preservation tracked as a
-            follow-up). For notes / bookmarks / annotations see the
+            per-card ↻ Sync chip to Pull first). Voice presets stay
+            Narrative-side (a TTS detail, not part of your manuscript).
+            <strong>YAML frontmatter</strong> — your
+            <code>--- title: … ---</code> block at the top of the file —
+            is captured at import and prepended back on push, so
+            metadata round-trips intact. See
+            <a href="#frontmatter-examples">"Frontmatter — what works
+            on push-back"</a> below for the exact shape the parser
+            accepts. For notes / bookmarks / annotations see the
             <em>📝 Push notes</em> button below.</td>
         </tr>
         <tr>
@@ -2528,6 +2533,141 @@
             custom order intact.</td>
         </tr>
       </table>
+
+      <!-- v4.80 (#849): frontmatter examples for ⇡ Push to GitHub.
+           Reachable as #frontmatter-examples from the v4.60 row above. -->
+      <h3 id="frontmatter-examples">Frontmatter — what works on push-back</h3>
+      <p>
+        When you import a markdown file from GitHub, Narrative captures
+        any YAML frontmatter block at the top of the file and stashes
+        it on the clip's <code>gitRef</code>. The block doesn't appear
+        in the reading view and TTS never says it. On
+        <em>⇡ Push to GitHub</em>, that captured block is prepended
+        back verbatim onto your revised body, so your file's metadata
+        round-trips intact.
+      </p>
+      <p>
+        The parser is strict: it copies the exact bytes between the
+        opener and closer, so the YAML inside can be anything — comments,
+        nested values, custom keys, blank lines — and survives the
+        round-trip without modification. What it cares about is the
+        <strong>fence shape</strong>.
+      </p>
+
+      <h4>✅ Shapes that work</h4>
+
+      <p><em>Minimal — Jekyll classic:</em></p>
+<pre><code>---
+title: Chapter 1
+---
+
+# Chapter 1
+
+The wall walk had gone quiet.
+</code></pre>
+
+      <p><em>Multi-field — author metadata:</em></p>
+<pre><code>---
+title: The Wall Walk
+author: Ilea Vann
+date: 2026-06-08
+tags: [draft, chapter, pov-ilea]
+summary: First sketch of the cooperage scene
+status: revising
+---
+
+# Chapter 0: What You Have
+
+*There's a war going on outside, no one is safe from.* — Mobb Deep
+
+The practice she'd borrowed from the women of Maren's Gate...
+</code></pre>
+
+      <p><em>Obsidian-flavor — nested values + aliases:</em></p>
+<pre><code>---
+title: Wall Walk Draft
+aliases:
+  - ch0
+  - opening
+current_word_count: 1290
+characters:
+  - Ilea Vann
+  - Torven
+  - Garrison commander
+properties:
+  pov: Ilea
+  status: revising
+---
+
+# Chapter 0: What You Have
+
+Ilea sat on the edge of the rented cot...
+</code></pre>
+
+      <h4>❌ Shapes that don't qualify (and why)</h4>
+
+      <p><em>One-liner — common mistake.</em> The opener and closer must
+      be on their own lines.</p>
+<pre><code>--- title: help
+
+# Chapter 0
+</code></pre>
+      <p>
+        ↑ The parser needs <code>---\n</code> on a line by itself,
+        then content, then <code>---\n</code> closing the block.
+        A one-line shorthand isn't recognized — the whole line goes
+        to TTS as prose.
+      </p>
+
+      <p><em>Opener with no closer — treated as a horizontal rule.</em></p>
+<pre><code>---
+
+# Chapter 1
+
+Some prose then a section break
+
+---
+
+More prose
+</code></pre>
+      <p>
+        ↑ Markdown allows <code>---</code> as a horizontal rule. To
+        avoid eating real section breaks, the parser requires the
+        closing <code>---</code> to come early — anything that looks
+        like a body section break stays in the document. Move your
+        metadata to the very top with both fences and you're set.
+      </p>
+
+      <p><em>Frontmatter offset by whitespace.</em></p>
+<pre><code>
+---
+title: Spaced
+---
+
+# Chapter 1
+</code></pre>
+      <p>
+        ↑ The file must start with <code>---\n</code> (or
+        <code>---\r\n</code>) on byte zero. A single leading blank line
+        is enough to break the match. If you edited in a tool that
+        prepended a BOM or stray newline, strip it.
+      </p>
+
+      <h4>Pattern to remember</h4>
+      <blockquote>
+        Three dashes on a line by themselves, opener and closer,
+        no leading whitespace.
+      </blockquote>
+
+      <p>
+        <strong>Backfilling on existing clips.</strong> If you imported
+        a chapter before v4.80, the frontmatter block isn't stored on
+        the clip yet — old saves predate the capture. Re-import the
+        chapter (or use the per-card <em>↻ Sync</em> chip) once to pull
+        the current file fresh; the block lands on
+        <code>gitRef.frontmatter</code> and subsequent pushes preserve
+        it.
+      </p>
 
       <!-- ============================================================= -->
       <h2 id="voice">3. Choosing a voice</h2>
