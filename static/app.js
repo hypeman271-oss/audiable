@@ -29396,8 +29396,33 @@ async function openGithubBrowser(repoUrl) {
           const data = await res.json();
           exitReadingView();
           textEl.value = data.text || "";
+          // v4.79 (#881): overwrite ALL the pending image state, not just
+          // _pendingImages. Previously this branch only touched the inline
+          // images array, so a previous import's _pendingDetectedCover and
+          // _pendingChapterImages would survive into this fetch and get
+          // attached to the saved clip at Generate time. User reported
+          // picking the wrong repo first, then picking the right one, and
+          // seeing the wrong repo's screenshot inline images persist into
+          // the new clip's library card. The multi-file branch below
+          // already does this correctly (29519-29522); this aligns the
+          // single-file branch with the same contract.
           _pendingImages = Array.isArray(data.images) ? data.images : [];
+          _pendingDetectedCover =
+            (data.cover && typeof data.cover === "object" && data.cover.src)
+              ? data.cover
+              : null;
+          _pendingChapterImages =
+            Array.isArray(data.chapter_images)
+              ? data.chapter_images.filter((c) => c && c.src)
+              : [];
           _pendingGitRef = data.gitRef || null;
+          // v4.79 (#881): also call _paintImportPreview so the visible
+          // thumbnail strip ("Detected in this import") repaints. Without
+          // this, even when the state above gets cleared correctly, the
+          // DOM still shows whatever was painted by the previous import —
+          // so the user sees stale thumbs that imply they'll attach to
+          // the new save. Repaint here keeps the visible truth in sync.
+          if (typeof _paintImportPreview === "function") _paintImportPreview();
           updateCounts();
           _checkForChapters();
           setStatus(`Loaded ${f.path} · ${(data.chars || 0).toLocaleString()} chars · ready to Generate`);
@@ -29822,9 +29847,19 @@ async function openGistBrowser(gistUrl) {
       const data = await res.json();
       exitReadingView();
       textEl.value = data.text || "";
+      // v4.79 (#881): same pending-state-leak gap as the GitHub picker's
+      // single-file branch fixed in the same release. Gists never return
+      // covers or chapter_images (they're per-file raw fetches), so
+      // these always clear to null/[] — but the previous import may have
+      // set them, and without an explicit clear they survive and get
+      // attached to the new clip at save. _paintImportPreview repaints
+      // the visible strip; without it the DOM holds the old thumbnails.
       _pendingImages = Array.isArray(data.images) ? data.images : [];
+      _pendingDetectedCover = null;
+      _pendingChapterImages = [];
       _pendingGitRef = null; // Gist files don't have a gitRef we can sync against
       _pendingChapterTitle = f.filename.replace(/\.[^.]+$/, "");
+      if (typeof _paintImportPreview === "function") _paintImportPreview();
       updateCounts();
       _checkForChapters();
       setStatus(

@@ -143,6 +143,29 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.79</span>
+          <span class="release-tagline">Fix: GitHub single-file import wasn't clearing previous import's images — they leaked onto the next clip.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Pending image state leak across GitHub imports.</strong>
+            Picking one file from a GitHub repo, then picking one file
+            from a different repo, used to leave the previous repo's
+            inline image thumbnails in the "Detected in this import"
+            strip. At Generate time those images got attached to the new
+            clip, so the wrong repo's screenshots ended up on the right
+            repo's library card. Now every single-file GitHub fetch
+            (and the same-shape single-file Gist fetch) explicitly
+            clears all four pending image fields and repaints the
+            preview strip — same contract the multi-file branch has
+            had since v225fz14.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.78</span>
           <span class="release-tagline">Settings cleanup — admin-only tools (Force update, debug log) tuck behind a new Admin pane.</span>
         </div>
