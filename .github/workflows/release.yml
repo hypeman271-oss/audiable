@@ -187,7 +187,15 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: "Narrative ${{ github.event.inputs.tag || github.ref_name }}"
-          draft: true
+          # v4.73: was draft:true so we could add release notes before
+          # announcing. But Tauri's auto-updater reads asset URLs of the
+          # form /releases/download/v{ver}/{file}, which only resolve once
+          # the release is PUBLISHED (drafts use an opaque untagged-* URL
+          # that the updater can't predict). v0.1.5 stuck in draft caused
+          # the "Update failed: 404 Not Found" symptom on v0.1.4 desktops.
+          # Now we publish immediately; tweak the body in place after if
+          # you want to add hand-written notes.
+          draft: false
           prerelease: false
           body: |
             Desktop binaries for Narrative ${{ github.event.inputs.tag || github.ref_name }}.
