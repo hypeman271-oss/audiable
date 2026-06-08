@@ -7699,6 +7699,20 @@ function _initBookmarkEditor() {
   const noteEl = el.querySelector("#bookmark-editor-note");
   if (noteEl) {
     noteEl.addEventListener("input", _paintBookmarkNoteCounter);
+    // v4.70 (#870): on desktop, plain Enter inside the note saves +
+    // closes — matches Slack / Linear / iMessage where short-note
+    // fields commit on Enter. Shift+Enter still inserts a newline
+    // (escape hatch; bookmarks are capped at 200 chars so this is
+    // rarely needed). Phone is excluded because the OS keyboard's
+    // return key is universally expected to insert a newline; phone
+    // users tap "Done" to commit. DEVICES.md scope: desktop only.
+    noteEl.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey) return;
+      const isPhone = window.matchMedia("(max-width: 767px)").matches;
+      if (isPhone) return;
+      e.preventDefault();
+      close(true);
+    });
   }
   // Tap the backdrop (outside the card) to dismiss without saving.
   el.addEventListener("click", (e) => {
@@ -7710,8 +7724,10 @@ function _initBookmarkEditor() {
       e.preventDefault();
       close(false);
     } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      // Cmd/Ctrl + Enter saves — for desktop power users. Plain
-      // Enter inside the textarea inserts a newline (standard).
+      // Cmd/Ctrl + Enter saves from anywhere in the dialog — even
+      // if focus is on Cancel or the X. Power-user fallback that's
+      // redundant with the noteEl handler above on desktop but
+      // still useful on phone or when focus has drifted.
       e.preventDefault();
       close(true);
     }
