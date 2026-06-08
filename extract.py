@@ -710,7 +710,18 @@ def fetch_and_extract_url(
     # handles markdown headings on its own.
     if is_file_url:
         filename = PurePath(parsed.path).name or parsed.hostname or "url"
-        text = extract_text(filename, raw)
+        # v4.80 (#849): for markdown files we split the frontmatter out
+        # ourselves so we can hand it back to the client and let it ride
+        # back to GitHub on the next push. Other file types
+        # (PDF/DOCX/EPUB/TXT) go through the regular dispatcher — they
+        # don't have a YAML-frontmatter equivalent we need to preserve.
+        frontmatter_block = ""
+        if file_ext in ("md", "markdown"):
+            decoded = _extract_plain(raw)
+            frontmatter_block, body = _split_yaml_frontmatter(decoded)
+            text = body
+        else:
+            text = extract_text(filename, raw)
         if not text.strip():
             raise ExtractionError("file is empty or unreadable")
         result = {
@@ -931,6 +942,48 @@ def _extract_plain(data: bytes) -> str:
 _FRONTMATTER_FENCE_RE = re.compile(r"(?m)^---\s*$")
 
 
+def _split_yaml_frontmatter(text: str) -> tuple[str, str]:
+    """Split a Markdown doc into (frontmatter_block, body).
+
+    The frontmatter_block, if present, includes the opening `---\\n`,
+    the YAML body, and the closing `---\\n` — i.e. it's the verbatim
+    prefix that can be prepended to a revised body to round-trip the
+    file on GitHub push-back without losing metadata.
+
+    Recognized shapes:
+      - Opens with `---` on the first line (LF or CRLF).
+      - Closes with `---` on its own line later.
+    Returns ``("", text)`` for anything not matching — including the
+    "`---` used as a horizontal-rule chapter break" case (no closer
+    found within the document), so the original v220as guard still
+    holds.
+
+    v4.80 (#849): split out from _strip_yaml_frontmatter so the push-back
+    path can preserve the frontmatter alongside the body. _strip_…
+    keeps its old return shape (just the body).
+    """
+    if not text:
+        return "", text
+    if not (text.startswith("---\n") or text.startswith("---\r\n")):
+        return "", text
+    fence = _FRONTMATTER_FENCE_RE.search(text[3:])
+    if not fence:
+        # Opener with no closer — likely a horizontal rule used as
+        # a chapter break ("---"), not frontmatter. Leave it.
+        return "", text
+    # End of the closing `---` line, measured from the start of the
+    # full text. Include the trailing newline(s) so the caller can
+    # paste this verbatim back at the top of the file.
+    fence_end = 3 + fence.end()
+    # Walk forward past the newline(s) immediately after the closer so
+    # the frontmatter_block ends cleanly on a line boundary.
+    while fence_end < len(text) and text[fence_end] in ("\r", "\n"):
+        fence_end += 1
+    frontmatter_block = text[:fence_end]
+    body = text[fence_end:]
+    return frontmatter_block, body
+
+
 def _strip_yaml_frontmatter(text: str) -> str:
     """Drop a leading YAML / Jekyll-style frontmatter block, if any.
 
@@ -947,22 +1000,11 @@ def _strip_yaml_frontmatter(text: str) -> str:
     the fence, though, and without this strip TTS happily reads
     "current word count 1290 summary Ilea Vann POV" out loud.
 
-    Recognized shapes:
-      - Opens with `---` on the first line (LF or CRLF).
-      - Closes with `---` on its own line later.
-    Anything not matching is returned unchanged.
+    See _split_yaml_frontmatter for the fence-detection rules;
+    this is a thin "discard the metadata, keep the body" wrapper.
     """
-    if not text:
-        return text
-    # Both LF and CRLF starts are valid.
-    if not (text.startswith("---\n") or text.startswith("---\r\n")):
-        return text
-    fence = _FRONTMATTER_FENCE_RE.search(text[3:])
-    if not fence:
-        # Opener with no closer — likely a horizontal rule used as
-        # a chapter break ("---"), not frontmatter. Leave it.
-        return text
-    return text[3 + fence.end():].lstrip("\r\n")
+    _, body = _split_yaml_frontmatter(text)
+    return body
 
 
 def _extract_markdown(data: bytes) -> str:

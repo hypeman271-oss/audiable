@@ -25278,11 +25278,14 @@ clipEditDialog.addEventListener("close", () => { _editingClipId = null; });
 //       try Push again.
 //   5c. On 401/403: token issue. Send user to Settings → GitHub token.
 //
-// Phase 1B (deferred): preserve YAML frontmatter on push. Right now
-// the entire file body becomes clip.text — frontmatter is lost. If
-// the source had `---\nauthor: ...\n---` at the top, importing
-// (v220as) stripped it and pushing back replaces the whole file
-// with just the body. Tracked as a follow-up.
+// v4.80 (#849) — Phase 1B: preserve YAML frontmatter on push. The
+// extractor now splits `---\n...\n---\n` off the top before handing
+// the body to the client, and stashes the verbatim block on
+// gitRef.frontmatter. On push we prepend that block to clip.text so
+// the round-trip leaves the metadata intact. Old clips (imported
+// before v4.80) have no frontmatter field — push them as before.
+// Files without a frontmatter block get an empty string and the
+// prepend is a no-op.
 const _clipEditPushGithubBtn = document.getElementById("clip-edit-push-github-btn");
 if (_clipEditPushGithubBtn) {
   _clipEditPushGithubBtn.addEventListener("click", async () => {
@@ -25335,6 +25338,13 @@ if (_clipEditPushGithubBtn) {
     _clipEditPushGithubBtn.disabled = true;
     const _origLabel = _clipEditPushGithubBtn.textContent;
     _clipEditPushGithubBtn.textContent = "Pushing…";
+    // v4.80 (#849): prepend YAML frontmatter so the file round-trips
+    // intact. clip.gitRef.frontmatter is populated by extract.py's
+    // URL-fetch path for .md / .markdown sources; empty string for
+    // formats that don't have a frontmatter, missing entirely on
+    // old clips imported before v4.80 (treat as empty).
+    const frontmatter = (clip.gitRef && clip.gitRef.frontmatter) || "";
+    const pushContent = frontmatter + (clip.text || "");
     try {
       const res = await fetch("/api/github/push-file", {
         method: "POST",
@@ -25344,7 +25354,7 @@ if (_clipEditPushGithubBtn) {
           repo_url: clip.gitRef.repoUrl,
           branch,
           path: clip.gitRef.path,
-          content: clip.text || "",
+          content: pushContent,
           message,
           expected_sha: clip.gitRef.sha,
           host: clip.gitRef.host || null,

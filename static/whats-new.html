@@ -143,6 +143,33 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.80</span>
+          <span class="release-tagline">GitHub push-back preserves YAML frontmatter — your <code>--- title: …</code> block survives the round-trip.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>YAML frontmatter round-trips on push.</strong> When
+            you import a markdown file from GitHub that has a
+            <code>--- … ---</code> frontmatter block at the top (Jekyll,
+            Obsidian, hand-rolled metadata — anything in that shape),
+            Narrative now stashes the block as-is on the clip's gitRef.
+            On <em>⇡ Push to GitHub</em>, the original frontmatter is
+            prepended back to your revised body, so the file on GitHub
+            keeps its <code>title:</code> / <code>tags:</code> /
+            <code>summary:</code> / whatever else you had up there.
+            Previously, push-back replaced the whole file with just
+            the revised prose and the frontmatter was lost — the
+            second commit silently deleted everyone's metadata.
+            Old clips imported before this version don't have the
+            stash; <em>re-import</em> the chapter (or use the per-card
+            ↻ Sync chip) to capture it, then push as normal.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.79</span>
           <span class="release-tagline">Fix: GitHub single-file import wasn't clearing previous import's images — they leaked onto the next clip.</span>
         </div>
