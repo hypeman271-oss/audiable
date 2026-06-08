@@ -5029,34 +5029,35 @@ document.addEventListener("keydown", (e) => {
   shortcutsDialog.showModal();
 });
 
-// v4.71 (#871): Spacebar toggles play/pause anywhere on desktop —
-// the YouTube / Spotify / Apple Music convention. Pre-v4.71 the
-// shortcuts dialog said "Space when player has focus" which is the
-// native <audio> behavior — but nobody focuses the audio element,
-// so the shortcut was effectively dead.
+// v4.71 / v4.72 (#871 + #872): global playback shortcuts on desktop.
+// The YouTube / Spotify / Apple Music keyboard set:
+//   Space, K       → play / pause
+//   J, ArrowLeft   → skip back (by configured skip interval)
+//   L, ArrowRight  → skip forward (by configured skip interval)
+//   ArrowUp        → volume +10%
+//   ArrowDown      → volume −10%
+// Arrows defer to book view when it's open (book view uses ← / →
+// for page-turn, see line ~21286). The scrubber's own arrow handler
+// (line ~12698) keeps working because it requires scrubber focus,
+// which our INPUT/role guards catch.
 //
-// Guards (order matters — each one must pass through cleanly so we
-// don't break typing or accessibility):
-//   1. Modifier key held → pass through. Ctrl+Space etc. belong to
-//      the OS / IME.
-//   2. Focus on a typing surface (input/textarea/contenteditable) →
-//      pass through. The user is typing a literal space.
-//   3. Focus on an interactive control (button/select/role=button)
-//      → pass through. Space activates buttons natively.
-//   4. Focus inside any modal <dialog> → pass through. Most dialogs
-//      contain forms/buttons; play/pause shouldn't fire underneath.
-//   5. Phone (≤767px viewport) → bail. No physical spacebar in the
-//      normal case; future Bluetooth-keyboard phone users still get
-//      the typing-surface guard above so it doesn't break input.
-//   6. No clip loaded (empty playerEl.src) → bail. Nothing to play.
-//
-// Hits target: focus on the body, hero, reading view, library card
-// area, etc. Toggle is paused → play, otherwise pause. Wraps the
-// play() call in a no-op catch so a quick double-tap doesn't dump
-// an AbortError into the console.
+// Guards (order matters — each must pass through cleanly so we don't
+// break typing or accessibility):
+//   1. Modifier key held → pass through. Ctrl+Space, Shift+Arrow
+//      etc. belong to the OS / select-extend / IME.
+//   2. Phone (≤767px viewport) → bail. No physical spacebar in
+//      normal use; arrows are awkward on touch anyway.
+//   3. Focus on a typing surface (input/textarea/contenteditable) →
+//      pass through. User is typing a literal character.
+//   4. Focus on an interactive control (button/select/role=button)
+//      → pass through. Space activates buttons natively, arrows
+//      can be element shortcuts.
+//   5. Focus inside any modal <dialog> → pass through. Dialogs
+//      contain forms/buttons.
+//   6. No clip loaded (empty playerEl.src) → bail. Nothing to act on.
 document.addEventListener("keydown", (e) => {
-  if (e.key !== " " && e.code !== "Space") return;
   if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  if (window.matchMedia("(max-width: 767px)").matches) return;
   const ae = document.activeElement;
   if (ae) {
     const tag = ae.tagName;
@@ -5072,13 +5073,65 @@ document.addEventListener("keydown", (e) => {
     }
     if (ae.closest && ae.closest("dialog[open]")) return;
   }
-  if (window.matchMedia("(max-width: 767px)").matches) return;
   if (!playerEl || !playerEl.src) return;
-  e.preventDefault();
-  if (playerEl.paused) {
-    playerEl.play().catch(() => {});
-  } else {
-    playerEl.pause();
+
+  // Book-view-open check: when the book view is the active surface,
+  // arrows belong to its page-turn handler (line ~21286). J/K/L /
+  // Space stay live so the listener can still pause while reading.
+  const bvEl = document.getElementById("book-view");
+  const inBookView = bvEl && !bvEl.hidden;
+  const k = e.key;
+
+  // Play / pause: Space, K
+  if (k === " " || e.code === "Space" || k === "k" || k === "K") {
+    e.preventDefault();
+    if (playerEl.paused) {
+      playerEl.play().catch(() => {});
+    } else {
+      playerEl.pause();
+    }
+    return;
+  }
+
+  // Skip back: J always, ← unless book view owns it
+  if (k === "j" || k === "J" || (k === "ArrowLeft" && !inBookView)) {
+    e.preventDefault();
+    if (typeof virtualTime === "function" && typeof seekToTime === "function") {
+      seekToTime(Math.max(0, virtualTime() - _skipInterval));
+    }
+    return;
+  }
+
+  // Skip forward: L always, → unless book view owns it
+  if (k === "l" || k === "L" || (k === "ArrowRight" && !inBookView)) {
+    e.preventDefault();
+    if (typeof virtualTime === "function" && typeof seekToTime === "function") {
+      seekToTime(virtualTime() + _skipInterval);
+    }
+    return;
+  }
+
+  // Volume up: ↑ (unless book view is the active surface — future
+  // book-view shortcuts may want it). 10% steps. Auto-unmutes so the
+  // user doesn't have to do a separate keystroke to "wake" sound.
+  if (k === "ArrowUp" && !inBookView) {
+    e.preventDefault();
+    playerEl.volume = Math.min(1, Math.round((playerEl.volume + 0.1) * 10) / 10);
+    if (playerEl.muted) playerEl.muted = false;
+    if (typeof setStatus === "function") {
+      setStatus(`Volume ${Math.round(playerEl.volume * 100)}%`);
+    }
+    return;
+  }
+
+  // Volume down: ↓
+  if (k === "ArrowDown" && !inBookView) {
+    e.preventDefault();
+    playerEl.volume = Math.max(0, Math.round((playerEl.volume - 0.1) * 10) / 10);
+    if (typeof setStatus === "function") {
+      setStatus(`Volume ${Math.round(playerEl.volume * 100)}%`);
+    }
+    return;
   }
 });
 
