@@ -13,6 +13,7 @@
 // `narrative:menu` CustomEvent on the webview via eval(), which the
 // JS layer (static/app.js) routes to existing buttons / dialogs.
 
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -68,6 +69,140 @@ fn wait_for_server(port: u16, timeout: Duration) -> bool {
         thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+// v4.83: auto-clear SW cache on Tauri auto-update.
+//
+// Symptom we're fixing: after v0.1.6 → v0.1.7 auto-updated cleanly,
+// the bundled web assets (v4.79) didn't show up until the user hit
+// Settings → Force update manually. The WebView2 Service Worker
+// registered during the v0.1.6 lifetime kept serving its old
+// narrative-shell-v225v4.73 Cache Storage entries — from WebView2's
+// perspective the tauri.localhost origin hadn't changed, so it had
+// no reason to bust the SW. Every future Tauri release would have
+// the same hidden tail until the user noticed and force-updated.
+//
+// Why we don't use webview.clear_all_browsing_data(): that wipes
+// IndexedDB too, which holds the user's library + annotations + voice
+// presets + everything else. Server-side sync would rehydrate it on
+// next launch, but only if the user is signed in AND nothing was
+// unsynced at upgrade time. Too risky.
+//
+// What we do instead: replay exactly what Settings → Force update
+// does — unregister every SW + delete every Cache Storage entry +
+// reload. That preserves IDB. We detect "upgrade happened" by
+// comparing CARGO_PKG_VERSION against a single-line text file we
+// stash in the app's local data dir.
+//
+// Brief flash of stale UI before the reload is acceptable (the
+// reload triggers within a few hundred ms once the embedded shell's
+// JS engine reaches our eval). The alternative — running the sweep
+// BEFORE the webview mounts — would require dropping down to the
+// platform-specific WebView2 COM API to call
+// CoreWebView2Profile::ClearBrowsingData with the granular
+// SERVICE_WORKERS + CACHE_STORAGE bitmask. Not worth the complexity
+// for what's effectively once-per-Tauri-release polish.
+//
+// Desktop-only. Mobile loads from Fly directly (see the navigate
+// branch in setup), so there's no embedded-shell SW cache to bust.
+#[cfg(desktop)]
+fn handle_version_upgrade<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let current = env!("CARGO_PKG_VERSION");
+    let stored_path: PathBuf = match app.path().app_local_data_dir() {
+        Ok(dir) => dir.join("last_known_version.txt"),
+        Err(e) => {
+            eprintln!("[narrative] version check: no app_local_data_dir ({})", e);
+            return;
+        }
+    };
+
+    let stored = fs::read_to_string(&stored_path)
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    // Always write the current version, even on the upgrade branch —
+    // if the eval/reload fails, we still want to record what's
+    // installed so the next launch doesn't try to clear again. The
+    // worst case is a single missed cache-bust, not an infinite loop.
+    if let Some(parent) = stored_path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            eprintln!(
+                "[narrative] version check: create_dir_all {:?} failed ({})",
+                parent, e
+            );
+        }
+    }
+    if let Err(e) = fs::write(&stored_path, current) {
+        eprintln!(
+            "[narrative] version check: write {:?} failed ({})",
+            stored_path, e
+        );
+    }
+
+    // Clear on either "we've seen a different version before" OR "we've
+    // never recorded a version" — the second case covers the one-time
+    // transition where users upgrade from a pre-v4.83 binary that
+    // didn't write last_known_version.txt at all. Without the
+    // None-branch clear, the first release that ships this code
+    // wouldn't bust the cache from the prior install. Cost on a
+    // genuinely-fresh install is one harmless reload of an empty
+    // cache (~500ms); benefit is that pre-v4.83 holdovers get a
+    // clean first launch.
+    let should_clear = match stored.as_deref() {
+        None => {
+            eprintln!(
+                "[narrative] version check: no recorded version — clearing SW cache (first launch or pre-v4.83 upgrade)"
+            );
+            true
+        }
+        Some(prev) if prev == current => {
+            eprintln!("[narrative] version check: same version {}", current);
+            false
+        }
+        Some(prev) => {
+            eprintln!(
+                "[narrative] version check: upgrade {} → {} — clearing SW cache",
+                prev, current
+            );
+            true
+        }
+    };
+
+    if !should_clear {
+        return;
+    }
+
+    // Mirror Settings → Force update verbatim. The IIFE runs in the
+    // page's JS context; `caches` + `serviceWorker` are available as
+    // soon as a document exists, so we don't have to wait on our
+    // cached app.js — the eval queues at the earliest opportunity.
+    // Reload bypasses the SW because we just unregistered it.
+    let Some(win) = app.get_webview_window("main") else {
+        eprintln!("[narrative] version check: no main webview window to eval into");
+        return;
+    };
+    let js = r#"
+        (async () => {
+            try {
+                console.log('[narrative-upgrade] post-update SW cache sweep starting');
+                if ('serviceWorker' in navigator) {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(regs.map(r => r.unregister().catch(() => false)));
+                }
+                if ('caches' in window) {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map(k => caches.delete(k).catch(() => false)));
+                }
+                console.log('[narrative-upgrade] sweep complete, reloading');
+            } catch (e) {
+                console.warn('[narrative-upgrade] sweep failed:', e);
+            }
+            location.reload();
+        })();
+    "#;
+    if let Err(e) = win.eval(js) {
+        eprintln!("[narrative] version check: eval failed ({})", e);
+    }
 }
 
 // v225v4.28 (#706): build the native Windows menu bar. Using Submenu
@@ -436,6 +571,27 @@ pub fn run() {
                     sidecar_path
                 );
             }
+            // v4.83: post-update SW cache sweep. If the binary version
+            // differs from the recorded last_known_version, this evals
+            // a Force-update-equivalent IIFE into the webview that
+            // unregisters the SW + drops every Cache Storage entry +
+            // reloads — picking up the newly bundled web assets without
+            // requiring the user to hit Settings → Force update.
+            // Desktop-only (mobile loads from Fly, no embedded SW cache).
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                // Defer briefly so the webview has wired up its eval
+                // channel before we push JS at it. setup() can fire
+                // before the window's webview is fully ready to accept
+                // eval calls; a short delay on a worker thread sidesteps
+                // the race without pulling tokio in as a direct dep.
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(500));
+                    handle_version_upgrade(&handle);
+                });
+            }
+
             // v4.58 (#707 follow-up): startup auto-poll for updates.
             // Until this lands, the auto-updater plugin only fires when
             // the user manually triggers Help → Check for updates… —
