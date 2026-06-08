@@ -86,6 +86,46 @@ into a multi-user product. Path B becomes the self-hosted-mode
 fallback (one user, one key) that satisfies the privacy-paranoid
 segment.
 
+**Reversal — V1 narrator is Kokoro on Fly, not on-device Piper (2026-06-08):**
+
+The original Synthesis row above (line 49) and the Hosting-model
+"DECIDED" box (line 215) both still say on-device Piper. That was
+right when the pitch was "your draft never leaves your machine"
+and mobile was scoped out. Two things changed:
+
+1. Cross-device sync became V1 (above). Sync means a server, and
+   if you already have a server doing audio dedup + library
+   replication, putting synthesis there too costs almost nothing
+   and removes the Capacitor + native-Piper-plugin work from the
+   critical path.
+2. Kokoro shipped. v220at–v220ay landed Kokoro in the tts/ package
+   with espeak-ng phonemes + an at-startup warmup task (v220aw /
+   v220ax fired the warm-up as a background task so cold-start
+   doesn't block /api/voices). v582 (#446) pinned ONNX threads and
+   instrumented RTF. Kokoro produces meaningfully better narration
+   than Piper at the price of slightly slower RTF — acceptable on
+   shared-CPU Fly, perfect with a hardware bump (#582+).
+
+**The V1 engine pick is Kokoro, hosted on Fly (narrative-alpha).**
+Default narrator for the public alpha is LibriTTS speaker 7
+(CC BY 4.0, attribution: "LibriTTS (Heiga Zen et al.), CC BY 4.0").
+Piper stays bundled as a fallback for offline / WASM Piper paths
+(#568 / v227+) and as the on-device option for V3 Self-Hosted, but
+isn't the default anymore.
+
+**Implied consequences of THIS reversal:**
+
+- No Capacitor + native Piper Kotlin plugin work on the V1 critical
+  path. Mobile stays PWA + the Android Tauri shell (v4.42, v4.43)
+  pointed at Fly.
+- Fly compute IS recurring cost — not "near-zero" as line 49 claims.
+  Current ~$5/mo machine + $0.45/mo volume. Re-evaluate at first
+  paying-customer milestone.
+- Voice attribution screen (pre-launch checklist) becomes more
+  important — bundled vs hosted-only voices need to be split in the
+  UI now that the user's "your machine never sees the audio" frame
+  is gone.
+
 **Not decided yet:**
 
 - LLC vs Delaware C-corp — accountant call, not a code decision.
