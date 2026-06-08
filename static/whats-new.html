@@ -143,6 +143,32 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.68 (desktop only)</span>
+          <span class="release-tagline">Desktop auto-update with a real progress bar — the v0.1.2→v0.1.4 saga finally lands.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Auto-update actually works now.</strong> A multi-day
+            bug chain on the desktop updater (v0.1.1→v0.1.4) is finally
+            done. Detection was silently dropping requests because the
+            Tauri plugin keys its manifest probes differently from what
+            we'd been serving. Server now responds with the exact keys
+            (<code>windows-x86_64-nsis</code> + fallback) the plugin
+            expects, the Rust shell explicitly drives download + install
+            (not auto in Tauri 2), and a non-modal banner at the top of
+            the window shows live download progress (% + KB counter) as
+            the new <code>.exe</code> streams in.
+          </li>
+          <li>
+            <strong>Browser PWA users: nothing to do.</strong> This is a
+            desktop-app-only release.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.65</span>
           <span class="release-tagline">Settings dialog widens out on desktop — no more squished two-column.</span>
         </div>

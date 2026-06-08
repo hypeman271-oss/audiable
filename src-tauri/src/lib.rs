@@ -15,7 +15,8 @@
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -203,8 +204,51 @@ async fn check_for_updates<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 // to a real progress UI is a follow-up. The plugin handles
                 // signature verification + NSIS silent-install + restart
                 // on success. On failure we dispatch an error event.
-                if let Err(e) =
-                    update.download_and_install(|_chunk, _total| {}, || {}).await
+                // v0.1.4: pipe download progress to JS so we can render a
+                // banner with a real progress bar. AtomicU64 + a 1%-throttle
+                // keeps us from eval-spamming the WebView on every chunk
+                // (default chunk size is 64KB; a 2.7MB installer is ~43
+                // chunks so even unthrottled would be fine, but principle).
+                let progress_app = app.clone();
+                let finish_app = app.clone();
+                let downloaded = Arc::new(AtomicU64::new(0));
+                // Start last_pct at 101 so the first chunk (0%) does dispatch.
+                let last_pct = Arc::new(AtomicU64::new(101));
+                let downloaded_for_chunk = downloaded.clone();
+                let last_pct_for_chunk = last_pct.clone();
+                if let Err(e) = update
+                    .download_and_install(
+                        move |chunk_length: usize, content_length: Option<u64>| {
+                            let prev = downloaded_for_chunk
+                                .fetch_add(chunk_length as u64, Ordering::SeqCst);
+                            let total_dl = prev + chunk_length as u64;
+                            let content_total = content_length.unwrap_or(0);
+                            let pct = if content_total > 0 {
+                                total_dl * 100 / content_total
+                            } else {
+                                0
+                            };
+                            let prev_pct = last_pct_for_chunk.load(Ordering::SeqCst);
+                            if pct != prev_pct {
+                                last_pct_for_chunk.store(pct, Ordering::SeqCst);
+                                if let Some(win) = progress_app.get_webview_window("main") {
+                                    let js = format!(
+                                        "window.dispatchEvent(new CustomEvent('narrative:update-progress',{{detail:{{downloaded:{},total:{},pct:{}}}}}))",
+                                        total_dl, content_total, pct
+                                    );
+                                    let _ = win.eval(&js);
+                                }
+                            }
+                        },
+                        move || {
+                            if let Some(win) = finish_app.get_webview_window("main") {
+                                let _ = win.eval(
+                                    "window.dispatchEvent(new CustomEvent('narrative:update-installing'))",
+                                );
+                            }
+                        },
+                    )
+                    .await
                 {
                     eprintln!("[narrative] install failed: {}", e);
                     let msg = escape(&e.to_string());

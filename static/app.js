@@ -434,19 +434,71 @@ window.addEventListener("narrative:menu", (e) => {
   }
 });
 
-// v225v4.29 (#707): updater feedback. The Rust side fires these three
-// CustomEvents in response to Help → Check for updates…. Keeping the
-// flow Rust-driven means we never have to ship the Tauri updater JS
+// v225v4.29 (#707): updater feedback. The Rust side fires CustomEvents
+// in response to Help → Check for updates… and the startup poll. Keeping
+// the flow Rust-driven means we never have to ship the Tauri updater JS
 // SDK alongside the bundler-less webview.
+//
+// v0.1.4 (#868): blocking alert("Update available...") replaced with a
+// non-modal top-of-window progress banner that updates in real time as
+// the .exe downloads. The Rust side fires:
+//   - narrative:update-available  → show banner
+//   - narrative:update-progress   → update bar + % text (throttled to 1%)
+//   - narrative:update-installing → swap copy to "Installing — restart…"
+//   - narrative:update-error      → tear banner down + alert the error
+// `update-none` keeps the alert() because that path is only reached via
+// the manual "Check for updates…" menu item, where the user is explicitly
+// expecting a confirmation that they're up to date.
+function _updateBannerEnsure() {
+  let banner = document.getElementById("update-banner");
+  if (banner) return banner;
+  banner = document.createElement("div");
+  banner.id = "update-banner";
+  banner.style.cssText =
+    "position:fixed;top:0;left:0;right:0;background:var(--bg-card,#141a30);" +
+    "color:var(--fg,#e7ecff);padding:10px 16px;z-index:99999;font-size:14px;" +
+    "display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--accent,#7c9cff);" +
+    "box-shadow:0 2px 8px rgba(0,0,0,0.35);font-family:inherit;";
+  banner.innerHTML =
+    '<span id="update-banner-text" style="flex:0 0 auto;font-weight:600">Update available</span>' +
+    '<div style="flex:1;height:6px;background:rgba(255,255,255,0.15);border-radius:3px;overflow:hidden">' +
+    '<div id="update-banner-bar" style="height:100%;background:var(--accent,#7c9cff);width:0%;transition:width 0.25s"></div>' +
+    "</div>" +
+    '<span id="update-banner-pct" style="flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--fg-dim,#97a0c9);min-width:5em;text-align:right">0%</span>';
+  document.body.appendChild(banner);
+  return banner;
+}
 window.addEventListener("narrative:update-available", (e) => {
   const ver = (e && e.detail && e.detail.version) || "(unknown)";
-  try {
-    window.alert(
-      "Update available: v" +
-        ver +
-        "\n\nYour current version stays in place until the new release downloads in the background. You'll be prompted to restart when it's ready."
-    );
-  } catch {}
+  _updateBannerEnsure();
+  const text = document.getElementById("update-banner-text");
+  if (text) text.textContent = "Update v" + ver + " — downloading…";
+});
+window.addEventListener("narrative:update-progress", (e) => {
+  _updateBannerEnsure();
+  const d = (e && e.detail) || {};
+  const pct = d.pct != null ? d.pct : 0;
+  const bar = document.getElementById("update-banner-bar");
+  const pctEl = document.getElementById("update-banner-pct");
+  if (bar) bar.style.width = pct + "%";
+  if (pctEl) {
+    if (d.total) {
+      const dlKB = Math.floor((d.downloaded || 0) / 1024);
+      const totalKB = Math.floor(d.total / 1024);
+      pctEl.textContent = pct + "% · " + dlKB + " / " + totalKB + " KB";
+    } else {
+      pctEl.textContent = pct + "%";
+    }
+  }
+});
+window.addEventListener("narrative:update-installing", () => {
+  _updateBannerEnsure();
+  const text = document.getElementById("update-banner-text");
+  const pctEl = document.getElementById("update-banner-pct");
+  const bar = document.getElementById("update-banner-bar");
+  if (text) text.textContent = "Installing — Narrative will restart…";
+  if (pctEl) pctEl.textContent = "";
+  if (bar) bar.style.width = "100%";
 });
 window.addEventListener("narrative:update-none", () => {
   try {
@@ -455,8 +507,10 @@ window.addEventListener("narrative:update-none", () => {
 });
 window.addEventListener("narrative:update-error", (e) => {
   const msg = (e && e.detail && e.detail.msg) || "Unknown error";
+  const banner = document.getElementById("update-banner");
+  if (banner) banner.remove();
   try {
-    window.alert("Couldn't check for updates.\n\n" + msg);
+    window.alert("Update failed.\n\n" + msg);
   } catch {}
 });
 
