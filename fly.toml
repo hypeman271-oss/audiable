@@ -51,13 +51,24 @@ kill_timeout = "5m"
   processes = ["app"]
 
   [[http_service.checks]]
-    grace_period = "10s"
+    # v4.84 (#845): probe /healthz instead of the static index. /healthz
+    # is unauthenticated (so the secret doesn't matter here either) and
+    # returns 503 when the DB round-trip fails OR the asyncio heartbeat
+    # has been silent for 120s+. That turns a real wedge into a Fly-
+    # initiated machine restart within a couple of check intervals
+    # instead of "the app feels broken, let me ssh in and look at
+    # logs" 10 hours later. Static-index probe (previous behavior)
+    # passed even when the event loop was dead because uvicorn's static
+    # handler runs early in the request lifecycle.
+    grace_period = "30s"
     interval = "30s"
     method = "GET"
-    timeout = "5s"
-    # Hit the static index — `/api/voices` would require X-Narrative-Key
-    # once that secret is set, and Fly's healthcheck can't send it.
-    path = "/"
+    # 3s is comfortable for /healthz's actual cost (one SELECT 1 +
+    # an os.path.getsize). If we ever see false-positive timeouts
+    # under real synth load, raise to 5s. Fly defaults to 3 consecutive
+    # failures before restarting → 90s detection floor for wedges.
+    timeout = "3s"
+    path = "/healthz"
 
 [[vm]]
   # Piper synthesis is CPU-bound + needs ~500-800 MB during inference.

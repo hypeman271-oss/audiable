@@ -243,6 +243,15 @@ import time as _wedge_time
 
 _WEDGE_PROCESS_STARTED_AT = _wedge_time.time()
 _WEDGE_HEARTBEAT_COUNT = 0
+# v4.84 (#845): wall-clock timestamp of the last heartbeat tick. Used by
+# /healthz to detect event-loop wedges — if this hasn't advanced in
+# WEDGE_HEARTBEAT_STALE_SEC the asyncio loop is dead and we return 503
+# so Fly's HTTP check restarts the machine. Seeded to boot time so a
+# cold-started process doesn't false-flag during the grace period before
+# the first 30s tick.
+_WEDGE_LAST_HEARTBEAT_AT = _WEDGE_PROCESS_STARTED_AT
+WEDGE_HEARTBEAT_STALE_SEC = 120
+WEDGE_HEARTBEAT_GRACE_SEC = 120
 _WEDGE_SSE_ACTIVE = 0
 _WEDGE_LAST_WAL_CHECKPOINT_AT = 0.0
 _WEDGE_LAST_WAL_SIZE_BYTES = 0
@@ -307,11 +316,16 @@ async def _schedule_wedge_heartbeat():
     import sys as _sys
 
     async def _loop():
-        global _WEDGE_HEARTBEAT_COUNT
+        global _WEDGE_HEARTBEAT_COUNT, _WEDGE_LAST_HEARTBEAT_AT
         while True:
             try:
                 await asyncio.sleep(30)
                 _WEDGE_HEARTBEAT_COUNT += 1
+                # v4.84 (#845): stamp wall-clock so /healthz can detect
+                # event-loop wedges. Stamped BEFORE the rest of the tick
+                # body so even an exception in the log line doesn't
+                # silently leave us stale.
+                _WEDGE_LAST_HEARTBEAT_AT = _wedge_time.time()
                 uptime = int(_wedge_time.time() - _WEDGE_PROCESS_STARTED_AT)
                 rss_mb = _wedge_get_rss_bytes() // (1024 * 1024)
                 # synth_jobs may not have imported on cold boot; guard.
@@ -397,9 +411,30 @@ def healthz():
     Unauthenticated by design — checks that DON'T require the key tell
     us the box is alive even when the auth path is wedged. The data
     inside is operational telemetry, not user data.
+
+    v4.84 (#845): returns HTTP 503 when the box is genuinely unhealthy
+    so Fly's [[http_service.checks]] can trigger a machine restart. Two
+    states qualify as 503:
+
+      1. db.ok is False — the sqlite round-trip threw or library_db
+         isn't enabled. Either the volume is gone or the connection
+         pool is wedged. Restarting clears both.
+      2. Heartbeat is stale — wall-clock minus _WEDGE_LAST_HEARTBEAT_AT
+         exceeds WEDGE_HEARTBEAT_STALE_SEC. The heartbeat coroutine
+         ticks every 30s; if we haven't ticked in 2 minutes, the
+         asyncio event loop is dead. Process is technically alive (so
+         a port-binding check would pass) but isn't processing
+         requests. Hard restart is the only recovery.
+
+    Grace period of WEDGE_HEARTBEAT_GRACE_SEC after boot so we don't
+    falsely 503 during the first 30s tick window. RSS + WAL + SSE
+    accounting are advisory — they ride along in the body for
+    diagnostics but don't gate the status code.
     """
     import os as _os
-    uptime = int(_wedge_time.time() - _WEDGE_PROCESS_STARTED_AT)
+    now = _wedge_time.time()
+    uptime = int(now - _WEDGE_PROCESS_STARTED_AT)
+
     # Active synth jobs guarded — synth_jobs module may not be
     # importable in some boot states.
     try:
@@ -408,15 +443,25 @@ def healthz():
     except Exception:
         active_jobs = -1
 
-    return {
-        "ok": True,
+    db_ok = _wedge_db_ok()
+    heartbeat_age_sec = now - _WEDGE_LAST_HEARTBEAT_AT
+    heartbeat_stale = (
+        uptime > WEDGE_HEARTBEAT_GRACE_SEC
+        and heartbeat_age_sec > WEDGE_HEARTBEAT_STALE_SEC
+    )
+    healthy = db_ok and not heartbeat_stale
+
+    body = {
+        "ok": healthy,
         "uptime_sec": uptime,
         "heartbeat_count": _WEDGE_HEARTBEAT_COUNT,
+        "heartbeat_age_sec": round(heartbeat_age_sec, 1),
+        "heartbeat_stale": heartbeat_stale,
         "process": {
             "rss_bytes": _wedge_get_rss_bytes(),
         },
         "db": {
-            "ok": _wedge_db_ok(),
+            "ok": db_ok,
             "wal_size_bytes": _wedge_get_wal_size_bytes(),
             "last_checkpoint_at": _WEDGE_LAST_WAL_CHECKPOINT_AT,
         },
@@ -432,6 +477,7 @@ def healthz():
             "app_name": _os.environ.get("FLY_APP_NAME", ""),
         },
     }
+    return JSONResponse(status_code=200 if healthy else 503, content=body)
 
 
 @app.middleware("http")
