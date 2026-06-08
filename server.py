@@ -906,7 +906,7 @@ async def voices_install_stream(req: InstallVoiceRequest):
 #
 # See UPDATES.md at repo root for the full release runbook.
 
-LATEST_DESKTOP_VERSION = "0.1.5"
+LATEST_DESKTOP_VERSION = "0.1.6"
 
 # target → base64 Ed25519 signature (output of `cargo tauri signer sign`).
 # Empty dict means "no signed bundles yet" — endpoint returns 204 for
@@ -937,7 +937,7 @@ LATEST_DESKTOP_VERSION = "0.1.5"
 # Server keys now match what the plugin actually sends. macOS still
 # needs the per-arch bundle naming fix before its sig can be pasted.
 DESKTOP_SIGNATURES: dict[str, str] = {
-    "windows": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akVDNmJrNE93bTEzbXBERDdpbVB4a2dlYUFzaE5qSjdvWitIZHo5dHdnUFlyS1IwKzJrNmU0N2hKek9YVVp0NDZRekV5VzZqdkhuWHJibUptQjRoZ0E0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwODk0NzI3CWZpbGU6TmFycmF0aXZlXzAuMS41X3g2NC1zZXR1cC5leGUKUkRFeVlSdXZxOGRaYU9KNFIxTWNNRGNmdERxeTlKcjhNR1BldFJXWWQwRTh1cjVmL2Fub3dWdmJvNmxWV3NDNGVOdE9neE05RlJ6Q1kyVVdXeTRNQWc9PQo=",
+    "windows": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1aktsUmh3T1h4NUJieVVTeDMyWm50Qzh4UTRLR0c4MGJLb29IaGJwc2xsWWhqalIvZmFvUXNJM0ltamxqVkFSbjIySU8rUTcwb2NRSTY3OWorZDl0THdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwODk4NzgzCWZpbGU6TmFycmF0aXZlXzAuMS42X3g2NC1zZXR1cC5leGUKaVVNM1pTSWxUdWQrNDRxYjZsZGhsTmVQM24yT3U0SUNnY1FVeXJic0RVWHY0RTZjQ3pnS1gyc2ZRc3NGZ2R3aDJoVkpxUzFZcXdJV3RxQnlLa0J5QVE9PQo=",
     # "darwin": "...",  # blocked on per-arch filename fix (both archs overwrite)
     # "linux":  "...",  # add after smoke-test on a Linux install
 }
