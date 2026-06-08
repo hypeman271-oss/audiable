@@ -5029,6 +5029,59 @@ document.addEventListener("keydown", (e) => {
   shortcutsDialog.showModal();
 });
 
+// v4.71 (#871): Spacebar toggles play/pause anywhere on desktop —
+// the YouTube / Spotify / Apple Music convention. Pre-v4.71 the
+// shortcuts dialog said "Space when player has focus" which is the
+// native <audio> behavior — but nobody focuses the audio element,
+// so the shortcut was effectively dead.
+//
+// Guards (order matters — each one must pass through cleanly so we
+// don't break typing or accessibility):
+//   1. Modifier key held → pass through. Ctrl+Space etc. belong to
+//      the OS / IME.
+//   2. Focus on a typing surface (input/textarea/contenteditable) →
+//      pass through. The user is typing a literal space.
+//   3. Focus on an interactive control (button/select/role=button)
+//      → pass through. Space activates buttons natively.
+//   4. Focus inside any modal <dialog> → pass through. Most dialogs
+//      contain forms/buttons; play/pause shouldn't fire underneath.
+//   5. Phone (≤767px viewport) → bail. No physical spacebar in the
+//      normal case; future Bluetooth-keyboard phone users still get
+//      the typing-surface guard above so it doesn't break input.
+//   6. No clip loaded (empty playerEl.src) → bail. Nothing to play.
+//
+// Hits target: focus on the body, hero, reading view, library card
+// area, etc. Toggle is paused → play, otherwise pause. Wraps the
+// play() call in a no-op catch so a quick double-tap doesn't dump
+// an AbortError into the console.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== " " && e.code !== "Space") return;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  const ae = document.activeElement;
+  if (ae) {
+    const tag = ae.tagName;
+    if (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      tag === "SELECT" ||
+      tag === "BUTTON" ||
+      ae.isContentEditable ||
+      ae.getAttribute("role") === "button"
+    ) {
+      return;
+    }
+    if (ae.closest && ae.closest("dialog[open]")) return;
+  }
+  if (window.matchMedia("(max-width: 767px)").matches) return;
+  if (!playerEl || !playerEl.src) return;
+  e.preventDefault();
+  if (playerEl.paused) {
+    playerEl.play().catch(() => {});
+  } else {
+    playerEl.pause();
+  }
+});
+
 // v225et: command palette. Opens on Cmd/Ctrl+K (or the ⌘K hint in the
 // hero icon rail). Builds a flat command list on each open so it
 // reflects current library state, current mode, etc. Items are
