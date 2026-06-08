@@ -1002,20 +1002,35 @@ def check_for_update(target: str, current_version: str):
     if not bundle_template:
         return Response(status_code=204)
     bundle_name = bundle_template.format(ver=LATEST_DESKTOP_VERSION)
+    bundle_url = (
+        f"{DESKTOP_DOWNLOAD_BASE}/"
+        f"v{LATEST_DESKTOP_VERSION}/{bundle_name}"
+    )
+
+    # v4.67 (#867 follow-up): the Tauri 2 updater plugin probes the
+    # manifest's `platforms` object for per-arch + installer-type keys,
+    # NOT the OS-only target it sent in the URL. The plugin's actual
+    # error message (caught 2026-06-08): "None of the fallback platforms
+    # ['windows-x86_64-nsis', 'windows-x86_64'] were found in the response
+    # `platforms` object" — that IS the documented fallback chain.
+    # Populate every key the plugin might probe so we hit on first try.
+    # macOS keys cover both archs from the same template until we
+    # solve the per-arch bundle naming overwrite issue.
+    platform_keys_by_target = {
+        "windows": ["windows-x86_64-nsis", "windows-x86_64"],
+        "darwin":  ["darwin-aarch64", "darwin-x86_64"],
+        "linux":   ["linux-x86_64"],
+    }
+    keys = platform_keys_by_target.get(target, [target])
+    platforms = {
+        k: {"signature": sig, "url": bundle_url} for k in keys
+    }
 
     return JSONResponse({
         "version": LATEST_DESKTOP_VERSION,
         "notes": "See https://narrative-alpha.fly.dev/whats-new.html",
         "pub_date": "2026-06-07T00:00:00Z",
-        "platforms": {
-            target: {
-                "signature": sig,
-                "url": (
-                    f"{DESKTOP_DOWNLOAD_BASE}/"
-                    f"v{LATEST_DESKTOP_VERSION}/{bundle_name}"
-                ),
-            }
-        },
+        "platforms": platforms,
     })
 
 
