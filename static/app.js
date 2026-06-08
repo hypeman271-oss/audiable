@@ -15306,11 +15306,23 @@ function enterReadingView(text, images, highlights, lines) {
       // a recently-past sentence (to annotate it) would yank the
       // playhead and interrupt their listening. The new contract:
       //
-      //   tap currently-playing sentence    → pause
-      //   tap currently-paused sentence     → resume (no seek)
-      //   tap other sentence (1st time)     → select (visual ring)
-      //   tap other sentence (2nd time)     → seek + play
-      //   tap different idle sentence       → replace selection
+      //   tap currently-playing/active sentence → select (visual ring) ← v4.75
+      //   tap other sentence (1st time)         → select (visual ring)
+      //   tap other sentence (2nd time)         → seek + play
+      //   tap different idle sentence           → replace selection
+      //
+      // v4.75 (#877): tap-on-active-sentence used to toggle play/pause
+      // and clear selection. That hijacked the natural "I want to
+      // bookmark the line I'm hearing right now" gesture — the listener
+      // had to pause some other way, then tap the line twice (which
+      // would re-seek to the same position). New contract: any tap on
+      // any sentence is a select, full stop. Bookmark/edit/annotate
+      // can then act on the selection. Pause has its own affordances
+      // — Spacebar/K on desktop (v4.71/v4.72), the Play/Pause chip in
+      // the player card or pull-up on phone. The same-sentence-second-
+      // tap branch below (i === _selectedSentenceIdx) now naturally
+      // handles "tap-tap-active-sentence" too: it'd seek to a position
+      // we're already at, which is a no-op for the playhead.
       //
       // Tag-armed flow is unaffected: the capture-phase annotate
       // listener at the reading-view root already runs first and
@@ -15325,30 +15337,25 @@ function enterReadingView(text, images, highlights, lines) {
       }
       _readingViewUserScrolled = false;
 
-      if (i === activeSentenceIdx) {
-        // This is the sentence the audio is currently at. Toggle
-        // play/pause without moving the playhead.
-        if (playerEl.paused) {
-          playerEl.play().catch(() => {});
-        } else {
-          playerEl.pause();
-        }
-        _clearSelectedSentence();
-        return;
-      }
-
       if (i === _selectedSentenceIdx) {
-        // Second tap on a previously-selected non-current sentence.
-        // Commit the seek and start playing from there.
+        // Second tap on a previously-selected sentence.
+        // Commit the seek and start playing from there. If this is
+        // the active sentence (idx === activeSentenceIdx) the seek
+        // is effectively a no-op — currentTime stays at the same
+        // position — but we still call seekToSentence to keep state
+        // consistent and to handle the streaming-mode case where the
+        // per-sentence WAV may need to (re-)load.
         _clearSelectedSentence();
         seekToSentence(i);
         if (playerEl.paused) playerEl.play().catch(() => {});
         return;
       }
 
-      // First tap on an idle sentence — select only. No seek, no
-      // play state change. The visible ring tells the user that a
-      // second tap on the same sentence will jump there.
+      // First tap — select only. No seek, no play state change.
+      // The visible ring tells the user that a second tap on the
+      // same sentence will jump there. Applies uniformly whether
+      // the tapped sentence is the active (playing) one or any
+      // other.
       _paintSelectedSentence(i);
     });
     // v220-AA: long-press / right-click opens the per-sentence voice
