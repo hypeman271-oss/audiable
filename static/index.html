@@ -1674,7 +1674,7 @@
                      "I'm not on the version I expect" — pair the diagnostic
                      and the fix. Switch key moved to the Account pane. -->
                 <p id="settings-version" class="settings-version">
-                  Narrative <span id="settings-version-tag">v225v4.75</span>
+                  Narrative <span id="settings-version-tag">v225v4.76</span>
                   <button
                     type="button"
                     id="settings-force-update"
@@ -3939,6 +3939,18 @@
               class="clip-edit-gitref-push"
               title="Commit the revised text back to this file on GitHub"
             >⇡ Push to GitHub</button>
+            <!-- v4.76 (#878): companion button for notes-only push.
+                 Writes the full Markdown export (notes + bookmarks +
+                 annotations) to a sibling .notes.md file alongside the
+                 source. E.g. chapters/04.md → chapters/04.notes.md.
+                 Independent of the prose push so the two cycles can
+                 run on their own commit cadence. -->
+            <button
+              id="clip-edit-push-notes-btn"
+              type="button"
+              class="clip-edit-gitref-push"
+              title="Commit notes + bookmarks + annotations as Markdown to a sibling .notes.md file"
+            >📝 Push notes</button>
           </p>
           <!-- v219: voice provenance. Shows which voice + license were
                in effect when this clip was generated. Read-only. Lets

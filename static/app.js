@@ -25277,6 +25277,183 @@ if (_clipEditPushGithubBtn) {
   });
 }
 
+// v4.76 (#878): Push notes to GitHub. Companion to the prose push
+// above. Writes the existing Markdown export (clip.notes + bookmarks
+// + annotations) to a sibling .notes.md file in the same repo/branch.
+//
+// Path strategy: strip the last extension on clip.gitRef.path and
+// append .notes.md. Examples:
+//   chapters/04.md          → chapters/04.notes.md
+//   chapters/04.markdown    → chapters/04.notes.md
+//   chapters/04             → chapters/04.notes.md
+//   chapters/scene.intro.md → chapters/scene.intro.notes.md (only
+//                             the LAST dot is the extension)
+//
+// SHA handling: notes files don't get a SHA on import (they're a
+// derived sibling, not the source). We send expected_sha:"" and the
+// server's v4.76 auto-resolve does a GET to discover whether the
+// file exists yet — if 200, uses that SHA; if 404, creates the file.
+// First push creates, subsequent pushes update. We don't cache the
+// notes SHA client-side because the server resolves on every push,
+// which is the simpler-and-correct model for a side artifact.
+function _deriveNotesPath(srcPath) {
+  if (typeof srcPath !== "string" || !srcPath) return "";
+  const lastSlash = srcPath.lastIndexOf("/");
+  const dir = lastSlash >= 0 ? srcPath.slice(0, lastSlash + 1) : "";
+  const base = lastSlash >= 0 ? srcPath.slice(lastSlash + 1) : srcPath;
+  const lastDot = base.lastIndexOf(".");
+  // Only treat as an extension if the dot isn't the first char
+  // (preserves dotfiles like ".gitignore" if they somehow show up).
+  const stem = lastDot > 0 ? base.slice(0, lastDot) : base;
+  return dir + stem + ".notes.md";
+}
+
+const _clipEditPushNotesBtn = document.getElementById("clip-edit-push-notes-btn");
+if (_clipEditPushNotesBtn) {
+  _clipEditPushNotesBtn.addEventListener("click", async () => {
+    if (_clipEditPushNotesBtn.disabled) return;
+    if (!_editingClipId) return;
+    const clip = await getClip(_editingClipId);
+    if (!clip) {
+      setStatus("Couldn't read that clip.", true);
+      return;
+    }
+    if (!clip.gitRef || !clip.gitRef.repoUrl || !clip.gitRef.path) {
+      setStatus("This clip isn't linked to a GitHub source.", true);
+      return;
+    }
+    const token = getGithubToken();
+    if (!token) {
+      setStatus(
+        "Set a GitHub token in Settings before pushing.",
+        true,
+      );
+      return;
+    }
+
+    // Build the Markdown body using the same exporter the local
+    // download path uses (v225dr/#604). Guards: if there's literally
+    // nothing to write (no clip.notes, no bookmarks, no annotations),
+    // refuse rather than commit an empty stub.
+    const md = (typeof _buildClipNotesMarkdown === "function")
+      ? _buildClipNotesMarkdown(clip)
+      : "";
+    const hasNotes = (clip.notes || "").trim().length > 0;
+    const hasBookmarks = Array.isArray(clip.bookmarks) && clip.bookmarks.length > 0;
+    const hasAnnotations = Array.isArray(clip.annotations)
+      && clip.annotations.some((a) => a && !a.deletedAt);
+    if (!hasNotes && !hasBookmarks && !hasAnnotations) {
+      setStatus(
+        "Nothing to push — this clip has no notes, bookmarks, or annotations yet.",
+        true,
+      );
+      return;
+    }
+    if (!md) {
+      setStatus("Couldn't build the notes markdown.", true);
+      return;
+    }
+
+    const notesPath = _deriveNotesPath(clip.gitRef.path);
+    const branch = clip.gitRef.branch || "main";
+    const defaultMessage = `Notes: ${clip.title || "(untitled)"}`;
+    const previewMessage = window.prompt(
+      `Push notes to GitHub?\n\n` +
+      `  Repo:   ${clip.gitRef.repoUrl}\n` +
+      `  Branch: ${branch}\n` +
+      `  File:   ${notesPath}  ${" ".repeat(0)}(sibling of ${clip.gitRef.path})\n\n` +
+      `Content: notes + bookmarks + annotations as Markdown.\n\n` +
+      `Edit the commit message below, then OK to push.\n` +
+      `Cancel keeps everything local.`,
+      defaultMessage,
+    );
+    if (previewMessage === null) {
+      setStatus("Push cancelled.");
+      return;
+    }
+    const message = previewMessage.trim() || defaultMessage;
+
+    _clipEditPushNotesBtn.disabled = true;
+    const _origLabel = _clipEditPushNotesBtn.textContent;
+    _clipEditPushNotesBtn.textContent = "Pushing…";
+    try {
+      const res = await fetch("/api/github/push-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          github_token: token,
+          repo_url: clip.gitRef.repoUrl,
+          branch,
+          path: notesPath,
+          content: md,
+          message,
+          // Empty SHA → server auto-resolves via GET-then-PUT. First
+          // push to a never-existed path → server creates it.
+          expected_sha: "",
+          host: clip.gitRef.host || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      _dlog("github-push-notes", `result for ${notesPath}`, {
+        httpStatus: res.status,
+        ok: data && data.ok,
+        reason: data && data.reason,
+        commitSha: data && data.commit_sha ? String(data.commit_sha).slice(0, 7) : null,
+      });
+      if (!res.ok || !data || data.ok === false) {
+        const reason = (data && data.reason) || "http_error";
+        if (reason === "stale_sha") {
+          // Notes file was edited on GitHub between the auto-resolve
+          // GET and the PUT — rare but possible. Tell the user to
+          // retry; the next push will re-resolve.
+          setStatus(
+            `Notes file changed on GitHub between probe and push. ` +
+            `Try Push notes again — it'll re-resolve.`,
+            true,
+          );
+        } else if (reason === "not_found") {
+          setStatus(
+            `Branch not found on GitHub: ${branch}. ` +
+            `Check the branch in Edit.`,
+            true,
+          );
+        } else if (reason === "auth") {
+          setStatus(
+            "GitHub rejected the push — token may not have write access. " +
+            "Settings → GitHub → Test token to diagnose.",
+            true,
+          );
+        } else if (reason === "auto_resolve_failed") {
+          setStatus(
+            `Couldn't check whether ${notesPath} exists yet: ` +
+            ((data && data.message) || "GitHub error"),
+            true,
+          );
+        } else if (reason === "network") {
+          setStatus(_withOfflineHint("Network error pushing notes to GitHub."), true);
+        } else {
+          const msg = (data && data.message) || `HTTP ${res.status}`;
+          setStatus(`Notes push failed: ${msg}`, true);
+        }
+        return;
+      }
+      const commitShort = data.commit_sha
+        ? String(data.commit_sha).slice(0, 7)
+        : "(no SHA returned)";
+      setStatus(
+        `Pushed notes for "${clip.title || "clip"}" → ${notesPath} ` +
+        `(commit ${commitShort}).`
+      );
+    } catch (e) {
+      console.warn("[github-push-notes] threw:", e);
+      setStatus(_withOfflineHint(`Notes push failed: ${e.message}`), true);
+    } finally {
+      _clipEditPushNotesBtn.disabled = false;
+      _clipEditPushNotesBtn.textContent = _origLabel;
+    }
+  });
+}
+
 // v225fz3 (#670): "Clear marks…" button in the Edit clip dialog opens
 // the confirm modal scoped to whichever clip the Edit dialog is
 // currently editing. Edit dialog stays open behind the confirm — if

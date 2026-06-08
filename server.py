@@ -1814,7 +1814,15 @@ class GithubPushFileRequest(BaseModel):
     # for the optimistic-concurrency check — if the file has moved
     # since this SHA, the PUT fails with 409 and we surface that to
     # the user as "Pull first."
-    expected_sha: str = Field(..., min_length=1, max_length=64)
+    #
+    # v4.76 (#878): now optional. Empty string triggers auto-resolve:
+    # the server issues a GET first to discover the current SHA, then
+    # PUTs with it (or PUTs without `sha` if the file is a 404 → file
+    # creation). Used by the notes-push path, which doesn't have a SHA
+    # cached for the sibling .notes.md the first time it pushes. The
+    # prose-push path keeps supplying a non-empty SHA so its existing
+    # 409-on-stale semantics are unchanged.
+    expected_sha: str = Field(default="", max_length=64)
     # Optional Enterprise host override — same as other GitHub endpoints.
     host: str | None = Field(default=None, max_length=200)
 
@@ -1844,12 +1852,6 @@ async def github_push_file_endpoint(req: GithubPushFileRequest):
         import urllib.parse
         quoted_path = urllib.parse.quote(req.path, safe="/")
         url = f"{api_base}/repos/{owner}/{repo}/contents/{quoted_path}"
-        body = {
-            "message": req.message,
-            "content": base64.b64encode(req.content.encode("utf-8")).decode("ascii"),
-            "sha": req.expected_sha,
-            "branch": req.branch,
-        }
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -1857,6 +1859,66 @@ async def github_push_file_endpoint(req: GithubPushFileRequest):
             "Authorization": f"Bearer {req.github_token}",
             "Content-Type": "application/json",
         }
+
+        # v4.76 (#878): auto-resolve SHA when the client didn't supply
+        # one. Used by the notes-push path — first push has no cached
+        # SHA, subsequent pushes do. GET the path on the target branch:
+        # if it exists, use its SHA for the PUT; if 404, the file is
+        # new and we PUT without `sha` (GitHub creates it).
+        resolved_sha = req.expected_sha
+        if not resolved_sha:
+            get_url = f"{url}?ref={urllib.parse.quote(req.branch)}"
+            get_req = urllib.request.Request(
+                get_url,
+                method="GET",
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "Narrative/0.1",
+                    "Authorization": f"Bearer {req.github_token}",
+                },
+            )
+            try:
+                with urllib.request.urlopen(get_req, timeout=15) as gresp:
+                    gdata = json.load(gresp)
+                    resolved_sha = (gdata.get("sha") or "")
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    resolved_sha = ""  # file doesn't exist → create
+                else:
+                    try:
+                        err_body = json.load(e)
+                        err_msg = err_body.get("message") or str(e)
+                    except Exception:
+                        err_msg = str(e)
+                    reason = (
+                        "auth" if e.code in (401, 403)
+                        else "auto_resolve_failed"
+                    )
+                    return {
+                        "ok": False,
+                        "status": e.code,
+                        "reason": reason,
+                        "message": f"SHA auto-resolve failed: {err_msg}",
+                    }
+            except urllib.error.URLError as e:
+                return {
+                    "ok": False,
+                    "status": 0,
+                    "reason": "network",
+                    "message": str(e.reason if hasattr(e, "reason") else e),
+                }
+
+        body = {
+            "message": req.message,
+            "content": base64.b64encode(req.content.encode("utf-8")).decode("ascii"),
+            "branch": req.branch,
+        }
+        # Only include `sha` when we have one. GitHub's contract:
+        # PUT with sha → update existing; PUT without sha → create new.
+        # Sending an empty string is rejected with 422.
+        if resolved_sha:
+            body["sha"] = resolved_sha
         r = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),
