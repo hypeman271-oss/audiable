@@ -988,6 +988,11 @@ dialog[open]::backdrop {
 
 /* ---------- Settings dialog ---------- */
 .settings-dialog {
+  /* v4.65 (#854 follow-up): on desktop the v4.63 hybrid layout needs
+     real width for the 170px sidebar + content pane to breathe. The
+     base 440px cap was a phone-era assumption; the @media (min-width: 768px)
+     override below bumps it. Tablet/phone (≤767) keep the narrower
+     440px so the drill-down layout reads as a single column. */
   width: min(440px, calc(100vw - 24px));
   /* Cap height so the dialog can't overflow the viewport. Settings
      has grown — mode picker + theme picker + stats panel + several
@@ -1026,6 +1031,18 @@ dialog[open]::backdrop {
 
 .settings-dialog::backdrop {
   background: var(--scrim);
+}
+
+/* v4.65 (#854 follow-up): desktop width bump. The v4.63 hybrid layout
+   (sidebar + content pane, side-by-side) needs ≥720px to render
+   without text wrapping every 4 words. 768px is the same breakpoint
+   that turns OFF the phone drill-down (see @media max-width: 767px
+   block below) — so this rule kicks in exactly when the side-by-side
+   layout activates. */
+@media (min-width: 768px) {
+  .settings-dialog {
+    width: min(760px, calc(100vw - 64px));
+  }
 }
 
 /* Three-tier mode gating — body gets data-ui-mode = "simple" |
