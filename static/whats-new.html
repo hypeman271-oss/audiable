@@ -143,6 +143,36 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.73</span>
+          <span class="release-tagline">Voice-note ▶ / ↻ / × buttons work in annotate mode; debug-log push surfaces its own failures.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Voice-note buttons stop dying when annotate-mode is on.</strong>
+            The reading-view's annotate-mode capture handler was stealing
+            every click inside a sentence span — including the inline
+            voice-note ▶ play / ↻ retry / × delete buttons that render
+            there. Symptom: in annotate mode you'd tap ▶ play 20× and
+            nothing would play, ↻ wouldn't retranscribe, × wouldn't open
+            the remove sheet. Now those button classes short-circuit
+            the intercept and the button's own handler runs as
+            expected. Diagnosed from a Tauri desktop debug log.
+          </li>
+          <li>
+            <strong>Debug-log push surfaces failures in the log itself.</strong>
+            The fire-and-forget server push was console.warn'ing on
+            failure, which doesn't end up in the debug log the recipient
+            reads — so when a Tauri desktop push silently failed, the
+            user saw "Log pushed" and we saw nothing arrive. Now every
+            phase (start, fetch-throw, non-2xx, ok) writes a
+            <code>[debug-log-push]</code> entry into the log itself.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.72 (desktop)</span>
           <span class="release-tagline">Full YouTube/Spotify keyboard set — Space, J/K/L, arrows for skip + volume.</span>
         </div>
