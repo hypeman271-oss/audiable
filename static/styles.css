@@ -6949,7 +6949,11 @@ button:disabled {
   position: relative;
   border-color: var(--working);
   box-shadow: 0 0 0 1px var(--working) inset;
-  animation: clipSyncingPulse 2.2s ease-in-out infinite;
+  /* v4.89: dropped the box-shadow pulse animation. The pulse was an
+     earlier sync indicator (v225ds/dt era) — now redundant with the
+     bottom-edge progress bar that already carries motion via the
+     comet/determinate fill. Static amber outline reads as "this card
+     is mid-action" without competing animation. */
 }
 .clip.syncing-now::after {
   content: "";
@@ -7020,13 +7024,11 @@ button:disabled {
 .clip.syncing-queued {
   border-color: var(--working-tint-2, var(--working-tint));
 }
-@keyframes clipSyncingPulse {
-  0%, 100% { box-shadow: 0 0 0 1px var(--working) inset; }
-  50%      { box-shadow: 0 0 0 2px var(--working) inset; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .clip.syncing-now { animation: none; }
-}
+/* v4.89: removed @keyframes clipSyncingPulse + its reduced-motion
+   override. The pulsing box-shadow on .clip.syncing-now was a sync
+   indicator from the pre-progress-bar era; with v4.85/86 carrying
+   the active-motion signal at the bottom edge, the inset pulse is
+   redundant. */
 /* v4.88: removed .clip-sync-status entirely (active variant gone in
    v4.87). Both text states have been retired; the bottom-edge progress
    bar handles "syncing now" and the dim amber outline handles

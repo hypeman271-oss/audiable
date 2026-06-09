@@ -143,6 +143,26 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.89</span>
+          <span class="release-tagline">Dropped the outline pulse on syncing cards — the progress bar is the only motion now.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>No more pulse on the syncing outline.</strong> The
+            amber ring around a re-narrating card used to breathe
+            (box-shadow inset 1px ↔ 2px every 2.2s). That was an
+            earlier sync indicator from before the bottom-edge
+            progress bar existed. Now redundant — the bar already
+            carries motion via the comet animation (indeterminate
+            phase) or the filling band (determinate). Outline stays
+            static. One source of motion per card, not two.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.88</span>
           <span class="release-tagline">Also removed the "Queued — N ahead" pill — the dim amber outline alone is the queued cue.</span>
         </div>
