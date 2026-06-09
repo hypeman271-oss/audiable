@@ -1449,6 +1449,41 @@
               <section class="settings-pane" data-cat="playback" hidden>
                 <h3 class="settings-pane-title">Playback</h3>
 
+                <!-- v4.90: pre-synth symbol stripper. Markdown chars like
+                     * and # get read aloud literally otherwise. -->
+                <div
+                  class="settings-row"
+                  data-search="strip symbols markdown asterisk hash underscore tilde backtick synth audio sound clean text pronunciation"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Strip symbols before synth</strong>
+                    <span class="settings-toggle-desc">
+                      Removes the listed characters from text before it goes
+                      to the voice engine, so things like
+                      <code>*emphasis*</code> and <code># Chapter 1</code>
+                      don't get read aloud as "asterisk" or "hash". Reading
+                      view keeps the raw markdown so you still see your
+                      source while revising. Default strips
+                      <code>*#_~`</code> (the markdown set).
+                    </span>
+                  </div>
+                  <div class="settings-toggle-controls">
+                    <label class="switch">
+                      <input id="settings-strip-symbols-on" type="checkbox" />
+                      <span class="slider"></span>
+                    </label>
+                    <input
+                      id="settings-strip-symbols-chars"
+                      type="text"
+                      class="settings-text-input"
+                      placeholder="*#_~`"
+                      maxlength="40"
+                      aria-label="Characters to strip from synth text"
+                      style="margin-top:6px; width:100%; max-width:160px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+                    />
+                  </div>
+                </div>
+
                 <div
                   class="settings-row"
                   data-search="skip interval seconds player playback rewind forward jump"
@@ -1781,7 +1816,7 @@
                      "I'm not on the version I expect" — pair the diagnostic
                      and the fix. Switch key moved to the Account pane. -->
                 <p id="settings-version" class="settings-version">
-                  Narrative <span id="settings-version-tag">v225v4.89</span>
+                  Narrative <span id="settings-version-tag">v225v4.90</span>
                   <button
                     type="button"
                     id="settings-force-update"

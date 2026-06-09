@@ -1943,6 +1943,40 @@ function isAuthorMode() {
   return getUIMode() === "author";
 }
 
+// v4.90: pre-synth symbol stripper. Markdown source (`# Heading`, `*emphasis*`)
+// gets pronounced literally by Piper/Kokoro — the engines read `*` as "asterisk"
+// or garble it as a phoneme. This strips a user-defined set of chars from the
+// text JUST BEFORE it goes to the synth API. Reading view + saved clip text
+// stay untouched (raw markdown still renders), only the audio is clean.
+//
+// Settings (under Playback):
+//   narrativeStripSymbolsOn    boolean  "*#_~`"  default ON
+//   narrativeStripSymbolsChars string   default the markdown-emphasis set
+const _STRIP_SYMBOLS_ON_KEY = "narrativeStripSymbolsOn";
+const _STRIP_SYMBOLS_CHARS_KEY = "narrativeStripSymbolsChars";
+const _STRIP_SYMBOLS_DEFAULT = "*#_~`";
+
+function _stripSymbolsEnabled() {
+  const v = localStorage.getItem(_STRIP_SYMBOLS_ON_KEY);
+  return v === null ? true : v === "1";
+}
+function _stripSymbolsChars() {
+  const v = localStorage.getItem(_STRIP_SYMBOLS_CHARS_KEY);
+  return v === null ? _STRIP_SYMBOLS_DEFAULT : v;
+}
+function _stripSynthChars(text) {
+  if (typeof text !== "string" || !text) return text;
+  if (!_stripSymbolsEnabled()) return text;
+  const chars = _stripSymbolsChars();
+  if (!chars) return text;
+  // Build a regex that matches any of the chars, escaping regex metachars.
+  const esc = chars.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  const re = new RegExp(`[${esc}]`, "g");
+  // Strip, then collapse any whitespace runs the stripping left behind so we
+  // don't send "Chapter  0 :  What" to the engine.
+  return text.replace(re, "").replace(/[ \t]{2,}/g, " ");
+}
+
 // Apply current mode at boot — survives reloads and PWA reinstalls.
 setUIMode(getUIMode());
 
@@ -2636,6 +2670,31 @@ document
     });
   });
 
+// v4.90: pre-synth symbol stripper. Toggle + input write directly to
+// localStorage (no setter helper — _stripSymbolsEnabled / _stripSymbolsChars
+// read fresh on every synth call so changes take effect immediately, no
+// reload). Dialog-open hook below syncs the visible state.
+{
+  const _stripToggleEl = document.getElementById("settings-strip-symbols-on");
+  const _stripCharsEl = document.getElementById("settings-strip-symbols-chars");
+  if (_stripToggleEl) {
+    _stripToggleEl.addEventListener("change", () => {
+      localStorage.setItem(
+        _STRIP_SYMBOLS_ON_KEY,
+        _stripToggleEl.checked ? "1" : "0"
+      );
+    });
+  }
+  if (_stripCharsEl) {
+    _stripCharsEl.addEventListener("input", () => {
+      // Empty string is allowed — equivalent to "off" semantically, but we
+      // keep the toggle as the primary kill-switch so the user can disable
+      // without losing their custom list.
+      localStorage.setItem(_STRIP_SYMBOLS_CHARS_KEY, _stripCharsEl.value);
+    });
+  }
+}
+
 // v223.tn15 (#479): paragraph-pause radios. Off (0) is default —
 // continuous playback. 2/4/6 seconds adds a breath at each paragraph
 // boundary so the listener can process / annotate. Persists in
@@ -3205,6 +3264,14 @@ settingsBtn.addEventListener("click", () => {
     .forEach((r) => {
       r.checked = _esHidden ? r.value === "hide" : r.value === "show";
     });
+  // v4.90: sync the strip-symbols toggle + input from localStorage so the
+  // dialog reflects whatever the user picked last session.
+  {
+    const _stripToggleEl = document.getElementById("settings-strip-symbols-on");
+    const _stripCharsEl = document.getElementById("settings-strip-symbols-chars");
+    if (_stripToggleEl) _stripToggleEl.checked = _stripSymbolsEnabled();
+    if (_stripCharsEl) _stripCharsEl.value = _stripSymbolsChars();
+  }
   // v225fz11.panes (#685): sync pane-visibility radios with the
   // current localStorage state so the dialog reflects whatever the ×
   // / pill / palette last set.
@@ -12076,8 +12143,11 @@ async function generate() {
       if (segs.length > 1) {
         endpoint = "/api/synthesize/segments/stream";
         requestBody = JSON.stringify({
+          // v4.90: strip user-configured symbols (markdown emphasis chars
+          // by default) so Piper/Kokoro don't pronounce literal `*` / `#` /
+          // backticks. Reading view keeps raw text.
           segments: segs.map((s) => ({
-            text: s.text,
+            text: _stripSynthChars(s.text),
             voice_id: s.voiceId,
             speaker_id: s.speakerId,
           })),
@@ -12096,7 +12166,8 @@ async function generate() {
   }
   if (!requestBody) {
     requestBody = JSON.stringify({
-      text,
+      // v4.90: strip configured symbols pre-synth (see _stripSynthChars).
+      text: _stripSynthChars(text),
       voice_id: fallbackVoice,
       rate: Number(rateEl.value),
       volume: Number(volumeEl.value) / 100,
@@ -14271,10 +14342,25 @@ function _advanceChapterQueue() {
 // asyncio task — a dropped client just means the next reconnect
 // replays whatever's buffered + live-streams the rest.
 async function _openSynthJobStream(payload, externalController) {
+  // v4.90: strip configured pre-synth symbols from the payload's text
+  // fields. Done here (not at each caller) so ALL bg-queue paths — manual
+  // generate, per-card 🔄, chapter queue, library re-narrate — pick up the
+  // strip without per-call wiring. Mutates a shallow clone so the caller's
+  // payload (which may be re-used in retry logic) keeps the raw text.
+  const _stripped = { ...payload };
+  if (typeof _stripped.text === "string") {
+    _stripped.text = _stripSynthChars(_stripped.text);
+  }
+  if (Array.isArray(_stripped.segments)) {
+    _stripped.segments = _stripped.segments.map((s) => ({
+      ...s,
+      text: typeof s.text === "string" ? _stripSynthChars(s.text) : s.text,
+    }));
+  }
   const createRes = await fetch("/api/synth/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(_stripped),
     signal: externalController.signal,
   });
   if (!createRes.ok) {

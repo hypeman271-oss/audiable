@@ -143,6 +143,30 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.90</span>
+          <span class="release-tagline">Strip symbols before synth — markdown characters no longer get read aloud as "asterisk" or "hash".</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Strip symbols before synth.</strong> New toggle in
+            Settings → Playback that removes a user-chosen set of
+            characters from text before it goes to the voice engine.
+            Default strips <code>*</code> <code>#</code> <code>_</code>
+            <code>~</code> <code>`</code> — the markdown emphasis set —
+            so <code># Chapter 0</code> and <code>*emphasis*</code>
+            don't get pronounced as the symbols. Reading view keeps the
+            raw markdown so you still see your source while revising;
+            only the audio is cleaned. The character list is editable
+            so you can add or remove whatever bothers you. Default is
+            ON. Applies to foreground Generate AND the bg-queue (per-card
+            🔄 re-narrate, chapter queue, library re-narrate).
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.89</span>
           <span class="release-tagline">Dropped the outline pulse on syncing cards — the progress bar is the only motion now.</span>
         </div>
