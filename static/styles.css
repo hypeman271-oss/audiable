@@ -6918,10 +6918,12 @@ button:disabled {
  * skipped chapter_00." Now:
  *   .clip.syncing-now      → accent border + subtle pulse
  *   .clip.syncing-queued   → muted accent border, no pulse
- *   .clip-sync-status      → "Queued — N ahead" line (v4.87: dropped
- *                            the "Syncing now…" active variant — the
- *                            bottom-edge progress bar carries that
- *                            signal now)
+ *   .clip-sync-status      → REMOVED in v4.88. Was the text pill that
+ *                            showed "Syncing now…" / "Queued — N
+ *                            ahead". Dropped because the bottom-edge
+ *                            progress bar carries the active signal,
+ *                            and the queued outline (.syncing-queued)
+ *                            alone is enough cue without text chrome.
  *   .clip-last-synced      → quiet "Last synced 5 min ago" beneath tags
  */
 /* v225ds: syncing states wear --working (amber) instead of --accent
@@ -7025,22 +7027,10 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .clip.syncing-now { animation: none; }
 }
-.clip-sync-status {
-  display: inline-block;
-  margin-top: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--working-tint);
-  color: var(--fg-dim);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  font-variant-numeric: tabular-nums;
-}
-/* v4.87: removed .clip-sync-status.active — the "Syncing now…"
-   text overlay was redundant with the bottom-edge progress bar and
-   overlapped the swatch on narrow cards. JS no longer applies the
-   .active modifier; the rule is gone to keep stylesheets honest. */
+/* v4.88: removed .clip-sync-status entirely (active variant gone in
+   v4.87). Both text states have been retired; the bottom-edge progress
+   bar handles "syncing now" and the dim amber outline handles
+   "queued". JS no longer renders the element. */
 /* v221.tn9: full-width footer strip across the card's bottom edge.
    Was previously a small inline span tucked inside titleStack — got
    crushed on narrow cards with the full action chip row. Footer

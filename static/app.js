@@ -23385,36 +23385,19 @@ function makeClipCard(clip) {
   // them if anyone wants the detail.
   playBtn.append(swatch, titleStack);
 
-  // v220as: sync status line — appears the moment a clip is enqueued
-  // for a re-narrate via the bg-queue, so users can see WHICH clip is
-  // being processed during a silent sweep.
+  // v220as: sync status line (REMOVED in v4.88).
   //
-  // v4.87: dropped the "Syncing now…" branch. It overlapped the
-  // swatch + "+ Cover" button on narrow cards, and the
-  // .clip.syncing-now::after progress bar (v4.85 height bump,
-  // v4.86 blue color) now carries the active signal cleanly along
-  // the bottom edge of the card. Queued cards still need a label
-  // because they DON'T get the progress bar yet (the bar only
-  // animates on .syncing-now, not .syncing-queued), so without the
-  // "Queued — N ahead" text the user would have no idea their
-  // re-narrate is waiting in line.
-  if (isSyncingQueued) {
-    const syncStatus = document.createElement("span");
-    syncStatus.className = "clip-sync-status";
-    // Find this clip's position in the pending queue.
-    let pos = -1;
-    for (let i = 0; i < _chapterQueue.length; i++) {
-      if (_chapterQueue[i].targetClipId === clip.id) {
-        pos = i;
-        break;
-      }
-    }
-    syncStatus.textContent =
-      pos > 0
-        ? `Queued — ${pos} ahead`
-        : "Queued — next up";
-    titleStack.appendChild(syncStatus);
-  }
+  // History:
+  //   v220as added a .clip-sync-status pill with two states:
+  //     - "Syncing now…" (active) — removed in v4.87 once the bottom-
+  //       edge progress bar (v4.85/v4.86) carried that signal cleanly
+  //     - "Queued — N ahead" (queued) — removed in v4.88 per user
+  //       request; the dim amber .clip.syncing-queued outline alone
+  //       conveys "waiting in queue" without the extra pill chrome
+  //
+  // If queue position info is wanted back in the future, do it as a
+  // numeric badge on the 🔄 chip ("🔄 #3") rather than reviving the
+  // amber text pill that competed for space with the cover swatch.
 
   // If the user added a note, render it as a small italic line below
   // the standard meta. Keeps the card a single tap-target.

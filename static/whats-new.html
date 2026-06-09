@@ -143,6 +143,26 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.88</span>
+          <span class="release-tagline">Also removed the "Queued — N ahead" pill — the dim amber outline alone is the queued cue.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Dropped the "Queued — N ahead" pill too.</strong>
+            v4.87 retired the "Syncing now…" half of the
+            .clip-sync-status element. v4.88 drops the queued half as
+            well — cards waiting in the bg-queue now show only the
+            dim amber outline (no text label). Cleaner cards, no
+            competing chrome around the cover swatch. If queue
+            position info is wanted back, the natural place is a
+            numeric badge on the 🔄 chip (not the amber text pill).
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.87</span>
           <span class="release-tagline">Removed the "Syncing now…" text pill — the progress bar carries the signal now.</span>
         </div>
