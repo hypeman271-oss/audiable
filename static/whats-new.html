@@ -143,6 +143,27 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.85</span>
+          <span class="release-tagline">Re-narrate progress bar — bigger and more visible on the bottom edge of library cards.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>More visible re-narrate bar.</strong> The progress
+            strip that paints along the bottom edge of a card while
+            it's re-narrating was 3 px — thin enough to read as
+            outline overflow from the amber border. Bumped to 7 px
+            with a soft upward glow so it reads as its own thing,
+            not part of the outline. Determinate fill (when sentence
+            events stream from the synth job) and the indeterminate
+            comet animation (during the brief window before the first
+            sentence arrives) both pick up the new height.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.82</span>
           <span class="release-tagline">Foreground synth no longer hangs forever on a stalled server — same split-budget watchdog the bg-queue had.</span>
         </div>
