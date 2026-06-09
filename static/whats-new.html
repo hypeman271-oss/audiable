@@ -143,6 +143,27 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.87</span>
+          <span class="release-tagline">Removed the "Syncing now…" text pill — the progress bar carries the signal now.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Dropped the redundant "Syncing now…" pill.</strong>
+            The amber chip that said "Syncing now…" overlapped the cover
+            swatch and "+ Cover" button on narrow cards, and was an
+            earlier attempt at a progress indicator that's been
+            superseded by the blue bottom-edge bar (v4.85 + v4.86).
+            Removed both the rendering JS and the dead CSS rule. Cards
+            actively re-narrating now show: amber outline + blue
+            progress bar. Cards waiting in the queue still get the
+            "Queued — N ahead" label since they don't have a bar yet.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.86</span>
           <span class="release-tagline">Re-narrate progress bar — now blue, distinct from the amber outline so it can't blend in.</span>
         </div>

@@ -6918,8 +6918,10 @@ button:disabled {
  * skipped chapter_00." Now:
  *   .clip.syncing-now      → accent border + subtle pulse
  *   .clip.syncing-queued   → muted accent border, no pulse
- *   .clip-sync-status      → "Syncing now…" / "Queued — N ahead" line
- *   .clip-sync-status.active → bright accent
+ *   .clip-sync-status      → "Queued — N ahead" line (v4.87: dropped
+ *                            the "Syncing now…" active variant — the
+ *                            bottom-edge progress bar carries that
+ *                            signal now)
  *   .clip-last-synced      → quiet "Last synced 5 min ago" beneath tags
  */
 /* v225ds: syncing states wear --working (amber) instead of --accent
@@ -7035,10 +7037,10 @@ button:disabled {
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
-.clip-sync-status.active {
-  background: var(--working);
-  color: var(--on-accent);
-}
+/* v4.87: removed .clip-sync-status.active — the "Syncing now…"
+   text overlay was redundant with the bottom-edge progress bar and
+   overlapped the swatch on narrow cards. JS no longer applies the
+   .active modifier; the rule is gone to keep stylesheets honest. */
 /* v221.tn9: full-width footer strip across the card's bottom edge.
    Was previously a small inline span tucked inside titleStack — got
    crushed on narrow cards with the full action chip row. Footer

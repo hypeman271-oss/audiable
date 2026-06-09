@@ -23387,37 +23387,32 @@ function makeClipCard(clip) {
 
   // v220as: sync status line — appears the moment a clip is enqueued
   // for a re-narrate via the bg-queue, so users can see WHICH clip is
-  // being processed during a silent sweep. Three states:
-  //   - "Syncing now…" pulses while the bg-worker is actively on this
-  //   - "Queued — N before this" while waiting in the queue
-  //   - hidden otherwise
-  // The number "N before this" comes from _chapterQueue.indexOf, so
-  // the user sees their position move up. Idempotent — re-renders
-  // whenever _bgMarkSyncing / _bgSetSyncingActive fires.
-  if (isSyncingNow || isSyncingQueued) {
+  // being processed during a silent sweep.
+  //
+  // v4.87: dropped the "Syncing now…" branch. It overlapped the
+  // swatch + "+ Cover" button on narrow cards, and the
+  // .clip.syncing-now::after progress bar (v4.85 height bump,
+  // v4.86 blue color) now carries the active signal cleanly along
+  // the bottom edge of the card. Queued cards still need a label
+  // because they DON'T get the progress bar yet (the bar only
+  // animates on .syncing-now, not .syncing-queued), so without the
+  // "Queued — N ahead" text the user would have no idea their
+  // re-narrate is waiting in line.
+  if (isSyncingQueued) {
     const syncStatus = document.createElement("span");
-    syncStatus.className =
-      "clip-sync-status" + (isSyncingNow ? " active" : "");
-    if (isSyncingNow) {
-      const totalText =
-        _bgSynthTotal > 0
-          ? ` — ${_bgSynthSentence}/${_bgSynthTotal} sentences`
-          : "";
-      syncStatus.textContent = `Syncing now…${totalText}`;
-    } else {
-      // Find this clip's position in the pending queue.
-      let pos = -1;
-      for (let i = 0; i < _chapterQueue.length; i++) {
-        if (_chapterQueue[i].targetClipId === clip.id) {
-          pos = i;
-          break;
-        }
+    syncStatus.className = "clip-sync-status";
+    // Find this clip's position in the pending queue.
+    let pos = -1;
+    for (let i = 0; i < _chapterQueue.length; i++) {
+      if (_chapterQueue[i].targetClipId === clip.id) {
+        pos = i;
+        break;
       }
-      syncStatus.textContent =
-        pos > 0
-          ? `Queued — ${pos} ahead`
-          : "Queued — next up";
     }
+    syncStatus.textContent =
+      pos > 0
+        ? `Queued — ${pos} ahead`
+        : "Queued — next up";
     titleStack.appendChild(syncStatus);
   }
 
