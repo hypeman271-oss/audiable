@@ -143,6 +143,26 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.86</span>
+          <span class="release-tagline">Re-narrate progress bar — now blue, distinct from the amber outline so it can't blend in.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Blue progress bar.</strong> The bar was the same
+            amber as the card outline, so even after the v4.85 height
+            bump it visually fused with the border. New
+            <code>--progress</code> design token (blue #7c9cff on
+            dark theme, #4858d9 on light) gives the bar its own
+            distinct color from the amber sync-state outline. The
+            indeterminate comet, determinate fill, and the reduced-
+            motion fallback all pick up the new color.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.85</span>
           <span class="release-tagline">Re-narrate progress bar — bigger and more visible on the bottom edge of library cards.</span>
         </div>

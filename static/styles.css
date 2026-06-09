@@ -99,6 +99,15 @@
   --working-strong: #d97706;
   --working-tint: rgba(245, 165, 36, 0.18);
   --working-tint-2: rgba(245, 165, 36, 0.28);
+
+  /* v4.86: progress color for the bottom-edge bar on syncing cards.
+     Distinct from the amber sync family (--working) so the bar
+     doesn't fuse with the card outline. Set to blue (matches
+     --accent) per visual A/B — note this overlaps the currently-
+     playing accent family, so a synced+playing pair will both show
+     blue. If that ambiguity bites we'll reach for cyan or green. */
+  --progress: #7c9cff;
+  --progress-glow: rgba(124, 156, 255, 0.55);
 }
 
 /* Light theme — cream / warm-white surfaces with deep navy text. Tuned
@@ -148,6 +157,12 @@
   --working-strong: #92400e;
   --working-tint: rgba(180, 83, 9, 0.12);
   --working-tint-2: rgba(180, 83, 9, 0.20);
+
+  /* v4.86: light-theme progress. Same deep blue as --accent so it
+     reads against the cream surface; the dark-theme value would
+     wash out. */
+  --progress: #4858d9;
+  --progress-glow: rgba(72, 88, 217, 0.55);
 }
 
 * {
@@ -6938,23 +6953,24 @@ button:disabled {
   left: 0;
   right: 0;
   bottom: 0;
-  /* v4.85: bumped 3px → 7px and added a soft upward glow. At 3px the
-     bar was visually fused with the amber outline (border-color
-     identical, edge adjacent) and users were missing it entirely. 7px
-     reads as its own band, the upward shadow lifts it off the card
-     edge so it doesn't look like outline overflow. */
+  /* v4.85: bumped 3px → 7px and added a soft upward glow.
+     v4.86: swapped --working (amber) → --progress (cyan). At 3px the
+     bar was buried by the outline; at 7px same-color it still fused
+     with the amber border because they were the same hue. Cyan
+     breaks the visual lock entirely — bar is distinct from both
+     outline (amber sync state) and the playing-state accent (blue). */
   height: 7px;
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--working) 50%,
+    var(--progress) 50%,
     transparent 100%
   );
   background-size: 40% 100%;
   background-repeat: no-repeat;
   background-position: -40% 0;
   animation: clipSyncingProgress 1.6s linear infinite;
-  box-shadow: 0 -2px 6px -1px color-mix(in srgb, var(--working) 55%, transparent);
+  box-shadow: 0 -2px 6px -1px var(--progress-glow);
   pointer-events: none;
 }
 @keyframes clipSyncingProgress {
@@ -6964,9 +6980,10 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .clip.syncing-now::after {
     animation: none;
-    /* Static amber strip so the state is still readable for users
-       who've turned animations off. */
-    background: var(--working);
+    /* v4.86: static cyan strip (was amber) so the state is still
+       readable for users who've turned animations off. Matches the
+       animated variant's color family. */
+    background: var(--progress);
     opacity: 0.6;
   }
 }
@@ -6978,7 +6995,9 @@ button:disabled {
    the fallback for the brief window between "synth started" and
    "first sentence streamed." */
 .clip.syncing-now.has-sync-progress::after {
-  background: var(--working);
+  /* v4.86: determinate fill uses --progress (cyan) so it stays
+     distinct from the amber outline. */
+  background: var(--progress);
   background-size: auto;
   background-position: 0 0;
   animation: none;
