@@ -143,6 +143,43 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.96</span>
+          <span class="release-tagline">Push revisions back to Scrivener — edit a clip imported from a .scriv bundle, hit 📘 Push to Scrivener, pick the original project file, download a patched copy.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Scrivener push-back.</strong> Companion to the
+            GitHub push from v4.60 (#538 Phase 1). Open the ✎ Edit
+            dialog on a Scrivener-sourced clip and you'll see a new
+            "From Scrivener: <em>Project › Manuscript/Part One</em>"
+            pin with a <em>📘 Push to Scrivener</em> button. Click
+            it, point at your original <code>.scriv.zip</code>, and
+            the browser downloads a patched copy with the revised
+            scene text written into the matching BinderItem. Re-open
+            in Scrivener to merge.
+          </li>
+          <li>
+            <strong>One tradeoff to know.</strong> Patched scenes
+            lose RTF formatting (bold/italic/font in <em>those scenes
+            only</em>). The text is exactly what you heard; the
+            untouched scenes round-trip byte-for-byte. We don't keep
+            a copy of your bundle on the server — you re-upload each
+            time, so the master always lives on your disk.
+          </li>
+          <li>
+            <strong>Works on every Scrivener clip.</strong> Single-
+            chapter imports, multi-chapter queues, and background
+            queues all carry the Scrivener pin now, so any saved clip
+            from a <code>.scriv</code> can be pushed back. Existing
+            clips imported before v4.96 won't have the pin; re-import
+            once to attach.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.95</span>
           <span class="release-tagline">Make a book mockup from scratch — no clip required. Open from ⌘K → 📕 Make a book mockup.</span>
         </div>
