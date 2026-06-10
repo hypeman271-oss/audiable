@@ -14401,6 +14401,37 @@ html, body {
   transform: translate3d(0, 0, calc(var(--bm-depth) / -2)) rotateY(180deg);
 }
 
+/* v4.95: cover controls inside the dialog. Upload-image button + a row of
+   color swatches. Either path sets the bm-cover background — image fills
+   the face and hides the title text; color keeps the title visible so the
+   user's writing reads first. */
+.book-mockup-cover-row { display: grid; gap: 8px; }
+.book-mockup-cover-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.book-mockup-swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.book-mockup-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+.book-mockup-swatch:hover { transform: scale(1.08); }
+.book-mockup-swatch.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent);
+}
+
 /* When the clip already has an uploaded cover (clip.cover.blob), drop the
    accent band + audio badge and let the cover image fill the front face.
    The audio badge moves to a corner overlay so the cover art reads first. */

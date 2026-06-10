@@ -482,7 +482,7 @@
                 id="header-version-tag"
                 class="brand-version"
                 title="What's new in this build"
-              >v225v4.94</a>
+              >v225v4.95</a>
             </h1>
             <p class="tagline">Write. Listen. Revise.</p>
           </div>
@@ -4338,6 +4338,76 @@
               autocomplete="off"
               placeholder="You"
             />
+          </div>
+          <!-- v4.95: cover controls. Upload an image (any JPG/PNG) OR
+               pick a color swatch. Either path overrides the clip's
+               original cover (if any) for this share only — doesn't
+               persist back to the clip. -->
+          <div class="book-mockup-cover-row">
+            <label>Cover</label>
+            <div class="book-mockup-cover-actions">
+              <button
+                id="book-mockup-cover-pick"
+                type="button"
+                class="link-btn"
+              >📁 Upload image</button>
+              <input
+                id="book-mockup-cover-input"
+                type="file"
+                accept="image/*"
+                hidden
+              />
+              <button
+                id="book-mockup-cover-clear"
+                type="button"
+                class="link-btn"
+                hidden
+              >✕ Clear cover</button>
+            </div>
+            <div class="book-mockup-swatches" aria-label="Cover color swatches">
+              <button
+                type="button"
+                class="book-mockup-swatch"
+                data-color="#1b2244"
+                style="background:#1b2244"
+                aria-label="Navy"
+              ></button>
+              <button
+                type="button"
+                class="book-mockup-swatch"
+                data-color="#2a1f3d"
+                style="background:#2a1f3d"
+                aria-label="Plum"
+              ></button>
+              <button
+                type="button"
+                class="book-mockup-swatch"
+                data-color="#3d2a1f"
+                style="background:#3d2a1f"
+                aria-label="Cocoa"
+              ></button>
+              <button
+                type="button"
+                class="book-mockup-swatch"
+                data-color="#1f3d2e"
+                style="background:#1f3d2e"
+                aria-label="Forest"
+              ></button>
+              <button
+                type="button"
+                class="book-mockup-swatch"
+                data-color="#4a1e1e"
+                style="background:#4a1e1e"
+                aria-label="Burgundy"
+              ></button>
+              <button
+                type="button"
+                class="book-mockup-swatch"
+                data-color="#0d1117"
+                style="background:#0d1117"
+                aria-label="Charcoal"
+              ></button>
+            </div>
           </div>
         </div>
         <div class="book-mockup-actions">

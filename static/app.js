@@ -5546,6 +5546,18 @@ document.addEventListener("keydown", (e) => {
         },
       });
     }
+    // v4.95: standalone book mockup builder. Always available — no clip
+    // required. Opens the Share Mockup dialog with empty fields so the
+    // user types a title + author and picks a cover image or color, then
+    // downloads the 1080×1080 PNG. The same component renders both the
+    // clip-based share and this from-scratch path.
+    out.push({
+      group: "Actions",
+      icon: "📕",
+      label: "Make a book mockup",
+      key: "act:make-mockup",
+      run: () => { if (typeof openBookMockup === "function") openBookMockup(null); },
+    });
     // Generate is always available — it's the most important action.
     out.push({
       group: "Actions",
@@ -25409,24 +25421,74 @@ const bookMockupTitleDisplay = $("book-mockup-title-display");
 const bookMockupAuthorDisplay = $("book-mockup-author-display");
 const bookMockupCoverFace = $("book-mockup-cover");
 const bookMockupDownload = $("book-mockup-download");
+const bookMockupCoverPick = $("book-mockup-cover-pick");
+const bookMockupCoverInput = $("book-mockup-cover-input");
+const bookMockupCoverClear = $("book-mockup-cover-clear");
 const _BOOK_MOCKUP_AUTHOR_KEY = "narrativeBookMockupAuthor";
+const _BOOK_MOCKUP_DEFAULT_COLOR = "#1b2244";
 let _bookMockupCoverUrl = null;
 let _bookMockupSourceClipId = null;
+// v4.95: standalone-mode state. When openBookMockup is invoked without a
+// clipId, the dialog becomes a free-form mockup builder — user picks a
+// cover image OR a color, types a title and author, downloads the PNG.
+// _bookMockupStandaloneCover is a Blob from the file input. _bookMockupColor
+// is a hex string from a swatch click. Both reset when the dialog closes.
+let _bookMockupStandaloneCover = null;
+let _bookMockupColor = null;
 
 async function openBookMockup(clipId) {
   if (!bookMockupDialog) return;
   const clip = clipId ? await getClip(clipId) : null;
   _bookMockupSourceClipId = clipId || null;
-  const title = (clip && clip.title) ? clip.title : "Your clip";
+  _bookMockupStandaloneCover = null;
+  _bookMockupColor = null;
+  const title = clip && clip.title
+    ? clip.title
+    : (clipId ? "Your clip" : "");
   const savedAuthor = (() => {
     try { return localStorage.getItem(_BOOK_MOCKUP_AUTHOR_KEY) || ""; }
     catch (e) { return ""; }
   })();
-  const author = savedAuthor || "You";
+  const author = savedAuthor || (clipId ? "You" : "");
   bookMockupTitle.value = title;
   bookMockupAuthor.value = author;
-  _paintBookMockupPreview(title, author, clip && clip.cover ? clip.cover : null);
+  _paintBookMockupPreview(
+    title || "Your title",
+    author,
+    clip && clip.cover ? clip.cover : null,
+  );
+  _refreshBookMockupCoverState();
   bookMockupDialog.showModal();
+  if (!clipId) {
+    // Standalone mode — focus the title field so the user can type
+    // immediately. With a clip, the title is pre-filled so we skip.
+    setTimeout(() => { try { bookMockupTitle.focus(); bookMockupTitle.select(); } catch (e) {} }, 50);
+  }
+}
+
+function _refreshBookMockupCoverState() {
+  // Sync the Clear-cover button visibility + swatch active state with the
+  // current cover mode (uploaded image vs picked color vs clip cover).
+  const hasUploadedCover = _bookMockupStandaloneCover instanceof Blob;
+  const hasPickedColor = !!_bookMockupColor;
+  if (bookMockupCoverClear) {
+    bookMockupCoverClear.hidden = !(hasUploadedCover || hasPickedColor);
+  }
+  const swatches = document.querySelectorAll(".book-mockup-swatch");
+  swatches.forEach((s) => {
+    const active = !hasUploadedCover && hasPickedColor && s.dataset.color === _bookMockupColor;
+    s.classList.toggle("active", active);
+  });
+  // Apply the picked color to the cover's CSS var so the live preview
+  // updates. If no color is picked, reset to the stylesheet default.
+  const scene = document.querySelector(".book-mockup-stage .bm-scene");
+  if (scene) {
+    if (hasPickedColor && !hasUploadedCover) {
+      scene.style.setProperty("--bm-cover-bg", _bookMockupColor);
+    } else {
+      scene.style.removeProperty("--bm-cover-bg");
+    }
+  }
 }
 
 function closeBookMockup() {
@@ -25446,8 +25508,14 @@ function _paintBookMockupPreview(title, author, cover) {
     URL.revokeObjectURL(_bookMockupCoverUrl);
     _bookMockupCoverUrl = null;
   }
-  if (cover && cover.blob instanceof Blob) {
-    _bookMockupCoverUrl = URL.createObjectURL(cover.blob);
+  // v4.95: standalone-uploaded cover beats the clip cover. Author can
+  // open Share mockup on a clip with cover X and re-share with cover Y
+  // without renaming the clip.
+  const effectiveCover = _bookMockupStandaloneCover instanceof Blob
+    ? { blob: _bookMockupStandaloneCover }
+    : cover;
+  if (effectiveCover && effectiveCover.blob instanceof Blob) {
+    _bookMockupCoverUrl = URL.createObjectURL(effectiveCover.blob);
     bookMockupCoverFace.style.backgroundImage = `url("${_bookMockupCoverUrl}")`;
     bookMockupCoverFace.dataset.hasArt = "1";
   } else {
@@ -25489,10 +25557,16 @@ async function downloadBookMockupPng() {
   const author = (bookMockupAuthor.value || "").trim();
   try { localStorage.setItem(_BOOK_MOCKUP_AUTHOR_KEY, author); } catch (e) {}
   let coverImg = null;
-  if (_bookMockupSourceClipId) {
+  // v4.95: prefer standalone-uploaded cover. Falls back to clip cover
+  // (when opened from Edit dialog), or null when neither is set — then
+  // the canvas renderer draws the title-on-color fallback.
+  if (_bookMockupStandaloneCover instanceof Blob) {
+    coverImg = await _bookMockupLoadCoverImage({ blob: _bookMockupStandaloneCover });
+  } else if (_bookMockupSourceClipId) {
     const clip = await getClip(_bookMockupSourceClipId);
     if (clip && clip.cover) coverImg = await _bookMockupLoadCoverImage(clip.cover);
   }
+  const fallbackColor = _bookMockupColor || _BOOK_MOCKUP_DEFAULT_COLOR;
   const canvas = document.createElement("canvas");
   const W = 1080, H = 1080;
   canvas.width = W; canvas.height = H;
@@ -25537,7 +25611,7 @@ async function downloadBookMockupPng() {
     ctx.drawImage(coverImg, dx, dy, dw, dh);
     ctx.restore();
   } else {
-    ctx.fillStyle = "#1b2244";
+    ctx.fillStyle = fallbackColor;
     _roundRect(ctx, bookX, bookY, bookW, bookH, 8);
     ctx.fill();
     ctx.shadowColor = "transparent";
@@ -25635,17 +25709,82 @@ if (bookMockupDialog) bookMockupDialog.addEventListener("close", () => {
     _bookMockupCoverUrl = null;
   }
   _bookMockupSourceClipId = null;
+  // v4.95: reset standalone state on close so a fresh open starts clean.
+  _bookMockupStandaloneCover = null;
+  _bookMockupColor = null;
+  if (bookMockupCoverInput) bookMockupCoverInput.value = "";
+});
+
+// v4.95: cover controls — upload image, pick color, clear.
+if (bookMockupCoverPick && bookMockupCoverInput) {
+  bookMockupCoverPick.addEventListener("click", () => bookMockupCoverInput.click());
+}
+if (bookMockupCoverInput) {
+  bookMockupCoverInput.addEventListener("change", () => {
+    const f = bookMockupCoverInput.files && bookMockupCoverInput.files[0];
+    if (!f) return;
+    _bookMockupStandaloneCover = f;
+    _bookMockupColor = null;
+    _paintBookMockupPreview(
+      bookMockupTitle.value || "Your title",
+      bookMockupAuthor.value || "",
+      null,
+    );
+    _refreshBookMockupCoverState();
+  });
+}
+if (bookMockupCoverClear) {
+  bookMockupCoverClear.addEventListener("click", () => {
+    _bookMockupStandaloneCover = null;
+    _bookMockupColor = null;
+    if (bookMockupCoverInput) bookMockupCoverInput.value = "";
+    _paintBookMockupPreview(
+      bookMockupTitle.value || "Your title",
+      bookMockupAuthor.value || "",
+      null,
+    );
+    _refreshBookMockupCoverState();
+    // Re-fetch clip cover if we came from a clip — clearing the standalone
+    // override should fall back to the clip's own cover.
+    if (_bookMockupSourceClipId) {
+      getClip(_bookMockupSourceClipId).then((clip) => {
+        if (clip && clip.cover) {
+          _paintBookMockupPreview(
+            bookMockupTitle.value || "Your title",
+            bookMockupAuthor.value || "",
+            clip.cover,
+          );
+        }
+      });
+    }
+  });
+}
+document.querySelectorAll(".book-mockup-swatch").forEach((sw) => {
+  sw.addEventListener("click", () => {
+    const c = sw.dataset.color;
+    if (!c) return;
+    _bookMockupColor = c;
+    _bookMockupStandaloneCover = null;
+    if (bookMockupCoverInput) bookMockupCoverInput.value = "";
+    _paintBookMockupPreview(
+      bookMockupTitle.value || "Your title",
+      bookMockupAuthor.value || "",
+      null,
+    );
+    _refreshBookMockupCoverState();
+  });
 });
 if (bookMockupTitle) bookMockupTitle.addEventListener("input", () => {
+  const placeholder = _bookMockupSourceClipId ? "Your clip" : "Your title";
   _paintBookMockupPreview(
-    bookMockupTitle.value || "Your clip",
+    bookMockupTitle.value || placeholder,
     bookMockupAuthor.value || "",
     null,
   );
-  if (_bookMockupSourceClipId) {
+  if (_bookMockupSourceClipId && !(_bookMockupStandaloneCover instanceof Blob)) {
     getClip(_bookMockupSourceClipId).then((clip) => {
       if (clip && clip.cover) {
-        _paintBookMockupPreview(bookMockupTitle.value || "Your clip", bookMockupAuthor.value || "", clip.cover);
+        _paintBookMockupPreview(bookMockupTitle.value || placeholder, bookMockupAuthor.value || "", clip.cover);
       }
     });
   }
