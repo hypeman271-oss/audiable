@@ -143,6 +143,28 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.91</span>
+          <span class="release-tagline">Symbol stripping now covers the inline single-sentence edit (✎) path too.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Splice path picks up the strip.</strong> v4.90
+            wired the Settings → Playback symbol stripper into
+            foreground Generate and every bg-queue path, but the
+            inline single-sentence edit (the ✎ Smart Edit) goes
+            through a separate <code>/api/synthesize/splice</code>
+            endpoint and was sending raw text to the engine. Now the
+            splice path strips too. The Phase B route (used when the
+            clip has the per-sentence cache populated) already picked
+            up the strip via v4.90's <code>_openSynthJobStream</code>
+            patch — this commit closes the fallback path.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.90</span>
           <span class="release-tagline">Strip symbols before synth — markdown characters no longer get read aloud as "asterisk" or "hash".</span>
         </div>

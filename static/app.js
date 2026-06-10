@@ -16502,7 +16502,15 @@ async function _commitInlineEdit() {
         typeof clip.speakerId === "number" ? clip.speakerId : null,
       rate: typeof clip.rate === "number" ? clip.rate : null,
       index: idx,
-      text: newText,
+      // v4.91 (#883 follow-up): strip configured symbols pre-synth.
+      // v4.90 covered generate() + bg-queue via _openSynthJobStream, but
+      // the splice path goes straight through multipart POST without
+      // that wrapper. Phase B path below uses _openSynthJobStream
+      // already so it strips automatically — only this fallback needs
+      // the explicit call. clip.text reconstruction below uses raw
+      // newText, so the saved sentence keeps its markdown chars and
+      // the reading view stays unchanged.
+      text: _stripSynthChars(newText),
       sentence_offsets_ms: offsetsMs,
     };
 
