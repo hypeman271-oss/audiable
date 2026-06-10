@@ -983,7 +983,7 @@ LATEST_DESKTOP_VERSION = "0.1.8"
 # Server keys now match what the plugin actually sends. macOS still
 # needs the per-arch bundle naming fix before its sig can be pasted.
 DESKTOP_SIGNATURES: dict[str, str] = {
-    "windows": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akZoWG55TmZyT3RNVmYybmI5TWp5WUxVdGJmbHpqOTNNU0wweDh6Z3BSa2Q1S2VsNm1JdnlrOTlWOE15amc4K3EwNUs4UmhIcEJHaWR2SkRmbUVBRFE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwOTQwOTg4CWZpbGU6TmFycmF0aXZlXzAuMS43X3g2NC1zZXR1cC5leGUKRTNJaGsyZGdrZnFIcFVVeGtPYTVEbVNDa0p6NlErUjV3am80c0pVdUdlN3ZRTmJWR3l5M1JvLzVINW5IT25xN0hwT21MUUFZZkI3MzgyL1BGVnVVRFE9PQo=",
+    "windows": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akUvZVptVnZKaHJ5SitpWGxaUHJFQVdHalN5UEZmTGl4QVJDUGthczhtZWtHL3VURWZlbDlWMHltRkpZN1ZMcm5yL0FjZ2NubnFKLzVDTiswQXdBN2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMDYwMTU1CWZpbGU6TmFycmF0aXZlXzAuMS44X3g2NC1zZXR1cC5leGUKbmtPWFBFVzdTdjBnWklPSDhTeEVJZUxsTVd2bjZlTWtUS0tUZGMva2FmV202UjJhVnlIRlF2TEVPelloVTFIY1lFL3pJbnRNakNseHAvOGV2cnZXREE9PQo=",
     # "darwin": "...",  # blocked on per-arch filename fix (both archs overwrite)
     # "linux":  "...",  # add after smoke-test on a Linux install
 }
