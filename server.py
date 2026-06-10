@@ -952,7 +952,7 @@ async def voices_install_stream(req: InstallVoiceRequest):
 #
 # See UPDATES.md at repo root for the full release runbook.
 
-LATEST_DESKTOP_VERSION = "0.1.7"
+LATEST_DESKTOP_VERSION = "0.1.8"
 
 # target → base64 Ed25519 signature (output of `cargo tauri signer sign`).
 # Empty dict means "no signed bundles yet" — endpoint returns 204 for
