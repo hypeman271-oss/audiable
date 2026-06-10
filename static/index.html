@@ -482,7 +482,7 @@
                 id="header-version-tag"
                 class="brand-version"
                 title="What's new in this build"
-              >v225v4.96</a>
+              >v225v4.99</a>
             </h1>
             <p class="tagline">Write. Listen. Revise.</p>
           </div>
@@ -4318,7 +4318,7 @@
         </div>
         <div class="book-mockup-stage">
           <div class="bm-scene" aria-label="Book mockup preview">
-            <div class="bm-book">
+            <div class="bm-book" id="book-mockup-book">
               <div class="bm-face bm-cover" id="book-mockup-cover">
                 <div class="bm-cover-band"></div>
                 <div class="bm-cover-text">
@@ -4344,6 +4344,51 @@
               <div class="bm-face bm-back"></div>
             </div>
           </div>
+        </div>
+        <!-- v4.99 (#892): rotation controls. Drag the book in the stage above,
+             pick a preset pose, or fine-tune with the sliders. The Download
+             PNG renderer reads the same angle state so the saved image
+             matches whatever you see in the preview. -->
+        <div class="book-mockup-rotate" role="group" aria-label="Rotate mockup">
+          <div class="book-mockup-rotate-presets">
+            <button type="button" data-rot="three-quarter-left" class="active">¾ Left</button>
+            <button type="button" data-rot="three-quarter-right">¾ Right</button>
+            <button type="button" data-rot="front">Front</button>
+            <button type="button" data-rot="side">Side</button>
+            <button type="button" data-rot="top">Top-down</button>
+            <button type="button" data-rot="reset">↺ Reset</button>
+          </div>
+          <div class="book-mockup-rotate-sliders">
+            <label>
+              <span>Y</span>
+              <input
+                id="book-mockup-rot-y"
+                type="range"
+                min="-180"
+                max="180"
+                value="-28"
+                step="1"
+                aria-label="Rotate left/right"
+              />
+              <span class="rot-value" id="book-mockup-rot-y-val">-28°</span>
+            </label>
+            <label>
+              <span>X</span>
+              <input
+                id="book-mockup-rot-x"
+                type="range"
+                min="-90"
+                max="90"
+                value="4"
+                step="1"
+                aria-label="Tilt up/down"
+              />
+              <span class="rot-value" id="book-mockup-rot-x-val">4°</span>
+            </label>
+          </div>
+          <p class="book-mockup-rotate-hint">
+            Drag the book to spin, pick a preset, or use the sliders.
+          </p>
         </div>
         <div class="book-mockup-controls">
           <div>

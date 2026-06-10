@@ -25484,6 +25484,21 @@ let _bookMockupSourceClipId = null;
 // is a hex string from a swatch click. Both reset when the dialog closes.
 let _bookMockupStandaloneCover = null;
 let _bookMockupColor = null;
+// v4.99 (#892): rotation state. Y is left/right spin (degrees, -180..180),
+// X is up/down tilt (-90..90). Defaults match the original CSS pose so the
+// dialog opens looking identical to v4.95. Both the live CSS preview and
+// the canvas PNG renderer read these — single source of truth.
+const _BOOK_MOCKUP_ROT_DEFAULT = { y: -28, x: 4 };
+let _bookMockupRot = { ..._BOOK_MOCKUP_ROT_DEFAULT };
+// Named poses for the preset buttons. Reset matches the default.
+const _BOOK_MOCKUP_POSES = {
+  "three-quarter-left":  { y: -28, x: 4 },
+  "three-quarter-right": { y:  28, x: 4 },
+  "front":               { y:   0, x: 0 },
+  "side":                { y: -88, x: 0 },
+  "top":                 { y:   0, x: 70 },
+  "reset":               { y: -28, x: 4 },
+};
 
 async function openBookMockup(clipId) {
   if (!bookMockupDialog) return;
@@ -25491,6 +25506,10 @@ async function openBookMockup(clipId) {
   _bookMockupSourceClipId = clipId || null;
   _bookMockupStandaloneCover = null;
   _bookMockupColor = null;
+  // v4.99 (#892): reset rotation to default on every open so a fresh
+  // dialog opens looking like v4.95 did.
+  _bookMockupRot = { ..._BOOK_MOCKUP_ROT_DEFAULT };
+  _applyBookMockupRotation();
   const title = clip && clip.title
     ? clip.title
     : (clipId ? "Your clip" : "");
@@ -25549,6 +25568,42 @@ function closeBookMockup() {
   if (bookMockupDialog && bookMockupDialog.open) bookMockupDialog.close();
 }
 
+// v4.99 (#892): push the current rotation state into the live preview's
+// CSS vars and the slider/value-label DOM. Called by every rotation
+// input — sliders, preset buttons, drag. Centralizes the round-trip so
+// no UI control has to know about the others.
+function _applyBookMockupRotation() {
+  const book = document.getElementById("book-mockup-book");
+  if (book) {
+    // v4.99: set both the CSS vars (so the stylesheet's transform: rule
+    // gets the right values for caching / first-paint) AND the inline
+    // transform directly (because some renderers — notably the Playwright
+    // headless Chromium we use for verification — don't re-evaluate var()
+    // inside transform functions after the element first paints).
+    book.style.setProperty("--bm-rot-y", _bookMockupRot.y + "deg");
+    book.style.setProperty("--bm-rot-x", _bookMockupRot.x + "deg");
+    book.style.transform =
+      `rotateY(${_bookMockupRot.y}deg) rotateX(${_bookMockupRot.x}deg)`;
+  }
+  const yEl = document.getElementById("book-mockup-rot-y");
+  const xEl = document.getElementById("book-mockup-rot-x");
+  const yVal = document.getElementById("book-mockup-rot-y-val");
+  const xVal = document.getElementById("book-mockup-rot-x-val");
+  if (yEl && yEl.value !== String(_bookMockupRot.y)) yEl.value = _bookMockupRot.y;
+  if (xEl && xEl.value !== String(_bookMockupRot.x)) xEl.value = _bookMockupRot.x;
+  if (yVal) yVal.textContent = Math.round(_bookMockupRot.y) + "°";
+  if (xVal) xVal.textContent = Math.round(_bookMockupRot.x) + "°";
+  // Drop any preset highlight if the current angles don't match a preset.
+  const presets = document.querySelectorAll(".book-mockup-rotate-presets button[data-rot]");
+  presets.forEach((btn) => {
+    const pose = _BOOK_MOCKUP_POSES[btn.dataset.rot];
+    const matches = pose &&
+      Math.round(pose.y) === Math.round(_bookMockupRot.y) &&
+      Math.round(pose.x) === Math.round(_bookMockupRot.x);
+    btn.classList.toggle("active", !!matches);
+  });
+}
+
 function _paintBookMockupPreview(title, author, cover) {
   if (bookMockupTitleDisplay) bookMockupTitleDisplay.textContent = title;
   if (bookMockupAuthorDisplay) bookMockupAuthorDisplay.textContent = author ? `By ${author}` : "";
@@ -25601,14 +25656,19 @@ function _wrapBookMockupText(ctx, text, maxWidth) {
   return lines;
 }
 
+// v4.99 (#892): 3D book mockup renderer. Replaces the v4.95 flat 2D card
+// so the saved PNG matches the rotated CSS preview at any angle. Renders
+// the book as six face quads (cover, back, spine, fore-edge, top, bottom)
+// projected through Y/X rotation + cheap perspective, painted back-to-
+// front with the camera-facing face-cull check. Each face's content is
+// pre-rendered into an offscreen canvas at the face's native pixel size,
+// then drawn into the projected quad via a two-triangle affine — gives a
+// passable perspective approximation without a homography solver.
 async function downloadBookMockupPng() {
   const title = (bookMockupTitle.value || "Your clip").trim() || "Your clip";
   const author = (bookMockupAuthor.value || "").trim();
   try { localStorage.setItem(_BOOK_MOCKUP_AUTHOR_KEY, author); } catch (e) {}
   let coverImg = null;
-  // v4.95: prefer standalone-uploaded cover. Falls back to clip cover
-  // (when opened from Edit dialog), or null when neither is set — then
-  // the canvas renderer draws the title-on-color fallback.
   if (_bookMockupStandaloneCover instanceof Blob) {
     coverImg = await _bookMockupLoadCoverImage({ blob: _bookMockupStandaloneCover });
   } else if (_bookMockupSourceClipId) {
@@ -25621,106 +25681,129 @@ async function downloadBookMockupPng() {
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  // Backdrop — gradient that echoes the .lp-hero-visual brand frame.
+  // --- 1. Backdrop (unchanged from v4.95) ---
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, "#0b1020");
   bg.addColorStop(1, "#1b2240");
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
-  // Soft accent glow at the bottom — same shape as the landing page.
   const glow = ctx.createRadialGradient(W / 2, H * 1.05, 0, W / 2, H * 1.05, W * 0.65);
   glow.addColorStop(0, "rgba(124, 156, 255, 0.32)");
   glow.addColorStop(1, "rgba(124, 156, 255, 0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
 
-  // Book card — 2:3 paperback proportions, centered, with a soft shadow.
-  const bookW = 520, bookH = 780;
-  const bookX = (W - bookW) / 2, bookY = (H - bookH) / 2 - 40;
+  // --- 2. Pre-render each face's contents at native size ---
+  // Book box: 520×780 (cover), 70 deep. Matches the v4.95 flat size so
+  // the front-on view (0°/0°) looks identical to the old PNG.
+  const FW = 520, FH = 780, FD = 70;
+  const coverFace = _buildBookMockupFace(FW, FH, coverImg, fallbackColor, title, author);
+  const backFace  = _buildBookMockupBackFace(FW, FH);
+  const spineFace = _buildBookMockupSpineFace(FD, FH, fallbackColor, title);
+  const edgeH     = _buildBookMockupEdgeFace(FD, FH);  // right fore-edge (vertical stripes)
+  const edgeV     = _buildBookMockupEdgeFace(FW, FD);  // top/bottom (horizontal stripes)
+
+  // --- 3. Define box corners in book-local space (origin at center) ---
+  const hw = FW / 2, hh = FH / 2, hd = FD / 2;
+  const corners = [
+    { x: -hw, y: -hh, z:  hd }, // 0 front TL
+    { x:  hw, y: -hh, z:  hd }, // 1 front TR
+    { x:  hw, y:  hh, z:  hd }, // 2 front BR
+    { x: -hw, y:  hh, z:  hd }, // 3 front BL
+    { x: -hw, y: -hh, z: -hd }, // 4 back TL
+    { x:  hw, y: -hh, z: -hd }, // 5 back TR
+    { x:  hw, y:  hh, z: -hd }, // 6 back BR
+    { x: -hw, y:  hh, z: -hd }, // 7 back BL
+  ];
+
+  // Six faces. Each names: corner indices in winding order TL→TR→BR→BL
+  // (as seen from outside the box), source canvas to drape over the quad,
+  // and source UV size (matches source canvas dimensions).
+  const faces = [
+    { name: "cover",  idx: [0, 1, 2, 3], src: coverFace, sw: FW, sh: FH },
+    { name: "back",   idx: [5, 4, 7, 6], src: backFace,  sw: FW, sh: FH },
+    { name: "spine",  idx: [4, 0, 3, 7], src: spineFace, sw: FD, sh: FH },
+    { name: "right",  idx: [1, 5, 6, 2], src: edgeH,     sw: FD, sh: FH },
+    { name: "top",    idx: [4, 5, 1, 0], src: edgeV,     sw: FW, sh: FD },
+    { name: "bottom", idx: [3, 2, 6, 7], src: edgeV,     sw: FW, sh: FD },
+  ];
+
+  // --- 4. Rotate corners by Y then X (matches CSS rotateY().rotateX()) ---
+  const ry = (_bookMockupRot.y || 0) * Math.PI / 180;
+  const rxa = (_bookMockupRot.x || 0) * Math.PI / 180;
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cxa = Math.cos(rxa), sxa = Math.sin(rxa);
+  const rotated = corners.map((p) => {
+    // Y-rotation
+    let x = p.x * cy + p.z * sy;
+    let z = -p.x * sy + p.z * cy;
+    let y = p.y;
+    // X-rotation
+    const yr = y * cxa - z * sxa;
+    const zr = y * sxa + z * cxa;
+    return { x, y: yr, z: zr };
+  });
+
+  // --- 5. Project to 2D with cheap perspective ---
+  // Focal length controls how dramatic the foreshortening is. Larger =
+  // flatter (closer to ortho); smaller = more perspective. 1500 matches
+  // the CSS `perspective: 1500px` in styles.css so projected angles agree.
+  const focal = 1500;
+  const cx2D = W / 2;
+  const cy2D = H / 2 - 40; // shift up a bit to leave room for the wordmark
+  const projected = rotated.map((p) => {
+    const f = focal / (focal - p.z);
+    return { x: cx2D + p.x * f, y: cy2D + p.y * f, z: p.z };
+  });
+
+  // --- 6. Drop shadow under the lowest projected point ---
+  const projY = projected.map((p) => p.y);
+  const projX = projected.map((p) => p.x);
+  const lowY = Math.max(...projY);
+  const midX = (Math.min(...projX) + Math.max(...projX)) / 2;
+  const shadowW = (Math.max(...projX) - Math.min(...projX)) * 0.85;
   ctx.save();
-  ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
-  ctx.shadowBlur = 60;
-  ctx.shadowOffsetY = 30;
-  if (coverImg) {
-    ctx.fillStyle = "#1b2244";
-    _roundRect(ctx, bookX, bookY, bookW, bookH, 8);
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    ctx.save();
-    _roundRect(ctx, bookX, bookY, bookW, bookH, 8);
-    ctx.clip();
-    const ar = coverImg.width / coverImg.height;
-    const targetAr = bookW / bookH;
-    let dw, dh, dx, dy;
-    if (ar > targetAr) {
-      dh = bookH; dw = dh * ar; dx = bookX - (dw - bookW) / 2; dy = bookY;
-    } else {
-      dw = bookW; dh = dw / ar; dx = bookX; dy = bookY - (dh - bookH) / 2;
-    }
-    ctx.drawImage(coverImg, dx, dy, dw, dh);
-    ctx.restore();
-  } else {
-    ctx.fillStyle = fallbackColor;
-    _roundRect(ctx, bookX, bookY, bookW, bookH, 8);
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    // Accent band near top.
-    ctx.fillStyle = "#7c9cff";
-    _roundRect(ctx, bookX + 60, bookY + 70, bookW * 0.42, 12, 6);
-    ctx.fill();
-    // Title — serif, large, bottom-anchored.
-    ctx.fillStyle = "#e7ecff";
-    ctx.font = "700 56px Georgia, 'Iowan Old Style', serif";
-    ctx.textBaseline = "top";
-    const titleMaxW = bookW - 100;
-    const titleLines = _wrapBookMockupText(ctx, title, titleMaxW);
-    const lineH = 64;
-    const titleBlockH = titleLines.length * lineH;
-    let titleY = bookY + bookH - 200 - titleBlockH;
-    for (const line of titleLines) {
-      ctx.fillText(line, bookX + 50, titleY);
-      titleY += lineH;
-    }
-    // Author — small caps style.
-    if (author) {
-      ctx.fillStyle = "rgba(231, 236, 255, 0.65)";
-      ctx.font = "600 20px -apple-system, 'Segoe UI', Roboto, sans-serif";
-      ctx.fillText(author.toUpperCase(), bookX + 50, bookY + bookH - 170);
-    }
-  }
+  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.filter = "blur(28px)";
+  ctx.beginPath();
+  ctx.ellipse(midX, lowY + 36, shadowW / 2, 22, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 
-  // Audiobook badge (overlay near the bottom of the cover).
-  const badgeX = bookX + 50, badgeY = bookY + bookH - 100, badgeH = 44;
-  const badgeText = "AUDIOBOOK";
-  ctx.font = "600 16px -apple-system, 'Segoe UI', Roboto, sans-serif";
-  const badgeTextW = ctx.measureText(badgeText).width;
-  const badgeW = badgeTextW + 90;
-  ctx.fillStyle = "rgba(11, 16, 32, 0.78)";
-  _roundRect(ctx, badgeX, badgeY, badgeW, badgeH, badgeH / 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  ctx.fillStyle = "#7c9cff";
-  const barXs = [0, 8, 16, 24, 32, 40];
-  const barHs = [12, 22, 8, 18, 6, 20];
-  for (let i = 0; i < barXs.length; i++) {
-    const x = badgeX + 16 + barXs[i];
-    const h = barHs[i];
-    const y = badgeY + (badgeH - h) / 2;
-    _roundRect(ctx, x, y, 3, h, 1.5);
-    ctx.fill();
+  // --- 7. Face visibility + depth sort ---
+  // A face is visible when its outward normal points at the camera (which
+  // sits on +z looking toward origin). Normal computed as edge0 × edge1
+  // of the rotated quad; sign of the resulting z component tells us
+  // whether the face is front-facing.
+  const visible = [];
+  for (const face of faces) {
+    const [i0, i1, i2, i3] = face.idx;
+    const p0 = rotated[i0], p1 = rotated[i1], p2 = rotated[i2];
+    const ex = p1.x - p0.x, ey = p1.y - p0.y;
+    const fx = p2.x - p0.x, fy = p2.y - p0.y;
+    const nz = ex * fy - ey * fx;
+    if (nz < 0) {
+      const avgZ = (rotated[i0].z + rotated[i1].z + rotated[i2].z + rotated[i3].z) / 4;
+      visible.push({ face, avgZ });
+    }
   }
-  ctx.fillStyle = "#e7ecff";
-  ctx.textBaseline = "middle";
-  ctx.fillText(badgeText, badgeX + 68, badgeY + badgeH / 2);
+  // Far → near so closer faces paint over farther ones.
+  visible.sort((a, b) => a.avgZ - b.avgZ);
 
-  // Footer — "Made with Narrative" wordmark.
+  // --- 8. Paint each visible face ---
+  for (const { face } of visible) {
+    const [i0, i1, i2, i3] = face.idx;
+    _drawTexturedQuad(
+      ctx, face.src, face.sw, face.sh,
+      projected[i0], projected[i1], projected[i2], projected[i3],
+    );
+  }
+
+  // --- 9. Footer wordmark (unchanged) ---
   ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "center";
   ctx.fillStyle = "rgba(231, 236, 255, 0.55)";
   ctx.font = "600 22px -apple-system, 'Segoe UI', Roboto, sans-serif";
-  ctx.textAlign = "center";
   ctx.fillText("Made with Narrative", W / 2, H - 70);
   ctx.fillStyle = "rgba(231, 236, 255, 0.32)";
   ctx.font = "400 16px -apple-system, 'Segoe UI', Roboto, sans-serif";
@@ -25738,6 +25821,197 @@ async function downloadBookMockupPng() {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, "image/png", 0.95);
+}
+
+// --- 3D helpers (#892) ---
+
+// Build a face canvas containing the front cover artwork — either the
+// user's cover image (cover-fit, no title overlay) or the title-on-color
+// fallback. Always includes the AUDIOBOOK badge near the bottom.
+function _buildBookMockupFace(width, height, coverImg, fallbackColor, title, author) {
+  const c = document.createElement("canvas");
+  c.width = width; c.height = height;
+  const cx = c.getContext("2d");
+  if (coverImg) {
+    cx.fillStyle = "#1b2244";
+    cx.fillRect(0, 0, width, height);
+    const ar = coverImg.width / coverImg.height;
+    const targetAr = width / height;
+    let dw, dh, dx, dy;
+    if (ar > targetAr) {
+      dh = height; dw = dh * ar; dx = -(dw - width) / 2; dy = 0;
+    } else {
+      dw = width; dh = dw / ar; dx = 0; dy = -(dh - height) / 2;
+    }
+    cx.drawImage(coverImg, dx, dy, dw, dh);
+  } else {
+    cx.fillStyle = fallbackColor;
+    cx.fillRect(0, 0, width, height);
+    cx.fillStyle = "#7c9cff";
+    _roundRect(cx, 60, 70, width * 0.42, 12, 6);
+    cx.fill();
+    cx.fillStyle = "#e7ecff";
+    cx.font = "700 56px Georgia, 'Iowan Old Style', serif";
+    cx.textBaseline = "top";
+    const titleMaxW = width - 100;
+    const titleLines = _wrapBookMockupText(cx, title, titleMaxW);
+    const lineH = 64;
+    const titleBlockH = titleLines.length * lineH;
+    let titleY = height - 200 - titleBlockH;
+    for (const line of titleLines) {
+      cx.fillText(line, 50, titleY);
+      titleY += lineH;
+    }
+    if (author) {
+      cx.fillStyle = "rgba(231, 236, 255, 0.65)";
+      cx.font = "600 20px -apple-system, 'Segoe UI', Roboto, sans-serif";
+      cx.fillText(author.toUpperCase(), 50, height - 170);
+    }
+  }
+  // AUDIOBOOK badge — overlay always, so the brand mark stays visible
+  // even on an image cover. Matches the v4.95 layout.
+  const badgeX = 50, badgeY = height - 100, badgeH = 44;
+  cx.font = "600 16px -apple-system, 'Segoe UI', Roboto, sans-serif";
+  const badgeTextW = cx.measureText("AUDIOBOOK").width;
+  const badgeW = badgeTextW + 90;
+  cx.fillStyle = "rgba(11, 16, 32, 0.78)";
+  _roundRect(cx, badgeX, badgeY, badgeW, badgeH, badgeH / 2);
+  cx.fill();
+  cx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+  cx.lineWidth = 1;
+  cx.stroke();
+  cx.fillStyle = "#7c9cff";
+  const barXs = [0, 8, 16, 24, 32, 40];
+  const barHs = [12, 22, 8, 18, 6, 20];
+  for (let i = 0; i < barXs.length; i++) {
+    const x = badgeX + 16 + barXs[i];
+    const h = barHs[i];
+    const y = badgeY + (badgeH - h) / 2;
+    _roundRect(cx, x, y, 3, h, 1.5);
+    cx.fill();
+  }
+  cx.fillStyle = "#e7ecff";
+  cx.textBaseline = "middle";
+  cx.fillText("AUDIOBOOK", badgeX + 68, badgeY + badgeH / 2);
+  return c;
+}
+
+function _buildBookMockupBackFace(width, height) {
+  const c = document.createElement("canvas");
+  c.width = width; c.height = height;
+  const cx = c.getContext("2d");
+  cx.fillStyle = "#0e1430";
+  cx.fillRect(0, 0, width, height);
+  return c;
+}
+
+// Spine: dark gradient with the title set vertically (rotated 90°). Width
+// param is the book's depth dimension; height is the cover height.
+function _buildBookMockupSpineFace(width, height, coverColor, title) {
+  const c = document.createElement("canvas");
+  c.width = width; c.height = height;
+  const cx = c.getContext("2d");
+  const grad = cx.createLinearGradient(0, 0, width, 0);
+  grad.addColorStop(0, "#0e1430");
+  grad.addColorStop(0.5, coverColor);
+  grad.addColorStop(1, "#0e1430");
+  cx.fillStyle = grad;
+  cx.fillRect(0, 0, width, height);
+  // Title text running down the spine — rotated 90° clockwise so it reads
+  // bottom-up. Only render if spine is wide enough for a legible row.
+  if (width >= 36 && title) {
+    cx.save();
+    cx.translate(width / 2, height / 2);
+    cx.rotate(-Math.PI / 2);
+    cx.fillStyle = "rgba(231, 236, 255, 0.85)";
+    cx.font = "600 22px Georgia, 'Iowan Old Style', serif";
+    cx.textBaseline = "middle";
+    cx.textAlign = "center";
+    const maxLen = height - 40;
+    let s = title;
+    while (cx.measureText(s).width > maxLen && s.length > 4) s = s.slice(0, -1);
+    if (s !== title) s = s.slice(0, -1) + "…";
+    cx.fillText(s, 0, 0);
+    cx.restore();
+  }
+  return c;
+}
+
+// Page edge: cream paper with closely-spaced ruled lines. Used for the
+// top / bottom / fore-edge faces. Direction parameter inferred from
+// aspect ratio — long axis gets the line direction.
+function _buildBookMockupEdgeFace(width, height) {
+  const c = document.createElement("canvas");
+  c.width = width; c.height = height;
+  const cx = c.getContext("2d");
+  cx.fillStyle = "#f4ecd8";
+  cx.fillRect(0, 0, width, height);
+  cx.strokeStyle = "#d8cfb8";
+  cx.lineWidth = 1;
+  // Rule lines run along the longer axis to mimic a stack of pages.
+  if (height >= width) {
+    for (let y = 1; y < height; y += 2) {
+      cx.beginPath();
+      cx.moveTo(0, y);
+      cx.lineTo(width, y);
+      cx.stroke();
+    }
+  } else {
+    for (let x = 1; x < width; x += 2) {
+      cx.beginPath();
+      cx.moveTo(x, 0);
+      cx.lineTo(x, height);
+      cx.stroke();
+    }
+  }
+  return c;
+}
+
+// Draw a textured quad by splitting it into two triangles and applying
+// a per-triangle affine transform. Not a true perspective homography,
+// but for the moderate rotations a book mockup uses (no extreme
+// fisheye angles), this looks correct enough that a casual viewer
+// can't tell the difference from a real 3D render. Source corners
+// (TL, TR, BR, BL) map to dest corners (p0, p1, p2, p3).
+function _drawTexturedQuad(ctx, src, sw, sh, p0, p1, p2, p3) {
+  // Triangle A: source (0,0)-(sw,0)-(sw,sh) → dest (p0, p1, p2)
+  _drawTriangleImage(ctx, src, 0, 0, sw, 0, sw, sh, p0, p1, p2);
+  // Triangle B: source (0,0)-(sw,sh)-(0,sh) → dest (p0, p2, p3)
+  _drawTriangleImage(ctx, src, 0, 0, sw, sh, 0, sh, p0, p2, p3);
+}
+
+function _drawTriangleImage(ctx, src, sx0, sy0, sx1, sy1, sx2, sy2, p0, p1, p2) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(p0.x, p0.y);
+  ctx.lineTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.closePath();
+  ctx.clip();
+  const m = _solveAffine(sx0, sy0, sx1, sy1, sx2, sy2, p0, p1, p2);
+  if (m) {
+    ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
+    ctx.drawImage(src, 0, 0);
+  }
+  ctx.restore();
+}
+
+// Solve for the affine transform that maps (sx0,sy0), (sx1,sy1), (sx2,sy2)
+// to (p0, p1, p2). Returns null when the source triangle is degenerate.
+// Affine matrix in canvas form is [a c e; b d f] meaning
+//   dest.x = a*src.x + c*src.y + e
+//   dest.y = b*src.x + d*src.y + f
+function _solveAffine(sx0, sy0, sx1, sy1, sx2, sy2, p0, p1, p2) {
+  const det = (sx1 - sx0) * (sy2 - sy0) - (sx2 - sx0) * (sy1 - sy0);
+  if (Math.abs(det) < 1e-9) return null;
+  const invDet = 1 / det;
+  const a = ((p1.x - p0.x) * (sy2 - sy0) - (p2.x - p0.x) * (sy1 - sy0)) * invDet;
+  const c = ((p2.x - p0.x) * (sx1 - sx0) - (p1.x - p0.x) * (sx2 - sx0)) * invDet;
+  const e = p0.x - a * sx0 - c * sy0;
+  const b = ((p1.y - p0.y) * (sy2 - sy0) - (p2.y - p0.y) * (sy1 - sy0)) * invDet;
+  const d = ((p2.y - p0.y) * (sx1 - sx0) - (p1.y - p0.y) * (sx2 - sx0)) * invDet;
+  const f = p0.y - b * sx0 - d * sy0;
+  return { a, b, c, d, e, f };
 }
 
 function _roundRect(ctx, x, y, w, h, r) {
@@ -25842,6 +26116,70 @@ if (bookMockupAuthor) bookMockupAuthor.addEventListener("input", () => {
   const display = bookMockupAuthorDisplay;
   if (display) display.textContent = bookMockupAuthor.value ? `By ${bookMockupAuthor.value}` : "";
 });
+// v4.99 (#892): rotation control wiring. Sliders push their value into
+// _bookMockupRot; preset buttons jump to a named pose; pointer drag on
+// the book spins both axes. All paths call _applyBookMockupRotation()
+// which updates the CSS vars + slider labels + preset highlight in lock-
+// step. The PNG renderer reads _bookMockupRot at click-time so saved
+// images always match the live preview.
+const _rotYInput = document.getElementById("book-mockup-rot-y");
+const _rotXInput = document.getElementById("book-mockup-rot-x");
+if (_rotYInput) {
+  _rotYInput.addEventListener("input", () => {
+    _bookMockupRot.y = parseFloat(_rotYInput.value) || 0;
+    _applyBookMockupRotation();
+  });
+}
+if (_rotXInput) {
+  _rotXInput.addEventListener("input", () => {
+    _bookMockupRot.x = parseFloat(_rotXInput.value) || 0;
+    _applyBookMockupRotation();
+  });
+}
+document.querySelectorAll(".book-mockup-rotate-presets button[data-rot]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const pose = _BOOK_MOCKUP_POSES[btn.dataset.rot];
+    if (!pose) return;
+    _bookMockupRot = { ...pose };
+    _applyBookMockupRotation();
+  });
+});
+// Drag-to-spin on the live book. Works with mouse + touch + pen via
+// Pointer Events. 1px of horizontal drag = 0.6° of Y rotation; 1px
+// vertical = 0.6° of X tilt. Clamped to slider ranges so user can't
+// drag the book into nonsense.
+(function _wireBookMockupDrag() {
+  const book = document.getElementById("book-mockup-book");
+  if (!book) return;
+  let dragging = false;
+  let startX = 0, startY = 0, startRotY = 0, startRotX = 0;
+  book.addEventListener("pointerdown", (e) => {
+    if (!bookMockupDialog || !bookMockupDialog.open) return;
+    dragging = true;
+    startX = e.clientX; startY = e.clientY;
+    startRotY = _bookMockupRot.y; startRotX = _bookMockupRot.x;
+    book.classList.add("is-dragging");
+    try { book.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+  });
+  book.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    _bookMockupRot.y = Math.max(-180, Math.min(180, startRotY + dx * 0.6));
+    _bookMockupRot.x = Math.max(-90,  Math.min(90,  startRotX - dy * 0.6));
+    _applyBookMockupRotation();
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    book.classList.remove("is-dragging");
+    try { book.releasePointerCapture(e.pointerId); } catch (err) {}
+  };
+  book.addEventListener("pointerup", end);
+  book.addEventListener("pointercancel", end);
+})();
+
 if (bookMockupDownload) bookMockupDownload.addEventListener("click", () => {
   downloadBookMockupPng().catch((err) => {
     console.warn("[book-mockup] download failed:", err);

@@ -14289,7 +14289,18 @@ html, body {
   width: var(--bm-cover-w);
   height: var(--bm-cover-h);
   transform-style: preserve-3d;
-  transform: rotateY(-28deg) rotateX(4deg);
+  /* v4.99 (#892): rotation bound to CSS vars so the JS controls (drag,
+     sliders, presets) can spin the book. Defaults match the original
+     ¾-Left pose so the dialog opens looking unchanged. No transition —
+     drag wants instant feedback, and presets snap. (Transitioning here
+     caused interpolated values to compete with new JS-set targets in
+     some renderers, leaving the book frozen mid-flight.) */
+  transform: rotateY(var(--bm-rot-y, -28deg)) rotateX(var(--bm-rot-x, 4deg));
+  touch-action: none;
+  cursor: grab;
+}
+.book-mockup-stage .bm-book.is-dragging {
+  cursor: grabbing;
 }
 .book-mockup-stage .bm-book::after {
   content: "";
@@ -14399,6 +14410,73 @@ html, body {
   background: #0e1430;
   border-radius: 4px 2px 2px 4px;
   transform: translate3d(0, 0, calc(var(--bm-depth) / -2)) rotateY(180deg);
+}
+
+/* v4.99 (#892): rotate controls. Sits between the 3D stage and the title
+   inputs. Presets jump to common poses; sliders give precise angle control;
+   drag-on-the-book is wired in JS. The PNG renderer reads the same angle
+   state so the downloaded image matches the live preview at any rotation. */
+.book-mockup-rotate {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-card) 60%, transparent);
+}
+.book-mockup-rotate-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.book-mockup-rotate-presets button {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.book-mockup-rotate-presets button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
+}
+.book-mockup-rotate-presets button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.book-mockup-rotate-sliders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.book-mockup-rotate-sliders label {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.book-mockup-rotate-sliders input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.book-mockup-rotate-sliders .rot-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: right;
+  color: var(--fg);
+}
+.book-mockup-rotate-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+@media (max-width: 480px) {
+  .book-mockup-rotate-sliders { grid-template-columns: 1fr; }
 }
 
 /* v4.95: cover controls inside the dialog. Upload-image button + a row of
