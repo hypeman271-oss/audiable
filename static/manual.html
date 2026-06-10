@@ -1666,6 +1666,7 @@
           <li><a href="#library">The library</a>
             <ul>
               <li><a href="#clear-marks">Clear revision marks</a></li>
+              <li><a href="#share-mockup">Share book mockup</a></li>
             </ul>
           </li>
           <li><a href="#settings">Settings &amp; modes</a></li>
@@ -3655,6 +3656,56 @@ title: Spaced
         cleanly, as long as the
         <code>&lt;!--NARRATIVE_BACKUP v1 …--&gt;</code> block at
         the end is intact.
+      </div>
+
+      <h3 id="share-mockup">Share book mockup</h3>
+      <p>
+        Per-clip marketing-share button (v4.94+). Renders the clip as
+        a paperback audiobook and downloads it as a 1080×1080 PNG sized
+        for Instagram, Bluesky, Threads, and KBoards thread images.
+        The shareable answer to "how do I show people this manuscript
+        exists as an audiobook before the cover art is even finished?"
+      </p>
+      <ul>
+        <li>
+          Open <strong>✎ Edit</strong> on a library card → at the
+          bottom of the dialog, click
+          <strong>📕 Share mockup</strong>.
+        </li>
+        <li>
+          The dialog opens with a 3D paperback rendering — the clip's
+          title on the cover, an <em>Audiobook</em> badge with a small
+          waveform glyph, and the clip's uploaded cover art if you've
+          set one. If no cover is set, a navy fallback fills in with
+          your title in serif type.
+        </li>
+        <li>
+          Two editable fields: <strong>Title</strong> (defaults to the
+          clip title — change it for the share without renaming the
+          clip) and <strong>By</strong> (your name — remembered across
+          sessions so you only type it once).
+        </li>
+        <li>
+          <strong>Download PNG</strong> writes
+          <code>{title}-narrative-mockup.png</code> to your downloads
+          folder. The PNG is canvas-rendered fresh from the title /
+          author / cover — no html2canvas, no 3D-transform quirks —
+          so the file looks identical across every browser.
+        </li>
+      </ul>
+      <p>
+        The PNG includes a <em>Made with Narrative</em> wordmark in
+        the footer and the URL below it. That's the only branding —
+        no watermark on the cover itself, no logo on the spine.
+      </p>
+      <div class="tip">
+        <strong>The same component anchors the marketing page.</strong>
+        The 3D book you see in the dialog is the same component used
+        on the landing page at
+        <a href="https://narrative-alpha.fly.dev/landing.html">narrative-alpha.fly.dev</a>.
+        So when a writer follows your share link and lands on the
+        marketing page, the visual continuity is built-in — the book
+        they saw in your share is the book they see in the hero.
       </div>
 
       <h3>Drag to reorder</h3>
