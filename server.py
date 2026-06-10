@@ -1050,53 +1050,65 @@ LATEST_DESKTOP_VERSION = "0.1.8"
 # very long base64 blob with embedded \n characters preserved exactly
 # as `cargo tauri signer` emitted; do NOT reflow or strip whitespace.
 #
-# macOS/Linux signatures left empty until the workflow is fixed to
-# emit per-arch macOS filenames (currently both Mac runners overwrite
-# the same Narrative.app.tar.gz name during upload). The endpoint
-# correctly returns 204 for those targets because of the `if not sig`
-# guard below.
+# v4.98 (#859): refactored to per-platform-KEY rather than per-target
+# so macOS's two architectures can carry distinct bundle URLs +
+# signatures. The Tauri 2 updater plugin sends an OS-only `target` in
+# the URL ("windows" / "darwin" / "linux") but probes the manifest's
+# `platforms` object using OS-arch-installer keys ("darwin-aarch64",
+# "windows-x86_64-nsis", etc). Windows entries duplicate the same
+# .exe + sig under both windows keys because Tauri only emits one
+# x64 NSIS installer regardless. macOS gets per-arch files now that
+# release.yml renames Narrative.app.tar.gz to Narrative_aarch64 /
+# Narrative_x64 variants before artifact upload (#859).
 #
-# v4.66 (#867) DIAGNOSED FROM FLY LOGS 2026-06-08: the Tauri 2 updater
-# plugin substitutes {{target}} → OS-only ("windows", "darwin", "linux")
-# NOT the per-arch form ("windows-x86_64", etc) we'd been assuming. The
-# v0.1.2 desktop was hitting /api/updates/latest/windows/0.1.2 and our
-# dict.get("windows") returned None → 204 → plugin said "no update."
-# Server keys now match what the plugin actually sends. macOS still
-# needs the per-arch bundle naming fix before its sig can be pasted.
-DESKTOP_SIGNATURES: dict[str, str] = {
-    "windows": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akUvZVptVnZKaHJ5SitpWGxaUHJFQVdHalN5UEZmTGl4QVJDUGthczhtZWtHL3VURWZlbDlWMHltRkpZN1ZMcm5yL0FjZ2NubnFKLzVDTiswQXdBN2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMDYwMTU1CWZpbGU6TmFycmF0aXZlXzAuMS44X3g2NC1zZXR1cC5leGUKbmtPWFBFVzdTdjBnWklPSDhTeEVJZUxsTVd2bjZlTWtUS0tUZGMva2FmV202UjJhVnlIRlF2TEVPelloVTFIY1lFL3pJbnRNakNseHAvOGV2cnZXREE9PQo=",
-    # "darwin": "...",  # blocked on per-arch filename fix (both archs overwrite)
-    # "linux":  "...",  # add after smoke-test on a Linux install
+# v4.66 (#867) DIAGNOSED FROM FLY LOGS 2026-06-08: the {{target}}
+# substitution is OS-only, not per-arch. Server keys match what the
+# plugin actually sends. v4.98 (#859) preserves that — the {{target}}
+# path is still OS-only; the per-arch SPLIT only happens inside the
+# returned manifest's `platforms` object, which is exactly how the
+# Tauri 2 plugin documents its lookup.
+#
+# Adding a new signature:
+#   - Windows: paste the .sig from Narrative_{ver}_x64-setup.exe.sig
+#     into BOTH windows keys (same file, same sig).
+#   - macOS: paste each arch's .sig under its own key
+#     (Narrative_aarch64.app.tar.gz.sig → darwin-aarch64, etc).
+#   - Linux: paste the AppImage .sig under linux-x86_64.
+DESKTOP_SIGNATURES_BY_KEY: dict[str, str] = {
+    "windows-x86_64-nsis": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akUvZVptVnZKaHJ5SitpWGxaUHJFQVdHalN5UEZmTGl4QVJDUGthczhtZWtHL3VURWZlbDlWMHltRkpZN1ZMcm5yL0FjZ2NubnFKLzVDTiswQXdBN2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMDYwMTU1CWZpbGU6TmFycmF0aXZlXzAuMS44X3g2NC1zZXR1cC5leGUKbmtPWFBFVzdTdjBnWklPSDhTeEVJZUxsTVd2bjZlTWtUS0tUZGMva2FmV202UjJhVnlIRlF2TEVPelloVTFIY1lFL3pJbnRNakNseHAvOGV2cnZXREE9PQo=",
+    "windows-x86_64":      "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTN2pHQUZTR0s1akUvZVptVnZKaHJ5SitpWGxaUHJFQVdHalN5UEZmTGl4QVJDUGthczhtZWtHL3VURWZlbDlWMHltRkpZN1ZMcm5yL0FjZ2NubnFKLzVDTiswQXdBN2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMDYwMTU1CWZpbGU6TmFycmF0aXZlXzAuMS44X3g2NC1zZXR1cC5leGUKbmtPWFBFVzdTdjBnWklPSDhTeEVJZUxsTVd2bjZlTWtUS0tUZGMva2FmV202UjJhVnlIRlF2TEVPelloVTFIY1lFL3pJbnRNakNseHAvOGV2cnZXREE9PQo=",
+    # macOS sigs blocked until v0.1.9 ships with the new per-arch
+    # filenames (release.yml rename step is in this commit, but the
+    # CURRENT v0.1.8 release still has the old Narrative.app.tar.gz).
+    # Once v0.1.9 is tagged + the workflow lands, paste:
+    #   "darwin-aarch64": <Narrative_aarch64.app.tar.gz.sig contents>,
+    #   "darwin-x86_64":  <Narrative_x64.app.tar.gz.sig contents>,
+    # "linux-x86_64": "...",  # add after smoke-test on a Linux install
 }
 
 # v4.65 (#858): switched from Fly /downloads to GitHub Releases. Pros:
 # free hosting, version-immutable, no Fly bandwidth quota. The full URL
-# the Tauri updater plugin fetches is built per-target below since
-# Tauri 2 produces DIFFERENT bundle filenames for each platform — the
-# old `Narrative_{version}_{target}.zip` generic template never
-# actually matched what Tauri emits.
+# the Tauri updater plugin fetches is built per-platform-key below.
 DESKTOP_DOWNLOAD_BASE = "https://github.com/hypeman271-oss/audiable/releases/download"
 
-# v4.65 (#858): per-target bundle filename templates. Confirmed
-# against the v0.1.2 CI build output — Tauri 2 actually emits raw
-# .exe / .app.tar.gz / .AppImage (no extra .zip / .tar.gz wrapper
-# around the installer). The {ver} placeholder is replaced with
-# LATEST_DESKTOP_VERSION. A target missing from this dict (or one
-# whose signature isn't in DESKTOP_SIGNATURES) falls back to 204.
-#
-# Known issue: macOS aarch64 and x86_64 both produce a file named
-# Narrative.app.tar.gz — the second matrix job overwrites the first
-# in the release. Fix later by adding {target_arch} to the bundle
-# config, or by post-build renaming in the workflow. For now,
-# macOS sigs stay un-pasted so those targets return 204.
-DESKTOP_BUNDLE_NAMES: dict[str, str] = {
+# v4.98 (#859): per-platform-KEY bundle filename templates. {ver} is
+# replaced with LATEST_DESKTOP_VERSION. macOS keys point at the
+# arch-suffixed files produced by the release.yml rename step (also
+# in this commit). The signature dict above gates whether each key
+# actually appears in the served manifest — keys here without sigs
+# are silently dropped, which is how we keep the next-version rollout
+# safe while macOS sigs are still TBD.
+DESKTOP_BUNDLE_NAMES_BY_KEY: dict[str, str] = {
     # NSIS .exe installer (preferred over MSI for in-place updates
     # because Tauri's updater plugin can drive NSIS silent-install
     # cleanly; MSI swap mid-process is fussier).
-    # v4.66 (#867): keys are OS-only to match what the plugin sends.
-    "windows": "Narrative_{ver}_x64-setup.exe",
-    "darwin":  "Narrative.app.tar.gz",
-    "linux":   "Narrative_{ver}_amd64.AppImage",
+    "windows-x86_64-nsis": "Narrative_{ver}_x64-setup.exe",
+    "windows-x86_64":      "Narrative_{ver}_x64-setup.exe",
+    # Per-arch macOS — renamed by release.yml step "Rename macOS
+    # bundles for per-arch release (#859)".
+    "darwin-aarch64":      "Narrative_aarch64.app.tar.gz",
+    "darwin-x86_64":       "Narrative_x64.app.tar.gz",
+    "linux-x86_64":        "Narrative_{ver}_amd64.AppImage",
 }
 
 
@@ -1110,48 +1122,52 @@ def _parse_semver(v: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
+# v4.67 (#867 follow-up) + v4.98 (#859): the Tauri 2 updater plugin
+# probes the manifest's `platforms` object for per-arch + installer-
+# type keys, NOT the OS-only target it sent in the URL. Documented
+# error message (caught 2026-06-08): "None of the fallback platforms
+# ['windows-x86_64-nsis', 'windows-x86_64'] were found in the response
+# `platforms` object" — that IS the documented fallback chain. Each
+# OS-target maps to the list of platform keys the plugin will probe.
+_PLATFORM_KEYS_BY_TARGET = {
+    "windows": ["windows-x86_64-nsis", "windows-x86_64"],
+    "darwin":  ["darwin-aarch64", "darwin-x86_64"],
+    "linux":   ["linux-x86_64"],
+}
+
+
 @app.get("/api/updates/latest/{target}/{current_version}")
 def check_for_update(target: str, current_version: str):
     """Tauri updater manifest endpoint. See LATEST_DESKTOP_VERSION above."""
     if _parse_semver(current_version) >= _parse_semver(LATEST_DESKTOP_VERSION):
         return Response(status_code=204)
 
-    sig = DESKTOP_SIGNATURES.get(target)
-    if not sig:
-        # No signed bundle for this target yet. Return 204 so the
-        # plugin stays quiet rather than logging a download failure.
-        return Response(status_code=204)
+    # v4.98 (#859): build the platforms object per-KEY rather than
+    # collapsing to one URL per target. macOS aarch64 + x86_64 now
+    # point at different files; Windows keeps both keys pointing at
+    # the same .exe because Tauri emits a single x64 installer.
+    keys = _PLATFORM_KEYS_BY_TARGET.get(target, [target])
+    platforms: dict[str, dict[str, str]] = {}
+    for key in keys:
+        sig = DESKTOP_SIGNATURES_BY_KEY.get(key)
+        filename_template = DESKTOP_BUNDLE_NAMES_BY_KEY.get(key)
+        if not sig or not filename_template:
+            # Key without a paste-ready sig (e.g. macOS pre-v0.1.9) or
+            # without a bundle template silently drops out of the
+            # manifest. The plugin gracefully treats a key it asked
+            # for but didn't receive as "no update for this platform"
+            # — same UX as a 204.
+            continue
+        bundle_name = filename_template.format(ver=LATEST_DESKTOP_VERSION)
+        bundle_url = (
+            f"{DESKTOP_DOWNLOAD_BASE}/"
+            f"v{LATEST_DESKTOP_VERSION}/{bundle_name}"
+        )
+        platforms[key] = {"signature": sig, "url": bundle_url}
 
-    # v4.65 (#858): pick the per-target bundle name; fall back to 204
-    # if Tauri doesn't emit a bundle for this target (we only support
-    # Windows + macOS + Linux today).
-    bundle_template = DESKTOP_BUNDLE_NAMES.get(target)
-    if not bundle_template:
+    if not platforms:
+        # No signed bundles for any platform key under this target.
         return Response(status_code=204)
-    bundle_name = bundle_template.format(ver=LATEST_DESKTOP_VERSION)
-    bundle_url = (
-        f"{DESKTOP_DOWNLOAD_BASE}/"
-        f"v{LATEST_DESKTOP_VERSION}/{bundle_name}"
-    )
-
-    # v4.67 (#867 follow-up): the Tauri 2 updater plugin probes the
-    # manifest's `platforms` object for per-arch + installer-type keys,
-    # NOT the OS-only target it sent in the URL. The plugin's actual
-    # error message (caught 2026-06-08): "None of the fallback platforms
-    # ['windows-x86_64-nsis', 'windows-x86_64'] were found in the response
-    # `platforms` object" — that IS the documented fallback chain.
-    # Populate every key the plugin might probe so we hit on first try.
-    # macOS keys cover both archs from the same template until we
-    # solve the per-arch bundle naming overwrite issue.
-    platform_keys_by_target = {
-        "windows": ["windows-x86_64-nsis", "windows-x86_64"],
-        "darwin":  ["darwin-aarch64", "darwin-x86_64"],
-        "linux":   ["linux-x86_64"],
-    }
-    keys = platform_keys_by_target.get(target, [target])
-    platforms = {
-        k: {"signature": sig, "url": bundle_url} for k in keys
-    }
 
     return JSONResponse({
         "version": LATEST_DESKTOP_VERSION,

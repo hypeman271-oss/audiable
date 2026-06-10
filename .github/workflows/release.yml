@@ -136,6 +136,51 @@ jobs:
           projectPath: src-tauri
           args: ${{ matrix.args }}
 
+      # v4.98 (#859): per-arch macOS updater bundle naming. Tauri emits
+      # the same Narrative.app.tar.gz filename from BOTH macOS runners
+      # (it doesn't know about cross-arch builds), so when the release
+      # job downloads workflow artifacts and uploads them to the
+      # GitHub Release, the second arch's bundle silently overwrites
+      # the first. Users on whichever arch lost the race download an
+      # incompatible binary at update time.
+      #
+      # Rename in-place AFTER the build but BEFORE artifact upload so
+      # the workflow-artifact step picks up the new names via the
+      # *.app.tar.gz* glob. The server-side updater manifest is
+      # refactored in parallel (server.py) to point per-platform-key
+      # at the matching renamed bundle.
+      - name: Rename macOS bundles for per-arch release (#859)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          if [[ "${{ matrix.label }}" == "macos-arm64" ]]; then
+            target_dir=src-tauri/target/aarch64-apple-darwin/release/bundle/macos
+            arch_suffix=aarch64
+          else
+            target_dir=src-tauri/target/x86_64-apple-darwin/release/bundle/macos
+            arch_suffix=x64
+          fi
+          if [ ! -d "$target_dir" ]; then
+            echo "::error::Expected macOS bundle dir not found: $target_dir"
+            exit 1
+          fi
+          cd "$target_dir"
+          renamed=0
+          for f in Narrative.app.tar.gz Narrative.app.tar.gz.sig; do
+            if [ -f "$f" ]; then
+              # Narrative.app.tar.gz -> Narrative_aarch64.app.tar.gz
+              # Narrative.app.tar.gz.sig -> Narrative_aarch64.app.tar.gz.sig
+              newname="Narrative_${arch_suffix}${f#Narrative}"
+              mv "$f" "$newname"
+              echo "Renamed: $f -> $newname"
+              renamed=$((renamed + 1))
+            fi
+          done
+          if [ "$renamed" -eq 0 ]; then
+            echo "::error::No macOS .app.tar.gz files found to rename"
+            exit 1
+          fi
+
       # Each runner has its own bundle layout — Tauri emits to
       # src-tauri/target/{target}/release/bundle/{format}/. On
       # macOS with --target, that's a target-prefixed path; on
