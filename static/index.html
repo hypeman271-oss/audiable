@@ -4094,6 +4094,33 @@
               title="Commit notes + bookmarks + annotations as Markdown to a sibling .notes.md file"
             >📝 Push notes</button>
           </p>
+          <!-- v4.96 (#538 Phase 2): Scrivener pin meta line. Shown
+               only for Scrivener-sourced clips. Push to Scrivener
+               opens a file picker for the original .scriv.zip, posts
+               it + the revised text to /api/scrivener/patch, and
+               downloads the patched .scriv.zip. The bundle isn't
+               persisted server-side; the user re-uploads each time
+               (one extra click, no server storage). The patched
+               scenes lose RTF formatting — documented tradeoff
+               (text wins, decorations don't). -->
+          <p id="clip-edit-scrivref" class="clip-edit-gitref" hidden>
+            <span class="clip-edit-gitref-label">From Scrivener:</span>
+            <span id="clip-edit-scrivref-project" class="clip-edit-gitref-path"></span>
+            <span class="clip-edit-gitref-sep">›</span>
+            <span id="clip-edit-scrivref-doc" class="clip-edit-gitref-path"></span>
+            <button
+              id="clip-edit-push-scrivener-btn"
+              type="button"
+              class="clip-edit-gitref-push"
+              title="Pick the original .scriv.zip and download a patched copy with this clip's revised text"
+            >📘 Push to Scrivener</button>
+            <input
+              id="clip-edit-scrivener-input"
+              type="file"
+              accept=".zip,.scriv,application/zip"
+              hidden
+            />
+          </p>
           <!-- v219: voice provenance. Shows which voice + license were
                in effect when this clip was generated. Read-only. Lets
                the user copy the exact attribution string for audiobook

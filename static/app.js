@@ -25322,6 +25322,21 @@ async function openClipEdit(clipId) {
       gitRefEl.hidden = true;
     }
   }
+  // v4.96 (#538 Phase 2): Scrivener pin display. Same gate pattern
+  // as gitRef — show project + doc path, with the Push to Scrivener
+  // button right alongside. Hidden for non-Scrivener clips.
+  const scrivRefEl = document.getElementById("clip-edit-scrivref");
+  if (scrivRefEl) {
+    if (clip.scrivenerRef && clip.scrivenerRef.doc_id) {
+      const projEl = document.getElementById("clip-edit-scrivref-project");
+      const docEl = document.getElementById("clip-edit-scrivref-doc");
+      if (projEl) projEl.textContent = clip.scrivenerRef.project_name || "(unknown project)";
+      if (docEl) docEl.textContent = clip.scrivenerRef.doc_path || `BinderItem ${clip.scrivenerRef.doc_id}`;
+      scrivRefEl.hidden = false;
+    } else {
+      scrivRefEl.hidden = true;
+    }
+  }
   // Cover staging. `_editPendingCover` represents the cover that will
   // be saved — initially mirrors the clip's current cover (or null if
   // none). User upload / remove mutates it; save persists it.
@@ -26015,6 +26030,114 @@ if (_clipEditPushGithubBtn) {
     } finally {
       _clipEditPushGithubBtn.disabled = false;
       _clipEditPushGithubBtn.textContent = _origLabel;
+    }
+  });
+}
+
+// v4.96 (#538 Phase 2): Push to Scrivener. Companion to the GitHub
+// push above for Scrivener-imported clips. The user picks their
+// original .scriv.zip from disk, the server patches the matching
+// BinderItem RTF with the revised text, and the browser downloads
+// the result as a fresh .scriv.zip. The bundle is never persisted
+// server-side — re-upload each push. Patched scenes lose any RTF
+// formatting (bold/italic/font in those scenes only); other scenes
+// round-trip byte-for-byte.
+const _clipEditPushScrivBtn = document.getElementById("clip-edit-push-scrivener-btn");
+const _clipEditScrivInput = document.getElementById("clip-edit-scrivener-input");
+if (_clipEditPushScrivBtn && _clipEditScrivInput) {
+  _clipEditPushScrivBtn.addEventListener("click", () => {
+    if (_clipEditPushScrivBtn.disabled) return;
+    if (!_editingClipId) return;
+    // Open the OS file picker. The change handler below does the actual
+    // upload-and-download work; this click just kicks off the picker.
+    _clipEditScrivInput.value = "";
+    _clipEditScrivInput.click();
+  });
+  _clipEditScrivInput.addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!_editingClipId) return;
+    const clip = await getClip(_editingClipId);
+    if (!clip) {
+      setStatus("Couldn't read that clip.", true);
+      return;
+    }
+    if (!clip.scrivenerRef || !clip.scrivenerRef.doc_id) {
+      setStatus("This clip isn't linked to a Scrivener source.", true);
+      return;
+    }
+    const text = (clip.text || "").trim();
+    if (!text) {
+      setStatus("Nothing to push — clip text is empty.", true);
+      return;
+    }
+    _clipEditPushScrivBtn.disabled = true;
+    const _origLabel = _clipEditPushScrivBtn.textContent;
+    _clipEditPushScrivBtn.textContent = "Patching…";
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append(
+        "edits",
+        JSON.stringify([
+          { doc_id: clip.scrivenerRef.doc_id, new_text: clip.text || "" },
+        ]),
+      );
+      const res = await fetch("/api/scrivener/patch", {
+        method: "POST",
+        body: formData,
+      });
+      _dlog("scriv-push", `result for ${clip.scrivenerRef.doc_id}`, {
+        httpStatus: res.status,
+        ok: res.ok,
+        patched: res.headers.get("X-Scriv-Patched") || "",
+        missing: res.headers.get("X-Scriv-Missing") || "",
+      });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const j = await res.json();
+          if (j && j.detail) detail = j.detail;
+        } catch (_) {}
+        setStatus(_withOfflineHint(`Scrivener patch failed: ${detail}`), true);
+        return;
+      }
+      const missingHdr = res.headers.get("X-Scriv-Missing") || "";
+      if (missingHdr && missingHdr.includes(clip.scrivenerRef.doc_id)) {
+        setStatus(
+          "That .scriv bundle doesn't contain this clip's scene. " +
+          "Pick the project file the clip was imported from.",
+          true,
+        );
+        return;
+      }
+      const blob = await res.blob();
+      // Pull the filename from Content-Disposition if present; fall back
+      // to project name from scrivenerRef + .scriv.zip suffix.
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = cd.match(/filename="([^"]+)"/);
+      const safeProject = (clip.scrivenerRef.project_name || "scrivener-project")
+        .replace(/[^A-Za-z0-9._-]/g, "_");
+      const downloadName = m ? m[1] : `${safeProject}.scriv.zip`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Defer revocation so Safari has time to start the download.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatus(
+        `Patched ${downloadName} — open it in Scrivener and File → Import to merge.`,
+      );
+    } catch (err) {
+      console.warn("[scriv-push] threw:", err);
+      setStatus(_withOfflineHint(`Scrivener patch failed: ${err.message}`), true);
+    } finally {
+      _clipEditPushScrivBtn.disabled = false;
+      _clipEditPushScrivBtn.textContent = _origLabel;
+      _clipEditScrivInput.value = "";
     }
   });
 }
