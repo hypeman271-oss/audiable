@@ -215,7 +215,9 @@
         margin-top: 56px;
         border-radius: var(--radius);
         overflow: hidden;
-        background: var(--bg-card);
+        background:
+          radial-gradient(120% 80% at 50% 100%, var(--accent-tint) 0%, transparent 70%),
+          linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);
         border: 1px solid var(--border-soft);
         box-shadow: var(--shadow-lift);
         aspect-ratio: 16 / 9;
@@ -233,9 +235,6 @@
         object-fit: cover;
         display: block;
       }
-      /* Placeholder shimmer for the hero image slot before the real
-         asset lands. Replace the inner content with <img src="..."> when
-         the screenshot is taken (task #407). */
       .lp-placeholder {
         text-align: center;
         padding: 24px;
@@ -251,6 +250,197 @@
         letter-spacing: 0.12em;
         font-weight: 600;
         margin-bottom: 10px;
+      }
+
+      /* ──────────────────────────────────────────────────────────────
+         Book mockup (#885). A 3D-perspective audiobook-paperback used
+         in the hero slot and (Phase 2) inside the in-app share dialog.
+         All measurements key off --bm-cover-w; change that one var to
+         resize the whole rig. Faces use preserve-3d so the spine + page
+         edges read as a single rigid body, not stacked sprites.
+         ────────────────────────────────────────────────────────────── */
+      .bm-scene {
+        --bm-cover-w: 240px;
+        --bm-cover-h: 360px;
+        --bm-depth: 28px;
+        --bm-paper: #f4ecd8;
+        --bm-paper-edge: #d8cfb8;
+        --bm-cover-bg: #1b2244;
+        --bm-cover-ink: #e7ecff;
+        --bm-band: #7c9cff;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 56px;
+        padding: 24px;
+        perspective: 1600px;
+        perspective-origin: 50% 40%;
+      }
+      .bm-book {
+        position: relative;
+        width: var(--bm-cover-w);
+        height: var(--bm-cover-h);
+        transform-style: preserve-3d;
+        transform: rotateY(-28deg) rotateX(4deg);
+        flex: 0 0 auto;
+      }
+      .bm-book::after {
+        content: "";
+        position: absolute;
+        left: 8%;
+        right: 8%;
+        bottom: -28px;
+        height: 24px;
+        background: radial-gradient(50% 100% at 50% 0%, rgba(0,0,0,0.55) 0%, transparent 80%);
+        filter: blur(6px);
+        transform: translateZ(-1px);
+        pointer-events: none;
+      }
+      .bm-face {
+        position: absolute;
+        top: 0;
+        left: 0;
+        backface-visibility: hidden;
+      }
+      .bm-cover {
+        width: var(--bm-cover-w);
+        height: var(--bm-cover-h);
+        background: var(--bm-cover-bg);
+        border-radius: 2px 4px 4px 2px;
+        transform: translate3d(0, 0, calc(var(--bm-depth) / 2));
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 28px 24px 24px;
+        color: var(--bm-cover-ink);
+      }
+      .bm-cover-band {
+        width: 60%;
+        height: 6px;
+        background: var(--bm-band);
+        border-radius: 3px;
+      }
+      .bm-cover-text {
+        margin-top: auto;
+      }
+      .bm-cover-title {
+        font-family: Georgia, "Iowan Old Style", "Apple Garamond", serif;
+        font-size: 30px;
+        line-height: 1.05;
+        letter-spacing: -0.01em;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+      .bm-cover-author {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.22em;
+        color: color-mix(in srgb, var(--bm-cover-ink) 65%, transparent);
+      }
+      .bm-cover-audio {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 18px;
+        padding: 6px 12px 6px 10px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 999px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-weight: 600;
+        color: var(--bm-cover-ink);
+        align-self: flex-start;
+      }
+      .bm-cover-audio svg rect { fill: var(--bm-band); }
+      .bm-spine {
+        width: var(--bm-depth);
+        height: var(--bm-cover-h);
+        background: linear-gradient(90deg, #0e1430 0%, var(--bm-cover-bg) 50%, #0e1430 100%);
+        transform: translate3d(calc(var(--bm-depth) / -2), 0, 0) rotateY(-90deg);
+      }
+      .bm-spine-text {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Georgia, serif;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        color: var(--bm-cover-ink);
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        opacity: 0.8;
+      }
+      .bm-pages-right {
+        width: var(--bm-depth);
+        height: var(--bm-cover-h);
+        background:
+          repeating-linear-gradient(180deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px),
+          var(--bm-paper);
+        transform: translate3d(calc(var(--bm-cover-w) - var(--bm-depth) / 2), 0, 0) rotateY(90deg);
+      }
+      .bm-pages-top {
+        width: var(--bm-cover-w);
+        height: var(--bm-depth);
+        background:
+          repeating-linear-gradient(90deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px),
+          var(--bm-paper);
+        transform: translate3d(0, calc(var(--bm-depth) / -2), 0) rotateX(90deg);
+      }
+      .bm-pages-bottom {
+        width: var(--bm-cover-w);
+        height: var(--bm-depth);
+        background:
+          repeating-linear-gradient(90deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px),
+          var(--bm-paper);
+        transform: translate3d(0, calc(var(--bm-cover-h) - var(--bm-depth) / 2), 0) rotateX(-90deg);
+      }
+      .bm-back {
+        width: var(--bm-cover-w);
+        height: var(--bm-cover-h);
+        background: #0e1430;
+        border-radius: 4px 2px 2px 4px;
+        transform: translate3d(0, 0, calc(var(--bm-depth) / -2)) rotateY(180deg);
+      }
+      .bm-caption {
+        max-width: 220px;
+        color: var(--fg-dim);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .bm-caption-eyebrow {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+        font-weight: 600;
+        margin: 0 0 8px;
+      }
+      .bm-caption-line {
+        margin: 0 0 10px;
+        color: var(--fg);
+        font-weight: 500;
+        font-size: 17px;
+      }
+      .bm-caption-sub {
+        margin: 0;
+      }
+      @media (max-width: 720px) {
+        .bm-scene {
+          --bm-cover-w: 180px;
+          --bm-cover-h: 270px;
+          --bm-depth: 22px;
+          gap: 24px;
+          padding: 16px;
+        }
+        .bm-cover-title { font-size: 22px; }
+        .bm-caption { display: none; }
       }
 
       /* ──────────────────────────────────────────────────────────────
@@ -618,15 +808,40 @@
           Never used as training data, never shared with other users.
         </p>
 
-        <div class="lp-hero-visual lp-todo">
-          <!-- TODO (task #407): replace placeholder with screenshot of
-               the book view, or the demo video's poster frame. Should
-               be 1920×1080 ideally, JPG/WebP. -->
-          <div class="lp-placeholder">
-            <span class="lp-placeholder-tag">Screenshot slot</span>
-            <p style="margin: 0; color: var(--fg-dim);">
-              Book view with a sentence highlighted mid-playback.
-            </p>
+        <div class="lp-hero-visual" aria-label="A paperback novel rendered as an audiobook, with a small Audiobook badge on the cover.">
+          <div class="bm-scene">
+            <div class="bm-book">
+              <div class="bm-face bm-cover">
+                <div class="bm-cover-band"></div>
+                <div class="bm-cover-text">
+                  <div class="bm-cover-title">The Quiet Lake</div>
+                  <div class="bm-cover-author">Sarah Chen</div>
+                </div>
+                <div class="bm-cover-audio">
+                  <svg width="44" height="22" viewBox="0 0 44 22" aria-hidden="true">
+                    <rect x="2"  y="6"  width="3" height="10" rx="1.5" />
+                    <rect x="9"  y="2"  width="3" height="18" rx="1.5" />
+                    <rect x="16" y="8"  width="3" height="6"  rx="1.5" />
+                    <rect x="23" y="4"  width="3" height="14" rx="1.5" />
+                    <rect x="30" y="9"  width="3" height="4"  rx="1.5" />
+                    <rect x="37" y="3"  width="3" height="16" rx="1.5" />
+                  </svg>
+                  <span>Audiobook</span>
+                </div>
+              </div>
+              <div class="bm-face bm-spine">
+                <div class="bm-spine-text">The Quiet Lake · Chen</div>
+              </div>
+              <div class="bm-face bm-pages-right"></div>
+              <div class="bm-face bm-pages-top"></div>
+              <div class="bm-face bm-pages-bottom"></div>
+              <div class="bm-face bm-back"></div>
+            </div>
+            <div class="bm-caption" aria-hidden="true">
+              <p class="bm-caption-eyebrow">Your draft</p>
+              <p class="bm-caption-line">Hear it before you publish it.</p>
+              <p class="bm-caption-sub">Real voices, your manuscript, on the devices you write from.</p>
+            </div>
           </div>
         </div>
       </div>
