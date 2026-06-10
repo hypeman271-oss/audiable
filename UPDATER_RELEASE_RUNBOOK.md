@@ -147,8 +147,16 @@ After the v0.1.2 first-release validation:
 □ git add -A && git commit -m "Release v0.1.X" && git tag v0.1.X
 □ git push origin main --tags
 □ Wait for CI (~15 min)
-□ Download .sig files from the new draft release
-□ Paste into DESKTOP_SIGNATURES
+□ Download .sig files from the new draft release. As of v0.1.9 (#859)
+  there are FOUR Windows + Mac sigs to grab, named per-arch:
+    - Narrative_0.1.X_x64-setup.exe.sig   (NSIS, used for both
+                                            windows-x86_64-nsis + windows-x86_64)
+    - Narrative_aarch64.app.tar.gz.sig    (macOS Apple Silicon)
+    - Narrative_x64.app.tar.gz.sig        (macOS Intel)
+  Linux ships its own sig once #860 lands.
+□ Paste into DESKTOP_SIGNATURES_BY_KEY (server.py). Windows gets the
+  same sig pasted into BOTH windows keys (Tauri only emits one x64
+  NSIS bundle). macOS aarch64 + x64 each get their own arch sig.
 □ Publish the GH Release  (release.yml auto-publishes — usually already done)
 □ Deploy Fly via scripts/deploy.ps1 — auto-runs verify_updater_manifest.py
    (catches forgot-to-repaste-sig + draft-release + wrong-key bugs;
