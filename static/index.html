@@ -482,7 +482,7 @@
                 id="header-version-tag"
                 class="brand-version"
                 title="What's new in this build"
-              >v225v4.41</a>
+              >v225v4.94</a>
             </h1>
             <p class="tagline">Write. Listen. Revise.</p>
           </div>
@@ -4261,8 +4261,96 @@
             />
           </div>
           <div class="clip-edit-actions">
+            <button
+              id="clip-edit-share-mockup"
+              type="button"
+              class="link-btn"
+              title="Render this clip as a paperback book mockup you can share"
+            >📕 Share mockup</button>
             <button id="clip-edit-save" type="button" class="primary">Save</button>
           </div>
+        </div>
+      </dialog>
+
+      <!-- v4.94 (#886): Share book mockup dialog. Per-clip marketing-share
+           surface. Opens from the Edit dialog and renders the clip as a
+           3D paperback for on-screen presentation; "Download PNG" generates
+           a 1080x1080 canvas-flat version sized for Instagram / Bluesky /
+           OG / KBoards thread images. The .bm-* component is the same one
+           used in the landing.html hero (#885) so brand presentation is
+           consistent. -->
+      <dialog id="book-mockup" class="book-mockup-dialog">
+        <div class="book-mockup-head">
+          <h2>Share book mockup</h2>
+          <button
+            id="book-mockup-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close mockup"
+          >Close</button>
+        </div>
+        <div class="book-mockup-stage">
+          <div class="bm-scene" aria-label="Book mockup preview">
+            <div class="bm-book">
+              <div class="bm-face bm-cover" id="book-mockup-cover">
+                <div class="bm-cover-band"></div>
+                <div class="bm-cover-text">
+                  <div class="bm-cover-title" id="book-mockup-title-display">Your clip</div>
+                  <div class="bm-cover-author" id="book-mockup-author-display">By you</div>
+                </div>
+                <div class="bm-cover-audio">
+                  <svg width="40" height="20" viewBox="0 0 44 22" aria-hidden="true">
+                    <rect x="2"  y="6"  width="3" height="10" rx="1.5" />
+                    <rect x="9"  y="2"  width="3" height="18" rx="1.5" />
+                    <rect x="16" y="8"  width="3" height="6"  rx="1.5" />
+                    <rect x="23" y="4"  width="3" height="14" rx="1.5" />
+                    <rect x="30" y="9"  width="3" height="4"  rx="1.5" />
+                    <rect x="37" y="3"  width="3" height="16" rx="1.5" />
+                  </svg>
+                  <span>Audiobook</span>
+                </div>
+              </div>
+              <div class="bm-face bm-spine"></div>
+              <div class="bm-face bm-pages-right"></div>
+              <div class="bm-face bm-pages-top"></div>
+              <div class="bm-face bm-pages-bottom"></div>
+              <div class="bm-face bm-back"></div>
+            </div>
+          </div>
+        </div>
+        <div class="book-mockup-controls">
+          <div>
+            <label for="book-mockup-title">Title</label>
+            <input
+              id="book-mockup-title"
+              type="text"
+              maxlength="120"
+              autocomplete="off"
+              placeholder="Your clip"
+            />
+          </div>
+          <div>
+            <label for="book-mockup-author">By</label>
+            <input
+              id="book-mockup-author"
+              type="text"
+              maxlength="80"
+              autocomplete="off"
+              placeholder="You"
+            />
+          </div>
+        </div>
+        <div class="book-mockup-actions">
+          <p class="book-mockup-hint">
+            Downloads as a 1080&times;1080 PNG sized for Instagram, Bluesky,
+            and book-marketing thread images. The clip's cover (if any) is
+            used; otherwise a navy fallback with your title.
+          </p>
+          <button
+            id="book-mockup-download"
+            type="button"
+            class="primary"
+          >Download PNG</button>
         </div>
       </dialog>
 

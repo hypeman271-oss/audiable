@@ -14172,3 +14172,253 @@ html, body {
 .overlay-tour-next:hover {
   filter: brightness(1.1);
 }
+
+/* v4.94 (#886): Share book mockup dialog. A per-clip marketing-share
+   surface — author opens it from the Edit dialog, sees their clip
+   rendered as a 3D paperback, and downloads a 1080×1080 square image
+   for social. The .bm-* classes are shared with landing.html so the
+   on-screen presentation matches the hero of narrative-alpha.fly.dev.
+   PNG export uses a canvas-flat render (no html2canvas, no CSS-3D
+   round-trip) so the file the user posts is identical across browsers. */
+.book-mockup-dialog {
+  width: min(720px, 92vw);
+  max-width: 92vw;
+  padding: 0;
+  border: none;
+  border-radius: 18px;
+  background: var(--bg-card);
+  color: var(--fg);
+  max-height: 92vh;
+  max-height: 92dvh;
+  overflow: auto;
+}
+.book-mockup-dialog::backdrop {
+  background: rgba(8, 12, 28, 0.55);
+}
+.book-mockup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 1;
+}
+.book-mockup-head h2 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+.book-mockup-stage {
+  background:
+    radial-gradient(80% 60% at 50% 100%, var(--accent-tint) 0%, transparent 70%),
+    linear-gradient(180deg, var(--bg-card-2, var(--bg-card)) 0%, var(--bg-card) 100%);
+  padding: 32px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+}
+.book-mockup-controls {
+  padding: 16px 22px 8px;
+  display: grid;
+  gap: 12px;
+}
+.book-mockup-controls label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fg-dim);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 4px;
+}
+.book-mockup-controls input[type="text"],
+.book-mockup-controls textarea {
+  width: 100%;
+  background: var(--bg-card-2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.book-mockup-controls textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+.book-mockup-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 22px 22px;
+  border-top: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+.book-mockup-actions .book-mockup-hint {
+  flex: 1 1 100%;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin: 0 0 4px;
+}
+
+/* The .bm-* classes mirror landing.html exactly so the brand presentation
+   is consistent. Sized smaller (--bm-cover-w: 200px) so the book fits
+   inside the dialog without scrolling on a 720p viewport. */
+.book-mockup-stage .bm-scene {
+  --bm-cover-w: 200px;
+  --bm-cover-h: 300px;
+  --bm-depth: 24px;
+  --bm-paper: #f4ecd8;
+  --bm-paper-edge: #d8cfb8;
+  --bm-cover-bg: #1b2244;
+  --bm-cover-ink: #e7ecff;
+  --bm-band: #7c9cff;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  perspective: 1500px;
+  perspective-origin: 50% 40%;
+}
+.book-mockup-stage .bm-book {
+  position: relative;
+  width: var(--bm-cover-w);
+  height: var(--bm-cover-h);
+  transform-style: preserve-3d;
+  transform: rotateY(-28deg) rotateX(4deg);
+}
+.book-mockup-stage .bm-book::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: -24px;
+  height: 22px;
+  background: radial-gradient(50% 100% at 50% 0%, rgba(0,0,0,0.55) 0%, transparent 80%);
+  filter: blur(6px);
+  transform: translateZ(-1px);
+  pointer-events: none;
+}
+.book-mockup-stage .bm-face {
+  position: absolute;
+  top: 0;
+  left: 0;
+  backface-visibility: hidden;
+}
+.book-mockup-stage .bm-cover {
+  width: var(--bm-cover-w);
+  height: var(--bm-cover-h);
+  background: var(--bm-cover-bg);
+  border-radius: 2px 4px 4px 2px;
+  transform: translate3d(0, 0, calc(var(--bm-depth) / 2));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 22px 18px 20px;
+  color: var(--bm-cover-ink);
+  overflow: hidden;
+}
+.book-mockup-stage .bm-cover-band {
+  width: 60%;
+  height: 5px;
+  background: var(--bm-band);
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.book-mockup-stage .bm-cover-text {
+  margin-top: auto;
+}
+.book-mockup-stage .bm-cover-title {
+  font-family: Georgia, "Iowan Old Style", "Apple Garamond", serif;
+  font-size: 24px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.book-mockup-stage .bm-cover-author {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: color-mix(in srgb, var(--bm-cover-ink) 65%, transparent);
+}
+.book-mockup-stage .bm-cover-audio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 5px 10px 5px 8px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  color: var(--bm-cover-ink);
+  align-self: flex-start;
+}
+.book-mockup-stage .bm-cover-audio svg rect { fill: var(--bm-band); }
+.book-mockup-stage .bm-spine {
+  width: var(--bm-depth);
+  height: var(--bm-cover-h);
+  background: linear-gradient(90deg, #0e1430 0%, var(--bm-cover-bg) 50%, #0e1430 100%);
+  transform: translate3d(calc(var(--bm-depth) / -2), 0, 0) rotateY(-90deg);
+}
+.book-mockup-stage .bm-pages-right {
+  width: var(--bm-depth);
+  height: var(--bm-cover-h);
+  background:
+    repeating-linear-gradient(180deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px),
+    var(--bm-paper);
+  transform: translate3d(calc(var(--bm-cover-w) - var(--bm-depth) / 2), 0, 0) rotateY(90deg);
+}
+.book-mockup-stage .bm-pages-top {
+  width: var(--bm-cover-w);
+  height: var(--bm-depth);
+  background:
+    repeating-linear-gradient(90deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px),
+    var(--bm-paper);
+  transform: translate3d(0, calc(var(--bm-depth) / -2), 0) rotateX(90deg);
+}
+.book-mockup-stage .bm-pages-bottom {
+  width: var(--bm-cover-w);
+  height: var(--bm-depth);
+  background:
+    repeating-linear-gradient(90deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px),
+    var(--bm-paper);
+  transform: translate3d(0, calc(var(--bm-cover-h) - var(--bm-depth) / 2), 0) rotateX(-90deg);
+}
+.book-mockup-stage .bm-back {
+  width: var(--bm-cover-w);
+  height: var(--bm-cover-h);
+  background: #0e1430;
+  border-radius: 4px 2px 2px 4px;
+  transform: translate3d(0, 0, calc(var(--bm-depth) / -2)) rotateY(180deg);
+}
+
+/* When the clip already has an uploaded cover (clip.cover.blob), drop the
+   accent band + audio badge and let the cover image fill the front face.
+   The audio badge moves to a corner overlay so the cover art reads first. */
+.book-mockup-stage .bm-cover[data-has-art="1"] {
+  padding: 0;
+  background-size: cover;
+  background-position: center;
+}
+.book-mockup-stage .bm-cover[data-has-art="1"] .bm-cover-band,
+.book-mockup-stage .bm-cover[data-has-art="1"] .bm-cover-text {
+  display: none;
+}
+.book-mockup-stage .bm-cover[data-has-art="1"] .bm-cover-audio {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  margin: 0;
+  align-self: auto;
+  background: rgba(11, 16, 32, 0.78);
+  border-color: rgba(255,255,255,0.18);
+}

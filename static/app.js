@@ -25394,6 +25394,280 @@ clipEditClose.addEventListener("click", closeClipEdit);
 clipEditSave.addEventListener("click", saveClipEdit);
 clipEditDialog.addEventListener("close", () => { _editingClipId = null; });
 
+// v4.94 (#886): Share book mockup. Opens a dialog with a 3D paperback
+// rendering of the current clip, plus a "Download PNG" button that
+// outputs a 1080x1080 canvas-flat version (social-share ready). The
+// .bm-* DOM is the same shape as landing.html so the brand presentation
+// is consistent; the PNG export uses a separate canvas-API renderer so
+// the file ships identically across browsers — no html2canvas, no
+// CSS-3D round-trip quirks.
+const bookMockupDialog = $("book-mockup");
+const bookMockupClose = $("book-mockup-close");
+const bookMockupTitle = $("book-mockup-title");
+const bookMockupAuthor = $("book-mockup-author");
+const bookMockupTitleDisplay = $("book-mockup-title-display");
+const bookMockupAuthorDisplay = $("book-mockup-author-display");
+const bookMockupCoverFace = $("book-mockup-cover");
+const bookMockupDownload = $("book-mockup-download");
+const _BOOK_MOCKUP_AUTHOR_KEY = "narrativeBookMockupAuthor";
+let _bookMockupCoverUrl = null;
+let _bookMockupSourceClipId = null;
+
+async function openBookMockup(clipId) {
+  if (!bookMockupDialog) return;
+  const clip = clipId ? await getClip(clipId) : null;
+  _bookMockupSourceClipId = clipId || null;
+  const title = (clip && clip.title) ? clip.title : "Your clip";
+  const savedAuthor = (() => {
+    try { return localStorage.getItem(_BOOK_MOCKUP_AUTHOR_KEY) || ""; }
+    catch (e) { return ""; }
+  })();
+  const author = savedAuthor || "You";
+  bookMockupTitle.value = title;
+  bookMockupAuthor.value = author;
+  _paintBookMockupPreview(title, author, clip && clip.cover ? clip.cover : null);
+  bookMockupDialog.showModal();
+}
+
+function closeBookMockup() {
+  if (_bookMockupCoverUrl) {
+    URL.revokeObjectURL(_bookMockupCoverUrl);
+    _bookMockupCoverUrl = null;
+  }
+  _bookMockupSourceClipId = null;
+  if (bookMockupDialog && bookMockupDialog.open) bookMockupDialog.close();
+}
+
+function _paintBookMockupPreview(title, author, cover) {
+  if (bookMockupTitleDisplay) bookMockupTitleDisplay.textContent = title;
+  if (bookMockupAuthorDisplay) bookMockupAuthorDisplay.textContent = author ? `By ${author}` : "";
+  if (!bookMockupCoverFace) return;
+  if (_bookMockupCoverUrl) {
+    URL.revokeObjectURL(_bookMockupCoverUrl);
+    _bookMockupCoverUrl = null;
+  }
+  if (cover && cover.blob instanceof Blob) {
+    _bookMockupCoverUrl = URL.createObjectURL(cover.blob);
+    bookMockupCoverFace.style.backgroundImage = `url("${_bookMockupCoverUrl}")`;
+    bookMockupCoverFace.dataset.hasArt = "1";
+  } else {
+    bookMockupCoverFace.style.backgroundImage = "";
+    delete bookMockupCoverFace.dataset.hasArt;
+  }
+}
+
+function _bookMockupLoadCoverImage(cover) {
+  return new Promise((resolve) => {
+    if (!cover || !(cover.blob instanceof Blob)) return resolve(null);
+    const url = URL.createObjectURL(cover.blob);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+function _wrapBookMockupText(ctx, text, maxWidth) {
+  const words = (text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = "";
+  for (const w of words) {
+    const trial = current ? `${current} ${w}` : w;
+    if (ctx.measureText(trial).width <= maxWidth || !current) {
+      current = trial;
+    } else {
+      lines.push(current);
+      current = w;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+async function downloadBookMockupPng() {
+  const title = (bookMockupTitle.value || "Your clip").trim() || "Your clip";
+  const author = (bookMockupAuthor.value || "").trim();
+  try { localStorage.setItem(_BOOK_MOCKUP_AUTHOR_KEY, author); } catch (e) {}
+  let coverImg = null;
+  if (_bookMockupSourceClipId) {
+    const clip = await getClip(_bookMockupSourceClipId);
+    if (clip && clip.cover) coverImg = await _bookMockupLoadCoverImage(clip.cover);
+  }
+  const canvas = document.createElement("canvas");
+  const W = 1080, H = 1080;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+
+  // Backdrop — gradient that echoes the .lp-hero-visual brand frame.
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#0b1020");
+  bg.addColorStop(1, "#1b2240");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  // Soft accent glow at the bottom — same shape as the landing page.
+  const glow = ctx.createRadialGradient(W / 2, H * 1.05, 0, W / 2, H * 1.05, W * 0.65);
+  glow.addColorStop(0, "rgba(124, 156, 255, 0.32)");
+  glow.addColorStop(1, "rgba(124, 156, 255, 0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // Book card — 2:3 paperback proportions, centered, with a soft shadow.
+  const bookW = 520, bookH = 780;
+  const bookX = (W - bookW) / 2, bookY = (H - bookH) / 2 - 40;
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
+  ctx.shadowBlur = 60;
+  ctx.shadowOffsetY = 30;
+  if (coverImg) {
+    ctx.fillStyle = "#1b2244";
+    _roundRect(ctx, bookX, bookY, bookW, bookH, 8);
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.save();
+    _roundRect(ctx, bookX, bookY, bookW, bookH, 8);
+    ctx.clip();
+    const ar = coverImg.width / coverImg.height;
+    const targetAr = bookW / bookH;
+    let dw, dh, dx, dy;
+    if (ar > targetAr) {
+      dh = bookH; dw = dh * ar; dx = bookX - (dw - bookW) / 2; dy = bookY;
+    } else {
+      dw = bookW; dh = dw / ar; dx = bookX; dy = bookY - (dh - bookH) / 2;
+    }
+    ctx.drawImage(coverImg, dx, dy, dw, dh);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = "#1b2244";
+    _roundRect(ctx, bookX, bookY, bookW, bookH, 8);
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+    // Accent band near top.
+    ctx.fillStyle = "#7c9cff";
+    _roundRect(ctx, bookX + 60, bookY + 70, bookW * 0.42, 12, 6);
+    ctx.fill();
+    // Title — serif, large, bottom-anchored.
+    ctx.fillStyle = "#e7ecff";
+    ctx.font = "700 56px Georgia, 'Iowan Old Style', serif";
+    ctx.textBaseline = "top";
+    const titleMaxW = bookW - 100;
+    const titleLines = _wrapBookMockupText(ctx, title, titleMaxW);
+    const lineH = 64;
+    const titleBlockH = titleLines.length * lineH;
+    let titleY = bookY + bookH - 200 - titleBlockH;
+    for (const line of titleLines) {
+      ctx.fillText(line, bookX + 50, titleY);
+      titleY += lineH;
+    }
+    // Author — small caps style.
+    if (author) {
+      ctx.fillStyle = "rgba(231, 236, 255, 0.65)";
+      ctx.font = "600 20px -apple-system, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillText(author.toUpperCase(), bookX + 50, bookY + bookH - 170);
+    }
+  }
+  ctx.restore();
+
+  // Audiobook badge (overlay near the bottom of the cover).
+  const badgeX = bookX + 50, badgeY = bookY + bookH - 100, badgeH = 44;
+  const badgeText = "AUDIOBOOK";
+  ctx.font = "600 16px -apple-system, 'Segoe UI', Roboto, sans-serif";
+  const badgeTextW = ctx.measureText(badgeText).width;
+  const badgeW = badgeTextW + 90;
+  ctx.fillStyle = "rgba(11, 16, 32, 0.78)";
+  _roundRect(ctx, badgeX, badgeY, badgeW, badgeH, badgeH / 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = "#7c9cff";
+  const barXs = [0, 8, 16, 24, 32, 40];
+  const barHs = [12, 22, 8, 18, 6, 20];
+  for (let i = 0; i < barXs.length; i++) {
+    const x = badgeX + 16 + barXs[i];
+    const h = barHs[i];
+    const y = badgeY + (badgeH - h) / 2;
+    _roundRect(ctx, x, y, 3, h, 1.5);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#e7ecff";
+  ctx.textBaseline = "middle";
+  ctx.fillText(badgeText, badgeX + 68, badgeY + badgeH / 2);
+
+  // Footer — "Made with Narrative" wordmark.
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "rgba(231, 236, 255, 0.55)";
+  ctx.font = "600 22px -apple-system, 'Segoe UI', Roboto, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Made with Narrative", W / 2, H - 70);
+  ctx.fillStyle = "rgba(231, 236, 255, 0.32)";
+  ctx.font = "400 16px -apple-system, 'Segoe UI', Roboto, sans-serif";
+  ctx.fillText("narrative-alpha.fly.dev", W / 2, H - 44);
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const a = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    const safe = (title || "clip").replace(/[^a-z0-9\-_. ]/gi, "").replace(/\s+/g, "-").slice(0, 60) || "clip";
+    a.href = url;
+    a.download = `${safe}-narrative-mockup.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, "image/png", 0.95);
+}
+
+function _roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+if (bookMockupClose) bookMockupClose.addEventListener("click", closeBookMockup);
+if (bookMockupDialog) bookMockupDialog.addEventListener("close", () => {
+  if (_bookMockupCoverUrl) {
+    URL.revokeObjectURL(_bookMockupCoverUrl);
+    _bookMockupCoverUrl = null;
+  }
+  _bookMockupSourceClipId = null;
+});
+if (bookMockupTitle) bookMockupTitle.addEventListener("input", () => {
+  _paintBookMockupPreview(
+    bookMockupTitle.value || "Your clip",
+    bookMockupAuthor.value || "",
+    null,
+  );
+  if (_bookMockupSourceClipId) {
+    getClip(_bookMockupSourceClipId).then((clip) => {
+      if (clip && clip.cover) {
+        _paintBookMockupPreview(bookMockupTitle.value || "Your clip", bookMockupAuthor.value || "", clip.cover);
+      }
+    });
+  }
+});
+if (bookMockupAuthor) bookMockupAuthor.addEventListener("input", () => {
+  const display = bookMockupAuthorDisplay;
+  if (display) display.textContent = bookMockupAuthor.value ? `By ${bookMockupAuthor.value}` : "";
+});
+if (bookMockupDownload) bookMockupDownload.addEventListener("click", () => {
+  downloadBookMockupPng().catch((err) => {
+    console.warn("[book-mockup] download failed:", err);
+  });
+});
+
+const clipEditShareMockupBtn = $("clip-edit-share-mockup");
+if (clipEditShareMockupBtn) {
+  clipEditShareMockupBtn.addEventListener("click", () => {
+    if (!_editingClipId) return;
+    openBookMockup(_editingClipId);
+  });
+}
+
 // v4.60 (#538 Phase 1A): Push-to-GitHub button. Closes the
 // revise-as-you-listen loop — write the clip's current text back to
 // the source file on GitHub with a real commit. Only available for
