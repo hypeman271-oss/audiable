@@ -911,6 +911,14 @@ let _pendingImages = [];
 // browser pick) returned a gitRef. Persisted onto the saved clip so
 // the update-checker can compare SHA against the live tree later.
 let _pendingGitRef = null;
+// v4.96 (#538 Phase 2): same idea for Scrivener imports. The
+// Scrivener picker stashes {project_name, doc_id, doc_path} here
+// for the single-chapter path. generate() copies it onto the new
+// clip as clip.scrivenerRef so the Edit dialog's Push to Scrivener
+// button knows which BinderItem to patch. The chapter-queue path
+// threads its own per-chapter scrivenerRef directly through the
+// queue items instead of relying on this global.
+let _pendingScrivenerRef = null;
 // v225fz11.cover (#677): /api/extract returns a `cover` object when
 // image_detector.detect_images() finds one in the source file (EPUB
 // cover, etc.). We stash it here at upload time and pull it into
@@ -1167,6 +1175,7 @@ async function _openAsEbook() {
         : null,
       pendingChapterTitle: _pendingChapterTitle,
       pendingGitRef: _pendingGitRef,
+      pendingScrivenerRef: _pendingScrivenerRef,
       textareaValue: textEl ? textEl.value : "",
     };
     window._ebookPreviewSnapshot = _ebookPreviewSnapshot;
@@ -1293,6 +1302,7 @@ async function _openAsEbook() {
     bookmarks: [],
     images: dedupedImages,
     gitRef: _pendingGitRef || null,
+    scrivenerRef: _pendingScrivenerRef || null,
     sentenceAssignments: {},
     assignmentsDirty: false,
     notes: "",
@@ -12520,6 +12530,15 @@ async function generate() {
                 : (regenExistingMeta && regenExistingMeta.gitRef
                     ? regenExistingMeta.gitRef
                     : null),
+              // v4.96 (#538 Phase 2): Scrivener source pin. Same
+              // precedence as gitRef — fresh import wins, otherwise
+              // preserve the existing scrivenerRef across re-narrate
+              // so Push to Scrivener still works.
+              scrivenerRef: _pendingScrivenerRef
+                ? _pendingScrivenerRef
+                : (regenExistingMeta && regenExistingMeta.scrivenerRef
+                    ? regenExistingMeta.scrivenerRef
+                    : null),
               // v220-AA: preserve manual per-sentence voice overrides
               // across regen. New clips start with no overrides ({}),
               // which is the same as no field at all.
@@ -12602,8 +12621,8 @@ async function generate() {
                 // Pending images have been written to the clip — clear so
                 // they don't leak into the next fresh clip the user types.
                 _pendingImages = [];
-  _pendingGitRef = null;
                 _pendingGitRef = null;
+                _pendingScrivenerRef = null;
                 // Chapter queue: mark "save side" complete and try to
                 // advance. The audio side is signaled separately by
                 // streaming exhaustion or the combined MP3's 'ended'.
@@ -13420,6 +13439,10 @@ function _startChapterQueue(chapters) {
   // save callback pins it onto the clip. Subsequent chapters set their
   // own gitRef from _advanceChapterQueue.
   _pendingGitRef = first.gitRef || null;
+  // v4.96 (#538 Phase 2): same idea for Scrivener — each queued
+  // chapter carries its own scrivenerRef so Push to Scrivener works
+  // on every clip from a multi-chapter import, not just the first.
+  _pendingScrivenerRef = first.scrivenerRef || null;
   textEl.value = first.text;
   updateCounts();
   _hideChapterBanner();
@@ -13600,6 +13623,10 @@ function _enqueueBg(jobsOrChapters) {
       // overwrite an existing clip instead of creating a new one (used
       // by the v176 "Re-narrate outdated" path).
       gitRef: j.gitRef || null,
+      // v4.96 (#538 Phase 2): preserve Scrivener pin through the
+      // bg-queue so multi-chapter Scrivener imports get Push to
+      // Scrivener on every saved clip, not just the first.
+      scrivenerRef: j.scrivenerRef || null,
       targetClipId: j.targetClipId || null,
     });
     // v220as: mark every re-narrate target as "queued" the moment it
@@ -13723,6 +13750,7 @@ async function _bgTrySynth(job) {
         text: job.text,
         targetClipId: job.targetClipId || null,
         gitRef: job.gitRef || null,
+        scrivenerRef: job.scrivenerRef || null,
       },
       { fromBgQueue: true }
     );
@@ -14303,6 +14331,8 @@ function _advanceChapterQueue() {
   _chapterCurrentIndex += 1;
   _pendingChapterTitle = next.title;
   _pendingGitRef = next.gitRef || null;
+  // v4.96 (#538 Phase 2): carry next chapter's Scrivener pin too.
+  _pendingScrivenerRef = next.scrivenerRef || null;
   _updateChapterQueueUI();
 
   // Fast path: chapter was pre-synthesized in the background while the
@@ -15153,6 +15183,8 @@ async function _preSynthesizeChapter(chapter, opts) {
       // the new SHA is recorded; fall back to the existing clip's
       // ref if for some reason we don't have a new one.
       gitRef: chapter.gitRef || (existingClip ? existingClip.gitRef : null),
+      // v4.96 (#538 Phase 2): same precedence for Scrivener pin.
+      scrivenerRef: chapter.scrivenerRef || (existingClip ? existingClip.scrivenerRef : null),
       // v220as: stamp every git-sourced clip with "when did we last
       // fetch + synth this." Surfaced on the library card as
       // "Last synced: 5 min ago" so users can tell across sessions
@@ -15847,6 +15879,7 @@ function clearForNewClip() {
   // a freshly-typed clip.
   _pendingImages = [];
   _pendingGitRef = null;
+  _pendingScrivenerRef = null;
   // v225fz11.cover (#677): drop the detected cover too — a clean
   // slate clip shouldn't inherit it from a previous import.
   _pendingDetectedCover = null;
@@ -21531,6 +21564,7 @@ function exitBookView(opts = {}) {
       if (s.pendingChapterImages) _pendingChapterImages = s.pendingChapterImages;
       if (s.pendingChapterTitle !== undefined) _pendingChapterTitle = s.pendingChapterTitle;
       if (s.pendingGitRef !== undefined) _pendingGitRef = s.pendingGitRef;
+      if (s.pendingScrivenerRef !== undefined) _pendingScrivenerRef = s.pendingScrivenerRef;
       // Restore textarea text (usually unchanged but covers edge cases
       // where loadClip muted it).
       if (textEl && s.textareaValue !== undefined) {
@@ -28659,6 +28693,7 @@ async function loadClip(id, { autoPlay = true } = {}) {
   _pendingDetectedCover = null;
   _pendingChapterImages = [];
   _pendingGitRef = null;
+  _pendingScrivenerRef = null;
   _pendingChapterTitle = null;
   if (typeof _paintImportPreview === "function") {
     try { _paintImportPreview(); } catch {}
@@ -30573,6 +30608,14 @@ function openScrivenerBrowser(data) {
       extra: c,
     })),
     onUse: async (picked, opts = {}) => {
+      // v4.96 (#538 Phase 2): build the scrivenerRef so generate()
+      // can pin it onto the saved clip. doc_id is the only id the
+      // patch endpoint needs; project_name + doc_path are display.
+      const refFor = (ch) => ({
+        project_name: data.project_name || "",
+        doc_id: ch.id,
+        doc_path: ch.path || "",
+      });
       if (picked.length === 1) {
         const ch = picked[0].extra;
         exitReadingView();
@@ -30580,6 +30623,7 @@ function openScrivenerBrowser(data) {
         _pendingChapterTitle = ch.title;
         _pendingImages = [];
         _pendingGitRef = null;
+        _pendingScrivenerRef = refFor(ch);
         _pendingDetectedCover = null;
         _pendingChapterImages = [];
         if (typeof _paintImportPreview === "function") _paintImportPreview();
@@ -30591,6 +30635,7 @@ function openScrivenerBrowser(data) {
       const chapters = picked.map((p) => ({
         title: p.extra.title,
         text: p.extra.text,
+        scrivenerRef: refFor(p.extra),
       }));
       if (opts.background) {
         _startBackgroundChapterQueue(chapters);
