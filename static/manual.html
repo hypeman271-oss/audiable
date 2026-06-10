@@ -1678,6 +1678,7 @@
               <li><a href="#wt-paste-url">Paste an article URL</a></li>
               <li><a href="#wt-upload-file">Upload a file</a></li>
               <li><a href="#wt-browse-github">Browse a GitHub repo</a></li>
+              <li><a href="#wt-share-mockup">Share a book mockup</a></li>
             </ul>
           </li>
           <li><a href="#shortcuts">Reference</a>
@@ -5260,6 +5261,90 @@ She set both hands flat on the table.</pre>
             <div class="wt-callout-text">Tap Import.</div>
           </div>
         </div>
+      </div>
+
+      <h3 id="wt-share-mockup">Tutorial 6 — Share a book mockup</h3>
+      <p>
+        Turn any clip into a 1080×1080 PNG of a paperback audiobook,
+        sized for Instagram / Bluesky / Threads / KBoards threads.
+        The on-screen book is rendered live in 3D — what you see is
+        the same component that anchors the landing-page hero. The
+        downloaded PNG flattens it to a clean square with a "Made with
+        Narrative" wordmark footer.
+      </p>
+      <div class="tip" style="margin-bottom: 16px;">
+        <strong>Live demo.</strong> The block below is the actual
+        component, not a screenshot — change the title field and you
+        watch the cover repaint in real time. The PNG export uses the
+        same source of truth.
+      </div>
+      <div class="manual-demo" style="background: linear-gradient(180deg, #141a30 0%, #1b2240 100%); border-radius: var(--radius); padding: 32px 20px; display: flex; align-items: center; justify-content: center; min-height: 360px;">
+        <div class="bm-scene" style="--bm-cover-w: 200px; --bm-cover-h: 300px; --bm-depth: 24px; --bm-paper: #f4ecd8; --bm-paper-edge: #d8cfb8; --bm-cover-bg: #1b2244; --bm-cover-ink: #e7ecff; --bm-band: #7c9cff; display: flex; align-items: center; justify-content: center; perspective: 1500px; perspective-origin: 50% 40%;" aria-label="Live book mockup demo">
+          <div class="bm-book" style="position: relative; width: var(--bm-cover-w); height: var(--bm-cover-h); transform-style: preserve-3d; transform: rotateY(-28deg) rotateX(4deg);">
+            <div class="bm-face bm-cover" style="position: absolute; top: 0; left: 0; width: var(--bm-cover-w); height: var(--bm-cover-h); background: var(--bm-cover-bg); border-radius: 2px 4px 4px 2px; transform: translate3d(0, 0, calc(var(--bm-depth) / 2)); display: flex; flex-direction: column; justify-content: space-between; padding: 22px 18px 20px; color: var(--bm-cover-ink); overflow: hidden;">
+              <div class="bm-cover-band" style="width: 60%; height: 5px; background: var(--bm-band); border-radius: 3px;"></div>
+              <div class="bm-cover-text" style="margin-top: auto;">
+                <div class="bm-cover-title" style="font-family: Georgia, 'Iowan Old Style', serif; font-size: 24px; line-height: 1.05; letter-spacing: -0.01em; font-weight: 700; margin-bottom: 8px;">Your Chapter</div>
+                <div class="bm-cover-author" style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.22em; color: rgba(231,236,255,0.65);">By You</div>
+              </div>
+              <div class="bm-cover-audio" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; padding: 5px 10px 5px 8px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 999px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.14em; font-weight: 600; color: var(--bm-cover-ink); align-self: flex-start;">
+                <svg width="40" height="20" viewBox="0 0 44 22" aria-hidden="true">
+                  <rect x="2" y="6" width="3" height="10" rx="1.5" fill="#7c9cff" />
+                  <rect x="9" y="2" width="3" height="18" rx="1.5" fill="#7c9cff" />
+                  <rect x="16" y="8" width="3" height="6" rx="1.5" fill="#7c9cff" />
+                  <rect x="23" y="4" width="3" height="14" rx="1.5" fill="#7c9cff" />
+                  <rect x="30" y="9" width="3" height="4" rx="1.5" fill="#7c9cff" />
+                  <rect x="37" y="3" width="3" height="16" rx="1.5" fill="#7c9cff" />
+                </svg>
+                <span>Audiobook</span>
+              </div>
+            </div>
+            <div class="bm-face bm-spine" style="position: absolute; top: 0; left: 0; width: var(--bm-depth); height: var(--bm-cover-h); background: linear-gradient(90deg, #0e1430 0%, var(--bm-cover-bg) 50%, #0e1430 100%); transform: translate3d(calc(var(--bm-depth) / -2), 0, 0) rotateY(-90deg);"></div>
+            <div class="bm-face bm-pages-right" style="position: absolute; top: 0; left: 0; width: var(--bm-depth); height: var(--bm-cover-h); background: repeating-linear-gradient(180deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px), var(--bm-paper); transform: translate3d(calc(var(--bm-cover-w) - var(--bm-depth) / 2), 0, 0) rotateY(90deg);"></div>
+            <div class="bm-face bm-pages-top" style="position: absolute; top: 0; left: 0; width: var(--bm-cover-w); height: var(--bm-depth); background: repeating-linear-gradient(90deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px), var(--bm-paper); transform: translate3d(0, calc(var(--bm-depth) / -2), 0) rotateX(90deg);"></div>
+            <div class="bm-face bm-pages-bottom" style="position: absolute; top: 0; left: 0; width: var(--bm-cover-w); height: var(--bm-depth); background: repeating-linear-gradient(90deg, var(--bm-paper) 0 1px, var(--bm-paper-edge) 1px 2px), var(--bm-paper); transform: translate3d(0, calc(var(--bm-cover-h) - var(--bm-depth) / 2), 0) rotateX(-90deg);"></div>
+          </div>
+        </div>
+      </div>
+      <ol style="margin-top: 20px;">
+        <li>
+          <strong>Open a clip's <em>✎ Edit</em> dialog.</strong> Tap
+          the pencil icon on any library card.
+        </li>
+        <li>
+          <strong>Scroll to the actions row at the bottom and click
+          <em>📕 Share mockup</em>.</strong> The 3D book opens in a new
+          dialog, prepopulated with the clip's title and cover. If
+          you've uploaded a cover image, it fills the front face; if
+          not, you get the navy fallback shown above.
+        </li>
+        <li>
+          <strong>Tweak <em>Title</em> and <em>By</em>.</strong>
+          The on-screen book repaints on every keystroke. Author is
+          remembered across sessions — type it once. The clip itself
+          isn't renamed; this is share-only metadata.
+        </li>
+        <li>
+          <strong>Click <em>Download PNG</em>.</strong> The file lands
+          in your Downloads folder as
+          <code>{title}-narrative-mockup.png</code>. Open it to see the
+          flat 1080×1080 version with a <em>Made with Narrative</em>
+          wordmark in the footer.
+        </li>
+        <li>
+          <strong>Post it.</strong> Drop the PNG into a tweet, an
+          Instagram square, a KBoards announcement thread, a writing-
+          group Discord. When someone follows the link to
+          narrative-alpha.fly.dev, they'll see the same 3D book in
+          the landing hero — visual continuity is built in.
+        </li>
+      </ol>
+      <div class="tip">
+        <strong>Tip — set a cover first.</strong> Mockups with real
+        cover art read as "a real book" at thumbnail size; the navy
+        fallback reads as "a writer's draft." Even a quick canvas paint
+        + a paragraph of title text in the Edit dialog's cover slot
+        gives the share image more pull when it scrolls past on a feed.
       </div>
 
       <!-- ============================================================= -->
