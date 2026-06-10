@@ -2380,6 +2380,60 @@ async def extract_scrivener_endpoint(file: UploadFile = File(...)):
     return result
 
 
+@app.post("/api/scrivener/patch")
+async def scrivener_patch_endpoint(
+    file: UploadFile = File(...),
+    edits: str = Form(...),
+):
+    """Apply revised text to a .scriv.zip and stream back the patched zip.
+
+    v4.96 (#538 Phase 2): the Edit dialog's "Push to Scrivener" button
+    posts the user's *original* .scriv bundle plus a JSON `edits` array
+    of `{doc_id, new_text}` entries. We replace each matching
+    `Files/Docs/<doc_id>.rtf` with a minimal-RTF rendering of new_text
+    (loses formatting in those scenes — that's the documented tradeoff)
+    and stream the rebuilt zip back as an attachment download. The
+    bundle isn't persisted server-side; this is one-shot.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="no filename")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file too large ({len(data)} bytes, max {MAX_UPLOAD_BYTES})",
+        )
+    import json as _json
+    try:
+        edit_list = _json.loads(edits)
+    except (_json.JSONDecodeError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"edits not JSON: {e}")
+    if not isinstance(edit_list, list) or not edit_list:
+        raise HTTPException(status_code=400, detail="edits must be a non-empty list")
+    try:
+        patched, summary = extract.patch_scrivener_bundle(data, edit_list)
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    project_name = summary.get("project_name") or "scrivener-project"
+    safe_name = "".join(
+        c if c.isalnum() or c in ("-", "_", ".") else "_"
+        for c in project_name
+    ) or "scrivener-project"
+    filename = f"{safe_name}.scriv.zip"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Scriv-Patched": ",".join(summary.get("patched") or []),
+        "X-Scriv-Missing": ",".join(summary.get("missing") or []),
+    }
+    return Response(
+        content=patched,
+        media_type="application/zip",
+        headers=headers,
+    )
+
+
 @app.post("/api/extract/obsidian")
 async def extract_obsidian_endpoint(file: UploadFile = File(...)):
     """Parse an Obsidian vault zip and return its note list.

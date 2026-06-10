@@ -1609,6 +1609,171 @@ def extract_scrivener_bundle(data: bytes) -> dict:
         }
 
 
+# v4.96 (#538 Phase 2): minimal RTF body for a single scene. Scrivener
+# happily round-trips a flat RTF that's just `{\rtf1\ansi...\pard ...\par}`.
+# We lose any per-scene styling (bold/italic/font) the user had — that's
+# the tradeoff documented in the task plan (the scene text is exactly
+# what they revised, but format-decorations vanish for *that* scene
+# only). All other scenes in the bundle are left untouched.
+def _build_minimal_scene_rtf(text: str) -> bytes:
+    """Render plain text to minimal Scrivener-compatible RTF bytes.
+
+    Each paragraph becomes its own `\\par`. Non-ASCII chars get
+    escaped as Unicode escapes (\\uNNNN?) so the RTF stays 7-bit safe
+    even when the source had smart quotes / em dashes.
+    """
+    def _esc(s: str) -> str:
+        out = []
+        for ch in s:
+            cp = ord(ch)
+            if ch == "\\":
+                out.append("\\\\")
+            elif ch == "{":
+                out.append("\\{")
+            elif ch == "}":
+                out.append("\\}")
+            elif cp < 128:
+                out.append(ch)
+            elif cp <= 0xFFFF:
+                # Signed 16-bit: RTF wants negative for >32767. The
+                # trailing `?` is the fallback char for RTF readers
+                # that don't understand the Unicode escape.
+                signed = cp if cp < 0x8000 else cp - 0x10000
+                out.append(f"\\u{signed}?")
+            else:
+                # Surrogate pair for chars beyond the BMP.
+                cp_adj = cp - 0x10000
+                high = 0xD800 | (cp_adj >> 10)
+                low = 0xDC00 | (cp_adj & 0x3FF)
+                high_signed = high if high < 0x8000 else high - 0x10000
+                low_signed = low if low < 0x8000 else low - 0x10000
+                out.append(f"\\u{high_signed}?\\u{low_signed}?")
+        return "".join(out)
+
+    # Split on blank lines so each paragraph becomes its own \par.
+    # Collapse internal single newlines into spaces (Scrivener treats
+    # \par as the paragraph break; mid-paragraph \line is unusual).
+    paragraphs = [
+        " ".join(p.split())
+        for p in (text or "").replace("\r\n", "\n").split("\n\n")
+        if p.strip()
+    ]
+    if not paragraphs:
+        paragraphs = [""]
+    body = "\n".join(
+        rf"\pard\plain\f0\fs24 {_esc(p)}\par" for p in paragraphs
+    )
+    rtf = (
+        r"{\rtf1\ansi\ansicpg1252\cocoartf2580"
+        r"{\fonttbl\f0\fnil\fcharset0 HelveticaNeue;}"
+        + "\n" + body + "\n}"
+    )
+    return rtf.encode("utf-8")
+
+
+def patch_scrivener_bundle(data: bytes, edits: list[dict]) -> tuple[bytes, dict]:
+    """Apply revised text edits to a .scriv.zip and return the patched zip.
+
+    `edits` is a list of `{"doc_id": "<binder-item-id>", "new_text": "..."}`
+    objects. For each edit we locate `Files/Docs/<doc_id>.rtf` inside the
+    bundle and replace it with a minimal-RTF rendering of `new_text`.
+    Docs we can't find are reported back in the summary; the rest of the
+    bundle (binder XML, snapshots, research, settings, fonts) round-trips
+    byte-for-byte.
+
+    Returns: (patched_bytes, summary)
+    where summary = {
+        "project_name": str,
+        "patched": [doc_id, ...],
+        "missing": [doc_id, ...],   # binder items we couldn't locate
+    }
+
+    Raises ExtractionError on malformed bundles.
+    """
+    import io
+    import zipfile
+
+    try:
+        zf_in = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        raise ExtractionError(f"not a valid zip file: {e}") from e
+
+    with zf_in:
+        names = zf_in.namelist()
+        scrivx_name = next(
+            (n for n in names if n.lower().endswith(".scrivx")),
+            None,
+        )
+        if not scrivx_name:
+            raise ExtractionError(
+                "not a Scrivener bundle (no .scrivx file inside the zip)"
+            )
+        project_name = PurePath(scrivx_name).stem
+        bundle_root = str(PurePath(scrivx_name).parent).rstrip("/")
+
+        # Build name lookup once. Real bundles have docs at
+        # `<bundle_root>/Files/Docs/<doc_id>.rtf` but defensively we
+        # also accept any path ending in `Files/Docs/<doc_id>.rtf`.
+        wanted: dict[str, str] = {}
+        for e in edits:
+            doc_id = (e.get("doc_id") or "").strip()
+            if not doc_id:
+                continue
+            candidate = f"{bundle_root}/Files/Docs/{doc_id}.rtf"
+            if candidate in names:
+                wanted[doc_id] = candidate
+                continue
+            # Fallback: scan for any path matching the doc id.
+            tail = f"Files/Docs/{doc_id}.rtf"
+            match = next((n for n in names if n.endswith(tail)), None)
+            if match:
+                wanted[doc_id] = match
+
+        edits_by_id = {(e.get("doc_id") or "").strip(): e for e in edits}
+
+        out_buf = io.BytesIO()
+        patched: list[str] = []
+        with zipfile.ZipFile(
+            out_buf,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as zf_out:
+            for info in zf_in.infolist():
+                if info.is_dir():
+                    # Copy directory entry as-is to preserve structure.
+                    zf_out.writestr(info, b"")
+                    continue
+                patched_doc_id = next(
+                    (
+                        did for did, path in wanted.items()
+                        if path == info.filename
+                    ),
+                    None,
+                )
+                if patched_doc_id is not None:
+                    edit = edits_by_id.get(patched_doc_id) or {}
+                    new_text = edit.get("new_text") or ""
+                    new_rtf = _build_minimal_scene_rtf(new_text)
+                    # Preserve the original ZipInfo (timestamps,
+                    # permissions) but write the new payload.
+                    zf_out.writestr(info, new_rtf)
+                    patched.append(patched_doc_id)
+                else:
+                    zf_out.writestr(info, zf_in.read(info.filename))
+
+        requested = [
+            (e.get("doc_id") or "").strip()
+            for e in edits
+            if (e.get("doc_id") or "").strip()
+        ]
+        missing = [did for did in requested if did not in wanted]
+        return out_buf.getvalue(), {
+            "project_name": project_name,
+            "patched": patched,
+            "missing": missing,
+        }
+
+
 # Obsidian-specific folder names we never want to import. Mostly config
 # (.obsidian/), trash (.trash/), template scaffolds, and attachment dirs
 # that don't hold prose. Lowercased for case-insensitive match.
