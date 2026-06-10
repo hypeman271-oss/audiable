@@ -149,8 +149,10 @@ After the v0.1.2 first-release validation:
 □ Wait for CI (~15 min)
 □ Download .sig files from the new draft release
 □ Paste into DESKTOP_SIGNATURES
-□ Publish the GH Release
-□ Deploy Fly
+□ Publish the GH Release  (release.yml auto-publishes — usually already done)
+□ Deploy Fly via scripts/deploy.ps1 — auto-runs verify_updater_manifest.py
+   (catches forgot-to-repaste-sig + draft-release + wrong-key bugs;
+    blocks the deploy declaring success if the manifest is broken)
 □ Open desktop install → confirm popup → click Install → confirm v0.1.X is running
 ```
 
