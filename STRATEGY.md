@@ -132,6 +132,49 @@ isn't the default anymore.
 - Direct sale vs app store — Tauri-first sidesteps this. Sell direct
   through your own site with Stripe Checkout; skip the 30% cut.
 
+### Kokoro hardware bump — decision deferred to post-GTM-Phase-1 (2026-06-10)
+
+**Current state on the deployed machine** (`shared-cpu-1x`, 1 vCPU,
+2 GB RAM, ~$3.20/mo):
+
+- Live-sampled Kokoro RTF: **0.28x**. 1 sec of audio takes ~3.4 sec
+  wall time on a cold cache; 30-min chapter ≈ 107 min to synth.
+- #446 already exhausted the free tuning (ONNX thread pin, espeak-ng
+  phonemes, startup warmup). CPU is the bottleneck.
+
+**Paid options surveyed** (Fly pricing, approximate):
+
+| Tier                                | RTF est.   | Cost      | 30-min chapter   |
+|-------------------------------------|------------|-----------|------------------|
+| `shared-cpu-1x` 2 GB (today)        | 0.28x      | ~$3/mo    | 107 min          |
+| `shared-cpu-4x` 4 GB                | 0.5–0.8x   | ~$15–20/mo| 40–60 min        |
+| `performance-1x` 2 GB (dedicated)   | 1.0–1.5x   | ~$30/mo   | 20–30 min        |
+| `a10` GPU 24/7                      | 5–10x      | ~$1000/mo | <5 min           |
+
+**Decision: hold at the current tier.** The bg-queue + resumable synth
+already make slow synth survivable for engaged users; the recurring
+$30/mo of a `performance-1x` recurs whether anyone uses the app or
+not.
+
+**Trigger to bump:**
+
+The moment we shoot the 60-second demo video (#408) or land GTM
+Phase 1 (#800), upgrade to `performance-1x` first. That's the lowest
+tier where "import a chapter, start listening within a minute" is
+honest, which is the only frame a first-time visitor will judge us
+on.
+
+**Trigger to consider GPU:**
+
+Three concurrent paying customers covering ≥$50/mo of recurring
+synth bandwidth, OR a hard product gate ("instant generate" becomes
+the differentiator). Until then GPU is overkill.
+
+**Don't bump on speculation.** RTF instrumentation will keep firing
+in stderr — if real-world chapters from real tester accounts show
+RTF dipping below 0.2x consistently (i.e. shared-CPU noisy neighbors
+are getting worse), revisit before the GTM trigger.
+
 ---
 
 ## The thesis
