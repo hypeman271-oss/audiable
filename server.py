@@ -353,6 +353,87 @@ async def _schedule_wedge_heartbeat():
 
 
 @app.on_event("startup")
+async def _start_wedge_heartbeat_watchdog():
+    """In-process backstop watchdog (#883, completing the #845 Option B).
+
+    The heartbeat coroutine stamps _WEDGE_LAST_HEARTBEAT_AT every 30s and
+    /healthz returns 503 when that timestamp is older than 120s — that's
+    the *primary* recovery path: Fly's HTTP check sees 503 and recycles
+    the machine. This watchdog is the *secondary* path: a native Python
+    thread that runs OFF the asyncio loop so it still fires when the
+    loop itself is wedged (the exact failure mode #823 was built for).
+    If the heartbeat hasn't ticked in WEDGE_WATCHDOG_KILL_SEC AND we're
+    past the boot grace, log loudly and call os._exit so Fly's machine-
+    death watchdog restarts us.
+
+    Kill threshold is intentionally higher than /healthz's stale
+    threshold so the HTTP-check path gets first dibs — this only fires
+    when external recovery has failed (e.g. Fly's check isn't reaching
+    /healthz, or isn't configured to restart on 503). os._exit is the
+    nuclear option: sys.exit raises SystemExit which uvicorn catches.
+    """
+    import os as _os
+    import sys as _sys
+    import threading as _threading
+
+    # Higher than WEDGE_HEARTBEAT_STALE_SEC (120s) — give /healthz +
+    # Fly's HTTP check a chance to trigger the restart cleanly before
+    # we go nuclear.
+    WEDGE_WATCHDOG_KILL_SEC = 180
+    # Poll cadence. Fast enough to bound time-to-kill to ~15s after
+    # the threshold; slow enough that the thread itself is invisible
+    # in normal operation.
+    WEDGE_WATCHDOG_POLL_SEC = 15
+
+    def _watchdog_loop():
+        while True:
+            try:
+                _wedge_time.sleep(WEDGE_WATCHDOG_POLL_SEC)
+                now = _wedge_time.time()
+                uptime = now - _WEDGE_PROCESS_STARTED_AT
+                if uptime <= WEDGE_HEARTBEAT_GRACE_SEC:
+                    continue
+                age = now - _WEDGE_LAST_HEARTBEAT_AT
+                if age <= WEDGE_WATCHDOG_KILL_SEC:
+                    continue
+                # Past grace + past kill threshold → the asyncio loop
+                # is wedged and external recovery hasn't fired. Log
+                # the diagnosis before going down so Fly logs preserve
+                # WHY the process died.
+                print(
+                    f"[watchdog] FATAL: heartbeat stale "
+                    f"age={age:.1f}s threshold={WEDGE_WATCHDOG_KILL_SEC}s "
+                    f"uptime={uptime:.0f}s — killing process",
+                    file=_sys.stderr, flush=True,
+                )
+                _os._exit(1)
+            except Exception as e:
+                # The watchdog itself must not crash silently. If we
+                # can't even log, there's nothing more to do — the
+                # heartbeat thread will eventually trip the same path.
+                try:
+                    print(
+                        f"[watchdog] error: {type(e).__name__}: {e}",
+                        file=_sys.stderr, flush=True,
+                    )
+                except Exception:
+                    pass
+
+    t = _threading.Thread(
+        target=_watchdog_loop,
+        name="wedge-watchdog",
+        daemon=True,
+    )
+    t.start()
+    print(
+        f"[watchdog] started (kill_threshold={WEDGE_WATCHDOG_KILL_SEC}s, "
+        f"poll={WEDGE_WATCHDOG_POLL_SEC}s, "
+        f"grace={WEDGE_HEARTBEAT_GRACE_SEC}s)",
+        file=_sys.stderr, flush=True,
+    )
+
+
+@app.on_event("startup")
 async def _schedule_wedge_wal_checkpoint():
     """Background SQLite WAL checkpoint every 5 minutes. Without this,
     a busy server in WAL mode grows library.db-wal until the disk
