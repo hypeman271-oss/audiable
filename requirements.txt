@@ -11,6 +11,10 @@ python-docx==1.2.0
 lameenc==1.8.2
 trafilatura==2.0.0
 striprtf==0.0.27
+# v4.107 (#896): encrypt Google Drive OAuth tokens at rest. Fernet
+# (AES-128-CBC + HMAC, authenticated) keyed by GDRIVE_TOKEN_KEY env.
+# See GDRIVE_OAUTH_SETUP.md §6. Linux + Windows wheels, no build step.
+cryptography==49.0.0
 # Kokoro TTS — Apache 2.0 model + weights, runs on the ONNX runtime
 # we already pull in via piper-tts. Bundle (one .onnx + one .bin)
 # downloaded into voices/kokoro/ at image build time; see Dockerfile.

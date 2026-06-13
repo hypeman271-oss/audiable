@@ -925,10 +925,14 @@ text lands in the textarea. Works today for Google Docs (exported as
 DOCX) and arbitrary Drive files (PDF / EPUB / DOCX). Sheets and
 Slides bail with a friendly error.
 
-**Status:** Phase 2. Phase 1 (URL paste) is sufficient for users who
-already share docs publicly. OAuth unlocks browsing your private
-Drive directly inside Narrative — like the GitHub repo browser does
-for repos.
+**Status:** ✅ DONE — shipped v225v4.107 (#896). Sign in with Google in
+Settings → Account → Google Drive, then Import ▾ → Google Drive opens
+the Google Picker for private files. Built with the `drive.file` scope
+(no Google app verification), tokens stored server-side per tenant
+(`gdrive_tokens` table, schema v7 — refresh token never reaches the
+browser), Picker fed a short-lived access token via
+`/api/gdrive/picker-token`. Operator setup in `GDRIVE_OAUTH_SETUP.md`.
+Notes below kept for history / the deferred `drive.readonly` option.
 
 ### What Phase 2 needs
 

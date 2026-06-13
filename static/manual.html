@@ -2147,17 +2147,22 @@
             dropped so nothing nonsense gets read aloud.</td>
         </tr>
         <tr>
-          <td><strong>Google Drive (link)</strong></td>
-          <td>Paste a Drive share URL. Google Docs are exported as
-            DOCX server-side so headings and paragraphs survive;
-            other Drive files (PDF, EPUB, DOCX) download and run
-            through the same dispatcher the file-upload path uses.
-            The share link <strong>must</strong> be set to
-            <em>Anyone with the link can view</em> in Drive
-            (right-click → Share). Google Sheets and Slides aren't
-            supported — TTS doesn't have a useful read of them.
-            Files larger than 25 MB hit Drive's virus-scan gate; in
-            that case download locally and use Upload file instead.</td>
+          <td><strong>Google Drive</strong></td>
+          <td><strong>Signed in?</strong> Connect Google Drive in
+            <em>Settings → Account → Google Drive</em> and this opens
+            Google's file picker — choose a private Doc or file and it
+            imports directly. Narrative only sees the files you pick, and
+            the connection lives on the server (nothing stored on your
+            device).<br />
+            <strong>Not signed in?</strong> Paste a Drive share URL set
+            to <em>Anyone with the link can view</em> (right-click →
+            Share). Either way, Google Docs export as DOCX server-side so
+            headings and paragraphs survive; other files (PDF, EPUB,
+            DOCX) run through the same dispatcher the file-upload path
+            uses. Google Sheets and Slides aren't supported — export to
+            DOCX or PDF first. Public-link files larger than 25 MB hit
+            Drive's virus-scan gate; download locally and use Upload file
+            instead.</td>
         </tr>
       </table>
 

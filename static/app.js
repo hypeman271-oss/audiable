@@ -3374,6 +3374,10 @@ settingsBtn.addEventListener("click", () => {
   if (typeof _refreshGithubOAuthUI === "function") {
     _refreshGithubOAuthUI();
   }
+  // v4.100 (#896): same for the Google Drive connect state.
+  if (typeof _refreshGdriveOAuthUI === "function") {
+    _refreshGdriveOAuthUI();
+  }
   settingsDialog.showModal();
 });
 
@@ -6156,6 +6160,297 @@ async function _refreshGithubOAuthUI() {
     window.location.href = "/api/github/oauth/start";
   });
 })();
+
+// v4.100 (#896): Google Drive OAuth — Settings → Account section wiring.
+// Differs from GitHub in two ways: (1) tokens live server-side, so the
+// "connected" state comes from /status per tenant rather than a local
+// token; (2) sign-in goes through an authed fetch to /start (to set the
+// tenant cookie) and THEN navigates to the returned authorize URL —
+// GitHub navigates straight to /start because its callback needs no
+// tenant. Status is fetched fresh each call (no cache) because
+// `connected` flips on connect / disconnect.
+let _gdriveOAuthStatus = null;  // most recent /status payload (for the Picker)
+
+async function _fetchGdriveOAuthStatus() {
+  try {
+    const res = await fetch("/api/gdrive/oauth/status");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _gdriveOAuthStatus = await res.json();
+  } catch (err) {
+    _gdriveOAuthStatus = { configured: false, connected: false, error: err.message };
+  }
+  return _gdriveOAuthStatus;
+}
+
+async function _refreshGdriveOAuthUI() {
+  const btn = document.getElementById("settings-drive-oauth-btn");
+  const note = document.getElementById("settings-drive-oauth-note");
+  const statusEl = document.getElementById("settings-drive-status");
+  if (!btn || !note) return;
+
+  const status = await _fetchGdriveOAuthStatus();
+  const labelEl = btn.querySelector(".settings-drive-oauth-label");
+  const setLabel = (t) => { if (labelEl) labelEl.textContent = t; };
+
+  if (!status.configured) {
+    btn.disabled = true;
+    btn.dataset.connected = "false";
+    btn.title =
+      "Google Drive OAuth isn't configured on this server. The operator " +
+      "needs to set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET env vars. " +
+      "See GDRIVE_OAUTH_SETUP.md. Public share links still work without " +
+      "signing in.";
+    setLabel("Sign in with Google");
+    note.textContent =
+      "OAuth not configured on the server — public Drive links still work.";
+    note.dataset.state = "info";
+    if (statusEl) { statusEl.textContent = ""; statusEl.dataset.state = "empty"; }
+    return;
+  }
+
+  btn.disabled = false;
+  if (status.connected) {
+    btn.dataset.connected = "true";
+    btn.title = "Disconnect Google Drive from Narrative.";
+    setLabel("Disconnect");
+    note.textContent = status.account_email
+      ? `Connected as ${status.account_email}.`
+      : "Connected to Google Drive.";
+    note.dataset.state = "signed-in";
+    if (statusEl) { statusEl.textContent = "Connected."; statusEl.dataset.state = "saved"; }
+  } else {
+    btn.dataset.connected = "false";
+    btn.title =
+      "Opens Google in this tab so you can authorize Narrative to read " +
+      "the files you pick. Nothing is stored on this device.";
+    setLabel("Sign in with Google");
+    note.textContent = "";
+    note.dataset.state = "";
+    if (statusEl) { statusEl.textContent = ""; statusEl.dataset.state = "empty"; }
+  }
+}
+
+(() => {
+  const btn = document.getElementById("settings-drive-oauth-btn");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (btn.dataset.connected === "true") {
+      // Disconnect — drop the server-side grant for this tenant.
+      btn.disabled = true;
+      try {
+        await fetch("/api/gdrive/oauth/disconnect", { method: "POST" });
+        if (typeof setStatus === "function") {
+          setStatus("Disconnected Google Drive.");
+        }
+      } catch (err) {
+        if (typeof setStatus === "function") {
+          setStatus(`Couldn't disconnect Google Drive: ${err.message}`, true);
+        }
+      } finally {
+        await _refreshGdriveOAuthUI();
+      }
+      return;
+    }
+    // Sign in — authed fetch to /start sets the tenant + state cookies
+    // and returns the Google authorize URL; then we navigate there.
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/gdrive/oauth/start");
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+        throw new Error(detail);
+      }
+      const { authorize_url } = await res.json();
+      if (!authorize_url) throw new Error("no authorize URL from server");
+      window.location.href = authorize_url;
+    } catch (err) {
+      btn.disabled = false;
+      if (typeof setStatus === "function") {
+        setStatus(`Google sign-in failed to start: ${err.message}`, true);
+      }
+    }
+  });
+})();
+
+// v4.100 (#896): capture the Drive OAuth result after the server's
+// /api/gdrive/oauth/callback redirects back to /. Unlike GitHub there is
+// NO token in the URL — tokens are server-side — just a success / error
+// flag we tidy out of the URL and turn into a toast.
+function _captureGdriveOAuthRedirect() {
+  try {
+    const q = new URLSearchParams(window.location.search || "");
+    const success = q.get("gdrive_oauth") === "success";
+    const errMsg = q.get("gdrive_oauth_error");
+    if (!success && !errMsg) return;
+    try { history.replaceState({}, "", window.location.pathname); } catch {}
+    setTimeout(() => {
+      try {
+        if (typeof setStatus !== "function") return;
+        if (errMsg) setStatus(`Google Drive sign-in failed: ${errMsg}`, true);
+        else setStatus("✓ Connected Google Drive.");
+      } catch {}
+    }, 0);
+    if (typeof _refreshGdriveOAuthUI === "function") _refreshGdriveOAuthUI();
+  } catch (err) {
+    console.warn("[oauth] gdrive capture failed:", err);
+  }
+}
+_captureGdriveOAuthRedirect();
+
+// v4.100 (#896): Google Drive Picker. The drive.file scope means we
+// CAN'T list a user's Drive server-side — the user must pick files via
+// Google's hosted Picker, which then grants Narrative access to just
+// those files. We load Google's api.js lazily (only when a signed-in
+// user opens Drive import) and feed the Picker a short-lived access
+// token from /api/gdrive/picker-token. The refresh token stays
+// server-side; only this ephemeral token ever reaches the browser.
+let _googlePickerApiPromise = null;
+function _loadGooglePickerApi() {
+  if (_googlePickerApiPromise) return _googlePickerApiPromise;
+  _googlePickerApiPromise = new Promise((resolve, reject) => {
+    if (window.google && window.google.picker) { resolve(); return; }
+    const finishLoad = () => {
+      try {
+        // gapi is defined by api.js; load just the picker module.
+        gapi.load("picker", { callback: () => resolve(), onerror: reject });
+      } catch (e) { reject(e); }
+    };
+    const existing = document.getElementById("google-api-js");
+    if (existing) {
+      existing.addEventListener("load", finishLoad);
+      existing.addEventListener("error", () =>
+        reject(new Error("failed to load Google API script")));
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = "google-api-js";
+    s.src = "https://apis.google.com/js/api.js";
+    s.async = true;
+    s.defer = true;
+    s.onload = finishLoad;
+    s.onerror = () => reject(new Error("failed to load Google API script"));
+    document.head.appendChild(s);
+  }).catch((err) => {
+    // Reset so a later retry can re-attempt the load (offline at first try).
+    _googlePickerApiPromise = null;
+    throw err;
+  });
+  return _googlePickerApiPromise;
+}
+
+async function _openGdrivePicker() {
+  const status = _gdriveOAuthStatus || (await _fetchGdriveOAuthStatus());
+  if (!status.api_key || !status.app_id) {
+    setStatus(
+      "Google Drive Picker isn't fully configured on the server " +
+      "(missing GOOGLE_API_KEY / GOOGLE_APP_ID). See GDRIVE_OAUTH_SETUP.md " +
+      "— or paste a public share link instead.",
+      true,
+    );
+    return;
+  }
+  setStatus("Opening Google Drive…");
+  let token;
+  try {
+    await _loadGooglePickerApi();
+    const res = await fetch("/api/gdrive/picker-token");
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+      throw new Error(detail);
+    }
+    token = (await res.json()).access_token;
+  } catch (err) {
+    setStatus(`Couldn't open Google Drive: ${err.message}`, true);
+    return;
+  }
+
+  try {
+    const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(false)
+      .setMode(google.picker.DocsViewMode.LIST);
+    const picker = new google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(token)
+      .setDeveloperKey(status.api_key)
+      .setAppId(status.app_id)
+      .setTitle("Pick a document to import")
+      .setCallback(_onGdrivePicked)
+      .build();
+    picker.setVisible(true);
+  } catch (err) {
+    setStatus(`Couldn't open Google Drive: ${err.message}`, true);
+  }
+}
+
+async function _onGdrivePicked(data) {
+  const P = window.google && window.google.picker;
+  if (!P || !data || data[P.Response.ACTION] !== P.Action.PICKED) return;
+  const docs = data[P.Response.DOCUMENTS] || [];
+  if (!docs.length) return;
+  // The Picker defaults to single-select; import the first document.
+  const doc = docs[0];
+  const fileId = doc[P.Document.ID];
+  const name = doc[P.Document.NAME] || "";
+  const mimeType = doc[P.Document.MIME_TYPE] || "";
+  setStatus(`Importing ${name || "file"} from Drive…`);
+  try {
+    const res = await fetch("/api/gdrive/fetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_id: fileId, mime_type: mimeType, name }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+      throw new Error(detail);
+    }
+    const fetched = await res.json();
+    _applyImportedDocument(fetched);
+    const chars = (fetched.chars || 0).toLocaleString();
+    setStatus(`Loaded ${fetched.filename} · ${chars} chars · ready to Generate`);
+    try {
+      textEl.scrollTop = 0;
+      if (typeof textEl.setSelectionRange === "function") {
+        textEl.setSelectionRange(0, 0);
+      }
+    } catch {}
+    if (!window.matchMedia("(max-width: 767px)").matches) textEl.focus();
+  } catch (err) {
+    setStatus(_withOfflineHint(`Drive import failed: ${err.message}`), true);
+  }
+}
+
+// Import ▾ → Google Drive dispatch: Picker for signed-in users, public
+// share-link row otherwise.
+async function _handleGdriveImport() {
+  let status;
+  try {
+    status = await _fetchGdriveOAuthStatus();
+  } catch {
+    status = { configured: false, connected: false };
+  }
+  if (status.configured && status.connected) {
+    _openGdrivePicker();
+    return;
+  }
+  // Phase 1 fallback: paste a public "Anyone with the link" share URL.
+  const signInTip = status.configured
+    ? " <strong>Tip:</strong> connect Google Drive in Settings to browse " +
+      "and import your private files."
+    : "";
+  showUrlRow({
+    placeholder: "drive.google.com/file/d/… or docs.google.com/document/d/…",
+    prefill: "https://",
+    hint:
+      'Paste a Drive share link. Google Docs export as DOCX; arbitrary ' +
+      'files (PDF, EPUB, DOCX) download directly. The link must be ' +
+      'set to <strong>"Anyone with the link can view"</strong> in ' +
+      "Drive's Share dialog." + signInTip,
+  });
+}
 
 // Mode picker change handler. Apply the new mode, then refresh the
 // textarea meta so the word-count / read-time line appears or
@@ -17861,33 +18156,25 @@ function _showAnnotatePalette(sentenceIndex, sentenceText) {
   annotatePalette.hidden = false;
 }
 
-// Restore annotate mode pref on boot.
+// Annotate mode no longer persists across reloads — on ANY tier.
 //
-// v225.tn69 (#551): skip the restore on phone. Annotate-mode is
-// meaningful only when paired with an in-memory armed tag (the
-// tag-row chip the user selected), and the armed state never
-// survives a reload. So restoring just the flag on phone leaves
-// the user in the stuck state #550 fixed in-session — except the
-// auto-disarm only fires after the first sentence tap, which a
-// passive listener never makes. Clearing the persisted flag here
-// on phone means every reload starts cleanly. Desktop still
-// restores because its annotate-mode toggle is visible and the
-// palette path is intentional UX there.
+// v225.tn69 (#551) skipped the restore on phone but kept it on desktop.
+// That left desktop (and tablet) users with annotate mode silently ON
+// from localStorage, where a capture-phase listener intercepts every
+// sentence click and opens the annotate palette instead of seeking —
+// the exact stuck state #551 fixed, just on the wider tiers. Annotate
+// mode is only meaningful paired with an in-memory armed tag (which
+// never survives a reload), so restoring the bare flag is never useful.
+// It's now a deliberate per-session choice: click the Annotate button to
+// enter it. Boot always starts OFF; sentence clicks seek + play by
+// default everywhere.
 try {
-  const _annotatePersistedOn =
-    localStorage.getItem("narrative.annotateMode") === "1";
-  const _isPhone = window.matchMedia("(max-width: 767px)").matches;
-  if (_annotatePersistedOn && _isPhone) {
-    // Force OFF on phone boot. Also clear the persisted flag so we
-    // don't keep dlog-ing this every reload.
+  if (localStorage.getItem("narrative.annotateMode") === "1") {
+    // Clear the stale persisted flag so we don't dlog this every reload.
     try { localStorage.setItem("narrative.annotateMode", "0"); } catch {}
-    document.body.dataset.annotateMode = "off";
-    _dlog("annotate", "boot: phone — skipping localStorage restore");
-  } else if (_annotatePersistedOn) {
-    _setAnnotateMode(true);
-  } else {
-    document.body.dataset.annotateMode = "off";
+    _dlog("annotate", "boot: not restoring annotate mode (per-session only)");
   }
+  document.body.dataset.annotateMode = "off";
 } catch {}
 
 if (annotateModeBtn) {
@@ -29696,18 +29983,10 @@ importMenu.addEventListener("click", (e) => {
         'picker.',
     });
   } else if (source === "gdrive") {
-    // v4.96 (#892): pre-prime the URL row for a Drive paste. The link
-    // MUST be set to "Anyone with the link" in Drive's share dialog —
-    // we have no OAuth (yet, see #896) so anything else 404s.
-    showUrlRow({
-      placeholder: "drive.google.com/file/d/… or docs.google.com/document/d/…",
-      prefill: "https://",
-      hint:
-        'Paste a Drive share link. Google Docs export as DOCX; arbitrary ' +
-        'files (PDF, EPUB, DOCX) download directly. The link must be ' +
-        'set to <strong>"Anyone with the link can view"</strong> in ' +
-        "Drive's Share dialog.",
-    });
+    // v4.100 (#896): signed-in users get the Google Picker (browse their
+    // private Drive); everyone else falls back to the public share-link
+    // row from Phase 1. _handleGdriveImport picks the branch.
+    _handleGdriveImport();
   } else if (source === "scrivener") {
     scrivenerInput.click();
   } else if (source === "obsidian") {
@@ -31492,6 +31771,45 @@ function _githubBranchFromUrl(url) {
   return null;
 }
 
+// v4.100 (#896): extracted from fetchFromUrl so the Drive Picker import
+// path applies a fetched document the exact same way a URL fetch does.
+// `data` is the server's {filename, chars, text, images, gitRef?} shape
+// from /api/extract/url, /api/extract/gdrive, or /api/gdrive/fetch.
+function _applyImportedDocument(data) {
+  // Same shape as the file-upload path — keep behavior aligned.
+  exitReadingView();
+  textEl.value = data.text || "";
+  // Stash any images the server pulled out. They survive until the next
+  // generate() saves them onto the clip (or until the user hits Clear).
+  _pendingImages = Array.isArray(data.images) ? data.images : [];
+  // GitHub-sourced URLs come back with gitRef; stash so the next
+  // generate() pins it onto the saved clip. (Drive has no gitRef.)
+  _pendingGitRef = data.gitRef || null;
+  // v225fz11.cover (#677): URL/Drive fetch doesn't run image_detector
+  // (covers come from file uploads only). Reset so a previously uploaded
+  // file's cover doesn't leak into this fetched clip.
+  _pendingDetectedCover = null;
+  // v225fz12.chapter-images (#678): same — no chapter_images here; reset
+  // so they don't leak across imports.
+  _pendingChapterImages = [];
+  // v225g6 (#695): same fresh-start semantics as the upload path —
+  // release the ebook-kind gate + drop the previous clip id so the phone
+  // Generate bar reappears and a Generate tap doesn't route through the
+  // regen path against an unrelated old clip.
+  if (typeof _setCurrentClipKind === "function") {
+    _setCurrentClipKind(null);
+  }
+  _currentClipId = null;
+  if (typeof window._syncPhoneGenerateBar === "function") {
+    try { window._syncPhoneGenerateBar(); } catch {}
+  }
+  // v225fz14 (#688): repaint preview strip (fetch can still contribute
+  // inline images via _pendingImages above).
+  _paintImportPreview();
+  updateCounts();
+  _checkForChapters();
+}
+
 async function fetchFromUrl() {
   const url = (urlInput.value || "").trim();
   if (!url) return;
@@ -31571,39 +31889,9 @@ async function fetchFromUrl() {
     }
     const data = await res.json();
 
-    // Same shape as the file-upload path — keep behavior aligned.
-    exitReadingView();
-    textEl.value = data.text || "";
-    // Stash any images the server pulled out of the URL. They survive
-    // until the next generate() saves them onto the clip (or until the
-    // user hits Clear, which wipes them).
-    _pendingImages = Array.isArray(data.images) ? data.images : [];
-    // GitHub-sourced URLs come back with gitRef; stash so the next
-    // generate() pins it onto the saved clip.
-    _pendingGitRef = data.gitRef || null;
-    // v225fz11.cover (#677): URL fetch doesn't run image_detector
-    // (covers come from file uploads only). Reset so a previously
-    // uploaded file's cover doesn't leak into this URL-sourced clip.
-    _pendingDetectedCover = null;
-    // v225fz12.chapter-images (#678): same — URL fetch doesn't
-    // produce chapter_images; reset so they don't leak across imports.
-    _pendingChapterImages = [];
-    // v225g6 (#695): same fresh-start semantics as the upload path —
-    // release the ebook-kind gate + drop the previous clip id so the
-    // phone Generate bar reappears and a Generate tap doesn't route
-    // through the regen path against an unrelated old clip.
-    if (typeof _setCurrentClipKind === "function") {
-      _setCurrentClipKind(null);
-    }
-    _currentClipId = null;
-    if (typeof window._syncPhoneGenerateBar === "function") {
-      try { window._syncPhoneGenerateBar(); } catch {}
-    }
-    // v225fz14 (#688): repaint preview strip (URL fetch can still
-    // contribute inline images via _pendingImages above).
-    _paintImportPreview();
-    updateCounts();
-    _checkForChapters();
+    // Drop the extracted text into the textarea + reset pending clip
+    // state. Shared with the Drive Picker path (see _applyImportedDocument).
+    _applyImportedDocument(data);
 
     hideUrlRow();
     const chars = (data.chars || 0).toLocaleString();

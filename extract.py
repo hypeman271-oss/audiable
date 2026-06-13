@@ -1100,6 +1100,142 @@ def fetch_and_extract_gdrive(url: str) -> dict:
     }
 
 
+# Google Docs export MIME types. The "native" Google formats have no
+# bytes to download — they must be exported. We only export Docs (→ DOCX,
+# which extract_text reads); Sheets / Slides bail with the same friendly
+# message the public-link path uses.
+_GOOGLE_NATIVE_PREFIX = "application/vnd.google-apps."
+_GDOC_EXPORT_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+
+def fetch_and_extract_gdrive_authed(
+    file_id: str,
+    access_token: str,
+    mime_type: str | None = None,
+    name: str | None = None,
+) -> dict:
+    """Download a Drive file via the authenticated Drive v3 API + extract.
+
+    Phase 2 (#896) companion to fetch_and_extract_gdrive. The file id +
+    mime type + name come from Google's Picker (client-side); the access
+    token is minted server-side from the tenant's stored grant. Because
+    the Picker already authorized this specific file under the drive.file
+    scope, the download just needs `Authorization: Bearer <token>`.
+
+    Returns the same shape as fetch_and_extract_gdrive: {filename, chars,
+    text, images}.
+
+    Args:
+        file_id: Drive file id (from the Picker's doc object).
+        access_token: a valid OAuth access token for the tenant.
+        mime_type: the file's mimeType (from the Picker). Google-native
+            docs (`application/vnd.google-apps.*`) are exported; anything
+            else downloads raw.
+        name: the file's display name (from the Picker), used for the
+            extension dispatch + the returned filename.
+
+    Raises:
+        ValueError for a missing file id / token (mapped to HTTP 400).
+        ExtractionError for unsupported kinds (Sheets / Slides), fetch
+            failures, and empty / unreadable files (mapped to HTTP 422).
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    if not file_id:
+        raise ValueError("missing Drive file id")
+    if not access_token:
+        raise ValueError("missing Drive access token")
+
+    mime = (mime_type or "").strip()
+    name = (name or "").strip()
+
+    if mime.startswith(_GOOGLE_NATIVE_PREFIX):
+        kind = mime[len(_GOOGLE_NATIVE_PREFIX):]
+        if kind == "document":
+            download_url = (
+                f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
+                f"?mimeType={urllib.parse.quote(_GDOC_EXPORT_MIME)}"
+            )
+            # Docs have no extension in their Picker name — force .docx so
+            # extract_text dispatches to the DOCX handler.
+            filename = (name or f"gdoc-{file_id}") + ".docx"
+        elif kind in ("spreadsheet", "presentation"):
+            nice = {"spreadsheet": "Sheets", "presentation": "Slides"}[kind]
+            raise ExtractionError(
+                f"Google {nice} aren't supported — export to DOCX or PDF "
+                "in Drive and import that instead"
+            )
+        else:
+            raise ExtractionError(
+                f"unsupported Google file type ({mime}) — export to DOCX "
+                "or PDF in Drive and import that instead"
+            )
+    else:
+        download_url = (
+            f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+        )
+        # The Picker name carries the real extension for binary files.
+        filename = name or file_id
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; Narrative/0.1; +local TTS reader)"
+        ),
+        "Accept": "*/*",
+    }
+    req = urllib.request.Request(download_url, headers=headers)
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read(MAX_GDRIVE_FETCH_BYTES + 1)
+            if len(raw) > MAX_GDRIVE_FETCH_BYTES:
+                raise ExtractionError(
+                    f"file too large (> {MAX_GDRIVE_FETCH_BYTES // (1024 * 1024)} MB)"
+                )
+            # For raw downloads, prefer the server-reported filename when
+            # the Picker didn't give us a usable one (extension matters).
+            if not mime.startswith(_GOOGLE_NATIVE_PREFIX) and not name:
+                filename = _gdrive_filename_from_headers(resp, file_id)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            # Token expired/revoked between minting and use, or the file
+            # was never granted via the Picker.
+            raise ExtractionError(
+                f"HTTP {e.code} — Drive access expired or this file wasn't "
+                "granted. Reconnect Google Drive in Settings and try again"
+            ) from e
+        if e.code == 404:
+            raise ExtractionError(
+                "file not found in Drive (it may have been deleted)"
+            ) from e
+        raise ExtractionError(f"HTTP {e.code} fetching Drive file") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ExtractionError(f"could not reach Drive: {e}") from e
+
+    if not raw:
+        raise ExtractionError("Drive returned an empty file")
+
+    try:
+        text = extract_text(filename, raw)
+    except UnsupportedFormatError as e:
+        raise ExtractionError(str(e)) from e
+
+    if not text.strip():
+        raise ExtractionError("file is empty or unreadable")
+
+    return {
+        "filename": filename,
+        "chars": len(text),
+        "text": text,
+        "images": [],
+    }
+
+
 def extract_text(filename: str, data: bytes) -> str:
     if not data:
         raise ExtractionError("empty file")

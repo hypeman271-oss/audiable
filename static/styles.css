@@ -3923,6 +3923,10 @@ textarea#text {
   transition: color 0.15s ease, background-color 0.15s ease;
   padding: 1px 2px;
   border-radius: 3px;
+  /* Sentences are click-to-seek on every tier (not just in annotate
+     mode), so always show the pointer affordance. The annotate-mode
+     rule below adds the hover background on top of this. */
+  cursor: pointer;
 }
 
 .reading-view .sentence + .sentence {

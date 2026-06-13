@@ -37,7 +37,7 @@ AUDIO_DIR = DATA_DIR / "audio"
 SENTENCE_DIR = DATA_DIR / "sentences"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -288,6 +288,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v6(c)
         c.execute("UPDATE schema_version SET version = 6")
         current = 6
+
+    if current < 7:
+        _apply_v7(c)
+        c.execute("UPDATE schema_version SET version = 7")
+        current = 7
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -659,6 +664,35 @@ def _apply_v6(c: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v7(c: sqlite3.Connection) -> None:
+    """Add gdrive_tokens table for Google Drive OAuth (#896).
+
+    One row per tenant holds the server-side OAuth grant: the short-lived
+    access token, the long-lived refresh token (which never leaves the
+    server), the access token's expiry, and the connected account email
+    for the "Connected as …" display. PRIMARY KEY (tenant_key) → one
+    Google account per Narrative tenant; reconnecting overwrites.
+    """
+    print(
+        "[library_db] migrating to schema v7 (add gdrive_tokens table "
+        "for Google Drive OAuth)",
+        file=sys.stderr, flush=True,
+    )
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS gdrive_tokens (
+          tenant_key    TEXT PRIMARY KEY,
+          access_token  TEXT NOT NULL,
+          refresh_token TEXT NOT NULL,
+          expires_at    REAL NOT NULL,
+          scope         TEXT,
+          account_email TEXT,
+          updated_at    TEXT NOT NULL
+        );
+        """
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Tenant directory (/data/tenants.json).
 #
@@ -1014,6 +1048,200 @@ def delete_sentence_audio_for_clip(tenant_key: str, clip_id: int) -> int:
         )
         conn().commit()
         return cur.rowcount or 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Google Drive OAuth grants (gdrive_tokens, schema v7, #896).
+#
+# Server-side token storage: the long-lived refresh token never leaves
+# the server. The access token + expiry are kept so the OAuth helper can
+# refresh on demand without re-prompting the user. One row per tenant.
+#
+# Tokens are ENCRYPTED AT REST (v4.107): a leaked DB file / backup /
+# volume snapshot must not hand an attacker a persistent Drive grant.
+# We seal each token with Fernet (AES-128-CBC + HMAC) keyed by the
+# GDRIVE_TOKEN_KEY env var. Stored values carry a version prefix:
+#   "g1:<ciphertext>"  — Fernet-sealed (key configured)
+#   "p0:<plaintext>"   — explicit plaintext (no key; local dev only)
+# Rotating / losing the key makes "g1:" rows undecryptable — get_ treats
+# that as "not connected" so the user simply reconnects.
+# ──────────────────────────────────────────────────────────────────────
+
+_token_cipher_cache = None  # None = not built; False = no key / unavailable
+
+
+def _token_cipher():
+    """Lazily build the Fernet cipher from GDRIVE_TOKEN_KEY. Returns the
+    Fernet instance, or None when no key is configured / cryptography
+    isn't installed (→ plaintext fallback for local dev)."""
+    global _token_cipher_cache
+    if _token_cipher_cache is not None:
+        return _token_cipher_cache or None
+    key = os.environ.get("GDRIVE_TOKEN_KEY", "").strip()
+    if not key:
+        _token_cipher_cache = False
+        return None
+    try:
+        from cryptography.fernet import Fernet
+        _token_cipher_cache = Fernet(key.encode("utf-8"))
+    except Exception as e:
+        # Bad key or missing lib — fail loud in logs but don't crash the
+        # whole DB layer; token writes will then refuse (see _seal_token).
+        print(
+            f"[library_db] GDRIVE_TOKEN_KEY unusable ({e}) — Drive token "
+            "encryption disabled",
+            file=sys.stderr, flush=True,
+        )
+        _token_cipher_cache = False
+        return None
+    return _token_cipher_cache
+
+
+def _seal_token(plaintext: str) -> str:
+    """Encrypt a token for storage. Prefixes the scheme so _open_token
+    knows how to reverse it."""
+    cipher = _token_cipher()
+    if cipher is None:
+        # No key: store explicit plaintext. Acceptable for local single-
+        # user dev; production sets GDRIVE_TOKEN_KEY (see GDRIVE_OAUTH_SETUP).
+        return "p0:" + plaintext
+    return "g1:" + cipher.encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+
+def _open_token(stored: str) -> str:
+    """Reverse _seal_token. Raises on an undecryptable "g1:" value (key
+    rotated / lost) so callers can treat the grant as gone."""
+    if stored.startswith("g1:"):
+        cipher = _token_cipher()
+        if cipher is None:
+            raise ValueError("encrypted token but no GDRIVE_TOKEN_KEY to open it")
+        from cryptography.fernet import InvalidToken
+        try:
+            return cipher.decrypt(stored[3:].encode("ascii")).decode("utf-8")
+        except InvalidToken as e:
+            raise ValueError("token failed to decrypt (key rotated?)") from e
+    if stored.startswith("p0:"):
+        return stored[3:]
+    # Legacy / unprefixed value — treat as raw plaintext.
+    return stored
+
+
+def save_gdrive_tokens(
+    tenant_key: str,
+    *,
+    access_token: str,
+    refresh_token: str,
+    expires_at: float,
+    scope: str | None,
+    account_email: str | None,
+) -> None:
+    """UPSERT a tenant's Drive OAuth grant. Overwrites any prior grant
+    (reconnecting a different Google account replaces the old one)."""
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    if not tenant_key:
+        raise ValueError("tenant_key required")
+    if not access_token or not refresh_token:
+        raise ValueError("access_token and refresh_token required")
+    now = _iso_now()
+    sealed_access = _seal_token(access_token)
+    sealed_refresh = _seal_token(refresh_token)
+    with _conn_lock:
+        conn().execute(
+            """
+            INSERT INTO gdrive_tokens (
+              tenant_key, access_token, refresh_token, expires_at,
+              scope, account_email, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_key) DO UPDATE SET
+              access_token = excluded.access_token,
+              refresh_token = excluded.refresh_token,
+              expires_at = excluded.expires_at,
+              scope = excluded.scope,
+              account_email = excluded.account_email,
+              updated_at = excluded.updated_at
+            """,
+            (
+                tenant_key, sealed_access, sealed_refresh, float(expires_at),
+                scope, account_email, now,
+            ),
+        )
+        conn().commit()
+
+
+def update_gdrive_access_token(
+    tenant_key: str,
+    *,
+    access_token: str,
+    expires_at: float,
+) -> None:
+    """Refresh just the access token + expiry after a token refresh,
+    leaving the refresh token untouched (Google reuses it). No-op if the
+    tenant has no grant row."""
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    if not tenant_key or not access_token:
+        raise ValueError("tenant_key and access_token required")
+    with _conn_lock:
+        conn().execute(
+            """
+            UPDATE gdrive_tokens
+            SET access_token = ?, expires_at = ?, updated_at = ?
+            WHERE tenant_key = ?
+            """,
+            (_seal_token(access_token), float(expires_at), _iso_now(), tenant_key),
+        )
+        conn().commit()
+
+
+def get_gdrive_tokens(tenant_key: str) -> dict | None:
+    """Return a tenant's Drive grant as a dict, or None if not connected.
+
+    Dict: {access_token, refresh_token, expires_at, scope, account_email,
+           updated_at}.
+    """
+    if not is_enabled() or not tenant_key:
+        return None
+    with _conn_lock:
+        row = conn().execute(
+            """
+            SELECT access_token, refresh_token, expires_at, scope,
+                   account_email, updated_at
+            FROM gdrive_tokens
+            WHERE tenant_key = ?
+            """,
+            (tenant_key,),
+        ).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    try:
+        out["access_token"] = _open_token(out["access_token"])
+        out["refresh_token"] = _open_token(out["refresh_token"])
+    except ValueError as e:
+        # Undecryptable (GDRIVE_TOKEN_KEY rotated / lost). Treat the grant
+        # as gone so the user reconnects rather than hitting opaque errors.
+        print(
+            f"[library_db] dropping unreadable Drive grant for tenant "
+            f"{tenant_key[:12]}…: {e}",
+            file=sys.stderr, flush=True,
+        )
+        return None
+    return out
+
+
+def delete_gdrive_tokens(tenant_key: str) -> bool:
+    """Drop a tenant's Drive grant (Disconnect). Returns True if a row was
+    removed. Best-effort: no-op when sync is disabled."""
+    if not is_enabled() or not tenant_key:
+        return False
+    with _conn_lock:
+        cur = conn().execute(
+            "DELETE FROM gdrive_tokens WHERE tenant_key = ?",
+            (tenant_key,),
+        )
+        conn().commit()
+        return (cur.rowcount or 0) > 0
 
 
 def gc_orphan_sentence_audio() -> int:

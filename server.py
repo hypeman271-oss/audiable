@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 import debug_log_push
 import extract
+import gdrive_oauth
 import github_oauth
 import library_db
 import synth_jobs
@@ -587,6 +588,9 @@ async def require_api_key(request: Request, call_next):
         can't carry a header. Samples are already public on HuggingFace.
       - /api/github/oauth/* — the OAuth round-trip is hit via redirect,
         not fetch, so the header isn't available. (v180 carve-out.)
+      - /api/gdrive/oauth/callback — same redirect-with-no-header reason,
+        but ONLY the callback (Drive stores tokens per tenant, so start /
+        status / fetch must stay authed). (#896)
     """
     # v225v4.27 (#704): CORS preflight short-circuit. The browser fires
     # OPTIONS before any cross-origin /api/* call to ask "are these
@@ -615,6 +619,13 @@ async def require_api_key(request: Request, call_next):
     if path.startswith("/api/voices/sample/"):
         return await call_next(request)
     if path.startswith("/api/github/oauth/"):
+        return await call_next(request)
+    # Only the Drive OAuth *callback* is carved out — it's hit via
+    # Google's top-level redirect with no X-Narrative-Key header. Every
+    # other /api/gdrive/* route (start, status, picker-token, fetch,
+    # disconnect) stays authed so request.state.tenant_key is known and
+    # tokens land on the right tenant. (#896)
+    if path == "/api/gdrive/oauth/callback":
         return await call_next(request)
     # v225v4.29 (#707): Tauri updater plugin polls this endpoint
     # without an auth header — it has no concept of NARRATIVE_KEY
@@ -2303,6 +2314,388 @@ async def github_oauth_callback_endpoint(
     # State served its purpose — burn it so a replay can't reuse it.
     resp.delete_cookie(_GH_OAUTH_STATE_COOKIE, path="/api/github/oauth/")
     return resp
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Google Drive OAuth (#896) — Phase 2 of Drive import.
+#
+# Mirrors the GitHub OAuth block above, with one architectural change:
+# tokens are stored SERVER-SIDE per tenant (gdrive_tokens table) rather
+# than handed to the browser. The long-lived refresh token never leaves
+# the server; the access token is exposed only briefly via /picker-token
+# so Google's client-side Picker can authorize file reads.
+#
+# Env vars (read at request time):
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET   (required for sign-in)
+#   GOOGLE_OAUTH_REDIRECT_URI                 (must match the console)
+#   GOOGLE_OAUTH_SCOPES                       (default drive.file + email)
+#   GOOGLE_API_KEY / GOOGLE_APP_ID            (public Picker config)
+# See GDRIVE_OAUTH_SETUP.md.
+
+_GD_OAUTH_STATE_COOKIE = "narrative_gd_oauth_state"
+_GD_OAUTH_TENANT_COOKIE = "narrative_gd_oauth_tenant"
+_GD_OAUTH_VERIFIER_COOKIE = "narrative_gd_oauth_verifier"
+# Refresh the access token when it's within this many seconds of expiry,
+# so a token we hand to the Picker / a download doesn't die mid-use.
+_GD_TOKEN_REFRESH_MARGIN = 120
+
+
+def _gdrive_oauth_config() -> dict:
+    """Snapshot of Drive OAuth env vars at request time."""
+    return {
+        "client_id": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
+        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(),
+        "redirect_uri": os.environ.get(
+            "GOOGLE_OAUTH_REDIRECT_URI",
+            "http://localhost:8000/api/gdrive/oauth/callback",
+        ).strip(),
+        "scopes": os.environ.get(
+            "GOOGLE_OAUTH_SCOPES", gdrive_oauth.DEFAULT_SCOPES
+        ).strip(),
+        # Public Picker config — safe to expose to the frontend. The API
+        # key is referrer-restricted; app_id is the GCP project number.
+        "api_key": os.environ.get("GOOGLE_API_KEY", "").strip(),
+        "app_id": os.environ.get("GOOGLE_APP_ID", "").strip(),
+    }
+
+
+def _fetch_google_email(access_token: str) -> str | None:
+    """Best-effort read of the connected account's email for display.
+    Returns None on any failure — the grant is still valid without it."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": "Narrative/0.1",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.load(resp)
+        email = data.get("email") if isinstance(data, dict) else None
+        return email if isinstance(email, str) else None
+    except Exception:
+        return None
+
+
+def get_valid_gdrive_access_token(tenant_key: str) -> str:
+    """Return a non-expired Drive access token for the tenant, refreshing
+    via the stored refresh token if needed. Synchronous (blocks on
+    urllib) — call through run_in_executor from async endpoints.
+
+    Raises HTTPException(401) if the tenant has no grant or the refresh
+    token has been revoked (the user must reconnect). On revocation the
+    stale grant is cleared so /status correctly reports "not connected".
+    """
+    import time
+
+    row = library_db.get_gdrive_tokens(tenant_key)
+    if not row:
+        raise HTTPException(
+            status_code=401,
+            detail="Google Drive not connected — sign in in Settings",
+        )
+
+    if row["expires_at"] - time.time() > _GD_TOKEN_REFRESH_MARGIN:
+        return row["access_token"]
+
+    cfg = _gdrive_oauth_config()
+    try:
+        payload = gdrive_oauth.refresh_access_token(
+            cfg["client_id"], cfg["client_secret"], row["refresh_token"]
+        )
+    except gdrive_oauth.OAuthError as e:
+        # A revoked / expired refresh token can't be salvaged — clear it
+        # so the UI prompts a fresh sign-in instead of looping on refresh.
+        library_db.delete_gdrive_tokens(tenant_key)
+        raise HTTPException(
+            status_code=401,
+            detail=f"Google Drive access expired — reconnect in Settings ({e})",
+        )
+
+    access = payload["access_token"]
+    expires_at = time.time() + int(payload.get("expires_in", 3600))
+    library_db.update_gdrive_access_token(
+        tenant_key, access_token=access, expires_at=expires_at
+    )
+    return access
+
+
+@app.get("/api/gdrive/oauth/status")
+async def gdrive_oauth_status_endpoint(request: Request):
+    """Whether Drive OAuth is configured + whether THIS tenant is connected.
+
+    Drives the Settings → Account → Google Drive section and the Import
+    menu's signed-in/signed-out branch. Returns the public Picker config
+    (api_key, app_id) so the frontend can build a Picker without another
+    round-trip. Never leaks the client secret.
+    """
+    cfg = _gdrive_oauth_config()
+    tenant_key = getattr(request.state, "tenant_key", "")
+    row = library_db.get_gdrive_tokens(tenant_key) if tenant_key else None
+    return {
+        "configured": bool(cfg["client_id"] and cfg["client_secret"]),
+        "connected": bool(row),
+        "account_email": (row or {}).get("account_email"),
+        "redirect_uri": cfg["redirect_uri"],
+        "api_key": cfg["api_key"],
+        "app_id": cfg["app_id"],
+    }
+
+
+@app.get("/api/gdrive/oauth/start")
+async def gdrive_oauth_start_endpoint(request: Request):
+    """Begin the Drive OAuth dance.
+
+    Unlike GitHub (where the browser navigates straight to /start), this
+    is hit via authed fetch so we can resolve request.state.tenant_key
+    and stash it in an HttpOnly cookie alongside the CSRF state. The
+    callback — which has no auth header — recovers the tenant from that
+    cookie. Returns the authorize URL as JSON; the client then does
+    window.location.href = url.
+    """
+    cfg = _gdrive_oauth_config()
+    if not cfg["client_id"] or not cfg["client_secret"]:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Google Drive OAuth is not configured — set GOOGLE_CLIENT_ID "
+                "+ GOOGLE_CLIENT_SECRET env vars on the server. See "
+                "GDRIVE_OAUTH_SETUP.md."
+            ),
+        )
+
+    tenant_key = getattr(request.state, "tenant_key", "")
+    if not tenant_key:
+        raise HTTPException(status_code=401, detail="missing tenant")
+
+    state = gdrive_oauth.generate_state()
+    verifier, challenge = gdrive_oauth.generate_pkce()
+    try:
+        url = gdrive_oauth.build_authorize_url(
+            cfg["client_id"], cfg["redirect_uri"], state, cfg["scopes"],
+            code_challenge=challenge,
+        )
+    except gdrive_oauth.OAuthError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    resp = JSONResponse({"authorize_url": url})
+    secure = cfg["redirect_uri"].startswith("https://")
+    cookie_kw = dict(
+        max_age=600,  # 10 min — matches Google's auth-code TTL
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/api/gdrive/oauth/",
+    )
+    resp.set_cookie(_GD_OAUTH_STATE_COOKIE, state, **cookie_kw)
+    # The tenant_key is already a sha256 hash (never the raw bearer), so
+    # parking it in a cookie doesn't expose the secret. It only needs to
+    # survive the ~seconds round-trip to Google and back.
+    resp.set_cookie(_GD_OAUTH_TENANT_COOKIE, tenant_key, **cookie_kw)
+    # PKCE verifier — HttpOnly so JS can't read it; presented at the token
+    # exchange in the callback to prove we started this flow.
+    resp.set_cookie(_GD_OAUTH_VERIFIER_COOKIE, verifier, **cookie_kw)
+    return resp
+
+
+@app.get("/api/gdrive/oauth/callback")
+async def gdrive_oauth_callback_endpoint(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    """Google redirects the user back here after they authorize.
+
+    Validates state (CSRF), recovers the tenant from its cookie,
+    exchanges the code for an access + refresh token, reads the account
+    email, and persists the grant SERVER-SIDE. Redirects back to / with
+    just a success flag — no token in the URL (tokens never touch the
+    browser in the Drive flow).
+    """
+    from fastapi.responses import RedirectResponse
+
+    def _clear_oauth_cookies(resp):
+        for c in (
+            _GD_OAUTH_STATE_COOKIE,
+            _GD_OAUTH_TENANT_COOKIE,
+            _GD_OAUTH_VERIFIER_COOKIE,
+        ):
+            resp.delete_cookie(c, path="/api/gdrive/oauth/")
+        return resp
+
+    def _fail(detail: str):
+        return _clear_oauth_cookies(RedirectResponse(
+            f"/?gdrive_oauth_error={_urlquote(detail)}", status_code=302
+        ))
+
+    if error:
+        return _fail(error_description or error)
+    if not code or not state:
+        return _fail("missing code or state in OAuth callback")
+
+    cookie_state = request.cookies.get(_GD_OAUTH_STATE_COOKIE) or ""
+    if not hmac.compare_digest(
+        state.encode("utf-8"), cookie_state.encode("utf-8")
+    ):
+        return _fail("OAuth state mismatch — possible CSRF or expired session")
+
+    tenant_key = request.cookies.get(_GD_OAUTH_TENANT_COOKIE) or ""
+    if not tenant_key:
+        return _fail("lost session — please start the sign-in again")
+
+    verifier = request.cookies.get(_GD_OAUTH_VERIFIER_COOKIE) or ""
+    if not verifier:
+        return _fail("lost session — please start the sign-in again")
+
+    cfg = _gdrive_oauth_config()
+    if not cfg["client_id"] or not cfg["client_secret"]:
+        return _fail("Google Drive OAuth is not configured")
+
+    import asyncio
+    import functools
+    import time
+
+    loop = asyncio.get_running_loop()
+    try:
+        payload = await loop.run_in_executor(
+            None,
+            functools.partial(
+                gdrive_oauth.exchange_code,
+                cfg["client_id"],
+                cfg["client_secret"],
+                code,
+                cfg["redirect_uri"],
+                verifier,
+            ),
+        )
+    except gdrive_oauth.OAuthError as e:
+        return _fail(str(e))
+
+    refresh_token = payload.get("refresh_token")
+    if not refresh_token:
+        # Google only omits the refresh token when the user previously
+        # granted without revoking. prompt=consent should prevent this,
+        # but guard anyway so we never persist a half grant.
+        return _fail(
+            "Google didn't return a refresh token — revoke Narrative's "
+            "access in your Google account and try again"
+        )
+
+    access = payload["access_token"]
+    expires_at = time.time() + int(payload.get("expires_in", 3600))
+    email = await loop.run_in_executor(None, _fetch_google_email, access)
+
+    try:
+        library_db.save_gdrive_tokens(
+            tenant_key,
+            access_token=access,
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+            scope=payload.get("scope"),
+            account_email=email,
+        )
+    except Exception as e:  # DB disabled / write failure
+        return _fail(f"could not save Drive connection: {e}")
+
+    return _clear_oauth_cookies(
+        RedirectResponse("/?gdrive_oauth=success", status_code=302)
+    )
+
+
+@app.get("/api/gdrive/picker-token")
+async def gdrive_picker_token_endpoint(request: Request):
+    """Mint a short-lived access token for the client-side Google Picker.
+
+    The Picker needs an OAuth token via setOAuthToken(). We expose only
+    the ephemeral access token (refreshed if stale) — never the refresh
+    token. Returns {access_token, expires_in}.
+    """
+    import asyncio
+    import time
+
+    tenant_key = getattr(request.state, "tenant_key", "")
+    loop = asyncio.get_running_loop()
+    access = await loop.run_in_executor(
+        None, get_valid_gdrive_access_token, tenant_key
+    )
+    row = library_db.get_gdrive_tokens(tenant_key) or {}
+    expires_in = max(0, int((row.get("expires_at", 0)) - time.time()))
+    return {"access_token": access, "expires_in": expires_in}
+
+
+class GdriveFetchRequest(BaseModel):
+    """A file the user picked in the Google Picker. file_id + mime_type +
+    name come from the Picker's doc object; the access token is resolved
+    server-side from the tenant's stored grant."""
+    file_id: str = Field(..., min_length=1, max_length=256)
+    mime_type: str | None = Field(default=None, max_length=256)
+    name: str | None = Field(default=None, max_length=512)
+
+
+@app.post("/api/gdrive/fetch")
+async def gdrive_fetch_endpoint(req: GdriveFetchRequest, request: Request):
+    """Download + extract a Picker-selected Drive file (authenticated).
+
+    Returns the same shape as /api/extract/gdrive: {filename, chars,
+    text, images}. The access token is minted + used entirely server-side.
+    """
+    import asyncio
+    import functools
+
+    tenant_key = getattr(request.state, "tenant_key", "")
+    loop = asyncio.get_running_loop()
+    access = await loop.run_in_executor(
+        None, get_valid_gdrive_access_token, tenant_key
+    )
+    try:
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                extract.fetch_and_extract_gdrive_authed,
+                req.file_id,
+                access,
+                req.mime_type,
+                req.name,
+            ),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
+
+
+@app.post("/api/gdrive/oauth/disconnect")
+async def gdrive_oauth_disconnect_endpoint(request: Request):
+    """Drop the tenant's stored Drive grant (Settings → Disconnect).
+
+    Revokes the grant at Google first (best-effort) so disconnecting
+    actually kills Narrative's access, not just our local copy — then
+    deletes the row regardless of whether revoke succeeded.
+    """
+    import asyncio
+
+    tenant_key = getattr(request.state, "tenant_key", "")
+    if not tenant_key:
+        return {"ok": True, "deleted": False, "revoked": False}
+
+    row = library_db.get_gdrive_tokens(tenant_key)
+    revoked = False
+    if row and row.get("refresh_token"):
+        loop = asyncio.get_running_loop()
+        revoked = await loop.run_in_executor(
+            None, gdrive_oauth.revoke_token, row["refresh_token"]
+        )
+    deleted = library_db.delete_gdrive_tokens(tenant_key)
+    return {"ok": True, "deleted": deleted, "revoked": revoked}
 
 
 class ExtractUrlRequest(BaseModel):

@@ -1049,6 +1049,51 @@
                   </div>
                 </div>
 
+                <!-- v4.100 (#896): Google Drive OAuth. Phase 2 of Drive
+                     import — sign in once here, then browse private Drive
+                     files via the Picker in Import ▾. Tokens live
+                     server-side (the refresh token never reaches this
+                     browser), so unlike GitHub there's no token to paste
+                     and nothing stored on this device. Button lights up
+                     only when the server reports OAuth is configured
+                     (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET). -->
+                <div
+                  class="settings-section"
+                  data-search="google drive oauth import private file signin gdrive docs authentication picker"
+                >
+                  <label class="settings-section-label">Google Drive</label>
+                  <p
+                    id="settings-drive-status"
+                    class="settings-token-status"
+                    data-state="empty"
+                    aria-live="polite"
+                  ></p>
+                  <div id="settings-drive-oauth-row" class="settings-github-oauth-row">
+                    <button
+                      id="settings-drive-oauth-btn"
+                      type="button"
+                      class="settings-github-oauth-btn"
+                      disabled
+                      title="Loading…"
+                    >
+                      <span class="settings-github-oauth-icon" aria-hidden="true">▲</span>
+                      <span class="settings-drive-oauth-label">Sign in with Google</span>
+                    </button>
+                    <p
+                      id="settings-drive-oauth-note"
+                      class="settings-github-oauth-note"
+                    ></p>
+                  </div>
+                  <p class="settings-section-hint">
+                    Connect Google Drive to import your private Docs and
+                    files via <em>Import ▾ → Google Drive</em>. You only
+                    grant access to the files you pick — Narrative can't
+                    see the rest of your Drive. The connection lives on the
+                    server, not this device. Public share links work
+                    without signing in.
+                  </p>
+                </div>
+
                 <!-- v4.63 (#854): admin chrome (maintenance form + tester key
                      management) tucks into Advanced. The OUTER details is
                      visible to everyone; the INNER admin sections stay
