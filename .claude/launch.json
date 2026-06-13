@@ -12,6 +12,18 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8091", "--directory", "static"],
       "port": 8091
+    },
+    {
+      "name": "landing",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8090", "--directory", "D:\\audiable\\static"],
+      "port": 8090
+    },
+    {
+      "name": "appbuilder",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["E:\\appbuilder\\server.py"],
+      "port": 7766
     }
   ]
 }
