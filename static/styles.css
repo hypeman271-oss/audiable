@@ -4091,7 +4091,7 @@ body[data-ui-mode="author"] .reading-view .sentence.played {
 .reading-view .chapter-image-figure-wrap figcaption {
   font-size: 12.5px;
   font-style: italic;
-  color: var(--text-muted);
+  color: var(--fg-dim);
   padding: 0 8px;
   margin: 0 auto;
   max-width: 80%;
@@ -4387,7 +4387,7 @@ body[data-offline="true"] .import-dropdown-item {
 }
 .tenants-list-meta {
   font-size: 12px;
-  color: var(--text-muted, #8a93a3);
+  color: var(--fg-dim, #97a0c9);
   display: block;
   margin-top: 2px;
 }
@@ -13345,7 +13345,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     border: 0;
     border-radius: 50%;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--fg-dim);
     font-size: 20px;
     line-height: 1;
     cursor: pointer;
@@ -13358,7 +13358,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
   .pane-close-btn:hover,
   .pane-close-btn:focus-visible {
     background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--text);
+    color: var(--fg);
     outline: none;
   }
   /* Library pane × needs to sit to the left of the resize handle
@@ -13388,7 +13388,7 @@ body[data-annotate-mode="on"] .reading-view .sentence:hover {
     -webkit-backdrop-filter: blur(12px) saturate(160%);
     cursor: pointer;
     z-index: 32;
-    color: var(--text);
+    color: var(--fg);
     font-size: 18px;
     transition: background 140ms ease, transform 140ms ease;
     padding: 0;
@@ -13728,6 +13728,12 @@ html, body {
 }
 .cmdk-shell {
   background: color-mix(in srgb, var(--bg-card-2) 92%, var(--accent-tint));
+  /* v225v4.105: belt-and-suspenders. Without an explicit color, .cmdk-item
+     inherits from <dialog>, which defaults to black in modern browsers
+     regardless of color-scheme. Result: dark text on dark surface in the
+     dark theme. Set color here so every child element inherits theme
+     foreground unless overridden. */
+  color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow:
@@ -13763,17 +13769,17 @@ html, body {
   background: transparent;
   border: 0;
   outline: 0;
-  color: var(--text);
+  color: var(--fg);
   font-size: 16px;
   line-height: 1.4;
 }
 .cmdk-input::placeholder {
-  color: var(--text-muted);
+  color: var(--fg-dim);
 }
 .cmdk-close {
   background: transparent;
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--fg-dim);
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 6px;
@@ -13782,7 +13788,7 @@ html, body {
 }
 .cmdk-close:hover {
   background: var(--hover-soft);
-  color: var(--text);
+  color: var(--fg);
 }
 .cmdk-results {
   overflow-y: auto;
@@ -13795,7 +13801,7 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--fg-dim);
   padding: 10px 16px 4px;
 }
 .cmdk-item {
@@ -13832,7 +13838,7 @@ html, body {
 }
 .cmdk-item-hint {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--fg-dim);
   flex: 0 0 auto;
   padding: 2px 6px;
   border: 1px solid var(--border);
@@ -13845,7 +13851,7 @@ html, body {
 .cmdk-empty {
   padding: 28px 16px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--fg-dim);
   font-size: 13px;
 }
 .cmdk-foot {
@@ -13855,7 +13861,7 @@ html, body {
   padding: 8px 16px;
   border-top: 1px solid var(--border);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--fg-dim);
   background: color-mix(in srgb, var(--bg-card) 60%, transparent);
 }
 .cmdk-foot kbd {
@@ -13972,7 +13978,7 @@ html, body {
      in app.js / index.html). */
   font-family: inherit;
   font-size: 14px;
-  color: var(--text);
+  color: var(--fg);
   text-align: left;
   transition: background 120ms ease, border-color 120ms ease;
 }
@@ -13991,7 +13997,7 @@ html, body {
 .desktop-author-pane .dap-voice-speaker {
   flex: 0 0 auto;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--fg-dim);
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--bg-page);
@@ -14026,7 +14032,7 @@ html, body {
 .clip-outdated-msg {
   flex: 1 1 220px;
   min-width: 0;
-  color: var(--text);
+  color: var(--fg);
 }
 .clip-outdated-msg strong {
   font-weight: 700;
@@ -14045,13 +14051,13 @@ html, body {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--bg-card);
-  color: var(--text-muted);
+  color: var(--fg-dim);
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .clip-outdated-btn:hover {
   background: var(--hover-soft);
-  color: var(--text);
+  color: var(--fg);
 }
 .clip-outdated-btn.primary {
   background: var(--accent);

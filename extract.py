@@ -907,6 +907,199 @@ def fetch_and_extract_url(
     }
 
 
+# ---- Google Drive (public-share URL) -------------------------------------
+# v4.96 (#892): import from a Drive share link without any OAuth setup.
+# Works for "anyone with the link" Google Docs (exported as DOCX) and
+# arbitrary Drive files (fetched as raw bytes + piped through the existing
+# extract_text dispatcher). Sheets / Slides fall through to a friendly
+# error — TTS doesn't have a useful read of those formats anyway.
+
+MAX_GDRIVE_FETCH_BYTES = 25 * 1024 * 1024  # 25 MB cap on Drive downloads
+
+
+def _parse_gdrive_url(url: str) -> tuple[str | None, str | None]:
+    """Pull (kind, file_id) out of a Drive / Docs share URL.
+
+    Recognized shapes:
+        drive.google.com/file/d/<ID>/view              -> ("file", id)
+        drive.google.com/open?id=<ID>                  -> ("file", id)
+        drive.google.com/uc?id=<ID>&export=download    -> ("file", id)
+        docs.google.com/document/d/<ID>/edit           -> ("document", id)
+        docs.google.com/spreadsheets/d/<ID>/edit       -> ("spreadsheet", id)
+        docs.google.com/presentation/d/<ID>/edit       -> ("presentation", id)
+
+    Returns (None, None) for anything else. Caller decides what to do
+    with the kind — Docs export to DOCX, raw files download via uc?,
+    Sheets/Slides bail.
+    """
+    import re
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse((url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if host not in ("drive.google.com", "docs.google.com"):
+        return (None, None)
+
+    # docs.google.com/{document,spreadsheets,presentation}/d/<ID>/...
+    if host == "docs.google.com":
+        m = re.match(
+            r"^/(document|spreadsheets|presentation)/d/([A-Za-z0-9_-]+)",
+            parsed.path,
+        )
+        if m:
+            return (m.group(1), m.group(2))
+        return (None, None)
+
+    # drive.google.com/file/d/<ID>/...
+    m = re.match(r"^/file/d/([A-Za-z0-9_-]+)", parsed.path)
+    if m:
+        return ("file", m.group(1))
+
+    # drive.google.com/open?id=<ID>  or  drive.google.com/uc?id=<ID>
+    if parsed.path in ("/open", "/uc"):
+        qs = urllib.parse.parse_qs(parsed.query)
+        ids = qs.get("id") or []
+        if ids and re.fullmatch(r"[A-Za-z0-9_-]+", ids[0]):
+            return ("file", ids[0])
+
+    return (None, None)
+
+
+def _gdrive_filename_from_headers(resp, file_id: str) -> str:
+    """Pull a filename out of a Drive download response.
+
+    Drive returns `Content-Disposition: attachment; filename="real.docx"`
+    on uc?export=download. Fall back to the file id if the header is
+    missing or malformed — extract_text will then 422 with an
+    unsupported-extension error which is still better than guessing.
+    """
+    import re
+
+    cd = resp.headers.get("Content-Disposition") or ""
+    # filename="..." (quoted) or filename=...; (unquoted)
+    m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', cd, flags=re.I)
+    if m:
+        name = urllib_unquote(m.group(1).strip())
+        if name:
+            return name
+    return file_id
+
+
+def urllib_unquote(s: str) -> str:
+    import urllib.parse
+    return urllib.parse.unquote(s)
+
+
+def fetch_and_extract_gdrive(url: str) -> dict:
+    """Fetch a Google Drive share URL and return its main text + metadata.
+
+    Same response shape as fetch_and_extract_url: {filename, chars,
+    text, images}. No `gitRef` is attached — Drive doesn't have a
+    branch+sha equivalent.
+
+    Args:
+        url: a Drive / Docs share URL. Must be set to "anyone with
+            the link can view" or this will 404.
+
+    Raises:
+        ValueError for unrecognized URL shapes (mapped to HTTP 400).
+        ExtractionError for fetch failures, unsupported kinds (Sheets /
+            Slides), and empty files (mapped to HTTP 422).
+    """
+    import urllib.error
+    import urllib.request
+
+    kind, file_id = _parse_gdrive_url(url)
+    if not file_id:
+        raise ValueError(
+            "URL must be a Google Drive or Google Docs share link"
+        )
+
+    if kind in ("spreadsheets", "presentation"):
+        # docs.google.com URL paths use "spreadsheets" (plural) and
+        # "presentation" (singular). The user-facing copy normalizes
+        # to "Sheets" / "Slides" so it reads naturally.
+        nice = {"spreadsheets": "Sheets", "presentation": "Slides"}[kind]
+        raise ExtractionError(
+            f"Google {nice} aren't supported — export to DOCX or PDF "
+            "in Drive and import that instead"
+        )
+
+    # Build the download URL. Google Docs export cleanly to DOCX, which
+    # the existing dispatcher reads (paragraphs in document order); raw
+    # Drive files come back via uc?export=download and we infer the
+    # extension from Content-Disposition.
+    if kind == "document":
+        download_url = (
+            f"https://docs.google.com/document/d/{file_id}/export?format=docx"
+        )
+        fallback_name = f"gdoc-{file_id}.docx"
+    else:
+        download_url = (
+            f"https://drive.google.com/uc?export=download&id={file_id}"
+        )
+        fallback_name = file_id
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; Narrative/0.1; +local TTS reader)"
+        ),
+        "Accept": "*/*",
+    }
+    req = urllib.request.Request(download_url, headers=headers)
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            # If Drive returns its "virus scan" interstitial HTML, it
+            # means the file is large enough to need a confirmation
+            # token. We don't follow that flow (requires cookie + token
+            # round-trip); tell the user to download + upload locally.
+            if kind == "file" and "html" in content_type:
+                raise ExtractionError(
+                    "this file needs Google's virus-scan confirmation "
+                    "(usually >100MB). Download it from Drive and upload "
+                    "the file directly instead"
+                )
+            raw = resp.read(MAX_GDRIVE_FETCH_BYTES + 1)
+            if len(raw) > MAX_GDRIVE_FETCH_BYTES:
+                raise ExtractionError(
+                    f"file too large (> {MAX_GDRIVE_FETCH_BYTES // (1024 * 1024)} MB)"
+                )
+            filename = _gdrive_filename_from_headers(resp, file_id) \
+                if kind == "file" else fallback_name
+    except urllib.error.HTTPError as e:
+        # 404 from Drive on a share URL almost always means the link
+        # isn't set to "anyone with the link can view" — surface that
+        # hint instead of a generic HTTP error.
+        if e.code in (401, 403, 404):
+            raise ExtractionError(
+                f"HTTP {e.code} — make sure the share link is set to "
+                "\"Anyone with the link\" in Drive (right-click → Share)"
+            ) from e
+        raise ExtractionError(f"HTTP {e.code} fetching Drive file") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ExtractionError(f"could not reach Drive: {e}") from e
+
+    if not raw:
+        raise ExtractionError("Drive returned an empty file")
+
+    try:
+        text = extract_text(filename, raw)
+    except UnsupportedFormatError as e:
+        raise ExtractionError(str(e)) from e
+
+    if not text.strip():
+        raise ExtractionError("file is empty or unreadable")
+
+    return {
+        "filename": filename,
+        "chars": len(text),
+        "text": text,
+        "images": [],
+    }
+
+
 def extract_text(filename: str, data: bytes) -> str:
     if not data:
         raise ExtractionError("empty file")

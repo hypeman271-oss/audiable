@@ -482,7 +482,7 @@
                 id="header-version-tag"
                 class="brand-version"
                 title="What's new in this build"
-              >v225v4.99</a>
+              >v225v4.106</a>
             </h1>
             <p class="tagline">Write. Listen. Revise.</p>
           </div>
@@ -1966,6 +1966,10 @@
                   <span class="import-menu-label">GitHub Gist</span>
                   <span class="import-menu-sub">Paste a gist.github.com URL — one snippet or many files</span>
                 </button>
+                <button role="menuitem" type="button" data-import="gdrive">
+                  <span class="import-menu-label">Google Drive (link)</span>
+                  <span class="import-menu-sub">Paste a Drive share URL — anyone-with-the-link only</span>
+                </button>
                 <button role="menuitem" type="button" data-import="scrivener">
                   <span class="import-menu-label">Scrivener bundle</span>
                   <span class="import-menu-sub">.scriv project zipped up from Finder / Explorer</span>
@@ -3189,9 +3193,9 @@
             id="export-notes-btn"
             type="button"
             class="notes-btn advanced-only"
-            aria-label="Export notes for this clip"
-            title="Export bookmarks + notes + annotations as a Markdown file"
-          >📤 Export notes</button>
+            aria-label="Download notes for this clip as a Markdown file"
+            title="Download bookmarks + notes + annotations as a Markdown file to your device"
+          >📤 Download notes</button>
           <!-- v225v4.33: trigger for the pull-up bookmarks drawer. On
                desktop the inline bookmark rows used to crowd the player;
                this chip lets the user pop them open in a full-width
@@ -3302,7 +3306,7 @@
                menu item is absent from the DOM. -->
           <button class="phone-menu-item" data-action="export-notes" type="button">
             <span class="phone-menu-icon" aria-hidden="true">📤</span>
-            <span>Export notes (.md)</span>
+            <span>Download notes (.md)</span>
           </button>
           <div class="phone-menu-divider"></div>
           <button class="phone-menu-item" data-action="settings" type="button">

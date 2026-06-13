@@ -1864,8 +1864,9 @@
         (context-dependent) <strong>Save text</strong> /
         <strong>Edit text</strong>. Everything you'd reach for —
         a single file, a URL, a GitHub repo, a Scrivener bundle, an
-        Obsidian vault — lives inside the Import menu, so the header
-        stays uncluttered as more sources land.</p>
+        Obsidian vault, a Google Drive share link — lives inside the
+        Import menu, so the header stays uncluttered as more sources
+        land.</p>
       <table>
         <tr>
           <th>Action</th>
@@ -2144,6 +2145,19 @@
             overrides the filename; <code>[[wikilinks]]</code> are
             flattened to plain text and <code>![[embeds]]</code> are
             dropped so nothing nonsense gets read aloud.</td>
+        </tr>
+        <tr>
+          <td><strong>Google Drive (link)</strong></td>
+          <td>Paste a Drive share URL. Google Docs are exported as
+            DOCX server-side so headings and paragraphs survive;
+            other Drive files (PDF, EPUB, DOCX) download and run
+            through the same dispatcher the file-upload path uses.
+            The share link <strong>must</strong> be set to
+            <em>Anyone with the link can view</em> in Drive
+            (right-click → Share). Google Sheets and Slides aren't
+            supported — TTS doesn't have a useful read of them.
+            Files larger than 25 MB hit Drive's virus-scan gate; in
+            that case download locally and use Upload file instead.</td>
         </tr>
       </table>
 

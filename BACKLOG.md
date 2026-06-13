@@ -917,6 +917,108 @@ their next breathing room.
 
 ---
 
+## 8. Google Drive OAuth — Phase 2 of Drive import
+
+**Triggered by:** v225v4.106 (#892) shipped the public-share-URL path
+for Drive imports — paste an "Anyone with the link" share URL and the
+text lands in the textarea. Works today for Google Docs (exported as
+DOCX) and arbitrary Drive files (PDF / EPUB / DOCX). Sheets and
+Slides bail with a friendly error.
+
+**Status:** Phase 2. Phase 1 (URL paste) is sufficient for users who
+already share docs publicly. OAuth unlocks browsing your private
+Drive directly inside Narrative — like the GitHub repo browser does
+for repos.
+
+### What Phase 2 needs
+
+- **`gdrive_oauth.py`** — mirror of `github_oauth.py`. Authorize URL
+  builder + code-exchange + refresh-token storage. Different
+  endpoints (`accounts.google.com/o/oauth2/v2/auth`,
+  `oauth2.googleapis.com/token`) and a different scope shape
+  (`https://www.googleapis.com/auth/drive.readonly` if we want to
+  browse anything, or the narrower `drive.file` if we only need to
+  read files the user explicitly picks via the Drive Picker).
+- **`/api/gdrive/oauth/*` routes** in `server.py` — mirror
+  `/api/github/oauth/*`. Authorize redirect, callback handler, code
+  exchange, refresh-token persistence per tenant_key.
+- **`/api/gdrive/files`** — list (folder, search, or shared-with-me).
+  Pages with `pageToken`.
+- **`/api/gdrive/fetch?id=X`** — download a specific file (Docs
+  exported as DOCX, raw files passthrough). Reuses the
+  `fetch_and_extract_gdrive` plumbing.
+- **Drive picker dialog** — mirror the GitHub picker. Tree view,
+  search, "files I've opened recently" chip row. Routes through the
+  shared document-picker component.
+- **Settings → Account → Google Drive section** — Sign in button,
+  fingerprint display (which account is connected), Disconnect.
+- **`GDRIVE_OAUTH_SETUP.md`** at repo root — instructions for the
+  operator (i.e. me) to register the OAuth app in Google Cloud
+  Console. NOT a runbook for end users.
+
+### What the operator needs to do first (out of band)
+
+This is the dependency that makes Phase 2 a bigger lift than Phase 1:
+
+1. Create a Google Cloud project at `console.cloud.google.com`.
+2. Enable the **Google Drive API** for that project.
+3. Create OAuth 2.0 credentials of type **Web application**. Set
+   authorized redirect URIs to:
+   - `https://narrative-alpha.fly.dev/api/gdrive/oauth/callback`
+   - `http://localhost:7777/api/gdrive/oauth/callback` (dev)
+   - `http://tauri.localhost/api/gdrive/oauth/callback` (Tauri shell)
+4. Go through **OAuth consent screen** setup. For the
+   `drive.readonly` scope, Google requires **app verification** —
+   that's a security review process (privacy policy URL, video walk-
+   through of the OAuth flow, ~weeks of back-and-forth). For private
+   testing with up to 100 invited users, "Testing" mode bypasses
+   verification but every user must be added explicitly to the
+   tester list.
+5. Drop `GDRIVE_CLIENT_ID` and `GDRIVE_CLIENT_SECRET` into Fly
+   secrets and local `.env`.
+
+### Decision points worth thinking about up front
+
+- **Scope choice.** `drive.file` (only files the user picks via the
+  Drive Picker JS SDK) skips verification entirely and is a tighter
+  privacy story — but it forces us to use Google's Picker UI rather
+  than building our own tree view. `drive.readonly` lets us build a
+  Narrative-native picker but pulls us into the verification gauntlet.
+  For a writer-focused beta, `drive.file` is probably the right call.
+- **Verification timing.** If we ship `drive.readonly`, we should
+  start the verification process *before* opening Drive sign-in to
+  testers — getting verified takes weeks and a half-rejected app
+  shows users a scary "this app isn't verified" warning.
+- **Token storage.** GitHub OAuth tokens live per `tenant_key`. Mirror
+  that for Drive — same column shape, just `gdrive_token` instead of
+  `github_token`. Refresh tokens matter more for Drive (access tokens
+  expire in 1 hour) so the persistence layer needs to handle refresh.
+
+### Recommended path when revisiting
+
+1. Decide scope (`drive.file` vs `drive.readonly`). I'd start with
+   `drive.file` to skip verification — and we get free use of
+   Google's polished Drive Picker UI.
+2. If picking `drive.file`: drop the picker-dialog scope from the
+   plan above and load `https://apis.google.com/js/api.js` instead.
+   The Picker handles file browse / search / sharing semantics.
+3. Build `gdrive_oauth.py` + routes + Settings UI.
+4. Wire the Picker to call `/api/gdrive/fetch?id=X` on selection.
+5. Document the consent-screen + tester-list workflow in
+   `GDRIVE_OAUTH_SETUP.md`.
+
+### What Phase 1 already covers (so Phase 2 doesn't need to redo it)
+
+- `_parse_gdrive_url` parses every shape of Drive / Docs URL.
+- `fetch_and_extract_gdrive` handles the download + dispatch logic
+  for both Google Docs (DOCX export) and raw Drive files. Phase 2
+  can call this with a constructed `uc?export=download&id=X` URL
+  after fetching via authenticated API instead of public share.
+- Import dropdown entry, frontend dispatch, and the
+  `/api/extract/gdrive` endpoint are already in place.
+
+---
+
 ## How to use this file
 
 When an idea worth keeping surfaces during use:

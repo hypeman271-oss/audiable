@@ -180,6 +180,36 @@
       <!-- ============================================================= -->
       <article class="release release-newest">
         <div class="release-head">
+          <span class="release-version">v225v4.106</span>
+          <span class="release-tagline">Import from Google Drive — paste a share link, get the text.</span>
+        </div>
+        <ul>
+          <li>
+            <strong>Google Drive in the Import menu.</strong> Pick
+            <em>Google Drive (link)</em>, paste a share URL, and the
+            Drive file lands in the textarea ready to Generate. Works
+            for Google Docs (exported as DOCX) and arbitrary files on
+            Drive (PDF, EPUB, DOCX) up to 25&nbsp;MB.
+          </li>
+          <li>
+            <strong>Link must be shareable.</strong> In Drive, right-click
+            the file → Share → set "General access" to
+            <em>Anyone with the link</em>. Without that, Drive returns
+            404 and we can't fetch it. (Full OAuth Drive browse is in
+            the backlog — that path will eventually let you pick from
+            your private Drive without the share toggle.)
+          </li>
+          <li>
+            <strong>Google Sheets and Slides aren't supported.</strong>
+            They don't have a useful TTS read. Export to DOCX or PDF in
+            Drive first, then import that.
+          </li>
+        </ul>
+      </article>
+
+      <!-- ============================================================= -->
+      <article class="release">
+        <div class="release-head">
           <span class="release-version">v225v4.99</span>
           <span class="release-tagline">Rotate the book mockup in 3D. The PNG you download matches the angle you set.</span>
         </div>

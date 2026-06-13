@@ -9357,6 +9357,23 @@ function _isGistUrl(url) {
   }
 }
 
+// v4.96 (#892): Google Drive share URL detector. Covers both Drive
+// (drive.google.com/file/d/…, drive.google.com/open?id=…) and Docs
+// (docs.google.com/document/d/…). fetchFromUrl routes matching URLs
+// through /api/extract/gdrive instead of /api/extract/url so the
+// backend can route Docs through their export endpoint.
+function _isGdriveUrl(url) {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname === "drive.google.com" ||
+      u.hostname === "docs.google.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
 const VOICE_FAVORITES_KEY = "narrative.voiceFavorites";
 
 function getFavoriteVoices() {
@@ -14020,6 +14037,26 @@ async function _bgRunWorker() {
         blobSize: t.blobSize,
         suspicious,
       });
+      // v225v4.101: if the just-synth'd clip is the one the user is
+      // currently reading, re-load it so the reading-view spans + the
+      // <audio> source swap to the new content. Without this, after a
+      // Sync GitHub / Re-narrate-outdated / per-card 🔄, the IDB row
+      // has new text + new audio but the on-screen reading view keeps
+      // showing the old spans — the workaround was Clear + reload.
+      // v220w made bg-queue "silent" (no auto-load) for re-narrates
+      // when the user wasn't viewing the clip; that policy is right
+      // for the library re-narrate-outdated batch case but wrong for
+      // the foreground "I'm reading this and just hit Sync GitHub"
+      // case. Gating on _currentClipId match preserves the silent
+      // behavior for background queue items.
+      // autoPlay:false because the user was reading; we shouldn't
+      // surprise them by starting playback.
+      if (_bgCurrent && _bgCurrent.targetClipId &&
+          _bgCurrent.targetClipId === _currentClipId) {
+        loadClip(_bgCurrent.targetClipId, { autoPlay: false }).catch((e) => {
+          console.warn("[bg-queue] post-OK reload failed:", e);
+        });
+      }
       _bgOkCount += 1;
     } else if (_silentChapterQueue) {
       const t = _bgLastSynth || {};
@@ -22459,17 +22496,52 @@ async function _syncAbsorbServerClip(sc) {
   // buttons + transcripts inline so new content from another device
   // shows up without a page reload.
   if (_currentClipId === localShape.id) {
-    try {
-      if (typeof _applyAnnotationMarkers === "function") {
-        _applyAnnotationMarkers(localShape);
+    // v225v4.101: detect whether TEXT changed in this absorb. If yes,
+    // do a full loadClip so the reading-view spans rebuild from new
+    // content; if no (annotations/bookmarks only — the original #490
+    // use case), do the lighter marker + drawer refresh as before.
+    // The bug v4.100 probed: GitHub Pull lands new text into IDB but
+    // sentence spans never rebuild, so user sees old text forever.
+    const newText = localShape.text || "";
+    const readingView = document.querySelector(".reading-view")
+      || document.getElementById("reading-view");
+    const rvText = readingView ? (readingView.textContent || "") : "";
+    const textChanged =
+      rvText.trim().length > 0 && newText.trim() !== rvText.trim();
+    if (typeof _dlog === "function") {
+      try {
+        _dlog("sync-absorb", "current clip absorbed", {
+          clipId: localShape.id,
+          newTextLen: newText.length,
+          newTextHead: newText.slice(0, 80),
+          renderedTextLen: rvText.length,
+          renderedTextHead: rvText.slice(0, 80),
+          textChanged,
+          action: textChanged ? "loadClip" : "light-refresh",
+          kind: localShape.kind || "audio",
+        });
+      } catch {}
+    }
+    if (textChanged) {
+      // Full reload — rebuilds sentence spans, swaps audio source,
+      // restores progressSec from IDB. autoPlay:false because the
+      // user was reading silently; don't surprise them with playback.
+      loadClip(localShape.id, { autoPlay: false }).catch((e) => {
+        console.warn("[sync] post-absorb reload failed:", e);
+      });
+    } else {
+      try {
+        if (typeof _applyAnnotationMarkers === "function") {
+          _applyAnnotationMarkers(localShape);
+        }
+        // Bookmarks list (if visible) also reads from IDB — re-render
+        // so a bookmark added on another device appears immediately.
+        if (typeof renderBookmarks === "function") {
+          renderBookmarks().catch(() => {});
+        }
+      } catch (e) {
+        console.warn("[sync] post-absorb refresh failed:", e);
       }
-      // Bookmarks list (if visible) also reads from IDB — re-render so a
-      // bookmark added on another device appears immediately.
-      if (typeof renderBookmarks === "function") {
-        renderBookmarks().catch(() => {});
-      }
-    } catch (e) {
-      console.warn("[sync] post-absorb refresh failed:", e);
     }
   }
 }
@@ -23044,14 +23116,36 @@ libraryHidePlayedBtn.addEventListener("click", () => {
 // queue from one repo is one API call, not 35. Updates _outdatedClipIds
 // then re-renders the library so cards flag themselves.
 async function syncAllFromGithub() {
+  // v225v4.103: visible feedback + one-tap full sync.
+  // Old behavior: tap Sync GitHub → SHA check → silently populate
+  // _outdatedClipIds → setStatus a summary (invisible on this user's
+  // desktop because #status is display:none). User taps the button,
+  // sees nothing, files a bug. Two-step design (Sync GitHub, then
+  // "Re-narrate outdated") was buried.
+  // New: alert() the outcome at every exit, and if outdated clips are
+  // found, offer to chain into renarrateAllOutdated() in the same tap.
+  const _slog = (msg, payload) => {
+    if (typeof _dlog === "function") _dlog("github-sync-all", msg, payload || {});
+  };
+  _slog("button tapped", {});
   const token = getGithubToken();
   if (!token) {
+    _slog("bail: no GitHub PAT", {});
+    alert("Sync GitHub failed: no GitHub PAT saved.\n\n" +
+          "Open Settings → Account → GitHub credentials and paste a " +
+          "Personal Access Token. Then tap Sync GitHub again.");
     setStatus("Set a GitHub PAT in Settings before syncing.", true);
     return;
   }
   const allClips = await listClips();
   const gitClips = allClips.filter((c) => c.gitRef && c.gitRef.repoUrl && c.gitRef.path);
+  _slog("filtered to GitHub clips", {
+    total: allClips.length, gitClips: gitClips.length,
+  });
   if (gitClips.length === 0) {
+    _slog("bail: no GitHub clips", {});
+    alert("No GitHub-sourced clips in the library.\n\n" +
+          "Import a clip from GitHub first (Import dropdown → GitHub).");
     setStatus("No GitHub-sourced clips in the library.");
     return;
   }
@@ -23116,11 +23210,43 @@ async function syncAllFromGithub() {
     _outdatedClipIds = newOutdated;
     renderLibrary();
     const outdatedCount = newOutdated.size;
-    const summary = outdatedCount === 0
-      ? `All ${gitClips.length} clip${gitClips.length === 1 ? "" : "s"} up to date.`
-      : `${outdatedCount} of ${gitClips.length} clip${gitClips.length === 1 ? "" : "s"} have newer commits on GitHub.`;
-    setStatus(errors ? `${summary} (${errors} repo${errors === 1 ? "" : "s"} failed)` : summary);
+    const errTail = errors ? ` (${errors} repo${errors === 1 ? "" : "s"} failed)` : "";
+    _slog("sync-check complete", {
+      gitClips: gitClips.length, outdated: outdatedCount, errors,
+    });
+    if (outdatedCount === 0) {
+      const msg = `All ${gitClips.length} GitHub-sourced clip${gitClips.length === 1 ? "" : "s"} ` +
+                  `up to date.${errTail}`;
+      alert(msg);
+      setStatus(msg);
+    } else {
+      const summary = `${outdatedCount} of ${gitClips.length} clip${gitClips.length === 1 ? "" : "s"} ` +
+                      `have newer commits on GitHub.${errTail}`;
+      setStatus(summary);
+      // Offer to chain into the second half — refetch + re-narrate —
+      // in the same tap. Without this, the user has to find the
+      // "Re-narrate outdated" button and tap it manually, OR open each
+      // outdated card and tap "Refetch + re-narrate" on its banner.
+      // That two-step flow is what's been confusing the user.
+      const proceed = confirm(
+        `${summary}\n\n` +
+        `Refetch new text from GitHub and re-narrate them now?\n\n` +
+        `(This re-narrates ${outdatedCount} clip${outdatedCount === 1 ? "" : "s"} in the ` +
+        `background — watch the queue panel for progress.)`
+      );
+      _slog("renarrate confirm", { proceed, outdatedCount });
+      if (proceed && typeof renarrateAllOutdated === "function") {
+        // Fire-and-forget — the renarrate function manages its own
+        // button state + status. We've already cleared this one's
+        // disabled flag below in the finally.
+        renarrateAllOutdated().catch((e) => {
+          console.warn("[sync-all] renarrate chain threw:", e);
+        });
+      }
+    }
   } catch (err) {
+    _slog("threw", { error: String(err && err.message || err) });
+    alert(`Sync failed: ${err.message}`);
     setStatus(_withOfflineHint(`Sync failed: ${err.message}`), true);
   } finally {
     librarySyncGithubBtn.disabled = false;
@@ -23143,28 +23269,73 @@ librarySyncGithubBtn.addEventListener("click", syncAllFromGithub);
 // Used by both the bulk "Re-narrate outdated" button (full library
 // sweep) AND the per-card sync chip on outdated cards.
 async function _refetchAndQueueClipFromGithub(id, token) {
+  // v225v4.102: instrument every silent-return path so the next debug
+  // log pins down exactly where the Sync GitHub flow bails. The user
+  // reported "the button clicks but nothing happens" — no bg-queue
+  // start, no sync-absorb, no visible feedback. Possible causes:
+  // missing gitRef, malformed repoUrl, /api/extract/url 4xx/5xx,
+  // network error. Each gets its own dlog frame.
+  const _slog = (msg, payload) => {
+    if (typeof _dlog === "function") _dlog("github-sync", msg, payload || {});
+  };
+  _slog("refetch start", { id, hasToken: !!token });
   const clip = await getClip(id);
-  if (!clip || !clip.gitRef || !clip.gitRef.repoUrl || !clip.gitRef.path) {
+  if (!clip) {
+    _slog("bail: clip not in IDB", { id });
+    return false;
+  }
+  if (!clip.gitRef) {
+    _slog("bail: clip has no gitRef", { id, title: clip.title });
+    return false;
+  }
+  if (!clip.gitRef.repoUrl) {
+    _slog("bail: gitRef.repoUrl missing", { id, gitRef: clip.gitRef });
+    return false;
+  }
+  if (!clip.gitRef.path) {
+    _slog("bail: gitRef.path missing", { id, gitRef: clip.gitRef });
     return false;
   }
   const { repoUrl, branch, path } = clip.gitRef;
   const m = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-  if (!m) return false;
+  if (!m) {
+    _slog("bail: repoUrl doesn't match github pattern", { id, repoUrl });
+    return false;
+  }
   const owner = m[1];
   const repo = m[2];
   const rawUrl =
     `https://raw.githubusercontent.com/${owner}/${repo}/${branch || "main"}/${encodeURI(path)}`;
-  const res = await fetch("/api/extract/url", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url: rawUrl,
-      github_token: token || undefined,
-      // No git_sha here — we WANT the latest, not a pinned version.
-    }),
+  _slog("fetching from extract API", {
+    id, owner, repo, branch: branch || "main", path,
   });
-  if (!res.ok) return false;
+  let res;
+  try {
+    res = await fetch("/api/extract/url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: rawUrl,
+        github_token: token || undefined,
+        // No git_sha here — we WANT the latest, not a pinned version.
+      }),
+    });
+  } catch (netErr) {
+    _slog("bail: fetch threw (network)", { id, error: String(netErr) });
+    throw netErr;  // let outer catch surface to user
+  }
+  if (!res.ok) {
+    let body = "";
+    try { body = (await res.text()).slice(0, 240); } catch {}
+    _slog("bail: extract API returned non-OK", {
+      id, status: res.status, body,
+    });
+    return false;
+  }
   const data = await res.json();
+  _slog("extract OK, enqueuing bg-synth", {
+    id, textLen: (data.text || "").length, hasGitRef: !!data.gitRef,
+  });
   // Drop it into the background queue. _bgRunWorker will pick it
   // up, _preSynthesizeChapter will overwrite the existing clip
   // because targetClipId is set.
@@ -23787,12 +23958,32 @@ function makeClipCard(clip) {
     refetchBtn.textContent = "Refetch + re-narrate";
     refetchBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
+      // v225v4.102: every silent-bail now alerts() AND dlogs, because
+      // #status is display:none on this user's desktop (CSS rule fires
+      // even outside phone case) so setStatus() is invisible. The
+      // alert() forces visible feedback so the user can't tap the
+      // button and see literally nothing happen.
+      const _slog = (msg, payload) => {
+        if (typeof _dlog === "function") _dlog("github-sync", msg, payload || {});
+      };
+      _slog("refetchBtn clicked", {
+        clipId: clip.id, title: clip.title,
+        hasGitRef: !!clip.gitRef,
+        gitRefRepoUrl: clip.gitRef ? clip.gitRef.repoUrl : null,
+      });
       const token = getGithubToken();
       if (!token) {
+        _slog("bail: no GitHub token saved", { clipId: clip.id });
+        alert("Sync GitHub failed: no GitHub PAT saved.\n\n" +
+              "Open Settings → Account → GitHub credentials and paste a " +
+              "Personal Access Token. Then tap Refetch again.");
         setStatus("Set a GitHub PAT in Settings before syncing.", true);
         return;
       }
       if (!voiceEl.value) {
+        _slog("bail: no voice selected", { clipId: clip.id });
+        alert("Sync GitHub failed: no voice selected.\n\n" +
+              "Pick a voice from the voice picker, then tap Refetch again.");
         setStatus("Pick a voice before syncing.", true);
         return;
       }
@@ -23807,15 +23998,29 @@ function makeClipCard(clip) {
           // before the bg-queue synth finishes — so the user sees
           // their tap registered.
           _markClipFresh(clip.id);
+          _slog("queued for re-narrate", {
+            clipId: clip.id, title: clip.title,
+          });
+          alert(`Queued "${clip.title}" for re-narrate.\n\n` +
+                `The bg-queue panel will show progress. ` +
+                `The reading view will update when synth completes.`);
           setStatus(
             `Queued ${clip.title} for re-narrate — watch the queue panel.`,
           );
         } else {
+          _slog("queue returned false", { clipId: clip.id });
+          alert(`Couldn't refetch "${clip.title}" from GitHub.\n\n` +
+                `Check the debug log for the bail reason ` +
+                `(category: github-sync).`);
           setStatus(`Couldn't refetch ${clip.title} from GitHub.`, true);
           refetchBtn.disabled = false;
         }
       } catch (err) {
+        _slog("threw", {
+          clipId: clip.id, error: String(err && err.message || err),
+        });
         console.warn("[outdated-banner] per-card refetch failed:", err);
+        alert(`Sync failed: ${err.message}`);
         setStatus(_withOfflineHint(`Sync failed: ${err.message}`), true);
         refetchBtn.disabled = false;
       }
@@ -26643,13 +26848,24 @@ if (_clipEditPushNotesBtn) {
       const commitShort = data.commit_sha
         ? String(data.commit_sha).slice(0, 7)
         : "(no SHA returned)";
-      setStatus(
-        `Pushed notes for "${clip.title || "clip"}" → ${notesPath} ` +
-        `(commit ${commitShort}).`
-      );
+      // v225v4.100: alert() the success so phone users can see it. On
+      // phone, #status is hidden when a clip is loaded (per #709 /
+      // v4.46) so setStatus() lands on an invisible element. Push is a
+      // write-back to GitHub with no native confirmation, so users were
+      // unsure whether the push happened. alert() shows on all
+      // platforms; matches the confirm() already used at the start of
+      // this same flow. Errors get the same treatment below.
+      const successMsg =
+        `Pushed notes for "${clip.title || "clip"}"\n\n` +
+        `→ ${notesPath}\n\n` +
+        `Commit ${commitShort} on ${(clip.gitRef && clip.gitRef.branch) || "default branch"}.`;
+      alert(successMsg);
+      setStatus(`Pushed notes → ${notesPath} (commit ${commitShort}).`);
     } catch (e) {
       console.warn("[github-push-notes] threw:", e);
-      setStatus(_withOfflineHint(`Notes push failed: ${e.message}`), true);
+      const errMsg = _withOfflineHint(`Notes push failed: ${e.message}`);
+      alert(errMsg);
+      setStatus(errMsg, true);
     } finally {
       _clipEditPushNotesBtn.disabled = false;
       _clipEditPushNotesBtn.textContent = _origLabel;
@@ -29479,6 +29695,19 @@ importMenu.addEventListener("click", (e) => {
         'load straight into the textarea; multi-file Gists open the ' +
         'picker.',
     });
+  } else if (source === "gdrive") {
+    // v4.96 (#892): pre-prime the URL row for a Drive paste. The link
+    // MUST be set to "Anyone with the link" in Drive's share dialog —
+    // we have no OAuth (yet, see #896) so anything else 404s.
+    showUrlRow({
+      placeholder: "drive.google.com/file/d/… or docs.google.com/document/d/…",
+      prefill: "https://",
+      hint:
+        'Paste a Drive share link. Google Docs export as DOCX; arbitrary ' +
+        'files (PDF, EPUB, DOCX) download directly. The link must be ' +
+        'set to <strong>"Anyone with the link can view"</strong> in ' +
+        "Drive's Share dialog.",
+    });
   } else if (source === "scrivener") {
     scrivenerInput.click();
   } else if (source === "obsidian") {
@@ -31321,7 +31550,13 @@ async function fetchFromUrl() {
       const token = getGithubToken();
       if (token) body.github_token = token;
     }
-    const res = await fetch("/api/extract/url", {
+    // v4.96 (#892): Drive URLs route through /api/extract/gdrive so the
+    // backend can resolve Google Docs to a DOCX export instead of
+    // trying to trafilatura-parse the share landing page.
+    const endpoint = _isGdriveUrl(url)
+      ? "/api/extract/gdrive"
+      : "/api/extract/url";
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

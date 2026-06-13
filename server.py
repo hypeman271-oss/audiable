@@ -2319,6 +2319,12 @@ class ExtractUrlRequest(BaseModel):
     git_sha: str | None = Field(default=None, max_length=80)
 
 
+class ExtractGdriveRequest(BaseModel):
+    """v4.96 (#892): public-share Google Drive URL → extracted text.
+    Same response shape as ExtractUrl. No auth (OAuth is Phase 2 / #896)."""
+    url: str = Field(..., min_length=8, max_length=2048)
+
+
 class GithubSyncCheckRequest(BaseModel):
     """Batch SHA check. Takes a list of {repoUrl, branch, paths[]} and
     returns the current SHA for each path, so the frontend can flag
@@ -2387,6 +2393,30 @@ async def extract_url_endpoint(req: ExtractUrlRequest):
                 github_token=req.github_token,
                 git_sha=req.git_sha,
             ),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except extract.ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
+
+
+@app.post("/api/extract/gdrive")
+async def extract_gdrive_endpoint(req: ExtractGdriveRequest):
+    """v4.96 (#892): fetch a public-share Google Drive URL.
+
+    Returns the same shape as /api/extract/url: {filename, chars, text,
+    images}. Google Docs export as DOCX (which the existing dispatcher
+    reads); arbitrary Drive files download as raw bytes + run through
+    extract_text. No OAuth — that lives in #896 (Phase 2)."""
+    import asyncio
+    import functools
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(extract.fetch_and_extract_gdrive, req.url),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
