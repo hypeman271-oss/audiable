@@ -81,6 +81,35 @@ VOICE_LICENSES: dict[str, dict] = {
         "commercial": True,
         "notes": "Single British female voice; credit as 'Jenny' or 'Jenny (Dioco)'.",
     },
+    # LJ Speech — public domain (CC0). Both the texts (published 1884–1964)
+    # and the LibriVox recordings (2016–17) are explicitly placed in the
+    # public domain by the dataset author (keithito.com/LJ-Speech-Dataset),
+    # and the Piper MODEL_CARD states "License: public domain". No
+    # attribution required. Three quality tiers, identical license.
+    "en_US-ljspeech-high": {
+        "license": "Public domain",
+        "dataset": "LJ Speech",
+        "dataset_url": "https://keithito.com/LJ-Speech-Dataset/",
+        "attribution": "",
+        "commercial": True,
+        "notes": "Public-domain dataset (CC0) — texts + LibriVox recordings both released to the public domain; no attribution required. Single US female speaker; older + single-speaker, so lower fidelity than LibriTTS-R.",
+    },
+    "en_US-ljspeech-medium": {
+        "license": "Public domain",
+        "dataset": "LJ Speech",
+        "dataset_url": "https://keithito.com/LJ-Speech-Dataset/",
+        "attribution": "",
+        "commercial": True,
+        "notes": "Public-domain dataset (CC0); no attribution required. Single US female speaker.",
+    },
+    "en_US-ljspeech-low": {
+        "license": "Public domain",
+        "dataset": "LJ Speech",
+        "dataset_url": "https://keithito.com/LJ-Speech-Dataset/",
+        "attribution": "",
+        "commercial": True,
+        "notes": "Public-domain dataset (CC0); no attribution required. Single US female speaker; low quality (fastest).",
+    },
 
     # ---- EXCLUDED — Mycroft 'All Rights Reserved' or unverifiable ----
     "en_US-amy-medium": {

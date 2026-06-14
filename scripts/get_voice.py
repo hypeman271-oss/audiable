@@ -26,6 +26,7 @@ VOICES_DIR = Path(__file__).resolve().parent.parent / "voices"
 DEFAULT_VOICES = [
     "en_US-amy-medium",      # American English, female (~63MB)
     "en_GB-alan-medium",     # British English, male (~63MB)
+    "en_US-ljspeech-high",   # American English, female, public domain (~108MB)
 ]
 
 
