@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import sys
 import time
@@ -322,16 +323,260 @@ def _write_sentence_to_cache(
     )
 
 
+# ---- Resume-from-cache (v4.111 — restart-resumable synthesis) ------------
+
+def _content_hash(params: "JobParams") -> str:
+    """Stable key for the resume cache: identical (text, voice, speaker,
+    rate) → same hash → same cached sentences. Volume is excluded (it's
+    applied at synth but doesn't change sentence boundaries; keeping it
+    out lets a volume tweak still reuse the cache — harmless since volume
+    rarely differs across a retry)."""
+    h = hashlib.sha256()
+    h.update((params.text or "").encode("utf-8"))
+    h.update(b"\x00")
+    h.update((params.voice_id or "").encode("utf-8"))
+    h.update(b"\x00")
+    h.update(str(params.speaker_id).encode("utf-8"))
+    h.update(b"\x00")
+    h.update(str(int(params.rate)).encode("utf-8"))
+    return h.hexdigest()
+
+
+def _persist_resume_sentence(
+    wav_b64: str, tenant_key: str, content_hash: str, sentence_idx: int
+) -> None:
+    """Best-effort write of one sentence WAV to the resume cache. Runs in
+    the executor (FLAC encode is CPU-bound). Never raises into the worker —
+    resume is an optimization; a write failure must not kill the synth."""
+    import library_db as _ldb
+    from tts.encode import wav_to_flac, wav_duration_ms
+
+    try:
+        if not _ldb.is_enabled() or not tenant_key:
+            return
+        wav_bytes = base64.b64decode(wav_b64)
+        if not wav_bytes:
+            return
+        duration_ms = wav_duration_ms(wav_bytes)
+        flac_bytes = wav_to_flac(wav_bytes)
+        sha = _ldb.store_sentence_audio(flac_bytes)
+        _ldb.record_resume_sentence(
+            tenant_key, content_hash, sentence_idx,
+            audio_sha256=sha, duration_ms=duration_ms,
+        )
+    except Exception as exc:
+        print(
+            f"[synth_jobs] resume-cache write failed (idx {sentence_idx}): {exc}",
+            file=sys.stderr, flush=True,
+        )
+
+
+def _load_resume_prefix(
+    tenant_key: str, content_hash: str, sentences: list[str]
+) -> list[dict] | None:
+    """Return a list of {wav_bytes, duration_ms} for the contiguous cached
+    prefix [0..k), or None if resume isn't safe. Pure read — emits nothing,
+    so the caller can cleanly fall back to a full synth on None.
+
+    Safety guards (any failure → None → full re-synth, never wrong audio):
+      - 0 < k <= N.
+      - The remaining text [k..N) must re-split into EXACTLY sentences[k:].
+        The engine re-splits the text it's given; if a naive join doesn't
+        round-trip (e.g. a force-split long sentence), we can't line the
+        remainder up with the cached prefix, so we bail.
+      - Every cached FLAC blob must decode. A missing/corrupt blob → bail.
+    """
+    import library_db as _ldb
+    from tts.encode import flac_to_wav
+
+    if not _ldb.is_enabled() or not tenant_key:
+        return None
+    n = len(sentences)
+    prefix_rows = _ldb.get_resume_prefix(tenant_key, content_hash)
+    k = len(prefix_rows)
+    if k == 0 or k > n:
+        return None
+    # Remainder must round-trip through the same splitter the engine uses,
+    # or the cached prefix won't align with what the engine produces.
+    remainder = sentences[k:]
+    if remainder and tts.split_sentences(" ".join(remainder)) != remainder:
+        return None
+    out = []
+    for row in prefix_rows:
+        flac_path = _ldb.SENTENCE_DIR / f"{row['audio_sha256']}.flac"
+        try:
+            flac_bytes = flac_path.read_bytes()
+            wav_bytes = flac_to_wav(flac_bytes)
+        except Exception:
+            return None  # blob gone/corrupt — safer to re-synth from scratch
+        out.append({"wav_bytes": wav_bytes, "duration_ms": int(row["duration_ms"])})
+    return out
+
+
+def _emit_sentence(job: SynthJob, index: int, total: int, offset_ms: int, wav_bytes: bytes) -> None:
+    """Append a synthetic sentence event to the job buffer in the exact
+    shape subscribe() replays (buffer position == index)."""
+    job.sentence_events.append({
+        "type": "sentence",
+        "index": index,
+        "total": total,
+        "offset_ms": offset_ms,
+        "wav_b64": base64.b64encode(wav_bytes).decode(),
+    })
+    job._buffer_bytes += len(wav_bytes)
+    job.sentences_done = max(job.sentences_done, index + 1)
+    job.sentences_total = max(job.sentences_total, total)
+
+
+async def _synthesize_resume(
+    job: SynthJob, content_hash: str, sentences: list[str], prefix: list[dict]
+) -> None:
+    """Resume branch: replay the cached prefix, synthesize only the
+    remainder in one engine pass, and stitch the combined audio from all
+    per-sentence WAVs. Because the engine pads each per-sentence WAV, a
+    concat of (cached prefix + fresh remainder) is byte-identical to a
+    full single-pass result. On any synth error this _fail()s the job
+    (the client's retry-once then re-POSTs and resumes again)."""
+    loop = asyncio.get_running_loop()
+    from tts.encode import concat_wavs
+
+    n = len(sentences)
+    k = len(prefix)
+    all_wavs: list[bytes] = []
+    offsets: list[int] = []
+    cumulative_ms = 0
+
+    print(
+        f"[synth_jobs] {job.id} resuming from cache: {k}/{n} sentences already done",
+        file=sys.stderr, flush=True,
+    )
+
+    # 1) Replay the cached prefix.
+    for i, row in enumerate(prefix):
+        wav = row["wav_bytes"]
+        _emit_sentence(job, i, n, cumulative_ms, wav)
+        all_wavs.append(wav)
+        offsets.append(cumulative_ms)
+        cumulative_ms += row["duration_ms"]
+    async with job._condition:
+        job._condition.notify_all()
+
+    # 2) Synthesize the remainder (one pass → one warmup at the boundary).
+    if k < n:
+        remainder_text = " ".join(sentences[k:])
+        try:
+            it = tts.synthesize_iter(
+                text=remainder_text,
+                voice_id=job.params.voice_id,
+                rate=job.params.rate,
+                volume=job.params.volume,
+                speaker_id=job.params.speaker_id,
+            )
+        except ValueError as exc:
+            await _fail(job, str(exc))
+            return
+
+        _DONE = object()
+
+        def _next_event() -> Any:
+            try:
+                return next(it)
+            except StopIteration:
+                return _DONE
+
+        from tts.encode import wav_duration_ms
+
+        while True:
+            try:
+                event = await loop.run_in_executor(None, _next_event)
+            except Exception as exc:
+                await _fail(job, f"resume remainder synth failed: {exc}")
+                return
+            if event is _DONE:
+                break
+            if event.get("type") != "sentence":
+                continue  # ignore the remainder's own "result"; we stitch
+            j = int(event.get("index", 0))
+            global_idx = k + j
+            if global_idx >= n:
+                # Engine produced more sentences than expected despite the
+                # round-trip guard — abandon to avoid a corrupt clip.
+                await _fail(job, "resume sentence overflow — re-synthesize")
+                return
+            wav = base64.b64decode(event.get("wav_b64", ""))
+            if job._buffer_bytes + len(wav) > _MAX_BUFFER_BYTES:
+                await _fail(job, "synth exceeded memory cap — split the chapter and retry")
+                return
+            _emit_sentence(job, global_idx, n, cumulative_ms, wav)
+            all_wavs.append(wav)
+            offsets.append(cumulative_ms)
+            cumulative_ms += wav_duration_ms(wav)
+            async with job._condition:
+                job._condition.notify_all()
+            await loop.run_in_executor(
+                None, _persist_resume_sentence,
+                event.get("wav_b64", ""), job.tenant_key, content_hash, global_idx,
+            )
+
+    if len(all_wavs) != n:
+        await _fail(job, f"resume produced {len(all_wavs)} of {n} sentences — re-synthesize")
+        return
+
+    # 3) Stitch + encode the full combined audio.
+    try:
+        combined = concat_wavs(all_wavs)
+        mp3_bytes = await loop.run_in_executor(None, wav_to_mp3, combined, 64)
+    except Exception as exc:
+        await _fail(job, f"resume stitch/encode failed: {exc}")
+        return
+    job.mp3_bytes = mp3_bytes
+    job.sentence_offsets_ms = offsets
+    try:
+        import library_db
+        if library_db.is_enabled():
+            job.audio_sha256 = library_db.store_audio(mp3_bytes)
+    except Exception as e:
+        print(f"[synth_jobs] {job.id} audio persist failed: {e}", file=sys.stderr, flush=True)
+
+
 async def _run_worker(job: SynthJob) -> None:
     """The background worker. Iterates tts.synthesize_iter via the
     thread pool (Piper is sync), appending each event to the job's
-    buffer + waking any subscribers."""
+    buffer + waking any subscribers.
+
+    v4.111: before a full synth, tries to resume from the per-sentence
+    resume cache (synth_resume_cache) so a restart doesn't redo finished
+    sentences. Resume is fully guarded — any doubt falls back to a clean
+    full synth — and the full path persists each sentence so the next
+    attempt can resume."""
     loop = asyncio.get_running_loop()
     _DONE = object()
     job.status = "running"
     async with job._condition:
         job._condition.notify_all()
+    content_hash = _content_hash(job.params)
     try:
+        # v4.111: try to resume from the per-sentence cache (best-effort).
+        # _load_resume_prefix emits nothing + guards hard, so None here
+        # cleanly means "do a normal full synth."
+        try:
+            _sentences = tts.split_sentences(job.params.text)
+            prefix = await loop.run_in_executor(
+                None, _load_resume_prefix, job.tenant_key, content_hash, _sentences
+            ) if (job.tenant_key and _sentences) else None
+        except Exception as exc:
+            print(f"[synth_jobs] {job.id} resume probe failed (ignored): {exc}",
+                  file=sys.stderr, flush=True)
+            prefix = None
+        if prefix:
+            await _synthesize_resume(job, content_hash, _sentences, prefix)
+            if job.status not in ("failed", "cancelled"):
+                job.status = "done"
+                job.completed_at = time.time()
+                async with job._condition:
+                    job._condition.notify_all()
+            return
+
         try:
             it = tts.synthesize_iter(
                 text=job.params.text,
@@ -443,6 +688,18 @@ async def _run_worker(job: SynthJob) -> None:
                         _tb.print_exc()
                         await _fail(job, f"sentence cache write failed: {exc}")
                         return
+
+                # v4.111: also persist to the content-keyed resume cache so
+                # a restart can resume THIS job mid-flight. Best-effort +
+                # off-thread; never fails the job (resume is just an
+                # optimization, unlike Phase B which gates restitch).
+                if job.tenant_key:
+                    await loop.run_in_executor(
+                        None, _persist_resume_sentence,
+                        event.get("wav_b64", ""),
+                        job.tenant_key, content_hash,
+                        int(event.get("index", 0)),
+                    )
             elif etype == "result":
                 # MP3-encode in the executor (CPU bound). Same hand-off
                 # the old /api/synthesize/stream did.

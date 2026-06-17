@@ -37,7 +37,7 @@ AUDIO_DIR = DATA_DIR / "audio"
 SENTENCE_DIR = DATA_DIR / "sentences"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -298,6 +298,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v8(c)
         c.execute("UPDATE schema_version SET version = 8")
         current = 8
+
+    if current < 9:
+        _apply_v9(c)
+        c.execute("UPDATE schema_version SET version = 9")
+        current = 9
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -722,6 +727,38 @@ def _apply_v8(c: sqlite3.Connection) -> None:
           created_at      TEXT NOT NULL,
           confirmed_at    TEXT
         );
+        """
+    )
+
+
+def _apply_v9(c: sqlite3.Connection) -> None:
+    """Add synth_resume_cache for restart-resumable synthesis.
+
+    Lets a re-POSTed job resume from already-synthesized sentences after
+    a process restart, instead of re-synthesizing from scratch. Keyed by
+    a content hash of (text, voice, speaker, rate) so it's independent of
+    any clip — works for plain synth jobs that have no clip_id. The audio
+    bytes reuse the content-addressed FLAC blob store (store_sentence_audio
+    / SENTENCE_DIR), shared with the Phase B sentence_audio cache.
+    """
+    print(
+        "[library_db] migrating to schema v9 (add synth_resume_cache for "
+        "restart-resumable synthesis)",
+        file=sys.stderr, flush=True,
+    )
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS synth_resume_cache (
+          tenant_key   TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          sentence_idx INTEGER NOT NULL,
+          audio_sha256 TEXT NOT NULL,
+          duration_ms  INTEGER NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (tenant_key, content_hash, sentence_idx)
+        );
+        CREATE INDEX IF NOT EXISTS idx_synth_resume_created
+          ON synth_resume_cache(created_at);
         """
     )
 
@@ -1436,6 +1473,12 @@ def gc_orphan_sentence_audio() -> int:
             "SELECT DISTINCT audio_sha256 FROM sentence_audio"
         ):
             referenced.add(row["audio_sha256"])
+        # v9: the resume cache shares this FLAC blob store. Count its
+        # references too, or we'd delete blobs a resumable job still needs.
+        for row in conn().execute(
+            "SELECT DISTINCT audio_sha256 FROM synth_resume_cache"
+        ):
+            referenced.add(row["audio_sha256"])
 
     if not SENTENCE_DIR.exists():
         return 0
@@ -1453,6 +1496,90 @@ def gc_orphan_sentence_audio() -> int:
         except OSError:
             pass
     return removed
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Restart-resumable synthesis cache (synth_resume_cache, schema v9).
+#
+# Keyed by a content hash of the synth params so a re-POSTed job (after a
+# process restart) can replay already-synthesized sentences instead of
+# re-doing them. Audio reuses the content-addressed FLAC blob store.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def record_resume_sentence(
+    tenant_key: str,
+    content_hash: str,
+    sentence_idx: int,
+    *,
+    audio_sha256: str,
+    duration_ms: int,
+) -> None:
+    """UPSERT one synthesized sentence into the resume cache."""
+    if not is_enabled() or not tenant_key or not content_hash:
+        return
+    with _conn_lock:
+        conn().execute(
+            """
+            INSERT INTO synth_resume_cache (
+              tenant_key, content_hash, sentence_idx, audio_sha256,
+              duration_ms, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_key, content_hash, sentence_idx) DO UPDATE SET
+              audio_sha256 = excluded.audio_sha256,
+              duration_ms = excluded.duration_ms,
+              created_at = excluded.created_at
+            """,
+            (
+                tenant_key, content_hash, int(sentence_idx), audio_sha256,
+                int(duration_ms), _iso_now(),
+            ),
+        )
+        conn().commit()
+
+
+def get_resume_prefix(tenant_key: str, content_hash: str) -> list[dict]:
+    """Return the CONTIGUOUS cached prefix [0, 1, 2, …] for this content,
+    in order. Stops at the first gap so the caller can safely resume right
+    after it. Each dict: {sentence_idx, audio_sha256, duration_ms}."""
+    if not is_enabled() or not tenant_key or not content_hash:
+        return []
+    with _conn_lock:
+        rows = conn().execute(
+            """
+            SELECT sentence_idx, audio_sha256, duration_ms
+            FROM synth_resume_cache
+            WHERE tenant_key = ? AND content_hash = ?
+            ORDER BY sentence_idx ASC
+            """,
+            (tenant_key, content_hash),
+        ).fetchall()
+    prefix = []
+    for i, r in enumerate(rows):
+        if r["sentence_idx"] != i:
+            break  # gap — only a contiguous prefix is safe to replay
+        prefix.append(dict(r))
+    return prefix
+
+
+def gc_resume_cache(max_age_days: int = 7) -> int:
+    """Delete resume-cache rows older than max_age_days. Returns the count
+    removed. The orphaned FLAC blobs are then reclaimed by
+    gc_orphan_sentence_audio on its next run. Resume is a short-lived
+    convenience (recover from a restart minutes later), so a week is
+    generous."""
+    if not is_enabled():
+        return 0
+    from datetime import datetime, timedelta, timezone
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    with _conn_lock:
+        cur = conn().execute(
+            "DELETE FROM synth_resume_cache WHERE created_at < ?", (cutoff,)
+        )
+        conn().commit()
+        return cur.rowcount or 0
 
 
 def gc_orphan_audio() -> int:
