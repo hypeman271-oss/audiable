@@ -14367,7 +14367,9 @@ async function _bgTrySynth(job) {
         gitRef: job.gitRef || null,
         scrivenerRef: job.scrivenerRef || null,
       },
-      { fromBgQueue: true }
+      // v4.110: existingJobId reattaches to a running server job
+      // (reattach-on-boot) instead of POSTing a new one.
+      { fromBgQueue: true, existingJobId: job.existingJobId || null }
     );
   } catch (err) {
     _dlog("bg-queue", `synth threw: ${job.title}`, {
@@ -14600,6 +14602,11 @@ async function _bgRunWorker() {
       // before throwing through to here.
       _bgSynthSentence = 0;
       _bgSynthTotal = 0;
+      // v4.110: if this was a reattach to a server job that turned out
+      // to be gone (404 → first attempt failed), drop existingJobId so
+      // the retry POSTs a FRESH job and re-synthesizes from scratch
+      // rather than re-attaching to the same dead id.
+      if (_bgCurrent) _bgCurrent.existingJobId = null;
       if (_silentChapterQueue) success = await _bgTrySynth(_bgCurrent);
     }
     if (success) {
@@ -15018,45 +15025,56 @@ function _advanceChapterQueue() {
 // synth. The new endpoint detaches the synth into a background
 // asyncio task — a dropped client just means the next reconnect
 // replays whatever's buffered + live-streams the rest.
-async function _openSynthJobStream(payload, externalController) {
-  // v4.90: strip configured pre-synth symbols from the payload's text
-  // fields. Done here (not at each caller) so ALL bg-queue paths — manual
-  // generate, per-card 🔄, chapter queue, library re-narrate — pick up the
-  // strip without per-call wiring. Mutates a shallow clone so the caller's
-  // payload (which may be re-used in retry logic) keeps the raw text.
-  const _stripped = { ...payload };
-  if (typeof _stripped.text === "string") {
-    _stripped.text = _stripSynthChars(_stripped.text);
-  }
-  if (Array.isArray(_stripped.segments)) {
-    _stripped.segments = _stripped.segments.map((s) => ({
-      ...s,
-      text: typeof s.text === "string" ? _stripSynthChars(s.text) : s.text,
-    }));
-  }
-  const createRes = await fetch("/api/synth/jobs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(_stripped),
-    signal: externalController.signal,
-  });
-  if (!createRes.ok) {
-    // Mimic the original fetch behavior — return the failed
-    // response so the caller's `if (!res.ok)` branch handles it.
-    return createRes;
-  }
-  let jobId = null;
-  try {
-    const cbody = await createRes.json();
-    jobId = cbody.job_id;
-  } catch {}
+async function _openSynthJobStream(payload, externalController, opts) {
+  // v4.110: reattach path. When opts.existingJobId is given we
+  // skip POST /api/synth/jobs and attach the resumable read loop to a
+  // job that's ALREADY running on the server (e.g. after a page reload
+  // mid-synthesis — see _reattachActiveSynthJobs). The server still has
+  // every sentence buffered, so opening the stream from=0 replays them
+  // fast and then live-streams the tail. Everything downstream (reader
+  // loop, stitch, save) is identical to a freshly-created job.
+  let jobId = (opts && opts.existingJobId) || null;
   if (!jobId) {
-    return new Response(
-      JSON.stringify({ error: "no job_id from server" }),
-      { status: 502, headers: { "Content-Type": "application/json" } },
-    );
+    // v4.90: strip configured pre-synth symbols from the payload's text
+    // fields. Done here (not at each caller) so ALL bg-queue paths — manual
+    // generate, per-card 🔄, chapter queue, library re-narrate — pick up the
+    // strip without per-call wiring. Mutates a shallow clone so the caller's
+    // payload (which may be re-used in retry logic) keeps the raw text.
+    const _stripped = { ...payload };
+    if (typeof _stripped.text === "string") {
+      _stripped.text = _stripSynthChars(_stripped.text);
+    }
+    if (Array.isArray(_stripped.segments)) {
+      _stripped.segments = _stripped.segments.map((s) => ({
+        ...s,
+        text: typeof s.text === "string" ? _stripSynthChars(s.text) : s.text,
+      }));
+    }
+    const createRes = await fetch("/api/synth/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(_stripped),
+      signal: externalController.signal,
+    });
+    if (!createRes.ok) {
+      // Mimic the original fetch behavior — return the failed
+      // response so the caller's `if (!res.ok)` branch handles it.
+      return createRes;
+    }
+    try {
+      const cbody = await createRes.json();
+      jobId = cbody.job_id;
+    } catch {}
+    if (!jobId) {
+      return new Response(
+        JSON.stringify({ error: "no job_id from server" }),
+        { status: 502, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    _dlog("synth", "resumable job created", { jobId });
+  } else {
+    _dlog("synth", "resumable: reattaching to existing job", { jobId });
   }
-  _dlog("synth", "resumable job created", { jobId });
 
   // Resumable byte stream. The downstream code processes SSE events
   // out of this stream as if it were a single connection. The
@@ -15147,6 +15165,20 @@ async function _openSynthJobStream(payload, externalController) {
                 return;
               }
             }
+          } else if (statusRes.status === 404) {
+            // v4.110: the job is GONE (server restarted / evicted it).
+            // Retrying the stream would just hit another 404 and burn
+            // the reconnect budget — and with a backgrounded tab the
+            // pill can sit frozen meanwhile. Close cleanly instead: the
+            // reader loop in _preSynthesizeChapter ends, _bgTrySynth
+            // returns false, and the existing retry-once POSTs a fresh
+            // job. Converges in O(1) rather than draining MAX_RECONNECTS.
+            _dlog("synth", "resumable: job 404 — server restarted, closing for fresh retry", {
+              jobId,
+              statusCode: statusRes.status,
+            });
+            controller.close();
+            return;
           } else {
             // Status check failed but we're not aborting — try to
             // reopen the stream anyway.
@@ -15326,6 +15358,74 @@ async function _phaseBPartialRenarrate({
 }
 
 
+// v4.110: on boot, reattach to a background synthesis job that's still
+// running on the server (e.g. the user reloaded mid-synthesis). The job
+// keeps running server-side in a detached task; without this the client
+// forgets it and the work never lands as a clip. We feed a reattach job
+// through the normal bg-queue worker with `existingJobId` so it shares
+// the exact same read/stitch/save path. Deferred so the app's normal
+// boot (which prompts for the API key if needed) runs first; bails
+// silently on any error so it's never intrusive.
+async function _reattachActiveSynthJobs() {
+  try {
+    if (_bgRunning) return;  // a queue is already driving synthesis
+    const res = await fetch("/api/synth/jobs?active=1");
+    if (!res.ok) return;
+    const { jobs } = await res.json();
+    const active = (jobs || []).filter(
+      (j) => j && (j.status === "running" || j.status === "pending"),
+    );
+    // Only auto-reattach when there's exactly one — driving multiple
+    // concurrent saves from boot is risky and rare. Jobs are already
+    // tenant-scoped server-side, so this one is ours.
+    if (active.length !== 1) {
+      if (active.length > 1) {
+        _dlog("synth", "boot: multiple active jobs, skipping auto-reattach", {
+          count: active.length,
+        });
+      }
+      return;
+    }
+    const snap = active[0];
+    // Pull the detail (full text + params) so we can label + save the
+    // clip without the original in-memory chapter.
+    const dres = await fetch(`/api/synth/jobs/${snap.id}?detail=1`);
+    if (!dres.ok) return;
+    const d = await dres.json();
+    if (!d.text) return;  // can't reconstruct the clip without its text
+    _dlog("synth", "boot: reattaching to active synth job", {
+      jobId: snap.id,
+      title: d.title,
+      done: snap.sentences_done,
+      total: snap.sentences_total,
+    });
+    _chapterQueue.push({
+      title: d.title || "Resuming…",
+      text: d.text,
+      targetClipId: d.target_clip_id || null,
+      voiceId: d.voice_id || null,
+      rate: typeof d.rate === "number" ? d.rate : null,
+      volume: typeof d.volume === "number" ? d.volume : 1,
+      speakerId: d.speaker_id != null ? d.speaker_id : null,
+      existingJobId: snap.id,
+    });
+    if (typeof setStatus === "function") {
+      setStatus(`Resuming background synthesis: ${d.title || "in progress"}…`);
+    }
+    _bgRunWorker();
+  } catch (err) {
+    _dlog && _dlog("synth", "boot: reattach probe failed (ignored)", {
+      err: String(err && err.message || err),
+    });
+  }
+}
+// Defer so the normal boot (voice list, library, any key prompt) settles
+// first; only acts if a job is genuinely still running server-side.
+if (typeof window !== "undefined") {
+  setTimeout(() => { try { _reattachActiveSynthJobs(); } catch {} }, 2500);
+}
+
+
 async function _preSynthesizeChapter(chapter, opts) {
   // v220t: bg-queue (silent batch import) shares this function with the
   // foreground lookahead caller. The end-of-chapter sleep check was a
@@ -15423,12 +15523,19 @@ async function _preSynthesizeChapter(chapter, opts) {
       rate,
       volume,
       speaker_id: speakerId,
+      // v4.110: carry the title so a boot-time reattach can label the
+      // pill + save the clip without the original in-memory chapter.
+      title: chapter.title || null,
     };
     if (phaseB_targetClipId && phaseB_targetLineIds) {
       _payload.target_clip_id = phaseB_targetClipId;
       _payload.target_line_ids = phaseB_targetLineIds;
     }
-    const res = await _openSynthJobStream(_payload, myController);
+    // v4.110: opts.existingJobId → attach to a running server job
+    // instead of POSTing a new one (reattach-on-boot path).
+    const res = await _openSynthJobStream(_payload, myController, {
+      existingJobId: (opts && opts.existingJobId) || null,
+    });
     if (!res.ok) {
       // v177: capture the response body — synthesis errors often
       // include the actual reason (voice not found, OOM, etc.) in

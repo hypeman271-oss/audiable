@@ -92,6 +92,10 @@ class JobParams:
     speaker_id: int | None
     target_clip_id: int | None = None
     target_line_ids: list[str] | None = None
+    # Display label for the bg-queue pill. Carried so a client that
+    # reattaches on boot (after a reload) can label + save the clip
+    # without the original in-memory chapter.
+    title: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> JobParams:
@@ -133,6 +137,7 @@ class JobParams:
             ),
             target_clip_id=target_clip_id,
             target_line_ids=target_line_ids,
+            title=(str(d["title"])[:300] if d.get("title") is not None else None),
         )
 
 
@@ -167,7 +172,9 @@ class SynthJob:
     _buffer_bytes: int = 0
 
     def snapshot(self) -> dict[str, Any]:
-        """Status snapshot the client polls."""
+        """Status snapshot the client polls. Light — safe to list many.
+        `title` is included so a reattaching client can label the pill
+        without fetching the (potentially large) text."""
         return {
             "id": self.id,
             "status": self.status,
@@ -178,6 +185,24 @@ class SynthJob:
             "completed_at": self.completed_at,
             "has_audio": self.mp3_bytes is not None,
             "audio_sha256": self.audio_sha256,
+            "title": self.params.title,
+        }
+
+    def reattach_detail(self) -> dict[str, Any]:
+        """snapshot() + the params a client needs to reconstruct + save
+        the clip after reattaching to this job on boot (it lost the
+        original in-memory chapter on reload). Heavier (carries the full
+        text) — only the single-job status endpoint returns it, never the
+        list."""
+        return {
+            **self.snapshot(),
+            "text": self.params.text,
+            "voice_id": self.params.voice_id,
+            "rate": self.params.rate,
+            "volume": self.params.volume,
+            "speaker_id": self.params.speaker_id,
+            "target_clip_id": self.params.target_clip_id,
+            "target_line_ids": self.params.target_line_ids,
         }
 
 

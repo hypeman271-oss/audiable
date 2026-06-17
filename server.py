@@ -759,6 +759,9 @@ class SynthJobCreateRequest(SynthesizeRequest):
     """
     target_clip_id: int | None = Field(default=None, ge=1)
     target_line_ids: list[str] | None = Field(default=None, max_length=10000)
+    # Display label, carried so a client that reattaches on boot can
+    # label the pill + save the clip without the original chapter.
+    title: str | None = Field(default=None, max_length=300)
 
 
 class SynthesisSegment(BaseModel):
@@ -1670,6 +1673,7 @@ async def synth_jobs_create(req: SynthJobCreateRequest, request: Request):
         "speaker_id": req.speaker_id,
         "target_clip_id": req.target_clip_id,
         "target_line_ids": req.target_line_ids,
+        "title": req.title,
     })
     try:
         job = await synth_jobs.create_job(params, tenant_key)
@@ -1679,15 +1683,19 @@ async def synth_jobs_create(req: SynthJobCreateRequest, request: Request):
 
 
 @app.get("/api/synth/jobs/{job_id}")
-async def synth_jobs_status(job_id: str, request: Request):
-    """Snapshot of the job's state. Cheap; safe to poll."""
+async def synth_jobs_status(job_id: str, request: Request, detail: int = 0):
+    """Snapshot of the job's state. Cheap; safe to poll.
+
+    `?detail=1` returns the heavier reattach payload (full text + synth
+    params) the boot-time reattach flow needs to reconstruct + save the
+    clip. The reconnect-loop status check uses the light default."""
     job = synth_jobs.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="unknown job")
     tenant_key = getattr(request.state, "tenant_key", None)
     if job.tenant_key != tenant_key:
         raise HTTPException(status_code=404, detail="unknown job")
-    return job.snapshot()
+    return job.reattach_detail() if detail else job.snapshot()
 
 
 @app.get("/api/synth/jobs/{job_id}/stream")
