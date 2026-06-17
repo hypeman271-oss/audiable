@@ -8,11 +8,14 @@ Run:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
 import mimetypes
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -26,6 +29,7 @@ import gdrive_oauth
 import github_oauth
 import library_db
 import synth_jobs
+import totp
 import tts
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap on uploads
@@ -650,6 +654,9 @@ async def require_api_key(request: Request, call_next):
         # Fire-and-forget last-seen update (no await needed; the helper
         # is sync + cheap + minute-bucketed).
         library_db.touch_tenant_seen(request.state.tenant_key)
+        blocked = _enforce_2fa(request, request.state.tenant_key, path)
+        if blocked is not None:
+            return blocked
         return await call_next(request)
 
     # Tester check — sha256(bearer) lookup in /data/tenants.json. The
@@ -661,6 +668,9 @@ async def require_api_key(request: Request, call_next):
         request.state.is_admin = False
         request.state.tenant_label = record.get("label", "")
         library_db.touch_tenant_seen(record["tenant_key"])
+        blocked = _enforce_2fa(request, request.state.tenant_key, path)
+        if blocked is not None:
+            return blocked
         return await call_next(request)
 
     return JSONResponse(
@@ -2696,6 +2706,220 @@ async def gdrive_oauth_disconnect_endpoint(request: Request):
         )
     deleted = library_db.delete_gdrive_tokens(tenant_key)
     return {"ok": True, "deleted": deleted, "revoked": revoked}
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Two-step verification (TOTP 2FA) — opt-in per tenant.
+#
+# A signed, stateless "2FA-passed" token is issued on successful code
+# verification and sent back by the client as X-Narrative-2FA on every
+# /api/* request. The middleware (require_api_key) gates a tenant's
+# requests once that tenant has a CONFIRMED enrollment. The /api/2fa/*
+# routes themselves are exempt from the gate (so a user can always
+# enroll / verify) but still require the API key.
+
+# "Remember this device" lifetime for the 2FA session token.
+_2FA_TOKEN_TTL = 30 * 24 * 3600  # 30 days
+# Brute-force guard: TOTP is only 6 digits, so cap failed attempts.
+_2FA_MAX_FAILS = 5
+_2FA_LOCKOUT_SEC = 60
+_2fa_attempts: dict[str, list] = {}  # tenant_key -> [fail_count, window_start]
+
+
+def _2fa_signing_key() -> bytes:
+    """HMAC key for 2FA session tokens — the server's NARRATIVE_KEY. It's
+    always set in deployed mode (where 2FA is enforced); rotating it
+    invalidates outstanding 2FA tokens, which is acceptable."""
+    return os.environ.get("NARRATIVE_KEY", "").encode("utf-8")
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * ((4 - len(s) % 4) % 4))
+
+
+def _issue_2fa_token(tenant_key: str) -> tuple[str, int]:
+    """Return (token, ttl_seconds). Token = b64(payload).b64(HMAC) where
+    payload is 'tenant_key|expiry_epoch'. Stateless — no DB row."""
+    exp = int(time.time()) + _2FA_TOKEN_TTL
+    payload = f"{tenant_key}|{exp}".encode("utf-8")
+    sig = hmac.new(_2fa_signing_key(), payload, hashlib.sha256).digest()
+    return f"{_b64url(payload)}.{_b64url(sig)}", _2FA_TOKEN_TTL
+
+
+def _verify_2fa_token(token: str, tenant_key: str) -> bool:
+    """True iff token is a valid, unexpired 2FA token for THIS tenant.
+    The signature covers the tenant_key, and we also compare it to the
+    request's tenant_key, so a token can't be replayed across tenants."""
+    if not token or "." not in token or not tenant_key:
+        return False
+    try:
+        payload_b64, sig_b64 = token.split(".", 1)
+        payload = _b64url_decode(payload_b64)
+        sig = _b64url_decode(sig_b64)
+    except Exception:
+        return False
+    expected = hmac.new(_2fa_signing_key(), payload, hashlib.sha256).digest()
+    if not hmac.compare_digest(sig, expected):
+        return False
+    try:
+        tok_tenant, exp = payload.decode("utf-8").split("|", 1)
+        exp_epoch = int(exp)
+    except Exception:
+        return False
+    if not hmac.compare_digest(tok_tenant, tenant_key):
+        return False
+    return time.time() < exp_epoch
+
+
+def _enforce_2fa(request: Request, tenant_key: str, path: str):
+    """Called from the auth middleware after the tenant is resolved.
+    Returns a JSONResponse to block the request, or None to allow it.
+    Blocks only when the tenant has a CONFIRMED enrollment, the path isn't
+    a 2FA endpoint, and no valid 2FA token is presented."""
+    if path.startswith("/api/2fa/"):
+        return None
+    if not library_db.totp_confirmed(tenant_key):
+        return None
+    if _verify_2fa_token(request.headers.get("X-Narrative-2FA", ""), tenant_key):
+        return None
+    return JSONResponse(status_code=401, content={"detail": "2fa_required"})
+
+
+def _2fa_rate_limited(tenant_key: str) -> bool:
+    rec = _2fa_attempts.get(tenant_key)
+    if not rec:
+        return False
+    if time.time() - rec[1] > _2FA_LOCKOUT_SEC:
+        _2fa_attempts.pop(tenant_key, None)
+        return False
+    return rec[0] >= _2FA_MAX_FAILS
+
+
+def _2fa_record_fail(tenant_key: str) -> None:
+    now = time.time()
+    rec = _2fa_attempts.get(tenant_key)
+    if not rec or now - rec[1] > _2FA_LOCKOUT_SEC:
+        _2fa_attempts[tenant_key] = [1, now]
+    else:
+        rec[0] += 1
+
+
+def _2fa_clear_fails(tenant_key: str) -> None:
+    _2fa_attempts.pop(tenant_key, None)
+
+
+class TotpCodeRequest(BaseModel):
+    """A 6-digit TOTP code or a recovery code (e.g. 'A7K2-9QMP')."""
+    code: str = Field(..., min_length=4, max_length=20)
+
+
+@app.get("/api/2fa/status")
+async def totp_status_endpoint(request: Request):
+    """Drives the Settings section + the prompt. `verified` = this request
+    already carries a valid 2FA token."""
+    tk = getattr(request.state, "tenant_key", "")
+    enr = library_db.get_totp_enrollment(tk) if tk else None
+    confirmed = bool(enr and enr["confirmed"])
+    verified = confirmed and _verify_2fa_token(
+        request.headers.get("X-Narrative-2FA", ""), tk
+    )
+    return {"enrolled": bool(enr), "confirmed": confirmed, "verified": verified}
+
+
+@app.post("/api/2fa/enroll/start")
+async def totp_enroll_start_endpoint(request: Request):
+    """Generate a fresh secret + otpauth URI for the enrollment QR. Stores
+    it pending (unconfirmed) so it doesn't gate anything yet."""
+    tk = getattr(request.state, "tenant_key", "")
+    if not tk:
+        raise HTTPException(status_code=401, detail="missing tenant")
+    enr = library_db.get_totp_enrollment(tk)
+    if enr and enr["confirmed"]:
+        raise HTTPException(
+            status_code=409, detail="two-step verification is already enabled"
+        )
+    secret = totp.generate_secret()
+    library_db.start_totp_enrollment(tk, secret)
+    label = getattr(request.state, "tenant_label", "") or "account"
+    return {"secret": secret, "otpauth_uri": totp.provisioning_uri(secret, label)}
+
+
+@app.post("/api/2fa/enroll/confirm")
+async def totp_enroll_confirm_endpoint(req: TotpCodeRequest, request: Request):
+    """Verify the first code, activate 2FA, and return one-time recovery
+    codes (shown once) plus a 2FA token so the user isn't immediately
+    locked out of the session they just secured."""
+    tk = getattr(request.state, "tenant_key", "")
+    if not tk:
+        raise HTTPException(status_code=401, detail="missing tenant")
+    if _2fa_rate_limited(tk):
+        raise HTTPException(status_code=429, detail="too many attempts — wait a minute")
+    enr = library_db.get_totp_enrollment(tk)
+    if not enr:
+        raise HTTPException(status_code=409, detail="no enrollment in progress — start again")
+    if enr["confirmed"]:
+        raise HTTPException(status_code=409, detail="already enabled")
+    if not totp.verify(enr["secret"], req.code):
+        _2fa_record_fail(tk)
+        raise HTTPException(
+            status_code=400,
+            detail="incorrect code — check your authenticator app and try again",
+        )
+    _2fa_clear_fails(tk)
+    codes = totp.generate_recovery_codes(10)
+    library_db.confirm_totp_enrollment(tk, [totp.hash_recovery_code(c) for c in codes])
+    token, ttl = _issue_2fa_token(tk)
+    return {"recovery_codes": codes, "token": token, "expires_in": ttl}
+
+
+@app.post("/api/2fa/verify")
+async def totp_verify_endpoint(req: TotpCodeRequest, request: Request):
+    """Verify a TOTP code (or consume a recovery code) and mint a 2FA
+    session token. Called by the frontend after a `2fa_required` response."""
+    tk = getattr(request.state, "tenant_key", "")
+    if not tk:
+        raise HTTPException(status_code=401, detail="missing tenant")
+    if _2fa_rate_limited(tk):
+        raise HTTPException(status_code=429, detail="too many attempts — wait a minute")
+    enr = library_db.get_totp_enrollment(tk)
+    if not enr or not enr["confirmed"]:
+        raise HTTPException(status_code=400, detail="two-step verification isn't enabled")
+    ok = totp.verify(enr["secret"], req.code)
+    if not ok:
+        ok = library_db.consume_recovery_code(tk, totp.hash_recovery_code(req.code))
+    if not ok:
+        _2fa_record_fail(tk)
+        raise HTTPException(status_code=400, detail="incorrect code")
+    _2fa_clear_fails(tk)
+    token, ttl = _issue_2fa_token(tk)
+    return {"token": token, "expires_in": ttl}
+
+
+@app.post("/api/2fa/disable")
+async def totp_disable_endpoint(req: TotpCodeRequest, request: Request):
+    """Turn 2FA off — requires a current TOTP or recovery code so a
+    walk-up attacker with an open session can't silently disable it."""
+    tk = getattr(request.state, "tenant_key", "")
+    if not tk:
+        raise HTTPException(status_code=401, detail="missing tenant")
+    if _2fa_rate_limited(tk):
+        raise HTTPException(status_code=429, detail="too many attempts — wait a minute")
+    enr = library_db.get_totp_enrollment(tk)
+    if not enr or not enr["confirmed"]:
+        return {"ok": True, "disabled": False}
+    ok = totp.verify(enr["secret"], req.code) or library_db.consume_recovery_code(
+        tk, totp.hash_recovery_code(req.code)
+    )
+    if not ok:
+        _2fa_record_fail(tk)
+        raise HTTPException(status_code=400, detail="incorrect code")
+    _2fa_clear_fails(tk)
+    library_db.disable_totp(tk)
+    return {"ok": True, "disabled": True}
 
 
 class ExtractUrlRequest(BaseModel):

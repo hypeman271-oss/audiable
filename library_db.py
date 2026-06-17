@@ -37,7 +37,7 @@ AUDIO_DIR = DATA_DIR / "audio"
 SENTENCE_DIR = DATA_DIR / "sentences"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -293,6 +293,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v7(c)
         c.execute("UPDATE schema_version SET version = 7")
         current = 7
+
+    if current < 8:
+        _apply_v8(c)
+        c.execute("UPDATE schema_version SET version = 8")
+        current = 8
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -693,6 +698,34 @@ def _apply_v7(c: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v8(c: sqlite3.Connection) -> None:
+    """Add totp_enrollments table for opt-in TOTP 2FA (two-step verification).
+
+    One row per tenant. `secret` is the base32 TOTP secret, encrypted at
+    rest (sealed, same as gdrive tokens). `confirmed` flips to 1 only after
+    the user proves they scanned it (enters a valid code). `recovery_hashes`
+    is a JSON array of sha256 hex digests — single-use codes, removed as
+    they're consumed.
+    """
+    print(
+        "[library_db] migrating to schema v8 (add totp_enrollments table "
+        "for two-step verification)",
+        file=sys.stderr, flush=True,
+    )
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS totp_enrollments (
+          tenant_key      TEXT PRIMARY KEY,
+          secret          TEXT NOT NULL,
+          confirmed       INTEGER NOT NULL DEFAULT 0,
+          recovery_hashes TEXT,
+          created_at      TEXT NOT NULL,
+          confirmed_at    TEXT
+        );
+        """
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Tenant directory (/data/tenants.json).
 #
@@ -1057,27 +1090,33 @@ def delete_sentence_audio_for_clip(tenant_key: str, clip_id: int) -> int:
 # the server. The access token + expiry are kept so the OAuth helper can
 # refresh on demand without re-prompting the user. One row per tenant.
 #
-# Tokens are ENCRYPTED AT REST (v4.107): a leaked DB file / backup /
-# volume snapshot must not hand an attacker a persistent Drive grant.
-# We seal each token with Fernet (AES-128-CBC + HMAC) keyed by the
-# GDRIVE_TOKEN_KEY env var. Stored values carry a version prefix:
+# Secrets are ENCRYPTED AT REST (v4.107): a leaked DB file / backup /
+# volume snapshot must not hand an attacker a usable secret. We seal each
+# value with Fernet (AES-128-CBC + HMAC) keyed by NARRATIVE_TOKEN_KEY
+# (falling back to the original GDRIVE_TOKEN_KEY name for back-compat).
+# Used for BOTH Google Drive OAuth tokens and TOTP 2FA secrets. Stored
+# values carry a version prefix:
 #   "g1:<ciphertext>"  — Fernet-sealed (key configured)
 #   "p0:<plaintext>"   — explicit plaintext (no key; local dev only)
-# Rotating / losing the key makes "g1:" rows undecryptable — get_ treats
-# that as "not connected" so the user simply reconnects.
+# Rotating / losing the key makes "g1:" rows undecryptable — readers treat
+# that as "absent" so the user simply re-connects / re-enrolls.
 # ──────────────────────────────────────────────────────────────────────
 
 _token_cipher_cache = None  # None = not built; False = no key / unavailable
 
 
 def _token_cipher():
-    """Lazily build the Fernet cipher from GDRIVE_TOKEN_KEY. Returns the
-    Fernet instance, or None when no key is configured / cryptography
-    isn't installed (→ plaintext fallback for local dev)."""
+    """Lazily build the Fernet cipher from NARRATIVE_TOKEN_KEY (or the
+    legacy GDRIVE_TOKEN_KEY). Returns the Fernet instance, or None when no
+    key is configured / cryptography isn't installed (→ plaintext fallback
+    for local dev)."""
     global _token_cipher_cache
     if _token_cipher_cache is not None:
         return _token_cipher_cache or None
-    key = os.environ.get("GDRIVE_TOKEN_KEY", "").strip()
+    key = (
+        os.environ.get("NARRATIVE_TOKEN_KEY", "").strip()
+        or os.environ.get("GDRIVE_TOKEN_KEY", "").strip()
+    )
     if not key:
         _token_cipher_cache = False
         return None
@@ -1086,9 +1125,9 @@ def _token_cipher():
         _token_cipher_cache = Fernet(key.encode("utf-8"))
     except Exception as e:
         # Bad key or missing lib — fail loud in logs but don't crash the
-        # whole DB layer; token writes will then refuse (see _seal_token).
+        # whole DB layer; writes then store plaintext (see _seal).
         print(
-            f"[library_db] GDRIVE_TOKEN_KEY unusable ({e}) — Drive token "
+            f"[library_db] NARRATIVE_TOKEN_KEY unusable ({e}) — at-rest "
             "encryption disabled",
             file=sys.stderr, flush=True,
         )
@@ -1097,29 +1136,29 @@ def _token_cipher():
     return _token_cipher_cache
 
 
-def _seal_token(plaintext: str) -> str:
-    """Encrypt a token for storage. Prefixes the scheme so _open_token
-    knows how to reverse it."""
+def _seal(plaintext: str) -> str:
+    """Encrypt a secret for storage. Prefixes the scheme so _open knows
+    how to reverse it."""
     cipher = _token_cipher()
     if cipher is None:
         # No key: store explicit plaintext. Acceptable for local single-
-        # user dev; production sets GDRIVE_TOKEN_KEY (see GDRIVE_OAUTH_SETUP).
+        # user dev; production sets NARRATIVE_TOKEN_KEY (see GDRIVE_OAUTH_SETUP).
         return "p0:" + plaintext
     return "g1:" + cipher.encrypt(plaintext.encode("utf-8")).decode("ascii")
 
 
-def _open_token(stored: str) -> str:
-    """Reverse _seal_token. Raises on an undecryptable "g1:" value (key
-    rotated / lost) so callers can treat the grant as gone."""
+def _open(stored: str) -> str:
+    """Reverse _seal. Raises on an undecryptable "g1:" value (key rotated
+    / lost) so callers can treat the secret as gone."""
     if stored.startswith("g1:"):
         cipher = _token_cipher()
         if cipher is None:
-            raise ValueError("encrypted token but no GDRIVE_TOKEN_KEY to open it")
+            raise ValueError("encrypted value but no NARRATIVE_TOKEN_KEY to open it")
         from cryptography.fernet import InvalidToken
         try:
             return cipher.decrypt(stored[3:].encode("ascii")).decode("utf-8")
         except InvalidToken as e:
-            raise ValueError("token failed to decrypt (key rotated?)") from e
+            raise ValueError("value failed to decrypt (key rotated?)") from e
     if stored.startswith("p0:"):
         return stored[3:]
     # Legacy / unprefixed value — treat as raw plaintext.
@@ -1144,8 +1183,8 @@ def save_gdrive_tokens(
     if not access_token or not refresh_token:
         raise ValueError("access_token and refresh_token required")
     now = _iso_now()
-    sealed_access = _seal_token(access_token)
-    sealed_refresh = _seal_token(refresh_token)
+    sealed_access = _seal(access_token)
+    sealed_refresh = _seal(refresh_token)
     with _conn_lock:
         conn().execute(
             """
@@ -1189,7 +1228,7 @@ def update_gdrive_access_token(
             SET access_token = ?, expires_at = ?, updated_at = ?
             WHERE tenant_key = ?
             """,
-            (_seal_token(access_token), float(expires_at), _iso_now(), tenant_key),
+            (_seal(access_token), float(expires_at), _iso_now(), tenant_key),
         )
         conn().commit()
 
@@ -1216,8 +1255,8 @@ def get_gdrive_tokens(tenant_key: str) -> dict | None:
         return None
     out = dict(row)
     try:
-        out["access_token"] = _open_token(out["access_token"])
-        out["refresh_token"] = _open_token(out["refresh_token"])
+        out["access_token"] = _open(out["access_token"])
+        out["refresh_token"] = _open(out["refresh_token"])
     except ValueError as e:
         # Undecryptable (GDRIVE_TOKEN_KEY rotated / lost). Treat the grant
         # as gone so the user reconnects rather than hitting opaque errors.
@@ -1242,6 +1281,145 @@ def delete_gdrive_tokens(tenant_key: str) -> bool:
         )
         conn().commit()
         return (cur.rowcount or 0) > 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# TOTP two-factor enrollments (totp_enrollments, schema v8).
+#
+# Opt-in per tenant. The base32 secret is encrypted at rest (sealed);
+# recovery codes are stored only as sha256 hashes and consumed single-use.
+# `confirmed` gates enforcement — a started-but-unconfirmed enrollment
+# never blocks the tenant (so a half-finished setup can't lock anyone out).
+# ──────────────────────────────────────────────────────────────────────
+
+
+def start_totp_enrollment(tenant_key: str, secret: str) -> None:
+    """Begin (or restart) enrollment: store the sealed secret, pending
+    (confirmed=0), clearing any prior enrollment for this tenant."""
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    if not tenant_key or not secret:
+        raise ValueError("tenant_key and secret required")
+    with _conn_lock:
+        conn().execute(
+            """
+            INSERT INTO totp_enrollments (
+              tenant_key, secret, confirmed, recovery_hashes,
+              created_at, confirmed_at
+            ) VALUES (?, ?, 0, NULL, ?, NULL)
+            ON CONFLICT(tenant_key) DO UPDATE SET
+              secret = excluded.secret,
+              confirmed = 0,
+              recovery_hashes = NULL,
+              created_at = excluded.created_at,
+              confirmed_at = NULL
+            """,
+            (tenant_key, _seal(secret), _iso_now()),
+        )
+        conn().commit()
+
+
+def confirm_totp_enrollment(tenant_key: str, recovery_hashes: list[str]) -> None:
+    """Mark a pending enrollment confirmed + store the recovery-code
+    hashes. No-op if there's no row for the tenant."""
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    if not tenant_key:
+        raise ValueError("tenant_key required")
+    with _conn_lock:
+        conn().execute(
+            """
+            UPDATE totp_enrollments
+            SET confirmed = 1, recovery_hashes = ?, confirmed_at = ?
+            WHERE tenant_key = ?
+            """,
+            (json.dumps(list(recovery_hashes or [])), _iso_now(), tenant_key),
+        )
+        conn().commit()
+
+
+def get_totp_enrollment(tenant_key: str) -> dict | None:
+    """Return {secret, confirmed, recovery_hashes, created_at,
+    confirmed_at} or None. Returns None if the sealed secret can't be
+    decrypted (key rotated/lost) — the tenant simply re-enrolls."""
+    if not is_enabled() or not tenant_key:
+        return None
+    with _conn_lock:
+        row = conn().execute(
+            """
+            SELECT secret, confirmed, recovery_hashes, created_at, confirmed_at
+            FROM totp_enrollments WHERE tenant_key = ?
+            """,
+            (tenant_key,),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        secret = _open(row["secret"])
+    except ValueError as e:
+        print(
+            f"[library_db] dropping unreadable TOTP enrollment for tenant "
+            f"{tenant_key[:12]}…: {e}",
+            file=sys.stderr, flush=True,
+        )
+        return None
+    return {
+        "secret": secret,
+        "confirmed": bool(row["confirmed"]),
+        "recovery_hashes": json.loads(row["recovery_hashes"] or "[]"),
+        "created_at": row["created_at"],
+        "confirmed_at": row["confirmed_at"],
+    }
+
+
+def totp_confirmed(tenant_key: str) -> bool:
+    """Cheap check (no decryption) used by the auth middleware on every
+    request: does this tenant have an ACTIVE (confirmed) 2FA enrollment?"""
+    if not is_enabled() or not tenant_key:
+        return False
+    with _conn_lock:
+        row = conn().execute(
+            "SELECT confirmed FROM totp_enrollments WHERE tenant_key = ?",
+            (tenant_key,),
+        ).fetchone()
+    return bool(row and row["confirmed"])
+
+
+def disable_totp(tenant_key: str) -> bool:
+    """Drop a tenant's enrollment. Returns True if a row was removed."""
+    if not is_enabled() or not tenant_key:
+        return False
+    with _conn_lock:
+        cur = conn().execute(
+            "DELETE FROM totp_enrollments WHERE tenant_key = ?", (tenant_key,)
+        )
+        conn().commit()
+        return (cur.rowcount or 0) > 0
+
+
+def consume_recovery_code(tenant_key: str, code_hash: str) -> bool:
+    """Atomically spend a single-use recovery code. Returns True iff
+    `code_hash` was present (and is now removed). Held under the write
+    lock so two concurrent uses of the same code can't both succeed."""
+    if not is_enabled() or not tenant_key or not code_hash:
+        return False
+    with _conn_lock:
+        row = conn().execute(
+            "SELECT recovery_hashes FROM totp_enrollments WHERE tenant_key = ?",
+            (tenant_key,),
+        ).fetchone()
+        if not row:
+            return False
+        hashes = json.loads(row["recovery_hashes"] or "[]")
+        if code_hash not in hashes:
+            return False
+        hashes.remove(code_hash)
+        conn().execute(
+            "UPDATE totp_enrollments SET recovery_hashes = ? WHERE tenant_key = ?",
+            (json.dumps(hashes), tenant_key),
+        )
+        conn().commit()
+        return True
 
 
 def gc_orphan_sentence_audio() -> int:

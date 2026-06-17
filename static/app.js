@@ -260,6 +260,23 @@ function setApiKey(key) {
   } catch {}
 }
 
+// v4.108 (2FA): the "2FA-passed" session token. Issued by /api/2fa/verify
+// after a valid code, sent as X-Narrative-2FA on every /api/* request so a
+// 2FA-enrolled tenant isn't re-prompted each call ("remember this device").
+// Server-signed + expiring; storing it client-side only grants the holder
+// what they already authenticated for.
+const TOTP_TOKEN_STORAGE = "narrative.2faToken";
+
+function getTotpToken() {
+  try { return localStorage.getItem(TOTP_TOKEN_STORAGE) || ""; } catch { return ""; }
+}
+function setTotpToken(token) {
+  try {
+    if (token) localStorage.setItem(TOTP_TOKEN_STORAGE, token);
+    else localStorage.removeItem(TOTP_TOKEN_STORAGE);
+  } catch {}
+}
+
 // v4.51 (#562 follow-up): prompt for the API key via a real <dialog>
 // element instead of window.prompt(). Tauri WebView2 on Windows
 // silently suppresses window.prompt() — the dialog never opens and
@@ -351,6 +368,65 @@ function _promptForApiKey() {
   });
 
   return _keyPromptInFlight;
+}
+
+// v4.108 (2FA): prompt for a 6-digit authenticator code (or a recovery
+// code) when the server answers `2fa_required`. Mirrors _promptForApiKey:
+// a real <dialog> (Tauri-safe), re-entrant so concurrent 2fa_required
+// responses share one prompt. Resolves to the trimmed code, or null on
+// cancel/Esc.
+let _totpPromptInFlight = null;
+function _promptForTotpCode() {
+  if (_totpPromptInFlight) return _totpPromptInFlight;
+
+  const dlg = document.getElementById("totp-prompt-dialog");
+  if (!dlg || typeof dlg.showModal !== "function") {
+    try {
+      const c = window.prompt("Enter your two-step verification code:");
+      return Promise.resolve(c && c.trim() ? c.trim() : null);
+    } catch {}
+    return Promise.resolve(null);
+  }
+
+  _totpPromptInFlight = new Promise((resolve) => {
+    const input = document.getElementById("totp-prompt-input");
+    const cancelBtn = document.getElementById("totp-prompt-cancel");
+    const errEl = document.getElementById("totp-prompt-error");
+    const form = dlg.querySelector("form");
+
+    if (input) input.value = "";
+    if (errEl) errEl.hidden = true;
+
+    let settled = false;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      _totpPromptInFlight = null;
+      try { dlg.close(); } catch {}
+      resolve(code);
+    };
+    const onCancel = (e) => { e.preventDefault(); finish(null); };
+    const onSubmit = (e) => {
+      const c = (input && input.value || "").trim();
+      finish(c || null);
+    };
+    const onClose = () => finish(null);
+
+    cancelBtn && cancelBtn.addEventListener("click", onCancel, { once: true });
+    form && form.addEventListener("submit", onSubmit, { once: true });
+    dlg.addEventListener("close", onClose, { once: true });
+
+    try {
+      dlg.showModal();
+      if (input) requestAnimationFrame(() => { try { input.focus(); } catch {} });
+    } catch (e) {
+      console.warn("[totp-prompt] showModal failed:", e);
+      _totpPromptInFlight = null;
+      resolve(null);
+    }
+  });
+
+  return _totpPromptInFlight;
 }
 
 // v225v4.27 (#704): when the page is loaded from the Tauri desktop
@@ -626,11 +702,69 @@ window.addEventListener("narrative:update-error", (e) => {
         h.set("X-Narrative-Key", key);
         options.headers = h;
       }
+      // v4.108 (2FA): attach the "2FA-passed" token if we have one. The
+      // server only requires it for 2FA-enrolled tenants; harmless
+      // otherwise, so we always send it when present.
+      const totpTok = getTotpToken();
+      if (totpTok) {
+        const h = new Headers(options.headers || {});
+        h.set("X-Narrative-2FA", totpTok);
+        options.headers = h;
+      }
     }
 
     let res = await origFetch(input, options);
 
     if (isApi && res.status === 401) {
+      // v4.108 (2FA): a 401 here is either a key problem OR a 2FA
+      // challenge. Peek the body (via a clone so `res` stays readable)
+      // to tell them apart.
+      let detail = "";
+      try { detail = ((await res.clone().json()) || {}).detail || ""; } catch {}
+
+      if (detail === "2fa_required") {
+        // The key is fine; this tenant has 2FA on and we lack (or have a
+        // stale) token. Prompt for a code, verify it, store the token,
+        // retry the original request with the header.
+        const code = await _promptForTotpCode();
+        if (code) {
+          try {
+            const vres = await origFetch(
+              (API_ORIGIN || "") + "/api/2fa/verify",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Narrative-Key": getApiKey(),
+                },
+                body: JSON.stringify({ code }),
+              },
+            );
+            if (vres.ok) {
+              const { token } = await vres.json();
+              if (token) {
+                setTotpToken(token);
+                const h = new Headers(options.headers || {});
+                h.set("X-Narrative-2FA", token);
+                options.headers = h;
+                res = await origFetch(input, options);
+              }
+            } else {
+              let d = `HTTP ${vres.status}`;
+              try { d = (await vres.json()).detail || d; } catch {}
+              if (typeof setStatus === "function") {
+                setStatus(`Two-step verification failed: ${d}`, true);
+              }
+            }
+          } catch (e) {
+            if (typeof setStatus === "function") {
+              setStatus(`Two-step verification error: ${e.message}`, true);
+            }
+          }
+        }
+        return res;
+      }
+
       // v4.52: before opening a NEW prompt, check whether the stored
       // key changed since we sent this request. Concurrent 401s with
       // a slow Fly cold-start cause this: fast requests trigger ONE
@@ -3377,6 +3511,10 @@ settingsBtn.addEventListener("click", () => {
   // v4.100 (#896): same for the Google Drive connect state.
   if (typeof _refreshGdriveOAuthUI === "function") {
     _refreshGdriveOAuthUI();
+  }
+  // v4.108 (2FA): refresh the two-step verification on/off state.
+  if (typeof _refreshTotpUI === "function") {
+    _refreshTotpUI();
   }
   settingsDialog.showModal();
 });
@@ -6297,6 +6435,171 @@ function _captureGdriveOAuthRedirect() {
   }
 }
 _captureGdriveOAuthRedirect();
+
+// v4.108 (2FA): two-step verification — Settings section + enrollment.
+async function _fetchTotpStatus() {
+  try {
+    const res = await fetch("/api/2fa/status");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    return { enrolled: false, confirmed: false, verified: false, error: err.message };
+  }
+}
+
+async function _refreshTotpUI() {
+  const btn = document.getElementById("settings-totp-btn");
+  const statusEl = document.getElementById("settings-totp-status");
+  if (!btn) return;
+  const labelEl = btn.querySelector(".settings-totp-label");
+  const setLabel = (t) => { if (labelEl) labelEl.textContent = t; };
+
+  const status = await _fetchTotpStatus();
+  if (status.confirmed) {
+    btn.dataset.confirmed = "true";
+    setLabel("Disable two-step verification");
+    btn.title = "Turn off two-step verification (requires a code).";
+    if (statusEl) { statusEl.textContent = "On — codes required on new devices."; statusEl.dataset.state = "saved"; }
+  } else {
+    btn.dataset.confirmed = "false";
+    setLabel("Enable two-step verification");
+    btn.title = "Add an authenticator-app second factor to your access.";
+    if (statusEl) { statusEl.textContent = "Off."; statusEl.dataset.state = "empty"; }
+  }
+}
+
+async function _startTotpEnroll() {
+  const dlg = document.getElementById("totp-enroll-dialog");
+  if (!dlg) return;
+  const secretEl = document.getElementById("totp-enroll-secret");
+  const linkEl = document.getElementById("totp-enroll-link");
+  const codeEl = document.getElementById("totp-enroll-code");
+  const errEl = document.getElementById("totp-enroll-error");
+  const stepSetup = document.getElementById("totp-enroll-step-setup");
+  const stepRecovery = document.getElementById("totp-enroll-step-recovery");
+  const form = document.getElementById("totp-enroll-confirm-form");
+  const cancelBtn = document.getElementById("totp-enroll-cancel");
+
+  let started;
+  try {
+    const res = await fetch("/api/2fa/enroll/start", { method: "POST" });
+    if (!res.ok) {
+      let d = `HTTP ${res.status}`;
+      try { d = (await res.json()).detail || d; } catch {}
+      throw new Error(d);
+    }
+    started = await res.json();
+  } catch (err) {
+    setStatus(`Couldn't start two-step setup: ${err.message}`, true);
+    return;
+  }
+
+  // Format the base32 secret in groups of 4 for easier manual entry.
+  if (secretEl) secretEl.textContent = (started.secret.match(/.{1,4}/g) || []).join(" ");
+  if (linkEl) linkEl.href = started.otpauth_uri;
+  if (codeEl) codeEl.value = "";
+  if (errEl) errEl.hidden = true;
+  if (stepSetup) stepSetup.hidden = false;
+  if (stepRecovery) stepRecovery.hidden = true;
+
+  const onConfirm = async (e) => {
+    e.preventDefault();
+    const code = (codeEl && codeEl.value || "").trim();
+    if (!code) return;
+    try {
+      const res = await fetch("/api/2fa/enroll/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) {
+        let d = `HTTP ${res.status}`;
+        try { d = (await res.json()).detail || d; } catch {}
+        if (errEl) { errEl.textContent = d; errEl.hidden = false; }
+        form.addEventListener("submit", onConfirm, { once: true });  // allow retry
+        return;
+      }
+      const data = await res.json();
+      if (data.token) setTotpToken(data.token);  // don't lock ourselves out
+      const codesEl = document.getElementById("totp-recovery-codes");
+      if (codesEl) codesEl.textContent = (data.recovery_codes || []).join("\n");
+      if (stepSetup) stepSetup.hidden = true;
+      if (stepRecovery) stepRecovery.hidden = false;
+      _refreshTotpUI();
+      setStatus("Two-step verification enabled.");
+    } catch (err) {
+      if (errEl) { errEl.textContent = err.message; errEl.hidden = false; }
+      form.addEventListener("submit", onConfirm, { once: true });
+    }
+  };
+
+  const onCancel = () => { try { dlg.close(); } catch {} };
+  form.addEventListener("submit", onConfirm, { once: true });
+  cancelBtn && cancelBtn.addEventListener("click", onCancel, { once: true });
+  try { dlg.showModal(); } catch {}
+}
+
+async function _disableTotp() {
+  const code = await _promptForTotpCode();
+  if (!code) return;
+  try {
+    const res = await fetch("/api/2fa/disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (!res.ok) {
+      let d = `HTTP ${res.status}`;
+      try { d = (await res.json()).detail || d; } catch {}
+      throw new Error(d);
+    }
+    setTotpToken("");  // no longer needed
+    setStatus("Two-step verification disabled.");
+  } catch (err) {
+    setStatus(`Couldn't disable two-step verification: ${err.message}`, true);
+  } finally {
+    _refreshTotpUI();
+  }
+}
+
+(() => {
+  const btn = document.getElementById("settings-totp-btn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (btn.dataset.confirmed === "true") _disableTotp();
+    else _startTotpEnroll();
+  });
+
+  // Enroll-dialog helpers: copy secret, copy/download recovery codes, done.
+  const copySecret = document.getElementById("totp-enroll-copy-secret");
+  copySecret && copySecret.addEventListener("click", () => {
+    const s = (document.getElementById("totp-enroll-secret") || {}).textContent || "";
+    try { navigator.clipboard?.writeText(s.replace(/\s/g, "")); setStatus("Secret copied."); } catch {}
+  });
+  const copyCodes = document.getElementById("totp-recovery-copy");
+  copyCodes && copyCodes.addEventListener("click", () => {
+    const c = (document.getElementById("totp-recovery-codes") || {}).textContent || "";
+    try { navigator.clipboard?.writeText(c); setStatus("Recovery codes copied."); } catch {}
+  });
+  const dlCodes = document.getElementById("totp-recovery-download");
+  dlCodes && dlCodes.addEventListener("click", () => {
+    const c = (document.getElementById("totp-recovery-codes") || {}).textContent || "";
+    const blob = new Blob([
+      "Narrative — two-step verification recovery codes\n" +
+      "Each code works once. Keep these somewhere safe.\n\n" + c + "\n",
+    ], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "narrative-recovery-codes.txt";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+  const done = document.getElementById("totp-enroll-done");
+  done && done.addEventListener("click", () => {
+    const dlg = document.getElementById("totp-enroll-dialog");
+    try { dlg && dlg.close(); } catch {}
+  });
+})();
 
 // v4.100 (#896): Google Drive Picker. The drive.file scope means we
 // CAN'T list a user's Drive server-side — the user must pick files via

@@ -1094,6 +1094,39 @@
                   </p>
                 </div>
 
+                <!-- v4.108 (2FA): opt-in two-step verification (TOTP). Each
+                     tenant can enable an authenticator-app second factor for
+                     their own access. Enable opens a dialog (secret + code
+                     confirm + recovery codes); Disable requires a code. -->
+                <div
+                  class="settings-section"
+                  data-search="two-step 2fa totp authenticator verify recovery backup security login mfa"
+                >
+                  <label class="settings-section-label">Two-step verification</label>
+                  <p
+                    id="settings-totp-status"
+                    class="settings-token-status"
+                    data-state="empty"
+                    aria-live="polite"
+                  ></p>
+                  <div id="settings-totp-row" class="settings-github-oauth-row">
+                    <button
+                      id="settings-totp-btn"
+                      type="button"
+                      class="settings-github-oauth-btn"
+                    >
+                      <span class="settings-github-oauth-icon" aria-hidden="true">🔒</span>
+                      <span class="settings-totp-label">Enable two-step verification</span>
+                    </button>
+                  </div>
+                  <p class="settings-section-hint">
+                    Add an authenticator-app code (Google Authenticator,
+                    Authy, 1Password…) on top of your access key. Once on,
+                    you'll enter a 6-digit code after pasting your key on a
+                    new device. Applies only to your account.
+                  </p>
+                </div>
+
                 <!-- v4.63 (#854): admin chrome (maintenance form + tester key
                      management) tucks into Advanced. The OUTER details is
                      visible to everyone; the INNER admin sections stay
@@ -3662,6 +3695,113 @@
             >Save key</button>
           </div>
         </form>
+      </dialog>
+
+      <!-- v4.108 (2FA): two-step verification code prompt. Shown when the
+           server answers `2fa_required`. Mirrors the API-key dialog so it
+           works in Tauri WebView2 (where window.prompt is suppressed). -->
+      <dialog
+        id="totp-prompt-dialog"
+        class="key-prompt-dialog"
+        aria-labelledby="totp-prompt-title"
+      >
+        <form method="dialog" class="key-prompt-card">
+          <header class="key-prompt-head">
+            <h3 id="totp-prompt-title">🔒 Two-step verification</h3>
+          </header>
+          <p class="key-prompt-body">
+            Enter the 6-digit code from your authenticator app. Lost your
+            phone? Enter one of your recovery codes instead.
+          </p>
+          <input
+            id="totp-prompt-input"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            spellcheck="false"
+            placeholder="123456"
+            aria-label="Two-step verification code"
+          />
+          <p id="totp-prompt-error" class="key-prompt-body" hidden></p>
+          <div class="key-prompt-actions">
+            <button
+              type="button"
+              id="totp-prompt-cancel"
+              class="link-btn"
+              value="cancel"
+            >Cancel</button>
+            <button
+              type="submit"
+              id="totp-prompt-verify"
+              class="primary"
+              value="verify"
+            >Verify</button>
+          </div>
+        </form>
+      </dialog>
+
+      <!-- v4.108 (2FA): enrollment dialog. Step 1 shows the secret +
+           otpauth link for the authenticator app and asks for a confirm
+           code; step 2 reveals one-time recovery codes. -->
+      <dialog
+        id="totp-enroll-dialog"
+        class="key-prompt-dialog"
+        aria-labelledby="totp-enroll-title"
+      >
+        <div class="key-prompt-card">
+          <header class="key-prompt-head">
+            <h3 id="totp-enroll-title">🔒 Enable two-step verification</h3>
+          </header>
+
+          <!-- Step 1: scan / enter the secret, confirm a code -->
+          <div id="totp-enroll-step-setup">
+            <p class="key-prompt-body">
+              Add this account to your authenticator app
+              (Google Authenticator, Authy, 1Password…), then enter the
+              6-digit code it shows to confirm.
+            </p>
+            <p class="key-prompt-body">
+              On this device, tap to open your app:
+              <a id="totp-enroll-link" href="#">Add to authenticator</a>
+            </p>
+            <p class="key-prompt-body">
+              Or enter this key manually:
+              <code id="totp-enroll-secret" class="totp-secret"></code>
+              <button type="button" id="totp-enroll-copy-secret" class="link-btn">Copy</button>
+            </p>
+            <form method="dialog" id="totp-enroll-confirm-form">
+              <input
+                id="totp-enroll-code"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                spellcheck="false"
+                placeholder="123456"
+                aria-label="Confirmation code"
+              />
+              <p id="totp-enroll-error" class="key-prompt-body" hidden></p>
+              <div class="key-prompt-actions">
+                <button type="button" id="totp-enroll-cancel" class="link-btn">Cancel</button>
+                <button type="submit" id="totp-enroll-verify" class="primary">Verify &amp; enable</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Step 2: recovery codes (shown once, after confirm) -->
+          <div id="totp-enroll-step-recovery" hidden>
+            <p class="key-prompt-body">
+              <strong>Two-step verification is on.</strong> Save these
+              one-time recovery codes somewhere safe — each works once if
+              you lose your authenticator. They won't be shown again.
+            </p>
+            <pre id="totp-recovery-codes" class="totp-recovery-codes" aria-label="Recovery codes"></pre>
+            <div class="key-prompt-actions">
+              <button type="button" id="totp-recovery-copy" class="link-btn">Copy</button>
+              <button type="button" id="totp-recovery-download" class="link-btn">Download</button>
+              <button type="button" id="totp-enroll-done" class="primary">Done</button>
+            </div>
+          </div>
+        </div>
       </dialog>
 
       <!-- v225et: command palette. Centered floating panel, top-third

@@ -78,19 +78,21 @@ export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:8000/api/gdrive/oauth/callbac
 # Public Picker config — safe to expose to the browser.
 export GOOGLE_API_KEY="AIzaSyxxxxxxxxxxxxxxxxxxxx"
 export GOOGLE_APP_ID="123456789012"   # the GCP project NUMBER
-# Encryption-at-rest key for stored Drive tokens (Fernet). REQUIRED in
-# production — without it tokens fall back to plaintext in the DB.
+# Encryption-at-rest key (Fernet) for sensitive secrets in the DB —
+# Drive OAuth tokens AND TOTP two-factor secrets. REQUIRED in production;
+# without it those values fall back to plaintext in the DB.
 # Generate once:  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-export GDRIVE_TOKEN_KEY="paste-the-generated-44-char-key="
+export NARRATIVE_TOKEN_KEY="paste-the-generated-44-char-key="
+# (The original name GDRIVE_TOKEN_KEY is still read as a fallback.)
 # Optional — defaults to "drive.file + userinfo.email". Leave unset.
 # export GOOGLE_OAUTH_SCOPES="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email"
 ```
 
-> **Keep `GDRIVE_TOKEN_KEY` stable and secret.** Rotating or losing it
-> makes existing stored grants undecryptable — Narrative then treats
-> those users as disconnected and they simply sign in again (no crash,
-> no data loss beyond the grant). Store it in Fly secrets, never in the
-> repo.
+> **Keep `NARRATIVE_TOKEN_KEY` stable and secret.** It encrypts both Drive
+> grants and TOTP 2FA secrets at rest. Rotating or losing it makes those
+> rows undecryptable — Narrative then treats the user as disconnected /
+> not-enrolled and they simply reconnect or re-enroll (no crash, no data
+> loss beyond the grant). Store it in Fly secrets, never in the repo.
 
 For Fly:
 
@@ -126,8 +128,9 @@ the key's referrer + API restrictions.
 - **Server-side per tenant.** The grant lives in the `gdrive_tokens`
   table (schema v7), keyed by `tenant_key` (sha256 of the bearer — never
   the raw key). One Google account per tenant; reconnecting overwrites.
-- **Encrypted at rest.** Access + refresh tokens are sealed with Fernet
-  (AES-128-CBC + HMAC) under `GDRIVE_TOKEN_KEY` before they hit SQLite —
+- **Encrypted at rest.** Access + refresh tokens (and TOTP 2FA secrets)
+  are sealed with Fernet (AES-128-CBC + HMAC) under `NARRATIVE_TOKEN_KEY`
+  before they hit SQLite —
   a leaked DB file / backup / volume snapshot yields ciphertext, not a
   usable grant. (Defends against at-rest exposure; not against full host
   compromise, where the key is in env on the same machine.)
