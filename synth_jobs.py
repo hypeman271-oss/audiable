@@ -97,6 +97,12 @@ class JobParams:
     # reattaches on boot (after a reload) can label + save the clip
     # without the original in-memory chapter.
     title: str | None = None
+    # v4.111: the library clip this synth should SAVE ONTO (overwrite),
+    # distinct from target_clip_id (which is the Phase B per-sentence
+    # cache opt-in). Clip identity is otherwise client-side only, so
+    # without this a reattach can't rebind to the original card and
+    # spawns a duplicate. Always sent when re-narrating an existing clip.
+    clip_id: int | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> JobParams:
@@ -139,6 +145,7 @@ class JobParams:
             target_clip_id=target_clip_id,
             target_line_ids=target_line_ids,
             title=(str(d["title"])[:300] if d.get("title") is not None else None),
+            clip_id=(int(d["clip_id"]) if d.get("clip_id") is not None else None),
         )
 
 
@@ -204,6 +211,7 @@ class SynthJob:
             "speaker_id": self.params.speaker_id,
             "target_clip_id": self.params.target_clip_id,
             "target_line_ids": self.params.target_line_ids,
+            "clip_id": self.params.clip_id,
         }
 
 

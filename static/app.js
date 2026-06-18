@@ -15402,7 +15402,12 @@ async function _reattachActiveSynthJobs() {
     _chapterQueue.push({
       title: d.title || "Resuming…",
       text: d.text,
-      targetClipId: d.target_clip_id || null,
+      // v4.111: rebind to the original library clip via the dedicated
+      // clip_id (NOT the Phase B target_clip_id), so the resumed synth
+      // overwrites that card instead of creating a duplicate. When it's
+      // a re-narrate, the save-tail then also uses the existing clip's
+      // title — so the card never shows the "Resuming…" placeholder.
+      targetClipId: d.clip_id || null,
       voiceId: d.voice_id || null,
       rate: typeof d.rate === "number" ? d.rate : null,
       volume: typeof d.volume === "number" ? d.volume : 1,
@@ -15526,6 +15531,11 @@ async function _preSynthesizeChapter(chapter, opts) {
       // v4.110: carry the title so a boot-time reattach can label the
       // pill + save the clip without the original in-memory chapter.
       title: chapter.title || null,
+      // v4.111: the library clip to overwrite (re-narrate target). Sent
+      // unconditionally (NOT gated on Phase B) so a reattach can rebind to
+      // the original card instead of spawning a duplicate. Distinct from
+      // target_clip_id below, which is the Phase B per-sentence cache opt-in.
+      clip_id: chapter.targetClipId || null,
     };
     if (phaseB_targetClipId && phaseB_targetLineIds) {
       _payload.target_clip_id = phaseB_targetClipId;

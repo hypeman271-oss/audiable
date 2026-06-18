@@ -762,6 +762,10 @@ class SynthJobCreateRequest(SynthesizeRequest):
     # Display label, carried so a client that reattaches on boot can
     # label the pill + save the clip without the original chapter.
     title: str | None = Field(default=None, max_length=300)
+    # v4.111: the library clip to overwrite (re-narrate target). Distinct
+    # from target_clip_id (Phase B cache opt-in) — carried so a reattach
+    # rebinds to the original card instead of creating a duplicate.
+    clip_id: int | None = Field(default=None, ge=1)
 
 
 class SynthesisSegment(BaseModel):
@@ -1674,6 +1678,7 @@ async def synth_jobs_create(req: SynthJobCreateRequest, request: Request):
         "target_clip_id": req.target_clip_id,
         "target_line_ids": req.target_line_ids,
         "title": req.title,
+        "clip_id": req.clip_id,
     })
     try:
         job = await synth_jobs.create_job(params, tenant_key)
