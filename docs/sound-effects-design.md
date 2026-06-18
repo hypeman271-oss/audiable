@@ -197,11 +197,18 @@ Sources: [ElevenLabs commercial rights](https://terms.law/ai-output-rights/eleve
 ## 5. Prototype status
 
 The MVP mixer (§1) is implemented behind a flag in `static/app.js`
-(`_sfxMixer` block + `_MVP_SFX_CUE`), with a placeholder brown-noise bed at
-`static/sfx/placeholder-ambience.mp3`. Enable with `?sfx=1` or
+(`_sfxMixer` block + `_MVP_SFX_CUE`) with an **ambience volume slider**
+(0–80%, persisted as `narrative.sfxVolume`). Enable with `?sfx=1` or
 `localStorage.setItem('narrative.sfxPrototype','1')`, then play a clip — the
-bed plays under the narration, ducked. Flag OFF = player unchanged. Swap the
-placeholder for a real CC0 or AI-generated loop to evaluate quality.
+bed plays under the narration, ducked, adjustable live. Flag OFF = player
+unchanged.
+
+Current bed: `static/sfx/rain-ambience.mp3` — a real recorded rainfall
+ambience, **public domain**, looped to ~20s + loudness-normalized.
+Source: Wikimedia Commons, https://commons.wikimedia.org/wiki/File:Rain.ogg
+(released to the public domain by the author; no attribution required).
+A true highway/engine loop for production would be sourced the same way
+(verified CC0/PD) or AI-generated (§4).
 
 **Sources:**
 [Freesound FAQ](https://freesound.org/help/faq/) ·

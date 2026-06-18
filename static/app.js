@@ -8900,7 +8900,7 @@ function _jumpToBookmarkText(bm) {
 // `?sfx=1` or localStorage 'narrative.sfxPrototype'="1". With the flag off,
 // none of this runs and the player is byte-for-byte unchanged.
 const _MVP_SFX_CUE = {
-  asset: "/sfx/placeholder-ambience.mp3",
+  asset: "/sfx/rain-ambience.mp3",
   // Whole-clip for the prototype so it's easy to hear; real cues are
   // scoped sentence ranges (see the cue data model in the design doc).
   startIdx: 0,
