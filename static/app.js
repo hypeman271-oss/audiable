@@ -8982,7 +8982,20 @@ function _sfxTick() {
   const idx = currentSentenceIndex(playerEl.currentTime);
   const inside =
     idx >= _MVP_SFX_CUE.startIdx && idx <= _MVP_SFX_CUE.endIdx && !playerEl.paused;
-  _sfxSetGain(inside ? _MVP_SFX_CUE.gain : 0);
+  _sfxSetGain(inside ? _sfxUserGain() : 0);
+}
+
+// Ambience level the user picked (0–80%), persisted; defaults to the cue's
+// duck level. Capped below 100% so the bed never overpowers the voice.
+function _sfxVolumePct() {
+  try {
+    const v = parseInt(localStorage.getItem("narrative.sfxVolume"), 10);
+    if (Number.isFinite(v) && v >= 0 && v <= 80) return v;
+  } catch {}
+  return Math.round(_MVP_SFX_CUE.gain * 100);
+}
+function _sfxUserGain() {
+  return _sfxVolumePct() / 100;
 }
 
 (() => {
@@ -8997,6 +9010,23 @@ function _sfxTick() {
   playerEl.addEventListener("timeupdate", _sfxTick);
   playerEl.addEventListener("pause", () => _sfxSetGain(0));
   playerEl.addEventListener("ended", () => _sfxSetGain(0));
+
+  // Reveal + wire the ambience volume slider when the prototype is on.
+  const sfxRow = document.getElementById("sfx-volume-row");
+  const sfxSlider = document.getElementById("sfx-volume");
+  const sfxVal = document.getElementById("sfx-volume-value");
+  if (_sfxEnabled() && sfxRow && sfxSlider) {
+    sfxRow.hidden = false;
+    const pct = _sfxVolumePct();
+    sfxSlider.value = String(pct);
+    if (sfxVal) sfxVal.textContent = pct + "%";
+    sfxSlider.addEventListener("input", () => {
+      const v = parseInt(sfxSlider.value, 10) || 0;
+      if (sfxVal) sfxVal.textContent = v + "%";
+      try { localStorage.setItem("narrative.sfxVolume", String(v)); } catch {}
+      _sfxTick(); // apply live if a cue is currently playing
+    });
+  }
 })();
 
 async function renderBookmarks() {

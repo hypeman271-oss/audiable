@@ -2676,6 +2676,16 @@
           </div>
         </div>
 
+        <!-- v4.114: ambience (sound-effects) volume. Hidden unless the SFX
+             prototype is enabled (?sfx=1 / localStorage). Capped below 100%
+             so the bed stays under the voice. -->
+        <div class="row" id="sfx-volume-row" hidden>
+          <div class="slider">
+            <label for="sfx-volume">Ambience <span id="sfx-volume-value">28%</span></label>
+            <input id="sfx-volume" type="range" min="0" max="80" step="1" value="28" />
+          </div>
+        </div>
+
         <!-- v225.tn85 (#567): Voice card preview button.
              One button that synthesizes a short sample using ALL
              current voice card settings: voice + speaker + speed
