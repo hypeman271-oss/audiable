@@ -8892,6 +8892,113 @@ function _jumpToBookmarkText(bm) {
   }
 }
 
+// ── v4.114: sound-effects MVP (prototype, behind a flag) ───────────────
+// Layers one ambience bed under the narration on playback, ducked, over a
+// hard-coded sentence range — the de-risking slice from
+// docs/sound-effects-design.md. Routing the narration through Web Audio is
+// the only risky bit, so this is GATED OFF by default: enable with
+// `?sfx=1` or localStorage 'narrative.sfxPrototype'="1". With the flag off,
+// none of this runs and the player is byte-for-byte unchanged.
+const _MVP_SFX_CUE = {
+  asset: "/sfx/placeholder-ambience.mp3",
+  // Whole-clip for the prototype so it's easy to hear; real cues are
+  // scoped sentence ranges (see the cue data model in the design doc).
+  startIdx: 0,
+  endIdx: 100000,
+  gain: 0.28, // ducked level under speech
+  rampSec: 0.8,
+};
+
+let _sfxCtx = null;
+let _sfxMediaSrc = null; // MediaElementSource(playerEl) — once per element, ever
+let _sfxMasterGain = null;
+let _sfxAmbBuffer = null;
+let _sfxAmbSource = null;
+let _sfxAmbGain = null;
+let _sfxReady = false; // narration routing is up (ambience may still be loading)
+
+function _sfxEnabled() {
+  try {
+    if (new URLSearchParams(location.search).get("sfx") === "1") return true;
+    return localStorage.getItem("narrative.sfxPrototype") === "1";
+  } catch {
+    return false;
+  }
+}
+
+async function _sfxInit() {
+  if (_sfxReady || !_sfxEnabled()) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || !playerEl) return;
+    _sfxCtx = new AC();
+    // Route the narration through the graph FIRST so it stays audible even
+    // if the ambience load below throws. createMediaElementSource may be
+    // called only ONCE per <audio> element for the page's lifetime.
+    _sfxMediaSrc = _sfxCtx.createMediaElementSource(playerEl);
+    _sfxMasterGain = _sfxCtx.createGain();
+    _sfxMediaSrc.connect(_sfxMasterGain).connect(_sfxCtx.destination);
+    _sfxReady = true; // narration is safely routed; ambience is best-effort
+    // Load + start the ambience bed (loops, silent until a cue is active).
+    const res = await fetch(_MVP_SFX_CUE.asset);
+    const arr = await res.arrayBuffer();
+    _sfxAmbBuffer = await _sfxCtx.decodeAudioData(arr);
+    _sfxAmbGain = _sfxCtx.createGain();
+    _sfxAmbGain.gain.value = 0;
+    _sfxAmbGain.connect(_sfxCtx.destination);
+    _sfxAmbSource = _sfxCtx.createBufferSource();
+    _sfxAmbSource.buffer = _sfxAmbBuffer;
+    _sfxAmbSource.loop = true;
+    _sfxAmbSource.connect(_sfxAmbGain);
+    _sfxAmbSource.start();
+  } catch (e) {
+    // Narration is unaffected — either we never rerouted it, or we did and
+    // only the ambience failed. Log and move on.
+    console.warn("[sfx] init failed (narration unaffected):", e);
+  }
+}
+
+function _sfxSetGain(target) {
+  if (!_sfxCtx || !_sfxAmbGain) return;
+  try {
+    _sfxAmbGain.gain.setTargetAtTime(
+      target, _sfxCtx.currentTime, _MVP_SFX_CUE.rampSec / 3,
+    );
+  } catch {}
+}
+
+function _sfxTick() {
+  if (!_sfxReady || !_sfxAmbGain) return;
+  // Prototype scope: combined-MP3 timeline only. Per-sentence streaming
+  // tracks time differently (_streamElapsed) — leave it silent there.
+  if (typeof _streamPlayhead === "number" && _streamPlayhead >= 0) {
+    _sfxSetGain(0);
+    return;
+  }
+  if (!Array.isArray(sentenceOffsetsSec) || !sentenceOffsetsSec.length) {
+    _sfxSetGain(0);
+    return;
+  }
+  const idx = currentSentenceIndex(playerEl.currentTime);
+  const inside =
+    idx >= _MVP_SFX_CUE.startIdx && idx <= _MVP_SFX_CUE.endIdx && !playerEl.paused;
+  _sfxSetGain(inside ? _MVP_SFX_CUE.gain : 0);
+}
+
+(() => {
+  if (!playerEl) return;
+  playerEl.addEventListener("play", () => {
+    if (!_sfxEnabled()) return;
+    if (!_sfxReady) _sfxInit();
+    else if (_sfxCtx && _sfxCtx.state === "suspended") {
+      _sfxCtx.resume().catch(() => {});
+    }
+  });
+  playerEl.addEventListener("timeupdate", _sfxTick);
+  playerEl.addEventListener("pause", () => _sfxSetGain(0));
+  playerEl.addEventListener("ended", () => _sfxSetGain(0));
+})();
+
 async function renderBookmarks() {
   // v225.tn67 (#549): fix duplicate-rows race. The clear used to
   // run BEFORE the await — meaning two concurrent renderBookmarks
