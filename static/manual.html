@@ -2904,7 +2904,7 @@ title: Spaced
         <figcaption>Bookmark row in the drawer: time (tap to jump), note (tap to open editor), × to delete</figcaption>
       </figure>
       <ul>
-        <li>Tap the <strong>time</strong> on the left to jump there and play.</li>
+        <li>Tap the <strong>time</strong> on the left to jump straight to that passage — it seeks the audio, scrolls the reading view to that sentence, and plays. On phone it also closes the bookmarks drawer so you land right on the words.</li>
         <li>Tap the <strong>note</strong> button to reopen the editor for that bookmark.</li>
         <li>Bookmarks live with the clip in the library (export/import too).</li>
         <li>Auto-regen on save-text preserves bookmarks even if the audio is rebuilt.</li>
@@ -3851,8 +3851,9 @@ title: Spaced
       <ul>
         <li>
           <strong>Account</strong> — sync library across devices,
-          Switch key, and (admin-only) maintenance schedule + tester
-          key management.
+          Switch key, connect GitHub / Google Drive for imports, turn on
+          two-step verification, and (admin-only) maintenance schedule +
+          tester key management.
         </li>
         <li>
           <strong>Appearance</strong> — theme (Auto / Dark / Light),
@@ -3905,6 +3906,27 @@ title: Spaced
         etc. Settings also remembers the last category you visited
         on this device, so reopening lands you where you were.
       </div>
+
+      <h3 id="two-step">Two-step verification <span style="color: var(--fg-dim); font-weight: 400;">(Account)</span></h3>
+      <p>
+        Optional, per-account. <strong>Settings → Account → Two-step
+        verification → Enable</strong> adds an authenticator-app code on
+        top of your access key. Add the account to your authenticator
+        (Google Authenticator, Authy, 1Password…) — tap <em>Add to
+        authenticator</em> on a phone, or enter the shown key manually —
+        then confirm the 6-digit code it generates.
+      </p>
+      <p>
+        You'll get a set of one-time <strong>recovery codes</strong> when
+        you turn it on — save them somewhere safe; each works once to get
+        back in if you lose your authenticator (they're shown only once).
+      </p>
+      <p>
+        Once on, a new device asks for a code after you paste your access
+        key, then remembers that device. Turn it off from the same panel
+        — it asks for a current code first, so a walk-up to an open
+        session can't disable it. Leave it off and nothing changes.
+      </p>
 
       <h3>Mode is the headline control</h3>
 
