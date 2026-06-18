@@ -8858,6 +8858,40 @@ function seekToTime(t) {
   } catch {}
 }
 
+// v4.112 (#bookmark-jump): tapping a bookmark's timestamp jumps to the
+// TEXT at that point — exactly as if the user had tapped that sentence in
+// the reading view. On phone the bookmark list lives in a pull-up drawer
+// over the text, and the old handler only seeked the audio, so the user
+// never saw the passage. Now we: seek (snaps to the sentence in stream
+// mode), close the drawer so the text is visible, and scroll the matching
+// sentence into view (the karaoke highlight then lands on it as playback
+// resumes). Applies on every tier — phone gains the navigation, desktop
+// gains the scroll-to-text.
+function _jumpToBookmarkText(bm) {
+  const t = Math.max(0, Number(bm && bm.timeSec) || 0);
+  seekToTime(t);
+  playerEl.play().catch(() => {});
+  // Close the bookmarks drawer (phone pull-up) so the passage is visible.
+  if (document.body.dataset.bookmarksDrawerOpen === "1") {
+    document.body.dataset.bookmarksDrawerOpen = "0";
+    const toggle = document.getElementById("bookmarks-drawer-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
+  }
+  // Scroll the matching sentence into view, like a sentence tap. Needs the
+  // reading view to be built (it is whenever a clip is loaded). Re-enable
+  // playback auto-follow so the karaoke highlight tracks from here.
+  const idx =
+    Array.isArray(sentenceOffsetsSec) && sentenceOffsetsSec.length
+      ? currentSentenceIndex(t)
+      : -1;
+  if (idx >= 0 && Array.isArray(sentenceSpans) && sentenceSpans[idx]) {
+    _readingViewUserScrolled = false;
+    try {
+      sentenceSpans[idx].scrollIntoView({ block: "center", behavior: "smooth" });
+    } catch {}
+  }
+}
+
 async function renderBookmarks() {
   // v225.tn67 (#549): fix duplicate-rows race. The clear used to
   // run BEFORE the await — meaning two concurrent renderBookmarks
@@ -8908,8 +8942,7 @@ async function renderBookmarks() {
     timeBtn.textContent = formatTime(bm.timeSec);
     timeBtn.title = `Jump to ${formatTime(bm.timeSec)}`;
     timeBtn.addEventListener("click", () => {
-      seekToTime(bm.timeSec);
-      playerEl.play().catch(() => {});
+      _jumpToBookmarkText(bm);
     });
 
     // v225.tn64 (#546): tap-to-edit note display. The previous inline
