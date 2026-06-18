@@ -448,6 +448,87 @@
         if (input) { input.textContent = ""; input.classList.remove("typing"); }
       },
     },
+
+    // Tutorial 7: Connect & secure your account. Settings → Account —
+    // connect GitHub + Google Drive for imports, then turn on two-step
+    // verification. Single mock surface; show/click steps only.
+    "connect-secure": {
+      steps: [
+        {
+          callout:
+            "Settings → <strong>Account</strong> is where your connections and security live. Tap <strong>Sign in with GitHub</strong> to authorize once.",
+          action: "click",
+          target: '[data-wt="gh-btn"]',
+          duration: 1700,
+        },
+        {
+          callout:
+            "GitHub connected — now <em>Import → GitHub</em> pulls chapters straight from your private repos.",
+          action: "show",
+          target: '[data-wt="gh-done"]',
+          duration: 1600,
+        },
+        {
+          callout:
+            "Tap <strong>Sign in with Google</strong> to connect Drive. You only grant the files you pick in Google's picker — never your whole Drive.",
+          action: "click",
+          target: '[data-wt="gd-btn"]',
+          duration: 1900,
+        },
+        {
+          callout:
+            "Drive connected — import private Docs and files via <em>Import → Google Drive</em>.",
+          action: "show",
+          target: '[data-wt="gd-done"]',
+          duration: 1600,
+        },
+        {
+          callout:
+            "Add a second layer: tap <strong>Enable</strong> on two-step verification.",
+          action: "click",
+          target: '[data-wt="tf-btn"]',
+          duration: 1500,
+        },
+        {
+          callout:
+            "Add the key to your authenticator app (Google Authenticator, Authy, 1Password…), then confirm the 6-digit code.",
+          action: "show",
+          target: '[data-wt="enroll"]',
+          duration: 2600,
+        },
+        {
+          callout:
+            "Save the one-time <strong>recovery codes</strong> — your way back in if you lose your phone (shown only once).",
+          action: "show",
+          target: '[data-wt="recovery"]',
+          duration: 2600,
+        },
+        {
+          callout:
+            "Two-step is on. From now on a new device asks for a code after you paste your access key.",
+          action: "show",
+          target: '[data-wt="tf-done"]',
+          duration: 1700,
+        },
+        {
+          callout:
+            "Your account is connected and secured — imports wired up, second factor on.",
+          action: "show",
+          target: '[data-wt="secured"]',
+          duration: 2400,
+        },
+      ],
+      reset(stage) {
+        ["gh-btn", "gd-btn", "tf-btn"].forEach((k) => {
+          const b = stage.querySelector('[data-wt="' + k + '"]');
+          if (b) b.classList.remove("pressed");
+        });
+        ["gh-done", "gd-done", "tf-done", "enroll", "recovery", "secured"].forEach((k) => {
+          const el = stage.querySelector('[data-wt="' + k + '"]');
+          if (el) el.classList.remove("shown");
+        });
+      },
+    },
   };
 
   function initWalkthrough(el) {

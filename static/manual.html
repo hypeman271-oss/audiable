@@ -1540,6 +1540,76 @@
         position: static !important;
         box-shadow: none !important;
       }
+
+      /* Tutorial 7 — Connect & secure your account. Mock Settings →
+         Account panel: connection rows + a two-step enroll card. Reuses
+         the .shown / .pressed fade-and-scale vocabulary of the other
+         walkthrough mocks. */
+      .manual .wt-mock-acct {
+        display: flex; flex-direction: column; gap: 10px;
+        padding: 14px; background: var(--bg-card);
+        border: 1px solid var(--border); border-radius: 12px;
+        min-height: 320px; position: relative;
+      }
+      .manual .wt-mock-acct-title { font-size: 12px; color: var(--fg-dim); font-weight: 600; }
+      .manual .wt-mock-acct-row {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        padding: 8px 10px; background: var(--bg-card-2);
+        border: 1px solid var(--border); border-radius: 8px;
+      }
+      .manual .wt-mock-acct-label { font-size: 13px; color: var(--fg); font-weight: 600; min-width: 130px; }
+      .manual .wt-mock-acct-btn {
+        padding: 6px 14px; background: var(--bg-card); color: var(--fg);
+        border: 1px solid var(--border); border-radius: 999px;
+        font-size: 12.5px; font-weight: 600; cursor: default;
+        transition: transform 120ms, background 120ms;
+      }
+      .manual .wt-mock-acct-btn.pressed { transform: scale(0.94); background: var(--accent-tint); }
+      .manual .wt-mock-acct-badge {
+        margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent);
+        opacity: 0; transform: translateX(-4px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-acct-badge.shown { opacity: 1; transform: translateX(0); }
+      .manual .wt-mock-acct-enroll {
+        background: var(--bg-card-2); border: 1px solid var(--border);
+        border-radius: 10px; padding: 10px; display: flex;
+        flex-direction: column; gap: 8px;
+        opacity: 0; transform: translateY(-4px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-acct-enroll.shown { opacity: 1; transform: translateY(0); }
+      .manual .wt-mock-acct-enroll-title { font-size: 12.5px; font-weight: 600; color: var(--fg); }
+      .manual .wt-mock-acct-secret { font-size: 12px; color: var(--fg-dim); }
+      .manual .wt-mock-acct-secret code {
+        font-family: ui-monospace, SFMono-Regular, monospace; color: var(--fg);
+        background: var(--bg-card); padding: 1px 6px; border-radius: 4px;
+      }
+      .manual .wt-mock-acct-coderow { display: flex; gap: 8px; align-items: center; }
+      .manual .wt-mock-acct-code {
+        flex: 1; padding: 6px 10px; background: var(--bg-card);
+        border: 1px solid var(--border); border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        letter-spacing: 4px; color: var(--fg); font-size: 13px;
+      }
+      .manual .wt-mock-acct-go {
+        padding: 6px 14px; background: var(--accent); color: #fff; border: 0;
+        border-radius: 6px; font-size: 12.5px; font-weight: 600; cursor: default;
+      }
+      .manual .wt-mock-acct-recovery {
+        font-size: 11.5px; color: var(--fg-dim);
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        opacity: 0; transition: opacity 240ms;
+      }
+      .manual .wt-mock-acct-recovery.shown { opacity: 1; }
+      .manual .wt-mock-acct-secured {
+        margin-top: auto; align-self: flex-start; padding: 6px 12px;
+        background: var(--accent-tint); color: var(--accent);
+        border-radius: 999px; font-size: 12.5px; font-weight: 700;
+        opacity: 0; transform: scale(0.96);
+        transition: opacity 280ms, transform 280ms;
+      }
+      .manual .wt-mock-acct-secured.shown { opacity: 1; transform: scale(1); }
     </style>
     <script>
       /* v225.tn53 (#530): highlight the active TOC entry as the user
@@ -1679,6 +1749,7 @@
               <li><a href="#wt-upload-file">Upload a file</a></li>
               <li><a href="#wt-browse-github">Browse a GitHub repo</a></li>
               <li><a href="#wt-share-mockup">Share a book mockup</a></li>
+              <li><a href="#wt-connect-secure">Connect &amp; secure your account</a></li>
             </ul>
           </li>
           <li><a href="#shortcuts">Reference</a>
@@ -5414,6 +5485,64 @@ She set both hands flat on the table.</pre>
       </div>
 
       <!-- ============================================================= -->
+      <h3 id="wt-connect-secure">Tutorial 7 — Connect &amp; secure your account</h3>
+      <p>
+        Wire up your imports and lock down access, all from
+        <strong>Settings → Account</strong>: connect GitHub and Google
+        Drive so you can pull manuscripts from private repos and Drive,
+        then turn on two-step verification for a second layer of
+        security.
+      </p>
+      <div class="tip" style="margin-bottom: 0;">
+        <strong>↓ Just watch.</strong> Auto-playing demo. The right
+        column tells you what each step is doing.
+      </div>
+      <div class="wt" data-walkthrough="connect-secure" aria-label="Connect and secure your account walkthrough">
+        <div class="wt-head">
+          <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
+          <span class="wt-head-title">Connect &amp; secure</span>
+          <span class="wt-head-step">Step 1 of 9</span>
+          <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
+        </div>
+        <div class="wt-body">
+          <div class="wt-stage">
+            <div class="wt-mock-acct">
+              <div class="wt-mock-acct-title">Settings · Account</div>
+              <div class="wt-mock-acct-row">
+                <span class="wt-mock-acct-label">GitHub</span>
+                <button class="wt-mock-acct-btn" data-wt="gh-btn">Sign in with GitHub</button>
+                <span class="wt-mock-acct-badge" data-wt="gh-done">✓ Connected</span>
+              </div>
+              <div class="wt-mock-acct-row">
+                <span class="wt-mock-acct-label">Google Drive</span>
+                <button class="wt-mock-acct-btn" data-wt="gd-btn">Sign in with Google</button>
+                <span class="wt-mock-acct-badge" data-wt="gd-done">✓ you@gmail.com</span>
+              </div>
+              <div class="wt-mock-acct-row">
+                <span class="wt-mock-acct-label">Two-step verification</span>
+                <button class="wt-mock-acct-btn" data-wt="tf-btn">🔒 Enable</button>
+                <span class="wt-mock-acct-badge" data-wt="tf-done">✓ On</span>
+              </div>
+              <div class="wt-mock-acct-enroll" data-wt="enroll">
+                <div class="wt-mock-acct-enroll-title">🔒 Enable two-step verification</div>
+                <div class="wt-mock-acct-secret">Key: <code>JBSW Y3DP EHPK 3PXP</code></div>
+                <div class="wt-mock-acct-coderow">
+                  <span class="wt-mock-acct-code">1 2 4 8 5 7</span>
+                  <button class="wt-mock-acct-go">Verify</button>
+                </div>
+                <div class="wt-mock-acct-recovery" data-wt="recovery">Recovery codes: A7K2-9QMP · ZU45-CANF · 94TJ-6ZSV · …</div>
+              </div>
+              <div class="wt-mock-acct-secured" data-wt="secured">✓ Account connected &amp; secured</div>
+            </div>
+            <div class="wt-cursor" data-wt="cursor"></div>
+          </div>
+          <div class="wt-callout">
+            <span class="wt-callout-num">1</span>
+            <div class="wt-callout-text">Connect GitHub.</div>
+          </div>
+        </div>
+      </div>
+
       <h2 id="shortcuts">11. Reference</h2>
 
       <h3 id="gestures">Gestures</h3>

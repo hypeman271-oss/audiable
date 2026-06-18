@@ -5814,6 +5814,17 @@ document.addEventListener("keydown", (e) => {
         }
       },
     });
+    out.push({
+      group: "Tutorials",
+      icon: "▶",
+      label: "Run tutorial: Connect & secure your account",
+      key: "tut:connect",
+      run: () => {
+        if (typeof window.__narrativeOpenManual === "function") {
+          window.__narrativeOpenManual("#wt-connect-secure");
+        }
+      },
+    });
 
     return out;
   }
