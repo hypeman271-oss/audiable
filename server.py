@@ -31,6 +31,11 @@ import library_db
 import synth_jobs
 import totp
 import tts
+# v4.113: import the voice catalog at boot (when the disk is healthy)
+# rather than lazily per request. A transient request-time filesystem
+# I/O error reading tts/catalog.py once 500'd "Browse voices" until a
+# restart; loading it here makes the endpoint immune to that.
+from tts import catalog as _voice_catalog
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap on uploads
 
@@ -830,10 +835,8 @@ def voices():
 @app.get("/api/voices/catalog")
 def voices_catalog():
     """Full Piper voice catalog with an `installed` flag per entry."""
-    from tts import catalog
-
     try:
-        return {"voices": catalog.list_for_ui()}
+        return {"voices": _voice_catalog.list_for_ui()}
     except Exception as e:
         raise HTTPException(
             status_code=503, detail=f"could not load voice catalog: {e}"
