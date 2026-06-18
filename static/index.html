@@ -2676,13 +2676,26 @@
           </div>
         </div>
 
-        <!-- v4.114: ambience (sound-effects) volume. Hidden unless the SFX
-             prototype is enabled (?sfx=1 / localStorage). Capped below 100%
-             so the bed stays under the voice. -->
+        <!-- v4.114 / Voice Studio integration: sound-effects controls.
+             Hidden unless the SFX prototype is enabled (?sfx=1 / localStorage).
+             Bed + one-shot dropdowns are populated from /sfx/assets.json (the
+             Adonis Voice Studio manifest). Volume capped <100% so the bed
+             stays under the voice. -->
         <div class="row" id="sfx-volume-row" hidden>
+          <div class="slider">
+            <label for="sfx-bed">Ambience bed</label>
+            <select id="sfx-bed"></select>
+          </div>
           <div class="slider">
             <label for="sfx-volume">Ambience <span id="sfx-volume-value">28%</span></label>
             <input id="sfx-volume" type="range" min="0" max="80" step="1" value="28" />
+          </div>
+          <div class="slider">
+            <label for="sfx-oneshot">One-shot</label>
+            <span class="sfx-oneshot-row">
+              <select id="sfx-oneshot"></select>
+              <button type="button" id="sfx-oneshot-play" class="link-btn">▶ Play</button>
+            </span>
           </div>
         </div>
 

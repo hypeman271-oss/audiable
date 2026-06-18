@@ -8916,6 +8916,10 @@ let _sfxAmbBuffer = null;
 let _sfxAmbSource = null;
 let _sfxAmbGain = null;
 let _sfxReady = false; // narration routing is up (ambience may still be loading)
+// Voice Studio integration: data-driven assets from /sfx/assets.json.
+let _sfxManifest = []; // [{name,file,kind:'bed'|'oneshot',license,commercial,...}]
+const _sfxBufferCache = {}; // file URL -> decoded AudioBuffer
+let _sfxCurrentBedFile = "/sfx/rain-ambience.mp3"; // selected looping bed
 
 function _sfxEnabled() {
   try {
@@ -8939,23 +8943,85 @@ async function _sfxInit() {
     _sfxMasterGain = _sfxCtx.createGain();
     _sfxMediaSrc.connect(_sfxMasterGain).connect(_sfxCtx.destination);
     _sfxReady = true; // narration is safely routed; ambience is best-effort
-    // Load + start the ambience bed (loops, silent until a cue is active).
-    const res = await fetch(_MVP_SFX_CUE.asset);
-    const arr = await res.arrayBuffer();
-    _sfxAmbBuffer = await _sfxCtx.decodeAudioData(arr);
+    // Shared ambience-bed gain (ducked); the looping source is (re)created
+    // by _sfxSetBed so the bed is data-driven + swappable.
     _sfxAmbGain = _sfxCtx.createGain();
     _sfxAmbGain.gain.value = 0;
     _sfxAmbGain.connect(_sfxCtx.destination);
-    _sfxAmbSource = _sfxCtx.createBufferSource();
-    _sfxAmbSource.buffer = _sfxAmbBuffer;
-    _sfxAmbSource.loop = true;
-    _sfxAmbSource.connect(_sfxAmbGain);
-    _sfxAmbSource.start();
+    await _sfxSetBed(_sfxCurrentBedFile);
   } catch (e) {
     // Narration is unaffected — either we never rerouted it, or we did and
     // only the ambience failed. Log and move on.
     console.warn("[sfx] init failed (narration unaffected):", e);
   }
+}
+
+// Fetch + decode an asset, cached per URL.
+async function _sfxDecode(file) {
+  if (_sfxBufferCache[file]) return _sfxBufferCache[file];
+  const res = await fetch(file);
+  const arr = await res.arrayBuffer();
+  const buf = await _sfxCtx.decodeAudioData(arr);
+  _sfxBufferCache[file] = buf;
+  return buf;
+}
+
+// Swap the looping ambience bed live (picker change). Keeps the existing
+// duck gain; only the source buffer changes.
+async function _sfxSetBed(file) {
+  _sfxCurrentBedFile = file;
+  if (!_sfxCtx || !_sfxAmbGain || !file) return;
+  try {
+    const buf = await _sfxDecode(file);
+    if (_sfxAmbSource) {
+      try { _sfxAmbSource.stop(); } catch {}
+      try { _sfxAmbSource.disconnect(); } catch {}
+    }
+    _sfxAmbBuffer = buf;
+    _sfxAmbSource = _sfxCtx.createBufferSource();
+    _sfxAmbSource.buffer = buf;
+    _sfxAmbSource.loop = true;
+    _sfxAmbSource.connect(_sfxAmbGain);
+    _sfxAmbSource.start();
+    _sfxTick(); // apply the current duck state to the new bed at once
+  } catch (e) {
+    console.warn("[sfx] bed load failed:", file, e);
+  }
+}
+
+// Fire a one-shot (spot fx) once at the current playhead, over the
+// narration. Events read louder than the bed so they register.
+async function _sfxPlayOneShot(file) {
+  if (!_sfxEnabled() || !file) return;
+  if (!_sfxReady) await _sfxInit();
+  if (!_sfxCtx) return;
+  try {
+    if (_sfxCtx.state === "suspended") await _sfxCtx.resume();
+    const buf = await _sfxDecode(file);
+    const g = _sfxCtx.createGain();
+    g.gain.value = 0.7;
+    g.connect(_sfxCtx.destination);
+    const src = _sfxCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(g);
+    src.onended = () => { try { g.disconnect(); } catch {} };
+    src.start();
+  } catch (e) {
+    console.warn("[sfx] one-shot failed:", file, e);
+  }
+}
+
+// Load the Voice Studio asset manifest (static, unauthenticated). Cached.
+async function _sfxLoadManifest() {
+  if (_sfxManifest.length) return _sfxManifest;
+  try {
+    const res = await fetch("/sfx/assets.json");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) _sfxManifest = data;
+    }
+  } catch {}
+  return _sfxManifest;
 }
 
 function _sfxSetGain(target) {
@@ -9025,6 +9091,42 @@ function _sfxUserGain() {
       if (sfxVal) sfxVal.textContent = v + "%";
       try { localStorage.setItem("narrative.sfxVolume", String(v)); } catch {}
       _sfxTick(); // apply live if a cue is currently playing
+    });
+
+    // Populate the bed + one-shot pickers from the Voice Studio manifest.
+    _sfxLoadManifest().then((mani) => {
+      const beds = mani.filter((a) => a && a.kind === "bed");
+      const shots = mani.filter((a) => a && a.kind === "oneshot");
+      const bedSel = document.getElementById("sfx-bed");
+      const shotSel = document.getElementById("sfx-oneshot");
+      const playBtn = document.getElementById("sfx-oneshot-play");
+      if (bedSel && beds.length) {
+        bedSel.innerHTML = "";
+        for (const b of beds) {
+          const o = document.createElement("option");
+          o.value = b.file;
+          o.textContent = b.name;
+          if (!b.commercial) o.textContent += " (non-commercial)";
+          bedSel.appendChild(o);
+        }
+        _sfxCurrentBedFile = beds[0].file;
+        bedSel.value = _sfxCurrentBedFile;
+        // If playback already started with the default bed, swap to this one.
+        if (_sfxReady) _sfxSetBed(_sfxCurrentBedFile);
+        bedSel.addEventListener("change", () => _sfxSetBed(bedSel.value));
+      }
+      if (shotSel && shots.length) {
+        shotSel.innerHTML = "";
+        for (const s of shots) {
+          const o = document.createElement("option");
+          o.value = s.file;
+          o.textContent = s.name;
+          shotSel.appendChild(o);
+        }
+      }
+      if (playBtn && shotSel) {
+        playBtn.addEventListener("click", () => _sfxPlayOneShot(shotSel.value));
+      }
     });
   }
 })();

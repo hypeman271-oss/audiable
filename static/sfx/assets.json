@@ -1,0 +1,110 @@
+[
+  {
+    "name": "rain",
+    "file": "/sfx/rain.wav",
+    "kind": "bed",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "wind",
+    "file": "/sfx/wind.wav",
+    "kind": "bed",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "fire",
+    "file": "/sfx/fire.wav",
+    "kind": "bed",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "static",
+    "file": "/sfx/static.wav",
+    "kind": "bed",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "thunder",
+    "file": "/sfx/thunder.wav",
+    "kind": "oneshot",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "knock",
+    "file": "/sfx/knock.wav",
+    "kind": "oneshot",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "gunshot",
+    "file": "/sfx/gunshot.wav",
+    "kind": "oneshot",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "whoosh",
+    "file": "/sfx/whoosh.wav",
+    "kind": "oneshot",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "heartbeat",
+    "file": "/sfx/heartbeat.wav",
+    "kind": "oneshot",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "beep",
+    "file": "/sfx/beep.wav",
+    "kind": "oneshot",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "telephone",
+    "file": "/sfx/telephone.wav",
+    "kind": "oneshot",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  },
+  {
+    "name": "applause",
+    "file": "/sfx/applause.wav",
+    "kind": "bed",
+    "license": "CC0 (procedurally generated)",
+    "commercial": true,
+    "attribution": "",
+    "source": "Adonis Voice Studio"
+  }
+]

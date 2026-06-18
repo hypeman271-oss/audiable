@@ -5,6 +5,12 @@ venv/
 .env
 .DS_Store
 *.wav
+# ...but served sound-effect assets MUST ship in the image. The Adonis
+# Voice Studio drop writes static/sfx/*.wav (+ assets.json); track them.
+!static/sfx/*.wav
+
+# Transient debug-log scratch (pushed via Settings → debug log).
+narrative-debug-logs/
 
 # Piper voice models (large binaries, downloaded via scripts/get_voice.py)
 voices/*.onnx

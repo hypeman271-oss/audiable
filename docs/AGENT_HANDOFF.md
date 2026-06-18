@@ -76,6 +76,10 @@ Start with `ARCHITECTURE.md`, `SYNC.md`, `DEVICES.md`, `BACKLOG.md`, and the
   Audio + plays a ducked ambience bed (`static/sfx/rain-ambience.mp3`, public
   domain) with an Ambience volume slider. **Flag off = player unchanged.** Not
   finished — no cue editor, persistence, or asset library yet.
+  **Update:** a sister app (Adonis Voice Studio) now pushes 12 CC0
+  procedurally-generated sounds + `static/sfx/assets.json` into the library; the
+  contract + remaining wiring tasks (manifest -> `_sfxMixer` + asset picker,
+  `sfx_licenses.py`, SW bump) are in **`docs/voice-studio-integration.md`**.
 - **Emotion / expressive dialogue** — explored (cloud engines: ElevenLabs v3,
   Hume Octave, Azure express-as, OpenAI gpt-4o-mini-tts), **not yet written to
   a doc, not started.** Current local engines (Piper/Kokoro) have no emotion
