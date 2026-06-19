@@ -14589,4 +14589,54 @@ html, body {
   .anim-emphasis {
     transition: none;
   }
+  .anim-emphasis--glow {
+    animation: none;
+  }
+}
+
+/* "glow" effect: a soft pulsing accent ring on top of the base emphasis. */
+.anim-emphasis--glow {
+  box-shadow: 0 0 0 2px var(--accent-tint);
+  animation: anim-glow-pulse 1.4s ease-in-out infinite;
+}
+@keyframes anim-glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--accent-tint); }
+  50% { box-shadow: 0 0 0 3px var(--accent-tint); }
+}
+
+/* Cue marker: a small clapper on any sentence that carries an animation cue.
+   Distinct from the annotation dot (::before) so the two can coexist. */
+.sentence[data-has-anim="1"] {
+  position: relative;
+}
+.sentence[data-has-anim="1"]::after {
+  content: "🎬";
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.65;
+  vertical-align: middle;
+}
+
+/* Animation authoring sub-row in the annotate palette (flag-gated). */
+.annotate-anim-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 4px;
+}
+.annotate-anim-label {
+  flex: 1 1 140px;
+  min-width: 120px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+}
+.annotate-anim-save {
+  border-color: var(--accent) !important;
 }

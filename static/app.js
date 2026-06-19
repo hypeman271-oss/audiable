@@ -9223,6 +9223,20 @@ function _animLoadCues(clip) {
     });
     if (any) _animLineIdToIdx = m;
   }
+  // Paint cue markers so authored cues are visible in the reading view at a
+  // glance (independent of the during-playback emphasis).
+  if (Array.isArray(sentenceSpans)) {
+    sentenceSpans.forEach((s) => {
+      if (s && s.dataset && s.dataset.hasAnim) delete s.dataset.hasAnim;
+    });
+    for (const cue of _animCues) {
+      const range = _animResolveRange(cue);
+      if (!range) continue;
+      for (let i = range[0]; i <= range[1]; i++) {
+        if (sentenceSpans[i]) sentenceSpans[i].dataset.hasAnim = "1";
+      }
+    }
+  }
   _animClearRender();
 }
 
@@ -9261,32 +9275,34 @@ function _animTick() {
     return;
   }
   const idx = currentSentenceIndex(playerEl.currentTime);
-  let emphasize = false; // a highlight/glow cue covers the current sentence
+  let emphasizeEffect = null; // 'highlight' | 'glow' covering the current sentence
   let badgeLabel = null; // last active badge cue's label wins
   for (const cue of _animCues) {
     if (!cue || cue.kind !== "ui") continue;
     const range = _animResolveRange(cue);
     if (!range || idx < range[0] || idx > range[1]) continue; // not active
     if (cue.effect === "badge") badgeLabel = cue.label || "✨ Animation";
-    else emphasize = true; // highlight / glow / default
+    else emphasizeEffect = cue.effect || "highlight"; // highlight / glow
   }
-  _animReconcileEmphasis(emphasize ? idx : -1);
+  _animReconcileEmphasis(emphasizeEffect ? idx : -1, emphasizeEffect === "glow");
   _animReconcileBadge(badgeLabel);
 }
 
 // Emphasis follows the narration: at most one span carries the effect class,
-// so the highlight rides the read-along like the karaoke cue.
-function _animReconcileEmphasis(idx) {
+// so the highlight rides the read-along like the karaoke cue. `glow` adds a
+// pulsing modifier on top of the base emphasis.
+function _animReconcileEmphasis(idx, glow) {
   const next =
     idx >= 0 && Array.isArray(sentenceSpans) && sentenceSpans[idx]
       ? sentenceSpans[idx]
       : null;
   if (_animEmphasized && _animEmphasized !== next) {
-    _animEmphasized.classList.remove("anim-emphasis");
+    _animEmphasized.classList.remove("anim-emphasis", "anim-emphasis--glow");
     _animEmphasized = null;
   }
-  if (next && next !== _animEmphasized) {
+  if (next) {
     next.classList.add("anim-emphasis");
+    next.classList.toggle("anim-emphasis--glow", !!glow);
     _animEmphasized = next;
   }
 }
@@ -18998,6 +19014,7 @@ function _hideAnnotatePalette() {
     _voiceReleaseStream();
   }
   if (typeof _voiceShowTagRow === "function") _voiceShowTagRow();
+  if (typeof _animHideAnimRow === "function") _animHideAnimRow();
   annotatePalette.hidden = true;
   _annotatePendingSentenceIndex = null;
   // v223.tn14: resume main playback if we paused it on palette open
@@ -19033,6 +19050,13 @@ function _showAnnotatePalette(sentenceIndex, sentenceText) {
       ? `Flag: "${snippet}${sentenceText.length > 60 ? "…" : ""}"`
       : "Pick a tag to flag this sentence";
   }
+  // Animation authoring (flag-gated): reveal 🎬 only when the flag is on,
+  // and always open on the tag row (never a stale anim sub-row).
+  const _animBtn = document.getElementById("annotate-anim-btn");
+  if (_animBtn) {
+    _animBtn.hidden = !(typeof _animEnabled === "function" && _animEnabled());
+  }
+  if (typeof _animHideAnimRow === "function") _animHideAnimRow();
   annotatePalette.hidden = false;
 }
 
@@ -19110,6 +19134,186 @@ if (annotatePalette) {
 
 if (annotatePaletteClose) {
   annotatePaletteClose.addEventListener("click", _hideAnnotatePalette);
+}
+
+// ── Animation cue authoring (flag-gated) ──────────────────────────────
+// The 🎬 button in the annotate palette swaps in the anim sub-row; picking
+// an effect writes a UI cue to clip.animationCues on the selected sentence
+// and refreshes the live firing engine. UI tier only (highlight/glow/badge);
+// one cue per sentence (upsert), mirroring the annotate "one per sentence"
+// model. See docs/animation-system-design.md.
+const annotateAnimBtn = $("annotate-anim-btn");
+const annotateAnimRow = $("annotate-anim-row");
+const annotateAnimLabel = $("annotate-anim-label");
+const annotateAnimSave = $("annotate-anim-save");
+const annotateAnimRemove = $("annotate-anim-remove");
+const annotateAnimCancel = $("annotate-anim-cancel");
+
+function _animHasCueOnIdx(idx) {
+  return (
+    idx != null &&
+    Array.isArray(_animCues) &&
+    _animCues.some((c) => c && c.startIdx === idx)
+  );
+}
+
+// Swap the palette to the anim sub-row (hide the tag row). Resets the
+// badge label/save, and shows Remove only if this sentence already has one.
+function _animShowAnimRow() {
+  if (!annotateAnimRow) return;
+  const tagsRow = document.getElementById("annotate-palette-tags");
+  if (tagsRow) tagsRow.hidden = true;
+  annotateAnimRow.hidden = false;
+  if (annotateAnimLabel) {
+    annotateAnimLabel.hidden = true;
+    annotateAnimLabel.value = "";
+  }
+  if (annotateAnimSave) annotateAnimSave.hidden = true;
+  if (annotateAnimRemove) {
+    annotateAnimRemove.hidden = !_animHasCueOnIdx(_annotatePendingSentenceIndex);
+  }
+}
+
+// Back to the tag row (called on cancel, palette open, and palette close).
+function _animHideAnimRow() {
+  if (annotateAnimRow) annotateAnimRow.hidden = true;
+  const tagsRow = document.getElementById("annotate-palette-tags");
+  if (tagsRow) tagsRow.hidden = false;
+}
+
+// IndexedDB upsert: one cue per sentence index (replace if present).
+async function _addAnimationCue(clipId, cue) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const clip = await idbReq(store.get(clipId));
+    if (!clip) return null;
+    const cues = Array.isArray(clip.animationCues)
+      ? clip.animationCues.slice()
+      : [];
+    const i = cues.findIndex((c) => c && c.startIdx === cue.startIdx);
+    if (i >= 0) cues[i] = cue;
+    else cues.push(cue);
+    clip.animationCues = cues;
+    clip.updatedAt = new Date().toISOString();
+    await idbReq(store.put(clip));
+    await new Promise((res, rej) => {
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    });
+    return clip;
+  } catch (e) {
+    console.warn("[anim] addCue failed:", e);
+    return null;
+  }
+}
+
+async function _removeAnimationCue(clipId, sentenceIdx) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const clip = await idbReq(store.get(clipId));
+    if (!clip) return null;
+    clip.animationCues = (
+      Array.isArray(clip.animationCues) ? clip.animationCues : []
+    ).filter((c) => !(c && c.startIdx === sentenceIdx));
+    clip.updatedAt = new Date().toISOString();
+    await idbReq(store.put(clip));
+    await new Promise((res, rej) => {
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    });
+    return clip;
+  } catch (e) {
+    console.warn("[anim] removeCue failed:", e);
+    return null;
+  }
+}
+
+// Build a cue for the pending sentence, persist it, mark the span, and
+// refresh the live engine so it fires on the next play without a reload.
+async function _animSaveCueForSentence(effect, label) {
+  const idx = _annotatePendingSentenceIndex;
+  if (idx == null || !_currentClipId) {
+    _hideAnnotatePalette();
+    return;
+  }
+  const span = sentenceSpans && sentenceSpans[idx];
+  const lineId = (span && span.dataset && span.dataset.lineId) || null;
+  const cue = {
+    id: "anim_" + _annotateNewId(),
+    kind: "ui",
+    effect,
+    startIdx: idx,
+    endIdx: idx,
+    startLineId: lineId,
+    endLineId: lineId,
+  };
+  if (effect === "badge") cue.label = (label || "").trim() || "✨ Animation";
+  const clip = await _addAnimationCue(_currentClipId, cue);
+  if (span) span.dataset.hasAnim = "1";
+  if (clip && typeof _animLoadCues === "function") {
+    if (typeof _animInit === "function") _animInit();
+    _animLoadCues(clip);
+  }
+  _hideAnnotatePalette();
+  setStatus(`✓ Animation (${effect}) on sentence ${idx + 1}.`);
+}
+
+async function _animRemoveCueForSentence() {
+  const idx = _annotatePendingSentenceIndex;
+  if (idx == null || !_currentClipId) {
+    _hideAnnotatePalette();
+    return;
+  }
+  const clip = await _removeAnimationCue(_currentClipId, idx);
+  const span = sentenceSpans && sentenceSpans[idx];
+  if (span) delete span.dataset.hasAnim;
+  if (clip && typeof _animLoadCues === "function") _animLoadCues(clip);
+  _hideAnnotatePalette();
+  setStatus(`✓ Removed animation from sentence ${idx + 1}.`);
+}
+
+if (annotateAnimBtn) {
+  annotateAnimBtn.addEventListener("click", () => _animShowAnimRow());
+}
+if (annotateAnimCancel) {
+  annotateAnimCancel.addEventListener("click", () => _animHideAnimRow());
+}
+if (annotateAnimRow) {
+  annotateAnimRow.addEventListener("click", (event) => {
+    const effBtn = event.target.closest("[data-anim-effect]");
+    if (!effBtn) return;
+    const effect = effBtn.dataset.animEffect;
+    if (effect === "badge") {
+      // Reveal the label field + Save; don't write until the author confirms.
+      if (annotateAnimLabel) {
+        annotateAnimLabel.hidden = false;
+        annotateAnimLabel.focus();
+      }
+      if (annotateAnimSave) annotateAnimSave.hidden = false;
+    } else {
+      _animSaveCueForSentence(effect, null);
+    }
+  });
+}
+if (annotateAnimSave) {
+  annotateAnimSave.addEventListener("click", () =>
+    _animSaveCueForSentence("badge", annotateAnimLabel ? annotateAnimLabel.value : "")
+  );
+}
+if (annotateAnimLabel) {
+  annotateAnimLabel.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      _animSaveCueForSentence("badge", annotateAnimLabel.value);
+    }
+  });
+}
+if (annotateAnimRemove) {
+  annotateAnimRemove.addEventListener("click", () => _animRemoveCueForSentence());
 }
 
 // Esc dismisses the palette like every other dialog in the app.
