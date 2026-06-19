@@ -684,6 +684,41 @@ async def require_api_key(request: Request, call_next):
     )
 
 
+# v225v4.126 (#900): the app shell (HTML/JS/CSS/sw.js/webmanifest) is served
+# by StaticFiles with ONLY ETag + Last-Modified — no Cache-Control. Browsers
+# then apply *heuristic* freshness and can serve those assets stale for hours
+# without revalidating. That starves the service worker's background update
+# fetch (its fetch handler does a network refresh, but the network copy is
+# itself HTTP-cached and stale) AND defeats the in-app "force update" reload,
+# leaving installed PWAs stuck many versions behind (observed in the field:
+# clients on v4.91 / v4.106 while live was v4.125, with no way to advance).
+#
+# Fix: send `Cache-Control: no-cache` on shell assets. `no-cache` does NOT mean
+# "don't store" — it means "always revalidate before use," which is cheap given
+# the existing strong ETag (a matching request returns a tiny 304; a changed
+# file returns 200 with fresh bytes). So every navigation now picks up a new
+# deploy within a reload, and the SW re-caches fresh shell. API responses and
+# the deliberately long-lived `public, max-age=86400` assets set their own
+# Cache-Control and are left untouched (we only stamp when none is present).
+_SHELL_SUFFIXES = (".html", ".js", ".css", ".webmanifest")
+
+
+@app.middleware("http")
+async def shell_no_cache(request: Request, call_next):
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        if (
+            request.method in ("GET", "HEAD")
+            and "cache-control" not in response.headers
+            and (path == "/" or path.endswith(_SHELL_SUFFIXES))
+        ):
+            response.headers["Cache-Control"] = "no-cache"
+    except Exception:
+        pass
+    return response
+
+
 # v225v4.30: CORS for the Tauri desktop shell. The Tauri app loads
 # index.html from the bundled assets (tauri://localhost on
 # macOS/Linux, https://tauri.localhost on Windows) and hits this
