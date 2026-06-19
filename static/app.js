@@ -9187,12 +9187,19 @@ function _animReducedMotion() {
   }
 }
 
-// Lazily build the stage overlay inside the reading view. Idempotent.
-// pointer-events:none + height:0 so it never blocks tap-to-seek or shifts text.
+// Build (or repair) the stage overlay inside the reading view. Idempotent +
+// self-healing: a reading-view re-render (enterReadingView rebuilds its
+// innerHTML) wipes the prepended stage, so we can't trust _animReady alone —
+// if our stage is detached, rebuild it. pointer-events:none + height:0 so it
+// never blocks tap-to-seek or shifts text.
 function _animInit() {
-  if (_animReady || !_animEnabled()) return;
+  if (!_animEnabled()) return;
+  if (_animReady && _animStageEl && _animStageEl.isConnected) return;
   const host = typeof readingView !== "undefined" && readingView;
   if (!host) return;
+  // Drop any orphaned stage from a prior render before building a fresh one.
+  const stale = host.querySelector(".anim-stage");
+  if (stale) stale.remove();
   const stage = document.createElement("div");
   stage.className = "anim-stage";
   if (_animReducedMotion()) stage.classList.add("anim-reduced");
@@ -9261,7 +9268,9 @@ function _animResolveRange(cue) {
 // Fire all active UI cues against the current playhead. Mirrors _sfxTick:
 // combined-MP3 timeline only; reconciles render state (no transition churn).
 function _animTick() {
-  if (!_animReady || !_animEnabled()) return;
+  if (!_animEnabled()) return;
+  _animInit(); // ensure/repair the stage (survives reading-view re-renders)
+  if (!_animReady || !_animBadgeEl) return;
   if (typeof _streamPlayhead === "number" && _streamPlayhead >= 0) {
     _animClearRender();
     return;
@@ -9270,10 +9279,14 @@ function _animTick() {
     _animClearRender();
     return;
   }
-  if (!_animCues.length || playerEl.paused) {
+  if (!_animCues.length) {
     _animClearRender();
     return;
   }
+  // Note: unlike the SFX bed, we do NOT clear on pause — a visual cue should
+  // stay on screen while paused on its sentence (pausing to look shouldn't
+  // make it vanish). The pause listener calls _animTick so the current
+  // sentence's cue is recomputed and held; `ended` still clears.
   const idx = currentSentenceIndex(playerEl.currentTime);
   let emphasizeEffect = null; // 'highlight' | 'glow' covering the current sentence
   let badgeLabel = null; // last active badge cue's label wins
@@ -9331,7 +9344,8 @@ function _animClearRender() {
   });
   playerEl.addEventListener("timeupdate", _animTick);
   playerEl.addEventListener("seeked", _animTick);
-  playerEl.addEventListener("pause", _animClearRender);
+  // Keep the current sentence's cue visible while paused (recompute, not clear).
+  playerEl.addEventListener("pause", _animTick);
   playerEl.addEventListener("ended", _animClearRender);
 })();
 

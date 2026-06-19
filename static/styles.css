@@ -14550,21 +14550,23 @@ html, body {
   position: sticky;
   top: 8px;
   z-index: 5;
-  display: flex;
-  justify-content: flex-end;
+  display: block;
+  text-align: right; /* right-align the inline-block badge */
   height: 0; /* don't take vertical space / shift the text */
   pointer-events: none; /* never block tap-to-seek on sentences */
 }
 .anim-badge {
+  display: inline-block; /* shrink to content — a compact pill, not a full-width band */
   pointer-events: none;
-  background: var(--accent-tint);
-  color: var(--accent);
-  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border: 0;
   font-size: 12px;
-  font-weight: 600;
-  padding: 4px 12px;
+  font-weight: 700;
+  padding: 5px 14px;
   border-radius: 999px;
   white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   opacity: 0;
   transform: translateY(-6px) scale(0.9);
   transition: opacity 300ms ease-out, transform 300ms ease-out;
@@ -14573,11 +14575,15 @@ html, body {
   opacity: 1;
   transform: translateY(0) scale(1);
 }
-/* Targeted UI cue: gently emphasize the active sentence within the window. */
+/* Targeted UI cue: emphasize the active sentence within the window. An
+   outline ring (not just a tint) so it reads clearly distinct from the
+   normal read-along highlight, which is a background-only treatment. */
 .anim-emphasis {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
   background: var(--accent-tint);
-  border-radius: 4px;
-  transition: background 240ms ease-out;
+  transition: outline-color 240ms ease-out, background 240ms ease-out;
 }
 /* User opt-out: state still shows, motion does not. */
 .anim-stage.anim-reduced .anim-badge {
