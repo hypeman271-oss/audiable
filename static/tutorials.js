@@ -529,6 +529,66 @@
         });
       },
     },
+
+    // Tutorial 8: Animate a sentence (preview feature). Standalone 🎬 Animate
+    // mode → tap a sentence → pick an effect (here Badge) → it plays as the
+    // line is read. Single self-contained mock; show/click steps only.
+    "animate-sentence": {
+      steps: [
+        {
+          callout:
+            "Tap <strong>🎬 Animate</strong> in the toolbar to enter animate mode. (It's separate from Annotate and doesn't pause playback.)",
+          action: "click",
+          target: '[data-wt="animate-btn"]',
+          addClass: "active",
+          duration: 1700,
+        },
+        {
+          callout:
+            "Tap the sentence you want to bring to life.",
+          action: "show",
+          target: '[data-wt="a-sent-2"]',
+          addClass: "sel",
+          duration: 1700,
+        },
+        {
+          callout:
+            "The animation palette opens — pick an effect: <strong>✨ Highlight</strong>, <strong>🔆 Glow</strong>, <strong>🏷 Badge</strong>, or <strong>🚶 Sprite</strong>.",
+          action: "show",
+          target: '[data-wt="palette"]',
+          duration: 1900,
+        },
+        {
+          callout:
+            "Here we choose <strong>🏷 Badge</strong> and type a label.",
+          action: "click",
+          target: '[data-wt="eff-badge"]',
+          duration: 1700,
+        },
+        {
+          callout:
+            "Now the badge plays on the stage while that line is narrated — and clears when it moves on.",
+          action: "show",
+          target: '[data-wt="badge"]',
+          duration: 2300,
+        },
+        {
+          callout:
+            "The line keeps a small <strong>🎬</strong> marker; tap it again in animate mode to tweak or remove the cue.",
+          action: "show",
+          target: '[data-wt="marker"]',
+          duration: 2100,
+        },
+      ],
+      reset(stage) {
+        const btn = stage.querySelector('[data-wt="animate-btn"]');
+        if (btn) btn.classList.remove("active", "pressed");
+        ["a-sent-2", "palette", "badge", "marker"].forEach((k) => {
+          const el = stage.querySelector('[data-wt="' + k + '"]');
+          if (el) el.classList.remove("shown", "sel");
+        });
+      },
+    },
   };
 
   function initWalkthrough(el) {

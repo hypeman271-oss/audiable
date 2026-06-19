@@ -5826,6 +5826,17 @@ document.addEventListener("keydown", (e) => {
         }
       },
     });
+    out.push({
+      group: "Tutorials",
+      icon: "▶",
+      label: "Run tutorial: Animate a sentence",
+      key: "tut:animate",
+      run: () => {
+        if (typeof window.__narrativeOpenManual === "function") {
+          window.__narrativeOpenManual("#wt-animate-sentence");
+        }
+      },
+    });
 
     return out;
   }

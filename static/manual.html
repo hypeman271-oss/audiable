@@ -1610,6 +1610,70 @@
         transition: opacity 280ms, transform 280ms;
       }
       .manual .wt-mock-acct-secured.shown { opacity: 1; transform: scale(1); }
+
+      /* Tutorial 8 — Animate a sentence. Mock toolbar + reading view +
+         effect palette + a badge on the stage. Reuses the .shown / .pressed
+         fade-and-press vocabulary of the other walkthrough mocks. */
+      .manual .wt-mock-anim {
+        display: flex; flex-direction: column; gap: 10px;
+        padding: 12px; background: var(--bg-card);
+        border: 1px solid var(--border); border-radius: 12px;
+        min-height: 320px; position: relative;
+      }
+      .manual .wt-mock-anim-toolbar { display: flex; gap: 8px; }
+      .manual .wt-mock-anim-tool {
+        padding: 5px 12px; background: var(--bg-card-2);
+        border: 1px solid var(--border); border-radius: 999px;
+        font-size: 12px; font-weight: 600; color: var(--fg-dim);
+        transition: transform 120ms, background 120ms, color 120ms, border-color 120ms;
+      }
+      .manual .wt-mock-anim-tool.pressed { transform: scale(0.94); }
+      .manual .wt-mock-anim-tool-animate.active {
+        background: var(--accent-tint); color: var(--accent); border-color: var(--accent);
+      }
+      .manual .wt-mock-anim-reading {
+        position: relative; flex: 1;
+        background: var(--bg-card-2); border: 1px solid var(--border);
+        border-radius: 10px; padding: 12px; display: flex;
+        flex-direction: column; gap: 8px;
+      }
+      .manual .wt-mock-anim-sent {
+        font-size: 13px; line-height: 1.5; color: var(--fg);
+        border-radius: 4px; padding: 2px 4px;
+        transition: outline-color 240ms, background 240ms;
+        outline: 2px solid transparent;
+      }
+      .manual .wt-mock-anim-sent.sel {
+        outline: 2px solid var(--accent); background: var(--accent-tint);
+      }
+      .manual .wt-mock-anim-marker {
+        font-size: 10px; opacity: 0; transition: opacity 240ms;
+      }
+      .manual .wt-mock-anim-marker.shown { opacity: 0.7; }
+      .manual .wt-mock-anim-badge {
+        position: absolute; top: 10px; right: 10px;
+        padding: 5px 14px; background: var(--accent); color: #fff;
+        border-radius: 999px; font-size: 12px; font-weight: 700;
+        white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        opacity: 0; transform: translateY(-6px) scale(0.9);
+        transition: opacity 300ms, transform 300ms;
+      }
+      .manual .wt-mock-anim-badge.shown { opacity: 1; transform: translateY(0) scale(1); }
+      .manual .wt-mock-anim-palette {
+        display: flex; gap: 6px; flex-wrap: wrap;
+        padding: 8px; background: var(--bg-card-2);
+        border: 1px solid var(--border); border-radius: 10px;
+        opacity: 0; transform: translateY(6px);
+        transition: opacity 240ms, transform 240ms;
+      }
+      .manual .wt-mock-anim-palette.shown { opacity: 1; transform: translateY(0); }
+      .manual .wt-mock-anim-eff {
+        padding: 5px 10px; background: var(--bg-card);
+        border: 1px solid var(--border); border-radius: 999px;
+        font-size: 12px; font-weight: 600; color: var(--fg);
+        transition: transform 120ms, background 120ms;
+      }
+      .manual .wt-mock-anim-eff.pressed { transform: scale(0.94); background: var(--accent-tint); }
     </style>
     <script>
       /* v225.tn53 (#530): highlight the active TOC entry as the user
@@ -1731,7 +1795,11 @@
           <li><a href="#text">Getting text in</a></li>
           <li><a href="#voice">Choosing a voice</a></li>
           <li><a href="#player">The player</a></li>
-          <li><a href="#reading">Reading view</a></li>
+          <li><a href="#reading">Reading view</a>
+            <ul>
+              <li><a href="#animation">Animating sentences (preview)</a></li>
+            </ul>
+          </li>
           <li><a href="#book-view">Book view</a></li>
           <li><a href="#library">The library</a>
             <ul>
@@ -1750,6 +1818,7 @@
               <li><a href="#wt-browse-github">Browse a GitHub repo</a></li>
               <li><a href="#wt-share-mockup">Share a book mockup</a></li>
               <li><a href="#wt-connect-secure">Connect &amp; secure your account</a></li>
+              <li><a href="#wt-animate-sentence">Animate a sentence (preview)</a></li>
             </ul>
           </li>
           <li><a href="#shortcuts">Reference</a>
@@ -3312,6 +3381,59 @@ title: Spaced
         arm-then-tap flow (tap tag → tap sentence) still works too;
         both orderings produce the same annotation.
       </div>
+
+      <h3 id="animation">Animating sentences <span style="font-weight:400;opacity:0.7;">(preview)</span></h3>
+      <div class="tip" style="margin-top:0;">
+        <strong>Preview feature.</strong> Animation is still being built and
+        is off by default. Turn it on by opening Narrative with
+        <code>?anim=1</code> in the address bar (or run
+        <code>localStorage.setItem('narrative.animPrototype','1')</code> in the
+        browser console once). With it off, the 🎬 Animate button is hidden and
+        nothing here applies.
+      </div>
+      <p>
+        Animation layers visual cues over the narration — like an animated
+        storybook, but driven by your audio. Each cue is tied to a sentence
+        and plays <em>while that sentence is read</em>, then clears. Cues are
+        saved on the clip and survive reload; they never change the audio.
+      </p>
+      <p>
+        Tap <strong>🎬 Animate</strong> in the player toolbar (next to
+        Annotate) to enter animate mode, then tap any sentence to open the
+        animation palette. Unlike Annotate, animate mode <strong>doesn't pause
+        playback</strong> — the clip keeps playing so you can watch a cue fire
+        as you add it. Tap 🎬 again (or ✕) to leave.
+      </p>
+      <p>There are four cue types:</p>
+      <ul>
+        <li><strong>✨ Highlight</strong> — the sentence gets an accent outline as it's read.</li>
+        <li><strong>🔆 Glow</strong> — the same, with a soft pulsing ring.</li>
+        <li><strong>🏷 Badge</strong> — a small labelled pill appears on the stage (top-right). You type the label, e.g. "A bird appears."</li>
+        <li><strong>🚶 Sprite</strong> — a hand-drawn frame animation plays (a walk cycle, a blink, a gesture). You upload a sprite sheet and set the frame count + speed.</li>
+      </ul>
+      <p>
+        A sentence with a cue shows a small <strong>🎬</strong> marker. To
+        remove one, tap that sentence again in animate mode and press
+        <strong>✕ Remove</strong>.
+      </p>
+      <h4 id="sprite-sheets">Preparing a sprite sheet</h4>
+      <p>
+        A sprite sheet is a single image holding every frame of the animation
+        in <strong>one horizontal row, all the same width and height</strong>.
+        Narrative slices it into <em>N</em> equal frames and cycles through them.
+      </p>
+      <ul>
+        <li><strong>Layout:</strong> frames left → right in one row (e.g. four 200×200 frames = an 800×200 image).</li>
+        <li><strong>Format:</strong> PNG with a transparent background, so the character sits cleanly over the page.</li>
+        <li><strong>Keep it small:</strong> 4–8 frames and a modest file size — sheets are currently stored on the clip itself.</li>
+        <li><strong>Tools:</strong> <em>Piskel</em> (free, browser-based, exports a horizontal strip), <em>Aseprite</em>, <em>Krita</em>, or <em>Procreate</em>. For non-pixel art, lay images in a row in Figma/Canva and export a PNG. You can also AI-generate consistent frames and combine them.</li>
+      </ul>
+      <p>
+        Then: <strong>🎬 Animate → tap a sentence → 🚶 Sprite →</strong> choose
+        the PNG, set <strong>Frames</strong> (how many cells) and
+        <strong>FPS</strong> (playback speed), and <strong>Save</strong>. The
+        sprite plays while that sentence is narrated and freezes if you pause.
+      </p>
 
       <!-- ============================================================= -->
       <h2 id="book-view">6. Book view</h2>
@@ -5539,6 +5661,53 @@ She set both hands flat on the table.</pre>
           <div class="wt-callout">
             <span class="wt-callout-num">1</span>
             <div class="wt-callout-text">Connect GitHub.</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 id="wt-animate-sentence">Tutorial 8 — Animate a sentence <span style="font-weight:400;opacity:0.7;">(preview)</span></h3>
+      <p>
+        Bring a line to life: in <strong>🎬 Animate</strong> mode, tap a
+        sentence and pick an effect — Highlight, Glow, a labelled Badge, or a
+        hand-drawn Sprite — and it plays while that line is narrated. (Preview
+        feature; see <a href="#animation">Animating sentences</a>.)
+      </p>
+      <div class="tip" style="margin-bottom: 0;">
+        <strong>↓ Just watch.</strong> Auto-playing demo. The right
+        column tells you what each step is doing.
+      </div>
+      <div class="wt" data-walkthrough="animate-sentence" aria-label="Animate a sentence walkthrough">
+        <div class="wt-head">
+          <span class="wt-head-badge" aria-hidden="true">▶ AUTO</span>
+          <span class="wt-head-title">Animate a sentence</span>
+          <span class="wt-head-step">Step 1 of 6</span>
+          <button type="button" class="wt-head-restart" aria-label="Restart walkthrough" title="Restart">↻</button>
+        </div>
+        <div class="wt-body">
+          <div class="wt-stage">
+            <div class="wt-mock-anim">
+              <div class="wt-mock-anim-toolbar">
+                <span class="wt-mock-anim-tool">📝 Annotate</span>
+                <span class="wt-mock-anim-tool wt-mock-anim-tool-animate" data-wt="animate-btn">🎬 Animate</span>
+              </div>
+              <div class="wt-mock-anim-reading">
+                <div class="wt-mock-anim-sent" data-wt="a-sent-1">The morning sun rose over the quiet village.</div>
+                <div class="wt-mock-anim-sent" data-wt="a-sent-2">A small bird landed on the sill beside her. <span class="wt-mock-anim-marker" data-wt="marker">🎬</span></div>
+                <div class="wt-mock-anim-sent" data-wt="a-sent-3">She smiled and reached out her hand.</div>
+                <div class="wt-mock-anim-badge" data-wt="badge">A bird appears</div>
+              </div>
+              <div class="wt-mock-anim-palette" data-wt="palette">
+                <span class="wt-mock-anim-eff">✨ Highlight</span>
+                <span class="wt-mock-anim-eff">🔆 Glow</span>
+                <span class="wt-mock-anim-eff" data-wt="eff-badge">🏷 Badge</span>
+                <span class="wt-mock-anim-eff">🚶 Sprite</span>
+              </div>
+            </div>
+            <div class="wt-cursor" data-wt="cursor"></div>
+          </div>
+          <div class="wt-callout">
+            <span class="wt-callout-num">1</span>
+            <div class="wt-callout-text">Enter animate mode.</div>
           </div>
         </div>
       </div>
