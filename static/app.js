@@ -1444,6 +1444,7 @@ async function _openAsEbook() {
     cover,
     annotations: [],
     highlights: [],
+    animationCues: [],
     lastSyncedAt: null,
     createdAt: new Date().toISOString(),
   };
@@ -9142,30 +9143,28 @@ function _sfxUserGain() {
   }
 })();
 
-// ── v4.118: animated-illustrations Phase 0 prototype (behind a flag) ────
-// The de-risking slice from docs/animation-system-design.md: prove the
-// cue-firing loop rides the same playback timeline the highlight + SFX use,
-// rendering ONE hard-coded UI cue onto a "stage" overlay. GATED OFF by
-// default — enable with `?anim=1` or localStorage 'narrative.animPrototype'
-// = "1". Flag off => none of this runs and the reading view is unchanged.
-// No persistence, no editor, combined-MP3 timeline only (per-sentence
-// streaming uses _streamElapsed and is a later increment — same boundary as
-// the SFX prototype). This is the analog of _MVP_SFX_CUE / _sfxTick.
-const _MVP_ANIM_CUE = {
-  // A windowed UI cue: fade+scale a stage badge in while the narration is
-  // inside this sentence range, and emphasize the active sentence so the
-  // "target a sentence" path is visible too. Real cues come from the editor
-  // and anchor to data-line-id (see the design doc).
-  kind: "ui",
-  startIdx: 2,
-  endIdx: 6,
-  label: "✨ Animation",
-};
-
+// ── v4.119: animated-illustrations — UI tier (Phase 1, behind a flag) ──
+// docs/animation-system-design.md Phase 1: real per-clip animation cues
+// (clip.animationCues[]), anchored to stable data-line-id, fired off the
+// same playback tick the highlight + SFX layers use. UI tier only for now
+// (no asset upload): a cue emphasizes a passage as it's read ("highlight"/
+// "glow") or shows a labelled badge on the "stage". Sprite + video tiers
+// are later phases. GATED OFF by default — enable with `?anim=1` or
+// localStorage 'narrative.animPrototype'="1". Combined-MP3 timeline only
+// (streaming uses _streamElapsed — a later increment, same boundary as the
+// SFX layer). Cue model + firing loop are the analog of _MVP_SFX_CUE /
+// _sfxTick, generalized from one hard-coded cue to the clip's cue list.
+//
+// Cue shape (UI tier): { id, kind:'ui', effect:'highlight'|'glow'|'badge',
+//   startLineId?, endLineId?, startIdx?, endIdx?, label? }. Line ids are the
+//   stable anchor (survive edits/re-narration); idx is the fallback for
+//   clips with no per-sentence lines[].
 let _animStageEl = null; // sticky overlay pinned to the reading view
-let _animBadgeEl = null; // the UI-cue target that fades/scales in
-let _animEmphasized = null; // sentence span currently emphasized (for cleanup)
-let _animReady = false;
+let _animBadgeEl = null; // the badge target on the stage
+let _animEmphasized = null; // sentence span currently emphasized (cleanup)
+let _animReady = false; // stage overlay built
+let _animCues = []; // current clip's animationCues (raw)
+let _animLineIdToIdx = null; // Map(lineId -> idx) for the loaded clip, or null
 
 function _animEnabled() {
   try {
@@ -9199,7 +9198,6 @@ function _animInit() {
   if (_animReducedMotion()) stage.classList.add("anim-reduced");
   const badge = document.createElement("div");
   badge.className = "anim-badge";
-  badge.textContent = _MVP_ANIM_CUE.label;
   stage.appendChild(badge);
   host.prepend(stage);
   _animStageEl = stage;
@@ -9207,50 +9205,106 @@ function _animInit() {
   _animReady = true;
 }
 
-// Fire the hard-coded UI cue against the current playhead. Mirrors _sfxTick:
-// combined-MP3 timeline only; windowed in/out like the SFX bed.
+// Load a clip's cues + (re)build the lineId->index map from the freshly
+// rendered reading view. Called from loadClip after enterReadingView, and by
+// the editor after a cue is added/removed. Clears any transient render state.
+function _animLoadCues(clip) {
+  _animCues = clip && Array.isArray(clip.animationCues) ? clip.animationCues : [];
+  _animLineIdToIdx = null;
+  if (Array.isArray(sentenceSpans) && sentenceSpans.length) {
+    const m = new Map();
+    let any = false;
+    sentenceSpans.forEach((span, i) => {
+      const lid = span && span.dataset && span.dataset.lineId;
+      if (lid) {
+        m.set(lid, i);
+        any = true;
+      }
+    });
+    if (any) _animLineIdToIdx = m;
+  }
+  _animClearRender();
+}
+
+// Resolve a cue's sentence range. Prefer stable line ids; fall back to the
+// stored indices (clips with no per-sentence lines[] use idx directly).
+function _animResolveRange(cue) {
+  let s = typeof cue.startIdx === "number" ? cue.startIdx : null;
+  let e = typeof cue.endIdx === "number" ? cue.endIdx : s;
+  if (_animLineIdToIdx) {
+    if (cue.startLineId != null && _animLineIdToIdx.has(cue.startLineId)) {
+      s = _animLineIdToIdx.get(cue.startLineId);
+    }
+    if (cue.endLineId != null && _animLineIdToIdx.has(cue.endLineId)) {
+      e = _animLineIdToIdx.get(cue.endLineId);
+    }
+  }
+  if (s == null) return null;
+  if (e == null || e < s) e = s;
+  return [s, e];
+}
+
+// Fire all active UI cues against the current playhead. Mirrors _sfxTick:
+// combined-MP3 timeline only; reconciles render state (no transition churn).
 function _animTick() {
-  if (!_animReady || !_animBadgeEl) return;
-  // Streaming uses a different time source — stay dormant there.
+  if (!_animReady || !_animEnabled()) return;
   if (typeof _streamPlayhead === "number" && _streamPlayhead >= 0) {
-    _animSetActive(false, -1);
+    _animClearRender();
     return;
   }
   if (!Array.isArray(sentenceOffsetsSec) || !sentenceOffsetsSec.length) {
-    _animSetActive(false, -1);
+    _animClearRender();
+    return;
+  }
+  if (!_animCues.length || playerEl.paused) {
+    _animClearRender();
     return;
   }
   const idx = currentSentenceIndex(playerEl.currentTime);
-  const inside =
-    idx >= _MVP_ANIM_CUE.startIdx &&
-    idx <= _MVP_ANIM_CUE.endIdx &&
-    !playerEl.paused;
-  _animSetActive(inside, idx);
+  let emphasize = false; // a highlight/glow cue covers the current sentence
+  let badgeLabel = null; // last active badge cue's label wins
+  for (const cue of _animCues) {
+    if (!cue || cue.kind !== "ui") continue;
+    const range = _animResolveRange(cue);
+    if (!range || idx < range[0] || idx > range[1]) continue; // not active
+    if (cue.effect === "badge") badgeLabel = cue.label || "✨ Animation";
+    else emphasize = true; // highlight / glow / default
+  }
+  _animReconcileEmphasis(emphasize ? idx : -1);
+  _animReconcileBadge(badgeLabel);
 }
 
-// Apply the UI cue: badge fade/scale (windowed) + emphasis on the active
-// sentence span (targeted). Both are pure class toggles — the "ui" renderer
-// vocabulary the design doc generalizes from tutorials.js.
-function _animSetActive(on, idx) {
-  if (_animBadgeEl) _animBadgeEl.classList.toggle("shown", !!on);
-  const nextSpan =
-    on && Array.isArray(sentenceSpans) && sentenceSpans[idx]
+// Emphasis follows the narration: at most one span carries the effect class,
+// so the highlight rides the read-along like the karaoke cue.
+function _animReconcileEmphasis(idx) {
+  const next =
+    idx >= 0 && Array.isArray(sentenceSpans) && sentenceSpans[idx]
       ? sentenceSpans[idx]
       : null;
-  if (_animEmphasized && _animEmphasized !== nextSpan) {
+  if (_animEmphasized && _animEmphasized !== next) {
     _animEmphasized.classList.remove("anim-emphasis");
     _animEmphasized = null;
   }
-  if (nextSpan && nextSpan !== _animEmphasized) {
-    nextSpan.classList.add("anim-emphasis");
-    _animEmphasized = nextSpan;
+  if (next && next !== _animEmphasized) {
+    next.classList.add("anim-emphasis");
+    _animEmphasized = next;
   }
 }
 
-// Teardown on stop/leave: hide the badge + clear emphasis. The stage element
-// stays in place — cheap to reuse on the next play.
-function _animStop() {
-  _animSetActive(false, -1);
+function _animReconcileBadge(label) {
+  if (!_animBadgeEl) return;
+  if (label) {
+    if (_animBadgeEl.textContent !== label) _animBadgeEl.textContent = label;
+    _animBadgeEl.classList.add("shown");
+  } else {
+    _animBadgeEl.classList.remove("shown");
+  }
+}
+
+// Drop all transient render state (badge hidden, emphasis cleared).
+function _animClearRender() {
+  _animReconcileEmphasis(-1);
+  _animReconcileBadge(null);
 }
 
 (() => {
@@ -9261,8 +9315,8 @@ function _animStop() {
   });
   playerEl.addEventListener("timeupdate", _animTick);
   playerEl.addEventListener("seeked", _animTick);
-  playerEl.addEventListener("pause", _animStop);
-  playerEl.addEventListener("ended", _animStop);
+  playerEl.addEventListener("pause", _animClearRender);
+  playerEl.addEventListener("ended", _animClearRender);
 })();
 
 async function renderBookmarks() {
@@ -30588,6 +30642,11 @@ async function loadClip(id, { autoPlay = true } = {}) {
   // re-applying after the fact.
   if (typeof _applyAnnotationMarkers === "function") {
     _applyAnnotationMarkers(clip);
+  }
+  // Animation layer (flag-gated): load this clip's cues + (re)build the
+  // lineId->index map now that the reading view's spans exist.
+  if (typeof _animLoadCues === "function") {
+    _animLoadCues(clip);
   }
   setMediaMetadata(clip.text || "");
 
