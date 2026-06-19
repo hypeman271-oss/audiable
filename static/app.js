@@ -36577,12 +36577,27 @@ if (settingsForceUpdate) {
         const keys = await caches.keys();
         await Promise.all(keys.map((k) => caches.delete(k).catch(() => false)));
       }
+      // v225v4.126: clearing the SW + Cache API isn't enough when the
+      // browser's OWN HTTP disk cache is serving stale shell files — the
+      // no-Cache-Control bug that stranded clients many versions back.
+      // fetch(url, {cache:"reload"}) bypasses the HTTP cache AND rewrites it
+      // with the fresh response, so the reload below renders the new version
+      // even on a browser that cached the old shell heuristically. (The
+      // server now also sends Cache-Control:no-cache, which prevents this
+      // going forward; this makes the button self-sufficient regardless.)
+      const _shell = [
+        "/", "/index.html", "/app.js", "/styles.css", "/sentence-ids.js",
+        "/tutorials.js", "/overlay-tour.js", "/manual.html", "/sw.js",
+        "/manifest.webmanifest",
+      ];
+      await Promise.all(
+        _shell.map((u) => fetch(u, { cache: "reload" }).catch(() => false)),
+      );
     } catch (e) {
       console.warn("[force-update] sweep failed:", e);
     }
-    // Hard reload — bypass the SW even if a residual controller is
-    // still around for the current page lifecycle. `location.reload`
-    // with no args is enough now that the SW + caches are gone.
+    // SW, Cache API, AND the HTTP cache for the shell are now fresh — a plain
+    // reload renders the new version.
     location.reload();
   });
 }
