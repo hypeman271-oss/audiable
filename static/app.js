@@ -9142,6 +9142,129 @@ function _sfxUserGain() {
   }
 })();
 
+// ── v4.118: animated-illustrations Phase 0 prototype (behind a flag) ────
+// The de-risking slice from docs/animation-system-design.md: prove the
+// cue-firing loop rides the same playback timeline the highlight + SFX use,
+// rendering ONE hard-coded UI cue onto a "stage" overlay. GATED OFF by
+// default — enable with `?anim=1` or localStorage 'narrative.animPrototype'
+// = "1". Flag off => none of this runs and the reading view is unchanged.
+// No persistence, no editor, combined-MP3 timeline only (per-sentence
+// streaming uses _streamElapsed and is a later increment — same boundary as
+// the SFX prototype). This is the analog of _MVP_SFX_CUE / _sfxTick.
+const _MVP_ANIM_CUE = {
+  // A windowed UI cue: fade+scale a stage badge in while the narration is
+  // inside this sentence range, and emphasize the active sentence so the
+  // "target a sentence" path is visible too. Real cues come from the editor
+  // and anchor to data-line-id (see the design doc).
+  kind: "ui",
+  startIdx: 2,
+  endIdx: 6,
+  label: "✨ Animation",
+};
+
+let _animStageEl = null; // sticky overlay pinned to the reading view
+let _animBadgeEl = null; // the UI-cue target that fades/scales in
+let _animEmphasized = null; // sentence span currently emphasized (for cleanup)
+let _animReady = false;
+
+function _animEnabled() {
+  try {
+    if (new URLSearchParams(location.search).get("anim") === "1") return true;
+    return localStorage.getItem("narrative.animPrototype") === "1";
+  } catch {
+    return false;
+  }
+}
+
+// Honor the OS reduced-motion setting AND a user opt-out. With motion off the
+// stage still SHOWS state (the badge appears) but without transitions — the
+// book stays fully usable. Hard requirement from the design doc.
+function _animReducedMotion() {
+  try {
+    if (localStorage.getItem("narrative.animEnabled") === "0") return true;
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+// Lazily build the stage overlay inside the reading view. Idempotent.
+// pointer-events:none + height:0 so it never blocks tap-to-seek or shifts text.
+function _animInit() {
+  if (_animReady || !_animEnabled()) return;
+  const host = typeof readingView !== "undefined" && readingView;
+  if (!host) return;
+  const stage = document.createElement("div");
+  stage.className = "anim-stage";
+  if (_animReducedMotion()) stage.classList.add("anim-reduced");
+  const badge = document.createElement("div");
+  badge.className = "anim-badge";
+  badge.textContent = _MVP_ANIM_CUE.label;
+  stage.appendChild(badge);
+  host.prepend(stage);
+  _animStageEl = stage;
+  _animBadgeEl = badge;
+  _animReady = true;
+}
+
+// Fire the hard-coded UI cue against the current playhead. Mirrors _sfxTick:
+// combined-MP3 timeline only; windowed in/out like the SFX bed.
+function _animTick() {
+  if (!_animReady || !_animBadgeEl) return;
+  // Streaming uses a different time source — stay dormant there.
+  if (typeof _streamPlayhead === "number" && _streamPlayhead >= 0) {
+    _animSetActive(false, -1);
+    return;
+  }
+  if (!Array.isArray(sentenceOffsetsSec) || !sentenceOffsetsSec.length) {
+    _animSetActive(false, -1);
+    return;
+  }
+  const idx = currentSentenceIndex(playerEl.currentTime);
+  const inside =
+    idx >= _MVP_ANIM_CUE.startIdx &&
+    idx <= _MVP_ANIM_CUE.endIdx &&
+    !playerEl.paused;
+  _animSetActive(inside, idx);
+}
+
+// Apply the UI cue: badge fade/scale (windowed) + emphasis on the active
+// sentence span (targeted). Both are pure class toggles — the "ui" renderer
+// vocabulary the design doc generalizes from tutorials.js.
+function _animSetActive(on, idx) {
+  if (_animBadgeEl) _animBadgeEl.classList.toggle("shown", !!on);
+  const nextSpan =
+    on && Array.isArray(sentenceSpans) && sentenceSpans[idx]
+      ? sentenceSpans[idx]
+      : null;
+  if (_animEmphasized && _animEmphasized !== nextSpan) {
+    _animEmphasized.classList.remove("anim-emphasis");
+    _animEmphasized = null;
+  }
+  if (nextSpan && nextSpan !== _animEmphasized) {
+    nextSpan.classList.add("anim-emphasis");
+    _animEmphasized = nextSpan;
+  }
+}
+
+// Teardown on stop/leave: hide the badge + clear emphasis. The stage element
+// stays in place — cheap to reuse on the next play.
+function _animStop() {
+  _animSetActive(false, -1);
+}
+
+(() => {
+  if (!playerEl) return;
+  playerEl.addEventListener("play", () => {
+    if (!_animEnabled()) return;
+    if (!_animReady) _animInit();
+  });
+  playerEl.addEventListener("timeupdate", _animTick);
+  playerEl.addEventListener("seeked", _animTick);
+  playerEl.addEventListener("pause", _animStop);
+  playerEl.addEventListener("ended", _animStop);
+})();
+
 async function renderBookmarks() {
   // v225.tn67 (#549): fix duplicate-rows race. The clear used to
   // run BEFORE the await — meaning two concurrent renderBookmarks
