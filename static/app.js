@@ -19123,7 +19123,6 @@ function _hideAnnotatePalette() {
     _voiceReleaseStream();
   }
   if (typeof _voiceShowTagRow === "function") _voiceShowTagRow();
-  if (typeof _animHideAnimRow === "function") _animHideAnimRow();
   annotatePalette.hidden = true;
   _annotatePendingSentenceIndex = null;
   // v223.tn14: resume main playback if we paused it on palette open
@@ -19159,13 +19158,6 @@ function _showAnnotatePalette(sentenceIndex, sentenceText) {
       ? `Flag: "${snippet}${sentenceText.length > 60 ? "…" : ""}"`
       : "Pick a tag to flag this sentence";
   }
-  // Animation authoring (flag-gated): reveal 🎬 only when the flag is on,
-  // and always open on the tag row (never a stale anim sub-row).
-  const _animBtn = document.getElementById("annotate-anim-btn");
-  if (_animBtn) {
-    _animBtn.hidden = !(typeof _animEnabled === "function" && _animEnabled());
-  }
-  if (typeof _animHideAnimRow === "function") _animHideAnimRow();
   annotatePalette.hidden = false;
 }
 
@@ -19245,23 +19237,33 @@ if (annotatePaletteClose) {
   annotatePaletteClose.addEventListener("click", _hideAnnotatePalette);
 }
 
-// ── Animation cue authoring (flag-gated) ──────────────────────────────
-// The 🎬 button in the annotate palette swaps in the anim sub-row; picking
-// an effect writes a UI cue to clip.animationCues on the selected sentence
-// and refreshes the live firing engine. UI tier only (highlight/glow/badge);
-// one cue per sentence (upsert), mirroring the annotate "one per sentence"
-// model. See docs/animation-system-design.md.
-const annotateAnimBtn = $("annotate-anim-btn");
-const annotateAnimRow = $("annotate-anim-row");
-const annotateAnimLabel = $("annotate-anim-label");
-const annotateAnimSave = $("annotate-anim-save");
-const annotateAnimRemove = $("annotate-anim-remove");
-const annotateAnimCancel = $("annotate-anim-cancel");
-const annotateAnimSpriteFile = $("annotate-anim-sprite-file");
-const annotateAnimFrames = $("annotate-anim-frames");
-const annotateAnimFps = $("annotate-anim-fps");
-let _animPendingEffect = null; // which effect the Save button commits ('badge'|'sprite')
+// ── Animation cue authoring (flag-gated, standalone) ──────────────────
+// A standalone "🎬 Animate" mode: its own toolbar button + bottom-sheet
+// palette, parallel to Annotate but INDEPENDENT — crucially it does NOT
+// pause playback (the annotate palette does), so cues preview live as you
+// add them. Entering the mode, a sentence tap opens the animate palette;
+// picking an effect writes a cue to clip.animationCues. UI tier
+// (highlight/glow/badge) + sprite tier; one cue per sentence (upsert).
+// See docs/animation-system-design.md.
+const animateModeBtn = $("animate-mode-btn");
+const animatePalette = $("animate-palette");
+const animateLabel = $("animate-label");
+const animateSpriteFile = $("animate-sprite-file");
+const animateFrames = $("animate-frames");
+const animateFps = $("animate-fps");
+const animateSave = $("animate-save");
+const animateRemove = $("animate-remove");
+const animateClose = $("animate-close");
+const animateHint = $("animate-hint");
+let _animMode = false;
+let _animSentenceIdx = null; // sentence the animate palette is acting on
+let _animPendingEffect = null; // which effect Save commits ('badge'|'sprite')
 let _animPendingSheet = null; // data URL of the chosen sprite sheet
+
+// Reveal the standalone Animate button only when the prototype flag is on.
+if (animateModeBtn) {
+  animateModeBtn.hidden = !(typeof _animEnabled === "function" && _animEnabled());
+}
 
 function _animHasCueOnIdx(idx) {
   return (
@@ -19271,43 +19273,59 @@ function _animHasCueOnIdx(idx) {
   );
 }
 
-// Swap the palette to the anim sub-row (hide the tag row). Resets the
-// badge label/save, and shows Remove only if this sentence already has one.
-function _animShowAnimRow() {
-  if (!annotateAnimRow) return;
-  const tagsRow = document.getElementById("annotate-palette-tags");
-  if (tagsRow) tagsRow.hidden = true;
-  annotateAnimRow.hidden = false;
-  if (annotateAnimLabel) {
-    annotateAnimLabel.hidden = true;
-    annotateAnimLabel.value = "";
+// Toggle animate mode. Mutually exclusive with annotate mode (one tap-target
+// behaviour on the reading view at a time).
+function _setAnimMode(on) {
+  _animMode = !!on;
+  if (_animMode && typeof _setAnnotateMode === "function" && _annotateMode) {
+    _setAnnotateMode(false);
   }
-  // Reset sprite inputs + pending state each open.
-  _animPendingEffect = null;
-  _animPendingSheet = null;
-  if (annotateAnimSpriteFile) {
-    annotateAnimSpriteFile.hidden = true;
-    annotateAnimSpriteFile.value = "";
+  if (animateModeBtn) {
+    animateModeBtn.setAttribute("aria-pressed", _animMode ? "true" : "false");
+    animateModeBtn.classList.toggle("annotate-mode-active", _animMode);
   }
-  if (annotateAnimFrames) {
-    annotateAnimFrames.hidden = true;
-    annotateAnimFrames.value = "";
-  }
-  if (annotateAnimFps) {
-    annotateAnimFps.hidden = true;
-    annotateAnimFps.value = "";
-  }
-  if (annotateAnimSave) annotateAnimSave.hidden = true;
-  if (annotateAnimRemove) {
-    annotateAnimRemove.hidden = !_animHasCueOnIdx(_annotatePendingSentenceIndex);
-  }
+  document.body.dataset.animateMode = _animMode ? "on" : "off";
+  if (!_animMode) _hideAnimatePalette();
+  setStatus(
+    _animMode
+      ? "Animate mode on — tap a sentence to add an animation."
+      : "Animate mode off."
+  );
 }
 
-// Back to the tag row (called on cancel, palette open, and palette close).
-function _animHideAnimRow() {
-  if (annotateAnimRow) annotateAnimRow.hidden = true;
-  const tagsRow = document.getElementById("annotate-palette-tags");
-  if (tagsRow) tagsRow.hidden = false;
+// Reset the palette's inputs + pending state; show Remove only when the
+// sentence already has a cue.
+function _animResetPaletteInputs() {
+  _animPendingEffect = null;
+  _animPendingSheet = null;
+  for (const el of [animateLabel, animateSpriteFile, animateFrames, animateFps]) {
+    if (el) {
+      el.hidden = true;
+      el.value = "";
+    }
+  }
+  if (animateSave) animateSave.hidden = true;
+  if (animateRemove) animateRemove.hidden = !_animHasCueOnIdx(_animSentenceIdx);
+}
+
+// Open the animate palette for a sentence. Unlike the annotate palette this
+// does NOT pause playback — cues preview live while the clip keeps playing.
+function _showAnimatePalette(idx, text) {
+  if (!animatePalette) return;
+  _animSentenceIdx = idx;
+  _animResetPaletteInputs();
+  if (animateHint) {
+    const snippet = (text || "").trim().slice(0, 60);
+    animateHint.textContent = snippet
+      ? `Animate: "${snippet}${text.length > 60 ? "…" : ""}"`
+      : "Tap an effect to animate this sentence";
+  }
+  animatePalette.hidden = false;
+}
+
+function _hideAnimatePalette() {
+  if (animatePalette) animatePalette.hidden = true;
+  _animSentenceIdx = null;
 }
 
 // IndexedDB upsert: one cue per sentence index (replace if present).
@@ -19365,9 +19383,9 @@ async function _removeAnimationCue(clipId, sentenceIdx) {
 // refresh the live engine so it fires on the next play without a reload.
 async function _animSaveCueForSentence(effect, opts) {
   opts = opts || {};
-  const idx = _annotatePendingSentenceIndex;
+  const idx = _animSentenceIdx;
   if (idx == null || !_currentClipId) {
-    _hideAnnotatePalette();
+    _hideAnimatePalette();
     return;
   }
   const span = sentenceSpans && sentenceSpans[idx];
@@ -19397,63 +19415,65 @@ async function _animSaveCueForSentence(effect, opts) {
     if (typeof _animInit === "function") _animInit();
     _animLoadCues(clip);
   }
-  _hideAnnotatePalette();
+  _hideAnimatePalette();
   setStatus(`✓ Animation (${effect}) on sentence ${idx + 1}.`);
 }
 
 async function _animRemoveCueForSentence() {
-  const idx = _annotatePendingSentenceIndex;
+  const idx = _animSentenceIdx;
   if (idx == null || !_currentClipId) {
-    _hideAnnotatePalette();
+    _hideAnimatePalette();
     return;
   }
   const clip = await _removeAnimationCue(_currentClipId, idx);
   const span = sentenceSpans && sentenceSpans[idx];
   if (span) delete span.dataset.hasAnim;
   if (clip && typeof _animLoadCues === "function") _animLoadCues(clip);
-  _hideAnnotatePalette();
+  _hideAnimatePalette();
   setStatus(`✓ Removed animation from sentence ${idx + 1}.`);
 }
 
-if (annotateAnimBtn) {
-  annotateAnimBtn.addEventListener("click", () => _animShowAnimRow());
+if (animateModeBtn) {
+  animateModeBtn.addEventListener("click", () => _setAnimMode(!_animMode));
 }
-if (annotateAnimCancel) {
-  annotateAnimCancel.addEventListener("click", () => _animHideAnimRow());
+if (animateClose) {
+  // The × exits animate mode entirely (the palette has no "back" — it's
+  // the whole UI now, not a sub-row).
+  animateClose.addEventListener("click", () => _setAnimMode(false));
 }
-if (annotateAnimRow) {
-  annotateAnimRow.addEventListener("click", (event) => {
+if (animatePalette) {
+  animatePalette.addEventListener("click", (event) => {
     const effBtn = event.target.closest("[data-anim-effect]");
     if (!effBtn) return;
     const effect = effBtn.dataset.animEffect;
     if (effect === "badge") {
       // Reveal the label field + Save; don't write until the author confirms.
       _animPendingEffect = "badge";
-      if (annotateAnimLabel) {
-        annotateAnimLabel.hidden = false;
-        annotateAnimLabel.focus();
+      if (animateLabel) {
+        animateLabel.hidden = false;
+        animateLabel.focus();
       }
-      if (annotateAnimSave) annotateAnimSave.hidden = false;
+      if (animateSave) animateSave.hidden = false;
     } else if (effect === "sprite") {
       // Reveal the file picker + frames/fps + Save; the file's data URL is
       // captured on change. Save commits the sprite cue.
       _animPendingEffect = "sprite";
       _animPendingSheet = null;
-      if (annotateAnimSpriteFile) {
-        annotateAnimSpriteFile.hidden = false;
-        annotateAnimSpriteFile.click(); // open the OS picker immediately
+      if (animateSpriteFile) {
+        animateSpriteFile.hidden = false;
+        animateSpriteFile.click(); // open the OS picker immediately
       }
-      if (annotateAnimFrames) annotateAnimFrames.hidden = false;
-      if (annotateAnimFps) annotateAnimFps.hidden = false;
-      if (annotateAnimSave) annotateAnimSave.hidden = false;
+      if (animateFrames) animateFrames.hidden = false;
+      if (animateFps) animateFps.hidden = false;
+      if (animateSave) animateSave.hidden = false;
     } else {
       _animSaveCueForSentence(effect); // highlight / glow — commit immediately
     }
   });
 }
-if (annotateAnimSpriteFile) {
-  annotateAnimSpriteFile.addEventListener("change", () => {
-    const file = annotateAnimSpriteFile.files && annotateAnimSpriteFile.files[0];
+if (animateSpriteFile) {
+  animateSpriteFile.addEventListener("change", () => {
+    const file = animateSpriteFile.files && animateSpriteFile.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
@@ -19468,29 +19488,33 @@ function _animCommitFromInputs() {
   if (_animPendingEffect === "sprite") {
     _animSaveCueForSentence("sprite", {
       sheet: _animPendingSheet,
-      frames: annotateAnimFrames ? annotateAnimFrames.value : 1,
-      fps: annotateAnimFps ? annotateAnimFps.value : 8,
+      frames: animateFrames ? animateFrames.value : 1,
+      fps: animateFps ? animateFps.value : 8,
     });
   } else {
     _animSaveCueForSentence("badge", {
-      label: annotateAnimLabel ? annotateAnimLabel.value : "",
+      label: animateLabel ? animateLabel.value : "",
     });
   }
 }
-if (annotateAnimSave) {
-  annotateAnimSave.addEventListener("click", _animCommitFromInputs);
+if (animateSave) {
+  animateSave.addEventListener("click", _animCommitFromInputs);
 }
-if (annotateAnimLabel) {
-  annotateAnimLabel.addEventListener("keydown", (e) => {
+if (animateLabel) {
+  animateLabel.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      _animSaveCueForSentence("badge", { label: annotateAnimLabel.value });
+      _animSaveCueForSentence("badge", { label: animateLabel.value });
     }
   });
 }
-if (annotateAnimRemove) {
-  annotateAnimRemove.addEventListener("click", () => _animRemoveCueForSentence());
+if (animateRemove) {
+  animateRemove.addEventListener("click", () => _animRemoveCueForSentence());
 }
+// Esc exits animate mode (parallel to the annotate palette's Esc).
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _animMode) _setAnimMode(false);
+});
 
 // Esc dismisses the palette like every other dialog in the app.
 document.addEventListener("keydown", (e) => {
@@ -19529,6 +19553,18 @@ if (readingViewEl) {
   readingViewEl.addEventListener(
     "click",
     (event) => {
+      // Standalone animate mode: a sentence tap opens the animate palette
+      // (no audio pause — cues preview live). Independent of annotate mode.
+      if (typeof _animMode !== "undefined" && _animMode) {
+        const aSpan = event.target.closest(".sentence");
+        if (!aSpan) return;
+        const aIdx = Number(aSpan.dataset.index);
+        if (!isFinite(aIdx)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        _showAnimatePalette(aIdx, aSpan.textContent || "");
+        return;
+      }
       if (!_annotateMode) return;
       const span = event.target.closest(".sentence");
       if (!span) return;

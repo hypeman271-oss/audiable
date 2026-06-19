@@ -9522,10 +9522,12 @@ textarea#text.file-drop-active {
 /* v223.annotate-1: while annotate mode is active, sentences in the
    reading view show a soft hover/tap affordance so the user knows
    they're targetable. */
-body[data-annotate-mode="on"] .reading-view .sentence {
+body[data-annotate-mode="on"] .reading-view .sentence,
+body[data-animate-mode="on"] .reading-view .sentence {
   cursor: pointer;
 }
-body[data-annotate-mode="on"] .reading-view .sentence:hover {
+body[data-annotate-mode="on"] .reading-view .sentence:hover,
+body[data-animate-mode="on"] .reading-view .sentence:hover {
   background: var(--hover-soft);
 }
 .highlight-toolbar-btn {

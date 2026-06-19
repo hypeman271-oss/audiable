@@ -321,10 +321,6 @@
              Distinct class so the existing data-tag handler doesn't
              try to save it as a regular flag. -->
         <button type="button" class="annotate-tag-btn annotate-voice-btn" id="annotate-voice-btn" title="Voice note">🎤 Voice</button>
-        <!-- Animation cue authoring (flag-gated ?anim=1; hidden otherwise).
-             Opens the anim sub-row to attach a UI animation cue to this
-             sentence. See docs/animation-system-design.md. -->
-        <button type="button" class="annotate-tag-btn annotate-anim-btn" id="annotate-anim-btn" title="Add animation" hidden>🎬 Animate</button>
         <button type="button" id="annotate-palette-close" class="annotate-palette-close" aria-label="Close palette">×</button>
       </div>
       <!-- v223.annotate-4: recording sub-row. Hidden while picking a
@@ -342,23 +338,28 @@
            finalized chunks shown solid. The text becomes the
            annotation's `transcript` field on save. -->
       <p class="annotate-record-transcript" id="annotate-record-transcript" hidden></p>
-      <!-- Animation cue sub-row (flag-gated). Swaps in after 🎬 Animate.
-           Pick a UI effect for the selected sentence; "badge" reveals a
-           label field. Remove shows when the sentence already has a cue. -->
-      <div class="annotate-anim-row" id="annotate-anim-row" hidden>
+      <p class="annotate-palette-hint" id="annotate-palette-hint">Pick a tag to flag this sentence</p>
+    </div>
+
+    <!-- Animation authoring palette (flag-gated ?anim=1). Standalone — its
+         own bottom-sheet, opened by the 🎬 Animate toolbar button + a
+         sentence tap. Independent of Annotate; does NOT pause playback, so
+         cues preview live. See docs/animation-system-design.md. -->
+    <div id="animate-palette" class="annotate-palette" hidden>
+      <div class="annotate-palette-row">
         <button type="button" class="annotate-tag-btn" data-anim-effect="highlight" title="Highlight the sentence as it's read">✨ Highlight</button>
         <button type="button" class="annotate-tag-btn" data-anim-effect="glow" title="Glow pulse on the sentence">🔆 Glow</button>
         <button type="button" class="annotate-tag-btn" data-anim-effect="badge" title="Show a labelled badge on the stage">🏷 Badge</button>
         <button type="button" class="annotate-tag-btn" data-anim-effect="sprite" title="Animate a sprite-sheet (hand-drawn frames)">🚶 Sprite</button>
-        <input type="text" class="annotate-anim-label" id="annotate-anim-label" placeholder="Badge text…" maxlength="40" hidden />
-        <input type="file" class="annotate-anim-file" id="annotate-anim-sprite-file" accept="image/*" hidden />
-        <input type="number" class="annotate-anim-num" id="annotate-anim-frames" placeholder="Frames" min="1" max="60" hidden />
-        <input type="number" class="annotate-anim-num" id="annotate-anim-fps" placeholder="FPS" min="1" max="30" hidden />
-        <button type="button" class="annotate-tag-btn annotate-anim-save" id="annotate-anim-save" hidden>Save</button>
-        <button type="button" class="annotate-tag-btn annotate-anim-remove" id="annotate-anim-remove" hidden>✕ Remove</button>
-        <button type="button" class="annotate-palette-close" id="annotate-anim-cancel" aria-label="Back to tags">×</button>
+        <input type="text" class="annotate-anim-label" id="animate-label" placeholder="Badge text…" maxlength="40" hidden />
+        <input type="file" class="annotate-anim-file" id="animate-sprite-file" accept="image/*" hidden />
+        <input type="number" class="annotate-anim-num" id="animate-frames" placeholder="Frames" min="1" max="60" hidden />
+        <input type="number" class="annotate-anim-num" id="animate-fps" placeholder="FPS" min="1" max="30" hidden />
+        <button type="button" class="annotate-tag-btn annotate-anim-save" id="animate-save" hidden>Save</button>
+        <button type="button" class="annotate-tag-btn annotate-anim-remove" id="animate-remove" hidden>✕ Remove</button>
+        <button type="button" class="annotate-palette-close" id="animate-close" aria-label="Exit animate mode">×</button>
       </div>
-      <p class="annotate-palette-hint" id="annotate-palette-hint">Pick a tag to flag this sentence</p>
+      <p class="annotate-palette-hint" id="animate-hint">Tap an effect to animate this sentence</p>
     </div>
 
     <main class="app">
@@ -3250,6 +3251,18 @@
             title="Tap to enter annotate mode — then tap any sentence to flag it"
             aria-pressed="false"
           >📝 Annotate</button>
+          <!-- Standalone animation-authoring mode (flag-gated ?anim=1; hidden
+               otherwise). Tap to enter, then tap a sentence to attach an
+               animation cue. Independent of Annotate. -->
+          <button
+            id="animate-mode-btn"
+            type="button"
+            class="annotate-mode-btn"
+            aria-label="Animate mode — tap a sentence to add an animation"
+            title="Tap to enter animate mode — then tap any sentence to add an animation"
+            aria-pressed="false"
+            hidden
+          >🎬 Animate</button>
           <button
             id="sleep-btn"
             type="button"
