@@ -14575,6 +14575,21 @@ html, body {
   opacity: 1;
   transform: translateY(0) scale(1);
 }
+/* Sprite tier (Phase 2): a frame-cycled sprite sheet floats top-right on the
+   stage. Sized to one frame by JS; pointer-events:none so it never blocks
+   taps. Renders below the badge when both are active. */
+.anim-sprite {
+  display: block;
+  margin-left: auto; /* right-align within the block stage */
+  margin-top: 4px;
+  pointer-events: none;
+  image-rendering: auto;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+.anim-sprite.shown {
+  opacity: 1;
+}
 /* Targeted UI cue: emphasize the active sentence within the window. An
    outline ring (not just a tint) so it reads clearly distinct from the
    normal read-along highlight, which is a background-only treatment. */
@@ -14645,4 +14660,20 @@ html, body {
 }
 .annotate-anim-save {
   border-color: var(--accent) !important;
+}
+.annotate-anim-num {
+  width: 84px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+}
+.annotate-anim-file {
+  max-width: 200px;
+  color: var(--fg-dim);
+  font-size: 12px;
 }

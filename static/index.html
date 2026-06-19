@@ -349,7 +349,11 @@
         <button type="button" class="annotate-tag-btn" data-anim-effect="highlight" title="Highlight the sentence as it's read">✨ Highlight</button>
         <button type="button" class="annotate-tag-btn" data-anim-effect="glow" title="Glow pulse on the sentence">🔆 Glow</button>
         <button type="button" class="annotate-tag-btn" data-anim-effect="badge" title="Show a labelled badge on the stage">🏷 Badge</button>
+        <button type="button" class="annotate-tag-btn" data-anim-effect="sprite" title="Animate a sprite-sheet (hand-drawn frames)">🚶 Sprite</button>
         <input type="text" class="annotate-anim-label" id="annotate-anim-label" placeholder="Badge text…" maxlength="40" hidden />
+        <input type="file" class="annotate-anim-file" id="annotate-anim-sprite-file" accept="image/*" hidden />
+        <input type="number" class="annotate-anim-num" id="annotate-anim-frames" placeholder="Frames" min="1" max="60" hidden />
+        <input type="number" class="annotate-anim-num" id="annotate-anim-fps" placeholder="FPS" min="1" max="30" hidden />
         <button type="button" class="annotate-tag-btn annotate-anim-save" id="annotate-anim-save" hidden>Save</button>
         <button type="button" class="annotate-tag-btn annotate-anim-remove" id="annotate-anim-remove" hidden>✕ Remove</button>
         <button type="button" class="annotate-palette-close" id="annotate-anim-cancel" aria-label="Back to tags">×</button>

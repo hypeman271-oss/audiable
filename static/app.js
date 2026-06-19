@@ -9161,10 +9161,14 @@ function _sfxUserGain() {
 //   clips with no per-sentence lines[].
 let _animStageEl = null; // sticky overlay pinned to the reading view
 let _animBadgeEl = null; // the badge target on the stage
+let _animSpriteEl = null; // sprite-sheet target on the stage (Phase 2)
 let _animEmphasized = null; // sentence span currently emphasized (cleanup)
 let _animReady = false; // stage overlay built
 let _animCues = []; // current clip's animationCues (raw)
 let _animLineIdToIdx = null; // Map(lineId -> idx) for the loaded clip, or null
+// Sprite playback state (Phase 2): the active sprite cue + frame cycler.
+let _animSprite = { cueId: null, timer: null, frames: 1, frameIdx: 0, stepPx: 0 };
+const _animSpriteDimCache = {}; // sheet (data URL) -> { w, h } natural dims
 
 function _animEnabled() {
   try {
@@ -9206,9 +9210,13 @@ function _animInit() {
   const badge = document.createElement("div");
   badge.className = "anim-badge";
   stage.appendChild(badge);
+  const sprite = document.createElement("div");
+  sprite.className = "anim-sprite";
+  stage.appendChild(sprite);
   host.prepend(stage);
   _animStageEl = stage;
   _animBadgeEl = badge;
+  _animSpriteEl = sprite;
   _animReady = true;
 }
 
@@ -9290,15 +9298,21 @@ function _animTick() {
   const idx = currentSentenceIndex(playerEl.currentTime);
   let emphasizeEffect = null; // 'highlight' | 'glow' covering the current sentence
   let badgeLabel = null; // last active badge cue's label wins
+  let activeSprite = null; // last active sprite cue wins
   for (const cue of _animCues) {
-    if (!cue || cue.kind !== "ui") continue;
+    if (!cue) continue;
     const range = _animResolveRange(cue);
     if (!range || idx < range[0] || idx > range[1]) continue; // not active
-    if (cue.effect === "badge") badgeLabel = cue.label || "✨ Animation";
-    else emphasizeEffect = cue.effect || "highlight"; // highlight / glow
+    if (cue.kind === "sprite") {
+      activeSprite = cue;
+    } else if (cue.kind === "ui") {
+      if (cue.effect === "badge") badgeLabel = cue.label || "✨ Animation";
+      else emphasizeEffect = cue.effect || "highlight"; // highlight / glow
+    }
   }
   _animReconcileEmphasis(emphasizeEffect ? idx : -1, emphasizeEffect === "glow");
   _animReconcileBadge(badgeLabel);
+  _animReconcileSprite(activeSprite, !playerEl.paused);
 }
 
 // Emphasis follows the narration: at most one span carries the effect class,
@@ -9330,10 +9344,91 @@ function _animReconcileBadge(label) {
   }
 }
 
-// Drop all transient render state (badge hidden, emphasis cleared).
+// ── Sprite tier (Phase 2): frame-cycle a sprite sheet while its cue is the
+// active sentence. The sheet is a horizontal strip of `frames` equal-width
+// frames; we size a box to one frame and step background-position-x at `fps`.
+// Cycling runs only while playing — paused freezes on the current frame
+// (consistent with the persist-on-pause behavior of the UI tier).
+function _animReconcileSprite(cue, playing) {
+  if (!_animSpriteEl) return;
+  if (!cue || !cue.sheet) {
+    _animSpriteHide();
+    return;
+  }
+  if (_animSprite.cueId !== cue.id) _animSpriteShow(cue);
+  if (playing) _animSpritePlay(cue);
+  else _animSpriteStopTimer();
+}
+
+function _animSpriteStopTimer() {
+  if (_animSprite.timer) {
+    clearInterval(_animSprite.timer);
+    _animSprite.timer = null;
+  }
+}
+
+function _animSpriteHide() {
+  _animSpriteStopTimer();
+  _animSprite.cueId = null;
+  if (_animSpriteEl) {
+    _animSpriteEl.classList.remove("shown");
+    _animSpriteEl.style.backgroundImage = "";
+  }
+}
+
+// Bind the sheet to the box (sizing one frame), reset to frame 0, reveal.
+// Natural dimensions are loaded once per sheet and cached.
+function _animSpriteShow(cue) {
+  _animSpriteStopTimer();
+  _animSprite.cueId = cue.id;
+  _animSprite.frames = Math.max(1, parseInt(cue.frames, 10) || 1);
+  _animSprite.frameIdx = 0;
+  const el = _animSpriteEl;
+  el.style.backgroundImage = 'url("' + cue.sheet + '")';
+  el.style.backgroundRepeat = "no-repeat";
+  const apply = (w, h) => {
+    if (_animSprite.cueId !== cue.id) return; // a newer cue took over mid-load
+    const frameW = w / _animSprite.frames;
+    const maxH = 140; // cap display height; scale width to keep aspect
+    const scale = h > maxH ? maxH / h : 1;
+    const dw = frameW * scale;
+    const dh = h * scale;
+    _animSprite.stepPx = dw;
+    el.style.width = dw + "px";
+    el.style.height = dh + "px";
+    el.style.backgroundSize = w * scale + "px " + h * scale + "px";
+    el.style.backgroundPosition = "0px 0px";
+    el.classList.add("shown");
+  };
+  const cached = _animSpriteDimCache[cue.sheet];
+  if (cached) {
+    apply(cached.w, cached.h);
+  } else {
+    const img = new Image();
+    img.onload = () => {
+      _animSpriteDimCache[cue.sheet] = { w: img.naturalWidth, h: img.naturalHeight };
+      apply(img.naturalWidth, img.naturalHeight);
+    };
+    img.src = cue.sheet;
+  }
+}
+
+function _animSpritePlay(cue) {
+  if (_animSprite.timer) return; // already cycling
+  const fps = Math.max(1, Math.min(30, parseInt(cue.fps, 10) || 8));
+  _animSprite.timer = setInterval(() => {
+    if (!_animSpriteEl || !_animSprite.stepPx) return;
+    _animSprite.frameIdx = (_animSprite.frameIdx + 1) % _animSprite.frames;
+    _animSpriteEl.style.backgroundPosition =
+      -_animSprite.frameIdx * _animSprite.stepPx + "px 0px";
+  }, 1000 / fps);
+}
+
+// Drop all transient render state (badge hidden, emphasis + sprite cleared).
 function _animClearRender() {
   _animReconcileEmphasis(-1);
   _animReconcileBadge(null);
+  _animSpriteHide();
 }
 
 (() => {
@@ -19162,6 +19257,11 @@ const annotateAnimLabel = $("annotate-anim-label");
 const annotateAnimSave = $("annotate-anim-save");
 const annotateAnimRemove = $("annotate-anim-remove");
 const annotateAnimCancel = $("annotate-anim-cancel");
+const annotateAnimSpriteFile = $("annotate-anim-sprite-file");
+const annotateAnimFrames = $("annotate-anim-frames");
+const annotateAnimFps = $("annotate-anim-fps");
+let _animPendingEffect = null; // which effect the Save button commits ('badge'|'sprite')
+let _animPendingSheet = null; // data URL of the chosen sprite sheet
 
 function _animHasCueOnIdx(idx) {
   return (
@@ -19181,6 +19281,21 @@ function _animShowAnimRow() {
   if (annotateAnimLabel) {
     annotateAnimLabel.hidden = true;
     annotateAnimLabel.value = "";
+  }
+  // Reset sprite inputs + pending state each open.
+  _animPendingEffect = null;
+  _animPendingSheet = null;
+  if (annotateAnimSpriteFile) {
+    annotateAnimSpriteFile.hidden = true;
+    annotateAnimSpriteFile.value = "";
+  }
+  if (annotateAnimFrames) {
+    annotateAnimFrames.hidden = true;
+    annotateAnimFrames.value = "";
+  }
+  if (annotateAnimFps) {
+    annotateAnimFps.hidden = true;
+    annotateAnimFps.value = "";
   }
   if (annotateAnimSave) annotateAnimSave.hidden = true;
   if (annotateAnimRemove) {
@@ -19248,7 +19363,8 @@ async function _removeAnimationCue(clipId, sentenceIdx) {
 
 // Build a cue for the pending sentence, persist it, mark the span, and
 // refresh the live engine so it fires on the next play without a reload.
-async function _animSaveCueForSentence(effect, label) {
+async function _animSaveCueForSentence(effect, opts) {
+  opts = opts || {};
   const idx = _annotatePendingSentenceIndex;
   if (idx == null || !_currentClipId) {
     _hideAnnotatePalette();
@@ -19258,14 +19374,23 @@ async function _animSaveCueForSentence(effect, label) {
   const lineId = (span && span.dataset && span.dataset.lineId) || null;
   const cue = {
     id: "anim_" + _annotateNewId(),
-    kind: "ui",
+    kind: effect === "sprite" ? "sprite" : "ui",
     effect,
     startIdx: idx,
     endIdx: idx,
     startLineId: lineId,
     endLineId: lineId,
   };
-  if (effect === "badge") cue.label = (label || "").trim() || "✨ Animation";
+  if (effect === "badge") cue.label = (opts.label || "").trim() || "✨ Animation";
+  if (effect === "sprite") {
+    if (!opts.sheet) {
+      setStatus("Pick a sprite-sheet image first.", true);
+      return; // keep the palette open so the author can choose a file
+    }
+    cue.sheet = opts.sheet;
+    cue.frames = Math.max(1, parseInt(opts.frames, 10) || 1);
+    cue.fps = Math.max(1, Math.min(30, parseInt(opts.fps, 10) || 8));
+  }
   const clip = await _addAnimationCue(_currentClipId, cue);
   if (span) span.dataset.hasAnim = "1";
   if (clip && typeof _animLoadCues === "function") {
@@ -19303,26 +19428,63 @@ if (annotateAnimRow) {
     const effect = effBtn.dataset.animEffect;
     if (effect === "badge") {
       // Reveal the label field + Save; don't write until the author confirms.
+      _animPendingEffect = "badge";
       if (annotateAnimLabel) {
         annotateAnimLabel.hidden = false;
         annotateAnimLabel.focus();
       }
       if (annotateAnimSave) annotateAnimSave.hidden = false;
+    } else if (effect === "sprite") {
+      // Reveal the file picker + frames/fps + Save; the file's data URL is
+      // captured on change. Save commits the sprite cue.
+      _animPendingEffect = "sprite";
+      _animPendingSheet = null;
+      if (annotateAnimSpriteFile) {
+        annotateAnimSpriteFile.hidden = false;
+        annotateAnimSpriteFile.click(); // open the OS picker immediately
+      }
+      if (annotateAnimFrames) annotateAnimFrames.hidden = false;
+      if (annotateAnimFps) annotateAnimFps.hidden = false;
+      if (annotateAnimSave) annotateAnimSave.hidden = false;
     } else {
-      _animSaveCueForSentence(effect, null);
+      _animSaveCueForSentence(effect); // highlight / glow — commit immediately
     }
   });
 }
+if (annotateAnimSpriteFile) {
+  annotateAnimSpriteFile.addEventListener("change", () => {
+    const file = annotateAnimSpriteFile.files && annotateAnimSpriteFile.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      _animPendingSheet = reader.result; // data URL
+      setStatus(`Sprite sheet "${file.name}" loaded — set frames + FPS, then Save.`);
+    };
+    reader.onerror = () => setStatus("Couldn't read that image.", true);
+    reader.readAsDataURL(file);
+  });
+}
+function _animCommitFromInputs() {
+  if (_animPendingEffect === "sprite") {
+    _animSaveCueForSentence("sprite", {
+      sheet: _animPendingSheet,
+      frames: annotateAnimFrames ? annotateAnimFrames.value : 1,
+      fps: annotateAnimFps ? annotateAnimFps.value : 8,
+    });
+  } else {
+    _animSaveCueForSentence("badge", {
+      label: annotateAnimLabel ? annotateAnimLabel.value : "",
+    });
+  }
+}
 if (annotateAnimSave) {
-  annotateAnimSave.addEventListener("click", () =>
-    _animSaveCueForSentence("badge", annotateAnimLabel ? annotateAnimLabel.value : "")
-  );
+  annotateAnimSave.addEventListener("click", _animCommitFromInputs);
 }
 if (annotateAnimLabel) {
   annotateAnimLabel.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      _animSaveCueForSentence("badge", annotateAnimLabel.value);
+      _animSaveCueForSentence("badge", { label: annotateAnimLabel.value });
     }
   });
 }
