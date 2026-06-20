@@ -9170,16 +9170,19 @@ function _sfxUserGain() {
 //   startLineId?, endLineId?, startIdx?, endIdx?, label? }. Line ids are the
 //   stable anchor (survive edits/re-narration); idx is the fallback for
 //   clips with no per-sentence lines[].
-let _animStageEl = null; // sticky overlay pinned to the reading view
+let _animStageEl = null; // sticky badge overlay (top) pinned to the reading view
 let _animBadgeEl = null; // the badge target on the stage
-let _animSpriteEl = null; // sprite-sheet target on the stage (Phase 2)
+let _animSpriteStageEl = null; // sticky sprite card (bottom-right) — own corner
+let _animSpriteEl = null; // sprite-sheet frame box inside the sprite card (Phase 2)
 let _animEmphasized = null; // sentence span currently emphasized (cleanup)
 let _animReady = false; // stage overlay built
 let _animCues = []; // current clip's animationCues (raw)
 let _animLineIdToIdx = null; // Map(lineId -> idx) for the loaded clip, or null
 // Sprite playback state (Phase 2): the active sprite cue + frame cycler.
-let _animSprite = { cueId: null, timer: null, frames: 1, frameIdx: 0, stepPx: 0 };
-const _animSpriteDimCache = {}; // sheet (data URL) -> { w, h } natural dims
+// objUrl is a live URL.createObjectURL for a Blob-backed sheet (revoked on
+// hide/replace); dim cache is keyed by cue.id (Blob object URLs differ per show).
+let _animSprite = { cueId: null, timer: null, frames: 1, frameIdx: 0, stepPx: 0, objUrl: null };
+const _animSpriteDimCache = {}; // cue.id -> { w, h } natural dims
 
 function _animEnabled() {
   try {
@@ -9209,24 +9212,40 @@ function _animReducedMotion() {
 // never blocks tap-to-seek or shifts text.
 function _animInit() {
   if (!_animEnabled()) return;
-  if (_animReady && _animStageEl && _animStageEl.isConnected) return;
+  if (
+    _animReady &&
+    _animStageEl && _animStageEl.isConnected &&
+    _animSpriteStageEl && _animSpriteStageEl.isConnected
+  ) {
+    return;
+  }
   const host = typeof readingView !== "undefined" && readingView;
   if (!host) return;
-  // Drop any orphaned stage from a prior render before building a fresh one.
-  const stale = host.querySelector(".anim-stage");
-  if (stale) stale.remove();
+  // Drop any orphaned stages from a prior render before building fresh ones.
+  host.querySelectorAll(".anim-stage, .anim-sprite-stage").forEach((e) => e.remove());
+  // Top: the badge overlay (small, top-right).
   const stage = document.createElement("div");
   stage.className = "anim-stage";
   if (_animReducedMotion()) stage.classList.add("anim-reduced");
   const badge = document.createElement("div");
   badge.className = "anim-badge";
   stage.appendChild(badge);
-  const sprite = document.createElement("div");
-  sprite.className = "anim-sprite";
-  stage.appendChild(sprite);
   host.prepend(stage);
+  // Bottom: the sprite card in its OWN corner (bottom-right, sticky), so a
+  // 140px character no longer floats over the first lines of text. The card
+  // (backdrop + shadow) only shows while a sprite cue is active.
+  const spriteStage = document.createElement("div");
+  spriteStage.className = "anim-sprite-stage";
+  const spriteCard = document.createElement("div");
+  spriteCard.className = "anim-sprite-card"; // backdrop/shadow; separate from the
+  const sprite = document.createElement("div"); // frame box (which owns the bg-image)
+  sprite.className = "anim-sprite";
+  spriteCard.appendChild(sprite);
+  spriteStage.appendChild(spriteCard);
+  host.appendChild(spriteStage);
   _animStageEl = stage;
   _animBadgeEl = badge;
+  _animSpriteStageEl = spriteStage;
   _animSpriteEl = sprite;
   _animReady = true;
 }
@@ -9362,7 +9381,9 @@ function _animReconcileBadge(label) {
 // (consistent with the persist-on-pause behavior of the UI tier).
 function _animReconcileSprite(cue, playing) {
   if (!_animSpriteEl) return;
-  if (!cue || !cue.sheet) {
+  // Active if the cue carries a sheet — either a Blob (preferred, stored
+  // natively in IndexedDB) or a legacy data-URL string.
+  if (!cue || !(cue.sheetBlob || cue.sheet)) {
     _animSpriteHide();
     return;
   }
@@ -9378,29 +9399,49 @@ function _animSpriteStopTimer() {
   }
 }
 
-function _animSpriteHide() {
-  _animSpriteStopTimer();
-  _animSprite.cueId = null;
-  if (_animSpriteEl) {
-    _animSpriteEl.classList.remove("shown");
-    _animSpriteEl.style.backgroundImage = "";
+// Release the live object URL for a Blob-backed sheet, if any.
+function _animSpriteRevoke() {
+  if (_animSprite.objUrl) {
+    try { URL.revokeObjectURL(_animSprite.objUrl); } catch {}
+    _animSprite.objUrl = null;
   }
 }
 
-// Bind the sheet to the box (sizing one frame), reset to frame 0, reveal.
-// Natural dimensions are loaded once per sheet and cached.
+function _animSpriteHide() {
+  _animSpriteStopTimer();
+  _animSpriteRevoke();
+  _animSprite.cueId = null;
+  if (_animSpriteEl) {
+    _animSpriteEl.style.backgroundImage = "";
+  }
+  if (_animSpriteStageEl) _animSpriteStageEl.classList.remove("shown");
+}
+
+// Bind the sheet to the box (sizing one frame), reset to frame 0, reveal the
+// card. The image source is a Blob object URL (preferred) or a legacy data
+// URL; natural dimensions are loaded once per cue and cached.
 function _animSpriteShow(cue) {
   _animSpriteStopTimer();
+  _animSpriteRevoke(); // drop the previous cue's object URL before a new one
   _animSprite.cueId = cue.id;
   _animSprite.frames = Math.max(1, parseInt(cue.frames, 10) || 1);
   _animSprite.frameIdx = 0;
+  // Resolve the image source: Blob → fresh object URL (tracked for revoke);
+  // else the legacy inline data URL.
+  let src;
+  if (cue.sheetBlob) {
+    _animSprite.objUrl = URL.createObjectURL(cue.sheetBlob);
+    src = _animSprite.objUrl;
+  } else {
+    src = cue.sheet;
+  }
   const el = _animSpriteEl;
-  el.style.backgroundImage = 'url("' + cue.sheet + '")';
+  el.style.backgroundImage = 'url("' + src + '")';
   el.style.backgroundRepeat = "no-repeat";
   const apply = (w, h) => {
     if (_animSprite.cueId !== cue.id) return; // a newer cue took over mid-load
     const frameW = w / _animSprite.frames;
-    const maxH = 140; // cap display height; scale width to keep aspect
+    const maxH = 120; // cap display height; scale width to keep aspect
     const scale = h > maxH ? maxH / h : 1;
     const dw = frameW * scale;
     const dh = h * scale;
@@ -9409,18 +9450,18 @@ function _animSpriteShow(cue) {
     el.style.height = dh + "px";
     el.style.backgroundSize = w * scale + "px " + h * scale + "px";
     el.style.backgroundPosition = "0px 0px";
-    el.classList.add("shown");
+    if (_animSpriteStageEl) _animSpriteStageEl.classList.add("shown");
   };
-  const cached = _animSpriteDimCache[cue.sheet];
+  const cached = _animSpriteDimCache[cue.id];
   if (cached) {
     apply(cached.w, cached.h);
   } else {
     const img = new Image();
     img.onload = () => {
-      _animSpriteDimCache[cue.sheet] = { w: img.naturalWidth, h: img.naturalHeight };
+      _animSpriteDimCache[cue.id] = { w: img.naturalWidth, h: img.naturalHeight };
       apply(img.naturalWidth, img.naturalHeight);
     };
-    img.src = cue.sheet;
+    img.src = src;
   }
 }
 
@@ -19269,7 +19310,7 @@ const animateHint = $("animate-hint");
 let _animMode = false;
 let _animSentenceIdx = null; // sentence the animate palette is acting on
 let _animPendingEffect = null; // which effect Save commits ('badge'|'sprite')
-let _animPendingSheet = null; // data URL of the chosen sprite sheet
+let _animPendingSheetBlob = null; // the chosen sprite sheet as a Blob/File
 
 // Reveal the standalone Animate button only when the prototype flag is on.
 if (animateModeBtn) {
@@ -19308,7 +19349,7 @@ function _setAnimMode(on) {
 // sentence already has a cue.
 function _animResetPaletteInputs() {
   _animPendingEffect = null;
-  _animPendingSheet = null;
+  _animPendingSheetBlob = null;
   for (const el of [animateLabel, animateSpriteFile, animateFrames, animateFps]) {
     if (el) {
       el.hidden = true;
@@ -19412,11 +19453,13 @@ async function _animSaveCueForSentence(effect, opts) {
   };
   if (effect === "badge") cue.label = (opts.label || "").trim() || "✨ Animation";
   if (effect === "sprite") {
-    if (!opts.sheet) {
+    if (!opts.blob) {
       setStatus("Pick a sprite-sheet image first.", true);
       return; // keep the palette open so the author can choose a file
     }
-    cue.sheet = opts.sheet;
+    // Store the Blob itself — IndexedDB persists it natively (no base64 bloat
+    // on the clip). The renderer makes an object URL at playback time.
+    cue.sheetBlob = opts.blob;
     cue.frames = Math.max(1, parseInt(opts.frames, 10) || 1);
     cue.fps = Math.max(1, Math.min(30, parseInt(opts.fps, 10) || 8));
   }
@@ -19466,10 +19509,10 @@ if (animatePalette) {
       }
       if (animateSave) animateSave.hidden = false;
     } else if (effect === "sprite") {
-      // Reveal the file picker + frames/fps + Save; the file's data URL is
-      // captured on change. Save commits the sprite cue.
+      // Reveal the file picker + frames/fps + Save; the chosen File (a Blob)
+      // is captured on change. Save commits the sprite cue.
       _animPendingEffect = "sprite";
-      _animPendingSheet = null;
+      _animPendingSheetBlob = null;
       if (animateSpriteFile) {
         animateSpriteFile.hidden = false;
         animateSpriteFile.click(); // open the OS picker immediately
@@ -19486,19 +19529,16 @@ if (animateSpriteFile) {
   animateSpriteFile.addEventListener("change", () => {
     const file = animateSpriteFile.files && animateSpriteFile.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      _animPendingSheet = reader.result; // data URL
-      setStatus(`Sprite sheet "${file.name}" loaded — set frames + FPS, then Save.`);
-    };
-    reader.onerror = () => setStatus("Couldn't read that image.", true);
-    reader.readAsDataURL(file);
+    // Keep the File itself (a Blob) — stored natively in IndexedDB, no base64
+    // bloat. No FileReader / data URL.
+    _animPendingSheetBlob = file;
+    setStatus(`Sprite sheet "${file.name}" loaded — set frames + FPS, then Save.`);
   });
 }
 function _animCommitFromInputs() {
   if (_animPendingEffect === "sprite") {
     _animSaveCueForSentence("sprite", {
-      sheet: _animPendingSheet,
+      blob: _animPendingSheetBlob,
       frames: animateFrames ? animateFrames.value : 1,
       fps: animateFps ? animateFps.value : 8,
     });

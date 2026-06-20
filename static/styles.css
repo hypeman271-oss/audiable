@@ -14577,20 +14577,47 @@ html, body {
   opacity: 1;
   transform: translateY(0) scale(1);
 }
-/* Sprite tier (Phase 2): a frame-cycled sprite sheet floats top-right on the
-   stage. Sized to one frame by JS; pointer-events:none so it never blocks
-   taps. Renders below the badge when both are active. */
+/* Sprite tier (Phase 2): the sprite plays in its OWN card pinned to the
+   bottom-right corner of the reading view (sticky), so a 140px character no
+   longer floats over the first lines of text. The stage is a zero-height
+   sticky anchor; the card (backdrop + shadow) floats up from it and only
+   shows while a sprite cue is active; the frame box owns the sprite-sheet
+   background-image (no padding/bg conflict). pointer-events:none throughout. */
+.anim-sprite-stage {
+  position: sticky;
+  bottom: 10px;
+  height: 0; /* anchor only — takes no layout space */
+  z-index: 5;
+  pointer-events: none;
+}
+.anim-sprite-card {
+  position: absolute;
+  right: 6px;
+  bottom: 0;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transition: opacity 220ms ease-out, transform 220ms ease-out;
+}
+.anim-sprite-stage.shown .anim-sprite-card {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
 .anim-sprite {
   display: block;
-  margin-left: auto; /* right-align within the block stage */
-  margin-top: 4px;
+  background-repeat: no-repeat;
   pointer-events: none;
   image-rendering: auto;
-  opacity: 0;
-  transition: opacity 200ms ease-out;
 }
-.anim-sprite.shown {
-  opacity: 1;
+@media (prefers-reduced-motion: reduce) {
+  .anim-sprite-card {
+    transition: none;
+  }
 }
 /* Targeted UI cue: emphasize the active sentence within the window. An
    outline ring (not just a tint) so it reads clearly distinct from the
