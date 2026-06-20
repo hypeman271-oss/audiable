@@ -9282,7 +9282,49 @@ function _animLoadCues(clip) {
       }
     }
   }
+  // Migrate any legacy inline sheets (sheetBlob from v4.127, or sheet data
+  // URLs) into the separate store so they stop bloating the clip's
+  // progress-save/sync. Fire-and-forget; renderer still handles legacy cues.
+  if (clip && _animCues.some((c) => c && !c.sheetId && (c.sheetBlob || c.sheet))) {
+    _animMigrateLegacySheets(clip).catch(() => {});
+  }
   _animClearRender();
+}
+
+// Move inline sprite sheets off the clip into ANIM_SHEET_STORE, then persist
+// the slimmed clip. One-time per legacy cue; idempotent.
+async function _animMigrateLegacySheets(clip) {
+  let changed = false;
+  for (const c of clip.animationCues || []) {
+    if (!c || c.sheetId) continue;
+    let blob = null;
+    if (c.sheetBlob instanceof Blob) {
+      blob = c.sheetBlob;
+    } else if (typeof c.sheet === "string" && c.sheet.startsWith("data:")) {
+      try {
+        blob = await (await fetch(c.sheet)).blob(); // data URL → Blob
+      } catch {}
+    }
+    if (!blob) continue;
+    const id = "sheet_" + _annotateNewId();
+    try {
+      await putAnimSheet(id, blob);
+    } catch {
+      continue;
+    }
+    c.sheetId = id;
+    delete c.sheetBlob;
+    delete c.sheet;
+    changed = true;
+  }
+  if (changed && typeof _mutateClipAtomic === "function") {
+    try {
+      await _mutateClipAtomic(clip.id, (cc) => {
+        cc.animationCues = clip.animationCues;
+      });
+      if (_currentClipId === clip.id) _animCues = clip.animationCues;
+    } catch {}
+  }
 }
 
 // Resolve a cue's sentence range. Prefer stable line ids; fall back to the
@@ -9381,15 +9423,28 @@ function _animReconcileBadge(label) {
 // (consistent with the persist-on-pause behavior of the UI tier).
 function _animReconcileSprite(cue, playing) {
   if (!_animSpriteEl) return;
-  // Active if the cue carries a sheet — either a Blob (preferred, stored
-  // natively in IndexedDB) or a legacy data-URL string.
-  if (!cue || !(cue.sheetBlob || cue.sheet)) {
+  // Active if the cue carries a sheet — a sheetId (separate store, preferred),
+  // or a legacy inline Blob / data-URL string.
+  if (!cue || !(cue.sheetId || cue.sheetBlob || cue.sheet)) {
     _animSpriteHide();
     return;
   }
   if (_animSprite.cueId !== cue.id) _animSpriteShow(cue);
   if (playing) _animSpritePlay(cue);
   else _animSpriteStopTimer();
+}
+
+// Resolve a cue's sheet to a displayable URL. Returns { value, revoke } where
+// revoke is true if we created an object URL (so the caller revokes it).
+async function _animResolveSheetUrl(cue) {
+  if (cue.sheetId) {
+    const blob = await getAnimSheet(cue.sheetId);
+    if (blob) return { value: URL.createObjectURL(blob), revoke: true };
+    return null;
+  }
+  if (cue.sheetBlob) return { value: URL.createObjectURL(cue.sheetBlob), revoke: true };
+  if (cue.sheet) return { value: cue.sheet, revoke: false };
+  return null;
 }
 
 function _animSpriteStopTimer() {
@@ -9423,46 +9478,50 @@ function _animSpriteHide() {
 function _animSpriteShow(cue) {
   _animSpriteStopTimer();
   _animSpriteRevoke(); // drop the previous cue's object URL before a new one
-  _animSprite.cueId = cue.id;
+  _animSprite.cueId = cue.id; // set synchronously so reconcile won't re-show
   _animSprite.frames = Math.max(1, parseInt(cue.frames, 10) || 1);
   _animSprite.frameIdx = 0;
-  // Resolve the image source: Blob → fresh object URL (tracked for revoke);
-  // else the legacy inline data URL.
-  let src;
-  if (cue.sheetBlob) {
-    _animSprite.objUrl = URL.createObjectURL(cue.sheetBlob);
-    src = _animSprite.objUrl;
-  } else {
-    src = cue.sheet;
-  }
-  const el = _animSpriteEl;
-  el.style.backgroundImage = 'url("' + src + '")';
-  el.style.backgroundRepeat = "no-repeat";
-  const apply = (w, h) => {
-    if (_animSprite.cueId !== cue.id) return; // a newer cue took over mid-load
-    const frameW = w / _animSprite.frames;
-    const maxH = 120; // cap display height; scale width to keep aspect
-    const scale = h > maxH ? maxH / h : 1;
-    const dw = frameW * scale;
-    const dh = h * scale;
-    _animSprite.stepPx = dw;
-    el.style.width = dw + "px";
-    el.style.height = dh + "px";
-    el.style.backgroundSize = w * scale + "px " + h * scale + "px";
-    el.style.backgroundPosition = "0px 0px";
-    if (_animSpriteStageEl) _animSpriteStageEl.classList.add("shown");
-  };
-  const cached = _animSpriteDimCache[cue.id];
-  if (cached) {
-    apply(cached.w, cached.h);
-  } else {
-    const img = new Image();
-    img.onload = () => {
-      _animSpriteDimCache[cue.id] = { w: img.naturalWidth, h: img.naturalHeight };
-      apply(img.naturalWidth, img.naturalHeight);
+  // Resolve the sheet (sheetId lookup is async) → an image source.
+  _animResolveSheetUrl(cue).then((resolved) => {
+    if (!resolved || _animSprite.cueId !== cue.id) {
+      // A newer cue took over, or the sheet is missing. If we made a URL for a
+      // stale cue, release it.
+      if (resolved && resolved.revoke) {
+        try { URL.revokeObjectURL(resolved.value); } catch {}
+      }
+      return;
+    }
+    const src = resolved.value;
+    _animSprite.objUrl = resolved.revoke ? src : null; // revoke object URLs only
+    const el = _animSpriteEl;
+    el.style.backgroundImage = 'url("' + src + '")';
+    el.style.backgroundRepeat = "no-repeat";
+    const apply = (w, h) => {
+      if (_animSprite.cueId !== cue.id) return; // a newer cue took over mid-load
+      const frameW = w / _animSprite.frames;
+      const maxH = 120; // cap display height; scale width to keep aspect
+      const scale = h > maxH ? maxH / h : 1;
+      const dw = frameW * scale;
+      const dh = h * scale;
+      _animSprite.stepPx = dw;
+      el.style.width = dw + "px";
+      el.style.height = dh + "px";
+      el.style.backgroundSize = w * scale + "px " + h * scale + "px";
+      el.style.backgroundPosition = "0px 0px";
+      if (_animSpriteStageEl) _animSpriteStageEl.classList.add("shown");
     };
-    img.src = src;
-  }
+    const cached = _animSpriteDimCache[cue.id];
+    if (cached) {
+      apply(cached.w, cached.h);
+    } else {
+      const img = new Image();
+      img.onload = () => {
+        _animSpriteDimCache[cue.id] = { w: img.naturalWidth, h: img.naturalHeight };
+        apply(img.naturalWidth, img.naturalHeight);
+      };
+      img.src = src;
+    }
+  });
 }
 
 function _animSpritePlay(cue) {
@@ -19415,9 +19474,12 @@ async function _removeAnimationCue(clipId, sentenceIdx) {
     const store = tx.objectStore(STORE);
     const clip = await idbReq(store.get(clipId));
     if (!clip) return null;
-    clip.animationCues = (
-      Array.isArray(clip.animationCues) ? clip.animationCues : []
-    ).filter((c) => !(c && c.startIdx === sentenceIdx));
+    const all = Array.isArray(clip.animationCues) ? clip.animationCues : [];
+    // GC any sprite sheets owned by the cues we're about to drop.
+    for (const c of all) {
+      if (c && c.startIdx === sentenceIdx && c.sheetId) deleteAnimSheet(c.sheetId);
+    }
+    clip.animationCues = all.filter((c) => !(c && c.startIdx === sentenceIdx));
     clip.updatedAt = new Date().toISOString();
     await idbReq(store.put(clip));
     await new Promise((res, rej) => {
@@ -19457,9 +19519,18 @@ async function _animSaveCueForSentence(effect, opts) {
       setStatus("Pick a sprite-sheet image first.", true);
       return; // keep the palette open so the author can choose a file
     }
-    // Store the Blob itself — IndexedDB persists it natively (no base64 bloat
-    // on the clip). The renderer makes an object URL at playback time.
-    cue.sheetBlob = opts.blob;
+    // Store the sheet in its OWN store and keep only a small id on the cue, so
+    // it never rides along in the clip's progress-save/sync (the audio-hitch
+    // bug). Renderer resolves the id → Blob → object URL at playback.
+    const sheetId = "sheet_" + _annotateNewId();
+    try {
+      await putAnimSheet(sheetId, opts.blob);
+    } catch (e) {
+      setStatus("Couldn't store the sprite sheet — see console.", true);
+      console.warn("[anim] putAnimSheet failed:", e);
+      return;
+    }
+    cue.sheetId = sheetId;
     cue.frames = Math.max(1, parseInt(opts.frames, 10) || 1);
     cue.fps = Math.max(1, Math.min(30, parseInt(opts.fps, 10) || 8));
   }
@@ -23468,8 +23539,14 @@ if (bookViewSpread) {
 // Keep the legacy DB name even after the app was renamed to Narrative — IndexedDB
 // is keyed on this string, and changing it would orphan any clips users already saved.
 const DB_NAME = "audiable";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "clips";
+// v225v4.128 (#901): sprite sheets live in their OWN store, NOT inside the
+// clip object. The throttled progress-save (every 5s during playback) does
+// get(clip) → put(clip) → _syncPushClip(clip); if a multi-MB sheet rode
+// along inside clip.animationCues, every tick cloned + uploaded megabytes,
+// hitching the audio. Out-of-line keys (the cue holds a small sheetId).
+const ANIM_SHEET_STORE = "anim_sheets";
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -23479,10 +23556,46 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(ANIM_SHEET_STORE)) {
+        db.createObjectStore(ANIM_SHEET_STORE); // out-of-line keys (sheetId)
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+// Sprite-sheet blob store helpers (kept off the clip; see ANIM_SHEET_STORE).
+async function putAnimSheet(id, blob) {
+  const db = await openDB();
+  const tx = db.transaction(ANIM_SHEET_STORE, "readwrite");
+  tx.objectStore(ANIM_SHEET_STORE).put(blob, id);
+  return new Promise((res, rej) => {
+    tx.oncomplete = () => res(id);
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error);
+  });
+}
+async function getAnimSheet(id) {
+  try {
+    const db = await openDB();
+    return await idbReq(
+      db.transaction(ANIM_SHEET_STORE, "readonly").objectStore(ANIM_SHEET_STORE).get(id)
+    );
+  } catch {
+    return null;
+  }
+}
+async function deleteAnimSheet(id) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(ANIM_SHEET_STORE, "readwrite");
+    tx.objectStore(ANIM_SHEET_STORE).delete(id);
+    await new Promise((res) => {
+      tx.oncomplete = res;
+      tx.onerror = res;
+    });
+  } catch {}
 }
 
 function idbReq(req) {
