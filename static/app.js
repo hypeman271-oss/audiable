@@ -19370,6 +19370,7 @@ let _animMode = false;
 let _animSentenceIdx = null; // sentence the animate palette is acting on
 let _animPendingEffect = null; // which effect Save commits ('badge'|'sprite')
 let _animPendingSheetBlob = null; // the chosen sprite sheet as a Blob/File
+let _animEditSheetId = null; // sheetId to reuse when editing an existing sprite cue
 
 // Reveal the standalone Animate button only when the prototype flag is on.
 if (animateModeBtn) {
@@ -19409,6 +19410,7 @@ function _setAnimMode(on) {
 function _animResetPaletteInputs() {
   _animPendingEffect = null;
   _animPendingSheetBlob = null;
+  _animEditSheetId = null;
   for (const el of [animateLabel, animateSpriteFile, animateFrames, animateFps]) {
     if (el) {
       el.hidden = true;
@@ -19425,11 +19427,36 @@ function _showAnimatePalette(idx, text) {
   if (!animatePalette) return;
   _animSentenceIdx = idx;
   _animResetPaletteInputs();
+  // Editing: if this sentence already has a SPRITE cue, pre-fill Frames + FPS
+  // so they can be changed in place (no need to re-pick the image — the sheet
+  // is reused). Picking a new file via 🚶 still replaces the image.
+  const existingSprite = (Array.isArray(_animCues) ? _animCues : []).find(
+    (c) => c && c.startIdx === idx && c.kind === "sprite"
+  );
+  if (existingSprite) {
+    _animPendingEffect = "sprite";
+    _animEditSheetId = existingSprite.sheetId || null;
+    if (animateFrames) {
+      animateFrames.hidden = false;
+      animateFrames.value = existingSprite.frames || 4;
+    }
+    if (animateFps) {
+      animateFps.hidden = false;
+      animateFps.value = existingSprite.fps || 8;
+    }
+    if (animateSpriteFile) animateSpriteFile.hidden = false; // optional replace
+    if (animateSave) animateSave.hidden = false;
+  }
   if (animateHint) {
-    const snippet = (text || "").trim().slice(0, 60);
-    animateHint.textContent = snippet
-      ? `Animate: "${snippet}${text.length > 60 ? "…" : ""}"`
-      : "Tap an effect to animate this sentence";
+    if (existingSprite) {
+      animateHint.textContent =
+        "Editing sprite — change Frames / FPS (or 🚶 to replace the image), then Save.";
+    } else {
+      const snippet = (text || "").trim().slice(0, 60);
+      animateHint.textContent = snippet
+        ? `Animate: "${snippet}${text.length > 60 ? "…" : ""}"`
+        : "Tap an effect to animate this sentence";
+    }
   }
   animatePalette.hidden = false;
 }
@@ -19515,22 +19542,28 @@ async function _animSaveCueForSentence(effect, opts) {
   };
   if (effect === "badge") cue.label = (opts.label || "").trim() || "✨ Animation";
   if (effect === "sprite") {
-    if (!opts.blob) {
+    if (opts.blob) {
+      // New / replacement sheet → store it (own store; only a small id rides
+      // on the clip — see the audio-hitch fix). GC a replaced sheet.
+      const sheetId = "sheet_" + _annotateNewId();
+      try {
+        await putAnimSheet(sheetId, opts.blob);
+      } catch (e) {
+        setStatus("Couldn't store the sprite sheet — see console.", true);
+        console.warn("[anim] putAnimSheet failed:", e);
+        return;
+      }
+      cue.sheetId = sheetId;
+      if (opts.reuseSheetId && opts.reuseSheetId !== sheetId) {
+        deleteAnimSheet(opts.reuseSheetId);
+      }
+    } else if (opts.reuseSheetId) {
+      // Editing in place: keep the existing sheet, just change frames/fps.
+      cue.sheetId = opts.reuseSheetId;
+    } else {
       setStatus("Pick a sprite-sheet image first.", true);
       return; // keep the palette open so the author can choose a file
     }
-    // Store the sheet in its OWN store and keep only a small id on the cue, so
-    // it never rides along in the clip's progress-save/sync (the audio-hitch
-    // bug). Renderer resolves the id → Blob → object URL at playback.
-    const sheetId = "sheet_" + _annotateNewId();
-    try {
-      await putAnimSheet(sheetId, opts.blob);
-    } catch (e) {
-      setStatus("Couldn't store the sprite sheet — see console.", true);
-      console.warn("[anim] putAnimSheet failed:", e);
-      return;
-    }
-    cue.sheetId = sheetId;
     cue.frames = Math.max(1, parseInt(opts.frames, 10) || 1);
     cue.fps = Math.max(1, Math.min(30, parseInt(opts.fps, 10) || 8));
   }
@@ -19610,6 +19643,7 @@ function _animCommitFromInputs() {
   if (_animPendingEffect === "sprite") {
     _animSaveCueForSentence("sprite", {
       blob: _animPendingSheetBlob,
+      reuseSheetId: _animEditSheetId,
       frames: animateFrames ? animateFrames.value : 1,
       fps: animateFps ? animateFps.value : 8,
     });
