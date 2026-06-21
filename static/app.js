@@ -9190,6 +9190,102 @@ const _animSpriteDimCache = {}; // cue.id -> { w, h } natural dims
 let _animPageLayerEl = null; // sticky full-bleed layer (behind text)
 let _animPageBgEl = null; // the image/sprite element inside the layer
 let _animPage = { cueId: null, timer: null, frames: 1, frameIdx: 0, objUrl: null };
+// Per-clip cache of sheetId -> object URL, preloaded at clip load so neither a
+// Book-view page flip nor a cue fire reads IndexedDB / decodes mid-playback.
+let _animSheetUrlCache = {};
+
+function _animClearSheetCache() {
+  for (const k in _animSheetUrlCache) {
+    try { URL.revokeObjectURL(_animSheetUrlCache[k]); } catch {}
+  }
+  _animSheetUrlCache = {};
+}
+
+async function _animPreloadSheets(clip) {
+  const cues = (clip && clip.animationCues) || [];
+  let added = false;
+  for (const c of cues) {
+    if (c && c.sheetId && !_animSheetUrlCache[c.sheetId]) {
+      const blob = await getAnimSheet(c.sheetId);
+      if (blob) {
+        _animSheetUrlCache[c.sheetId] = URL.createObjectURL(blob);
+        added = true;
+      }
+    }
+  }
+  // Scenes may now be renderable — re-apply onto the open Book-view pages
+  // (they persist; no re-render needed).
+  if (
+    added &&
+    typeof bookView !== "undefined" && bookView && !bookView.hidden &&
+    typeof _animApplyToSpreadScenes === "function"
+  ) {
+    try { _animApplyToSpreadScenes(); } catch {}
+  }
+}
+
+// Book-view (consumer surface): paint the full-page SCENE behind each text page
+// of the current spread. Called at the end of _bookViewRenderSpread (spreads
+// re-render destructively, so we re-inject each time). Scene = the page cue
+// (scene marker) with the largest start ≤ the page's first sentence. Uses the
+// preloaded URL cache only — no IDB/decode here (audio-safe). Still images get
+// a Ken-Burns drift; sprite-source scenes show their first frame (no per-frame
+// loop in Book view for now). See docs/animation-system-design.md §12.
+function _animApplyToSpreadScenes() {
+  if (!_animEnabled()) return;
+  if (!Array.isArray(_animCues) || !_animCues.length) return;
+  if (typeof _bookSentenceToPage === "undefined" || !Array.isArray(_bookSentenceToPage)) {
+    return;
+  }
+  // V3 pages are .book-view-page; legacy are .book-page. Both stamp
+  // data-text-page-idx; _bookSentenceToPage maps sentence → that index.
+  const pages = document.querySelectorAll(
+    ".book-view-page[data-text-page-idx], .book-page[data-text-page-idx]"
+  );
+  pages.forEach((pageEl) => {
+    pageEl.querySelectorAll(".anim-book-scene").forEach((e) => e.remove());
+    pageEl.classList.remove("book-page--scene");
+    const tpi = parseInt(pageEl.dataset.textPageIdx, 10);
+    if (!Number.isFinite(tpi)) return;
+    // First sentence on this page (smallest sentence idx mapped to it).
+    let first = -1;
+    for (let i = 0; i < _bookSentenceToPage.length; i++) {
+      if (_bookSentenceToPage[i] === tpi) {
+        first = i;
+        break;
+      }
+    }
+    if (first < 0) return;
+    let scene = null;
+    let best = -1;
+    for (const c of _animCues) {
+      if (!c || c.kind !== "page") continue;
+      const range = _animResolveRange(c);
+      if (!range || range[0] > first) continue;
+      if (range[0] > best) {
+        best = range[0];
+        scene = c;
+      }
+    }
+    if (!scene || !scene.sheetId) return;
+    const url = _animSheetUrlCache[scene.sheetId];
+    if (!url) return; // not preloaded yet — appears after the preload re-render
+    const layer = document.createElement("div");
+    layer.className = "anim-book-scene";
+    const bg = document.createElement("div");
+    bg.className = "anim-book-scene-bg";
+    bg.style.backgroundImage = 'url("' + url + '")';
+    if (scene.source !== "sprite" && !_animReducedMotion()) {
+      bg.classList.add("anim-page-bg--kenburns");
+    }
+    const scrim = document.createElement("div");
+    scrim.className = "anim-book-scene-scrim";
+    layer.appendChild(bg);
+    layer.appendChild(scrim);
+    pageEl.prepend(layer);
+    pageEl.classList.add("book-page--scene");
+  });
+}
 
 function _animEnabled() {
   try {
@@ -9280,6 +9376,11 @@ function _animInit() {
 function _animLoadCues(clip) {
   _animCues = clip && Array.isArray(clip.animationCues) ? clip.animationCues : [];
   _animLineIdToIdx = null;
+  // New clip → drop the prior sheet-URL cache and preload this clip's sheets
+  // (so spread flips + cue fires never read IndexedDB / decode mid-listen —
+  // the consumer-surface audio guarantee). Idempotent; fire-and-forget.
+  _animClearSheetCache();
+  if (clip) _animPreloadSheets(clip);
   if (Array.isArray(sentenceSpans) && sentenceSpans.length) {
     const m = new Map();
     let any = false;
@@ -9347,6 +9448,7 @@ async function _animMigrateLegacySheets(clip) {
         cc.animationCues = clip.animationCues;
       });
       if (_currentClipId === clip.id) _animCues = clip.animationCues;
+      _animPreloadSheets(clip); // cache the freshly-migrated sheetIds
     } catch {}
   }
 }
@@ -9474,6 +9576,11 @@ function _animReconcileSprite(cue, playing) {
 // revoke is true if we created an object URL (so the caller revokes it).
 async function _animResolveSheetUrl(cue) {
   if (cue.sheetId) {
+    // Prefer the preloaded cache (no IDB read / decode at fire time). The
+    // cached URL is shared + revoked by _animClearSheetCache, so revoke:false.
+    if (_animSheetUrlCache[cue.sheetId]) {
+      return { value: _animSheetUrlCache[cue.sheetId], revoke: false };
+    }
     const blob = await getAnimSheet(cue.sheetId);
     if (blob) return { value: URL.createObjectURL(blob), revoke: true };
     return null;
@@ -21436,6 +21543,7 @@ function _bookViewRenderSpread(spreadIdx, flipDirection = null) {
     } else {
       // Text page. slot 1 → text page 0; slot 2 → text page 1; ...
       const textPageIdx = slot - 1;
+      pageEl.dataset.textPageIdx = String(textPageIdx); // for the anim scene hook
       const sentenceIdxs = _bookViewPages[textPageIdx] || [];
 
       // v210 (M6.1): bookmarked-page ribbon. A small accent-coloured
@@ -21605,6 +21713,9 @@ function _bookViewRenderSpread(spreadIdx, flipDirection = null) {
     // assume something went wrong and yank the overlay anyway.
     setTimeout(cleanup, 1200);
   }
+  // Animation (flag-gated): paint full-page scene backgrounds onto this
+  // spread's pages. No-op unless the flag is on + page cues exist.
+  if (typeof _animApplyToSpreadScenes === "function") _animApplyToSpreadScenes();
   return totalSpreads;
 }
 
@@ -22417,6 +22528,11 @@ function _bookViewV3Setup(source) {
       bookmarkedPages: bmSet.size,
     });
   }
+
+  // Animation (flag-gated): paint full-page scene backgrounds onto the
+  // built pages. All pages exist now; V3 slides between spreads without
+  // re-rendering, so applying once here covers every spread.
+  if (typeof _animApplyToSpreadScenes === "function") _animApplyToSpreadScenes();
 
   // Initial position.
   _bookViewV3State.spreadIdx = 0;

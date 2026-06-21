@@ -344,6 +344,44 @@ not a reuse of `_animInit`.
 (b) sprite/badge/highlight per spread → (c) preload cache + phone/desktop
 polish. Flag-gated until ready; bump SW; verify both device tiers.
 
+### 12a. AS-BUILT — Phase (a) full-page scene (v4.134, SHIPPED)
+
+The spec above assumed the legacy `_bookViewRenderSpread` / `_bookViewPages` /
+`.book-page` renderer. **Reality: V3 is the default Book-view paginator**
+(`_bookViewV3Enabled()` defaults true; `?bookviewv3=0` kills it). V3 differs in
+three ways that changed the integration:
+
+- **Pages are `.book-view-page` (with `.book-view-page-body`), not `.book-page`.**
+  V3 stamps `page.dataset.textPageIdx` in `closeTextPage` and populates the
+  shared `_bookSentenceToPage[]` (sentence idx → text-page idx). Legacy
+  `_bookViewPages` is empty under V3 — do NOT rely on it.
+- **V3 builds ALL pages once in `_bookViewV3Setup`, then *slides* between
+  spreads** (translateX) — it does NOT re-render per flip. So the scene hook is
+  applied **once at the end of `_bookViewV3Setup`** (before `_bookViewV3GotoSpread(0)`),
+  not per-spread. (The legacy `_bookViewRenderSpread` also got the hook for the
+  kill-switch path; harmless.)
+- **`_animApplyToSpreadScenes()`** (app.js) targets
+  `.book-view-page[data-text-page-idx], .book-page[data-text-page-idx]`,
+  derives each page's first sentence from `_bookSentenceToPage`, picks the
+  scene-marker page cue with the largest start ≤ that sentence, and injects
+  `.anim-book-scene` (`.anim-book-scene-bg` + `.anim-book-scene-scrim`) as the
+  page's first child. The page's body/footer are lifted above via
+  `.book-page--scene > *:not(.anim-book-scene){z-index:1}`. Still images get the
+  shared `.anim-page-bg--kenburns` drift; sprite-source scenes show frame 0
+  statically (no per-frame loop in Book view yet — deferred to a later phase).
+
+**Audio safety (built):** preload + cache `sheetId → objectURL` at clip load
+(`_animSheetUrlCache`, `_animClearSheetCache`, `_animPreloadSheets` in
+`_animLoadCues`; re-preload after `_animMigrateLegacySheets`). The book-scene
+renderer reads ONLY the cache (cache miss → skip; `_animPreloadSheets` re-applies
+scenes when it lands). `_animResolveSheetUrl` now prefers the cache too, so the
+scrolling-view sprite/page fire no longer reads IndexedDB at fire time either.
+Verified: scene renders behind readable text in V3 Book view; audio advanced
+0→4.37s smoothly during playback with the scene up.
+
+**Still pending:** (b) sprite/badge/highlight per page in Book view;
+(c) phone (1-page) tier verification + sprite-loop full-page in Book view.
+
 ---
 
 ## 13. Prototype status (original — superseded by §11)

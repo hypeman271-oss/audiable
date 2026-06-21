@@ -14671,6 +14671,37 @@ body.anim-page-active #reading-view > *:not(.anim-page-layer) {
 body.anim-page-active #reading-view {
   overflow-x: clip;
 }
+
+/* Book-view (consumer surface): full-page scene behind a spread's text page.
+   .book-page is already position:relative (bookmark ribbon), so the scene fills
+   it; the page's text is lifted above the bg + scrim. */
+.book-page--scene {
+  position: relative; /* containing block for the absolute scene layer */
+}
+.book-page--scene > *:not(.anim-book-scene) {
+  position: relative;
+  z-index: 1;
+}
+.anim-book-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+}
+.anim-book-scene-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.anim-book-scene-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(rgba(8, 10, 20, 0.4), rgba(8, 10, 20, 0.6));
+}
 @media (prefers-reduced-motion: reduce) {
   .anim-sprite-card {
     transition: none;
