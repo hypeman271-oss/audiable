@@ -9193,6 +9193,33 @@ let _animPage = { cueId: null, timer: null, frames: 1, frameIdx: 0, objUrl: null
 // Per-clip cache of sheetId -> object URL, preloaded at clip load so neither a
 // Book-view page flip nor a cue fire reads IndexedDB / decodes mid-playback.
 let _animSheetUrlCache = {};
+// Book-view full-page sprite-loop tickers (one setInterval per animated scene
+// bg). V3 builds all pages once + slides, so we step every sprite scene's
+// background-position regardless of which spread is visible — cheap (cached URL,
+// no IDB/decode), audio-safe. Cleared on re-apply + on Book-view exit.
+let _animBookSpriteTimers = [];
+
+function _animBookSpriteStopAll() {
+  for (const t of _animBookSpriteTimers) {
+    try { clearInterval(t); } catch {}
+  }
+  _animBookSpriteTimers = [];
+}
+
+// Start a frame-stepper for one sprite scene bg. Mirrors _animPagePlay: the
+// N-frame strip is scaled to N page-widths and stepped via the percentage trick.
+function _animBookSpriteStart(bgEl, frames, fps) {
+  const N = Math.max(1, parseInt(frames, 10) || 1);
+  if (N < 2) return; // single frame — nothing to cycle
+  const rate = Math.max(1, Math.min(30, parseInt(fps, 10) || 8));
+  let idx = 0;
+  const timer = setInterval(() => {
+    if (!bgEl.isConnected) { clearInterval(timer); return; }
+    idx = (idx + 1) % N;
+    bgEl.style.backgroundPosition = (idx / (N - 1)) * 100 + "% 0%";
+  }, 1000 / rate);
+  _animBookSpriteTimers.push(timer);
+}
 
 function _animClearSheetCache() {
   for (const k in _animSheetUrlCache) {
@@ -9237,6 +9264,8 @@ function _animApplyToSpreadScenes() {
   if (typeof _bookSentenceToPage === "undefined" || !Array.isArray(_bookSentenceToPage)) {
     return;
   }
+  // Tear down any prior sprite-loop tickers before rebuilding the scenes.
+  _animBookSpriteStopAll();
   // V3 pages are .book-view-page; legacy are .book-page. Both stamp
   // data-text-page-idx; _bookSentenceToPage maps sentence → that index.
   const pages = document.querySelectorAll(
@@ -9275,7 +9304,17 @@ function _animApplyToSpreadScenes() {
     const bg = document.createElement("div");
     bg.className = "anim-book-scene-bg";
     bg.style.backgroundImage = 'url("' + url + '")';
-    if (scene.source !== "sprite" && !_animReducedMotion()) {
+    const frames = Math.max(1, parseInt(scene.frames, 10) || 1);
+    if (scene.source === "sprite" && frames > 1) {
+      // Full-bleed sprite strip: scale to N page-widths, show frame 0, then
+      // step background-position-x via a per-scene ticker (percentage trick,
+      // mirrors _animPagePlay). Cheap (cached URL) + audio-safe. Reduced motion
+      // freezes on frame 0.
+      bg.classList.add("anim-book-scene-bg--sprite");
+      bg.style.backgroundSize = frames * 100 + "% 100%";
+      bg.style.backgroundPosition = "0% 0%";
+      if (!_animReducedMotion()) _animBookSpriteStart(bg, frames, scene.fps);
+    } else if (scene.source !== "sprite" && !_animReducedMotion()) {
       bg.classList.add("anim-page-bg--kenburns");
     }
     const scrim = document.createElement("div");
@@ -23586,6 +23625,7 @@ function exitBookView(opts = {}) {
   bookView.hidden = true;
   bookView.style.visibility = "";
   _bookSentenceSpans = [];
+  if (typeof _animBookSpriteStopAll === "function") _animBookSpriteStopAll();
   if (bookViewSpread) bookViewSpread.innerHTML = "";
   if (bookViewToggle) bookViewToggle.textContent = "📖 Book view";
   // v225v3.7 (#741): clean up auto-hide state so next open starts

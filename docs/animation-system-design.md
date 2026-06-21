@@ -367,8 +367,11 @@ three ways that changed the integration:
   `.anim-book-scene` (`.anim-book-scene-bg` + `.anim-book-scene-scrim`) as the
   page's first child. The page's body/footer are lifted above via
   `.book-page--scene > *:not(.anim-book-scene){z-index:1}`. Still images get the
-  shared `.anim-page-bg--kenburns` drift; sprite-source scenes show frame 0
-  statically (no per-frame loop in Book view yet — deferred to a later phase).
+  shared `.anim-page-bg--kenburns` drift; **sprite-source scenes now loop**
+  (v4.135) via per-scene tickers (`_animBookSpriteStart`/`_animBookSpriteStopAll`)
+  that step `background-position-x` (strip scaled to N page-widths, percentage
+  trick — mirrors `_animPagePlay`). Cheap (cached URL, no IDB), reduced-motion
+  freezes on frame 0, timers torn down on re-apply + in `exitBookView`.
 
 **Audio safety (built):** preload + cache `sheetId → objectURL` at clip load
 (`_animSheetUrlCache`, `_animClearSheetCache`, `_animPreloadSheets` in
@@ -380,7 +383,8 @@ Verified: scene renders behind readable text in V3 Book view; audio advanced
 0→4.37s smoothly during playback with the scene up.
 
 **Still pending:** (b) sprite/badge/highlight per page in Book view;
-(c) phone (1-page) tier verification + sprite-loop full-page in Book view.
+(c) phone (1-page) tier verification. (Sprite-loop full-page in Book view —
+done v4.135, verified: 4-frame strip cycled 0/33/66/100% in V3 Book view.)
 
 ---
 
