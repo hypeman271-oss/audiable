@@ -3425,9 +3425,62 @@ title: Spaced
       <ul>
         <li><strong>Layout:</strong> frames left → right in one row (e.g. four 200×200 frames = an 800×200 image).</li>
         <li><strong>Format:</strong> PNG with a transparent background, so the character sits cleanly over the page.</li>
-        <li><strong>Keep it small:</strong> 4–8 frames and a modest file size — sheets are currently stored on the clip itself.</li>
-        <li><strong>Tools:</strong> <em>Piskel</em> (free, browser-based, exports a horizontal strip), <em>Aseprite</em>, <em>Krita</em>, or <em>Procreate</em>. For non-pixel art, lay images in a row in Figma/Canva and export a PNG. You can also AI-generate consistent frames and combine them.</li>
+        <li><strong>Equal cells:</strong> every frame must be the same width, with the character centered in each — uneven cells make the animation drift or clip.</li>
+        <li><strong>Keep it small:</strong> 4–8 frames and a modest file size.</li>
       </ul>
+
+      <h5>Make one in Piskel (free, no install)</h5>
+      <ol>
+        <li>Open <strong>piskelapp.com</strong> → <em>Create Sprite</em>.</li>
+        <li>Set the canvas to your <strong>frame</strong> size (e.g. 200×200) — not the whole strip.</li>
+        <li>Draw frame 1. In the frames panel (bottom), use <strong>+</strong> / duplicate to add frames 2, 3, 4… nudging the character a little each time so the motion flows.</li>
+        <li>Keep the character <strong>centered</strong> in every frame.</li>
+        <li>Export → <strong>PNG</strong> → <strong>Spritesheet</strong> → <strong>1 row / horizontal</strong> → download.</li>
+      </ol>
+
+      <h5>From AI-generated frames</h5>
+      <p>
+        Generate the <em>same character in several poses</em> (e.g. "side-view
+        fox, mid-stride, transparent background"), keeping style and scale
+        constant; then lay the images in a single row in Figma, Canva, or
+        Photopea (free) at equal cell size and export one PNG. Consistency
+        across frames is the tricky part — generate extra and pick the matching
+        set.
+      </p>
+
+      <p>
+        <strong>Other tools:</strong> Aseprite, Krita, or Procreate all export
+        horizontal sprite sheets too.
+      </p>
+
+      <div class="tip">
+        <strong>Quick test sheet.</strong> To confirm the feature works before
+        you invest in art, paste this in the browser console (F12) — it
+        downloads a clean 4-frame bouncing-ball sheet (transparent, 800×200):
+        <pre style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;background:var(--bg-card-2,rgba(0,0,0,0.25));border:1px solid var(--border,rgba(255,255,255,0.1));border-radius:8px;padding:10px;overflow-x:auto;margin-top:8px;">(() =&gt; {
+  const F=4,S=200,cv=document.createElement('canvas');
+  cv.width=F*S;cv.height=S;const x=cv.getContext('2d');
+  for(let i=0;i&lt;F;i++){
+    const t=i/(F-1), y=S*0.55-Math.sin(t*Math.PI)*S*0.32;
+    const sq=1+0.18*Math.sin(t*Math.PI);
+    x.save();x.translate(i*S+S/2,y);x.scale(1/sq,sq);
+    x.fillStyle='#7c9cff';x.beginPath();x.arc(0,0,S*0.22,0,7);x.fill();
+    x.fillStyle='#fff';x.beginPath();x.arc(-S*0.06,-S*0.05,S*0.05,0,7);x.fill();
+    x.restore();
+  }
+  const a=document.createElement('a');
+  a.href=cv.toDataURL('image/png');a.download='test-sprite-4f.png';a.click();
+})()</pre>
+        Then add it with <strong>Frames 4, FPS 8</strong>.
+      </div>
+
+      <h5>Common mistakes</h5>
+      <ul>
+        <li><strong>Uneven frame widths</strong> → the animation drifts or clips. Cells must be identical width.</li>
+        <li><strong>White background</strong> → you get a white box; export with transparency.</li>
+        <li><strong>Wrong frame count</strong> → if the sheet has 6 cells but you enter 4, it slices wrong. The number must match the cells exactly.</li>
+      </ul>
+
       <p>
         Then: <strong>🎬 Animate → tap a sentence → 🚶 Sprite →</strong> choose
         the PNG, set <strong>Frames</strong> (how many cells) and
