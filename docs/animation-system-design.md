@@ -269,7 +269,83 @@ device tiers it touches (`DEVICES.md`).
 
 ## 11. Prototype status
 
-Not yet built. This doc is the spec; next concrete step is **Phase 0** behind
-`?anim=1`, mirroring the SFX prototype's shape (`_MVP_SFX_CUE` + `_sfxTick`).
-The editor look-and-feel is captured in the interactive mockup shared in chat
-(tier picker, timeline cue markers, hand-place vs auto-suggest modes).
+Phases 0–2 shipped behind `?anim=1` (Settings → Mode → Animation toggle):
+UI tier (highlight/glow/badge), sprite tier, and the full-page scene tier, all
+authored from the standalone 🎬 Animate palette and rendered in the **scrolling
+reading view**. Sheets live in a separate IndexedDB store (`anim_sheets`) so
+they never bloat the clip's progress-save/sync (the audio-hitch fix).
+
+---
+
+## 12. Book-view rendering (the CONSUMER surface) — spec
+
+**Strategic reframing.** Narrative is splitting into a paid **author** app
+(compose books) and a free **consumer** app (read them); for consumers the
+primary surface is **Book view** (paginated spreads), and "reading + images" is
+the core experience. So animation rendering in Book view is *not* a follow-up —
+it's the consumption product. Authors compose in the scrolling Author view
+(current renderer); consumers read in Book view (this renderer). **Same cue
+model, two renderers.**
+
+**Current gap (verified).** The animation engine hooks ONLY `#reading-view`
+(`_animInit`'s host). Book view renders none of the tiers today.
+
+**What Book view already gives us (reuse, don't rebuild):**
+- Pagination: `_bookViewPages` / `_bookSentenceToPage`; `_bookViewRenderSpread`
+  builds `.book-page` slots (cover on spread 0; `ppr` = `_bookViewPagesPerSpread`
+  = 1 phone / 2 desktop). `_bookSentenceSpans` = the spans on the visible spread.
+- Sentence→spread mapping: `_bookViewSpreadOfSentence(idx, ppr)`.
+- Narration sync: the highlight tick auto-flips to the active sentence's spread
+  (unless user-pinned via `_bookViewUserPaged`) and `_bookViewApplyActive(idx)`
+  marks the active span. That's the hook cues fire on.
+- Cue model, sheet store, `_animResolveSheetUrl`, the page/sprite/badge render
+  helpers — all shared.
+
+**Per-tier mapping onto a spread:**
+- **Full-page scene (the headline).** Discrete pages make this *easier* than the
+  scrolling view — no sticky. For each `.book-page`, find the page cue (scene
+  marker) covering that page's sentence range and fill the page's background +
+  scrim; the page's text sits on top (live, highlightable). Per-page (a desktop
+  2-page spread can show two scenes if a boundary falls mid-spread). This is
+  **spread-static** — the page shows its scene the whole time you're on it, not
+  per-sentence. Best for consumption.
+- **Sprite / badge.** Overlay on the `.book-page` whose cued sentence is on that
+  page. **Sentence-synced** — fire as narration reaches the line (reuse the
+  active-sentence hook), so a character "performs" on its line.
+- **Highlight / glow.** Augment `_bookViewApplyActive`'s `.active` span with the
+  emphasis class.
+
+**Firing model.** Spreads re-render **destructively** (`bookViewSpread.innerHTML
+= ""`), so animation layers must be re-applied per render: add a hook
+`_animApplyToSpread(spreadEl)` at the END of `_bookViewRenderSpread` that, for
+each page, resolves the covering scene + on-page sprites/badges and injects the
+layers. Sentence-synced cues additionally update from the highlight tick.
+
+**Performance / audio (critical — this is the consumer surface).** Re-resolving
+sheets from IndexedDB on every page flip would re-read + decode mid-listen and
+hitch audio (same class of bug as before). So **preload + cache sheet object
+URLs at clip load** (a per-clip `sheetId → objectURL` map, revoked on clip
+change); spread renders just assign cached URLs. No IDB/decode at flip or
+fire time.
+
+**Phone vs desktop (`DEVICES.md`).** Desktop spread = 2 pages (up to 2 scenes);
+phone = 1 page = 1 scene. Sprites/badges per page. Verify both tiers.
+
+**Cover spread.** Spread 0's cover page keeps the cover art; scenes start on the
+first text page.
+
+**Honest constraints.** Destructive re-render + the page-flip clone overlay
+(`book-page-flipping`) interplay; objectURL lifecycle across flips; reduced-
+motion + hard-disable still mandatory; the scrolling-view engine assumes
+persistent spans, Book view does not — so the Book-view renderer is a sibling,
+not a reuse of `_animInit`.
+
+**Build phases:** (a) full-page scene per spread (consumer headline) →
+(b) sprite/badge/highlight per spread → (c) preload cache + phone/desktop
+polish. Flag-gated until ready; bump SW; verify both device tiers.
+
+---
+
+## 13. Prototype status (original — superseded by §11)
+
+This doc began as a pre-build spec; §11 records what actually shipped.
