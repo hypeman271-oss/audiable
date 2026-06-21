@@ -14619,6 +14619,66 @@ html, body {
     transition: none;
   }
 }
+
+/* Page (scene) tier: a full-bleed background behind the reading text. The
+   layer is a sticky, zero-height anchor; its bg + scrim are absolutely
+   positioned to fill the reading pane and stay put while the text scrolls
+   over them. Height is set in JS to the reading pane's box. */
+.anim-page-layer {
+  position: sticky;
+  top: 0;
+  height: 0; /* no flow space — children are absolute */
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 500ms ease-out;
+}
+.anim-page-layer.shown {
+  opacity: 1;
+}
+.anim-page-bg,
+.anim-page-scrim {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 70vh; /* fallback until JS sizes to the reading pane */
+  pointer-events: none;
+  overflow: hidden;
+}
+.anim-page-bg {
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.anim-page-scrim {
+  /* darken the art so the light read-along text stays legible on top */
+  background: linear-gradient(rgba(8, 10, 20, 0.45), rgba(8, 10, 20, 0.62));
+}
+.anim-page-bg--kenburns {
+  animation: anim-page-kenburns 24s ease-in-out infinite alternate;
+  transform-origin: center;
+}
+@keyframes anim-page-kenburns {
+  0% { transform: scale(1.06) translate(0, 0); }
+  100% { transform: scale(1.14) translate(-2%, -2%); }
+}
+/* Lift the reading text above the page bg + scrim while a scene is active. */
+body.anim-page-active #reading-view > *:not(.anim-page-layer) {
+  position: relative;
+  z-index: 1;
+}
+/* Clip the full-bleed bg horizontally so it can't add a horizontal scrollbar. */
+body.anim-page-active #reading-view {
+  overflow-x: clip;
+}
+@media (prefers-reduced-motion: reduce) {
+  .anim-sprite-card {
+    transition: none;
+  }
+  .anim-page-bg--kenburns {
+    animation: none;
+  }
+}
 /* Targeted UI cue: emphasize the active sentence within the window. An
    outline ring (not just a tint) so it reads clearly distinct from the
    normal read-along highlight, which is a background-only treatment. */

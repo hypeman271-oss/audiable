@@ -9183,6 +9183,13 @@ let _animLineIdToIdx = null; // Map(lineId -> idx) for the loaded clip, or null
 // hide/replace); dim cache is keyed by cue.id (Blob object URLs differ per show).
 let _animSprite = { cueId: null, timer: null, frames: 1, frameIdx: 0, stepPx: 0, objUrl: null };
 const _animSpriteDimCache = {}; // cue.id -> { w, h } natural dims
+// Page tier: full-bleed scene background behind the text. A 'page' cue is a
+// scene marker — active from its startIdx until the next page cue (so one cue
+// = whole chapter, several = per passage; Book view shows whichever covers the
+// spread). Source is a sprite-sheet loop or a still image (Ken-Burns motion).
+let _animPageLayerEl = null; // sticky full-bleed layer (behind text)
+let _animPageBgEl = null; // the image/sprite element inside the layer
+let _animPage = { cueId: null, timer: null, frames: 1, frameIdx: 0, objUrl: null };
 
 function _animEnabled() {
   try {
@@ -9215,14 +9222,31 @@ function _animInit() {
   if (
     _animReady &&
     _animStageEl && _animStageEl.isConnected &&
-    _animSpriteStageEl && _animSpriteStageEl.isConnected
+    _animSpriteStageEl && _animSpriteStageEl.isConnected &&
+    _animPageLayerEl && _animPageLayerEl.isConnected
   ) {
     return;
   }
   const host = typeof readingView !== "undefined" && readingView;
   if (!host) return;
   // Drop any orphaned stages from a prior render before building fresh ones.
-  host.querySelectorAll(".anim-stage, .anim-sprite-stage").forEach((e) => e.remove());
+  host
+    .querySelectorAll(".anim-stage, .anim-sprite-stage, .anim-page-layer")
+    .forEach((e) => e.remove());
+  // Behind everything: the full-bleed page background (scene tier). Sticky so
+  // it stays put while the text scrolls; height:0 so it takes no flow space;
+  // its bg + scrim are absolutely positioned and the text paints on top.
+  const pageLayer = document.createElement("div");
+  pageLayer.className = "anim-page-layer";
+  const pageBg = document.createElement("div");
+  pageBg.className = "anim-page-bg";
+  const pageScrim = document.createElement("div");
+  pageScrim.className = "anim-page-scrim";
+  pageLayer.appendChild(pageBg);
+  pageLayer.appendChild(pageScrim);
+  host.prepend(pageLayer);
+  _animPageLayerEl = pageLayer;
+  _animPageBgEl = pageBg;
   // Top: the badge overlay (small, top-right).
   const stage = document.createElement("div");
   stage.className = "anim-stage";
@@ -9371,10 +9395,21 @@ function _animTick() {
   let emphasizeEffect = null; // 'highlight' | 'glow' covering the current sentence
   let badgeLabel = null; // last active badge cue's label wins
   let activeSprite = null; // last active sprite cue wins
+  let activePage = null; // page (scene) cue with the largest start ≤ idx
+  let activePageStart = -1;
   for (const cue of _animCues) {
     if (!cue) continue;
     const range = _animResolveRange(cue);
-    if (!range || idx < range[0] || idx > range[1]) continue; // not active
+    if (!range) continue;
+    if (cue.kind === "page") {
+      // Scene marker: active from its start onward, until a later page cue.
+      if (range[0] <= idx && range[0] > activePageStart) {
+        activePage = cue;
+        activePageStart = range[0];
+      }
+      continue;
+    }
+    if (idx < range[0] || idx > range[1]) continue; // not active
     if (cue.kind === "sprite") {
       activeSprite = cue;
     } else if (cue.kind === "ui") {
@@ -9385,6 +9420,7 @@ function _animTick() {
   _animReconcileEmphasis(emphasizeEffect ? idx : -1, emphasizeEffect === "glow");
   _animReconcileBadge(badgeLabel);
   _animReconcileSprite(activeSprite, !playerEl.paused);
+  _animReconcilePage(activePage, !playerEl.paused);
 }
 
 // Emphasis follows the narration: at most one span carries the effect class,
@@ -9535,11 +9571,112 @@ function _animSpritePlay(cue) {
   }, 1000 / fps);
 }
 
-// Drop all transient render state (badge hidden, emphasis + sprite cleared).
+// ── Page (scene) tier: full-bleed background behind the text. Source is a
+// sprite-sheet loop (frames cycle, full-bleed) or a still image (Ken-Burns
+// slow pan/zoom). A page cue holds until the next one.
+function _animReconcilePage(cue, playing) {
+  if (!_animPageLayerEl || !_animPageBgEl) return;
+  if (!cue || !(cue.sheetId || cue.sheetBlob || cue.sheet)) {
+    _animPageHide();
+    return;
+  }
+  if (_animPage.cueId !== cue.id) _animPageShow(cue);
+  // Sprite-source pages cycle frames; still images animate via CSS only.
+  if (cue.source === "sprite") {
+    if (playing) _animPagePlay(cue);
+    else _animPageStopTimer();
+  }
+}
+
+function _animPageStopTimer() {
+  if (_animPage.timer) {
+    clearInterval(_animPage.timer);
+    _animPage.timer = null;
+  }
+}
+
+function _animPageRevoke() {
+  if (_animPage.objUrl) {
+    try { URL.revokeObjectURL(_animPage.objUrl); } catch {}
+    _animPage.objUrl = null;
+  }
+}
+
+function _animPageHide() {
+  _animPageStopTimer();
+  _animPageRevoke();
+  _animPage.cueId = null;
+  if (_animPageLayerEl) _animPageLayerEl.classList.remove("shown");
+  if (_animPageBgEl) {
+    _animPageBgEl.style.backgroundImage = "";
+    _animPageBgEl.classList.remove("anim-page-bg--sprite", "anim-page-bg--kenburns");
+  }
+  try { document.body.classList.remove("anim-page-active"); } catch {}
+}
+
+function _animPageShow(cue) {
+  _animPageStopTimer();
+  _animPageRevoke();
+  _animPage.cueId = cue.id;
+  _animPage.frames = Math.max(1, parseInt(cue.frames, 10) || 1);
+  _animPage.frameIdx = 0;
+  const bg = _animPageBgEl;
+  _animResolveSheetUrl(cue).then((resolved) => {
+    if (!resolved || _animPage.cueId !== cue.id) {
+      if (resolved && resolved.revoke) {
+        try { URL.revokeObjectURL(resolved.value); } catch {}
+      }
+      return;
+    }
+    _animPage.objUrl = resolved.revoke ? resolved.value : null;
+    bg.style.backgroundImage = 'url("' + resolved.value + '")';
+    // Size the bg + scrim to fill the reading pane's visible box.
+    const host = typeof readingView !== "undefined" && readingView;
+    const h = host ? host.clientHeight : 0;
+    if (h) {
+      bg.style.height = h + "px";
+      const scrim = _animPageLayerEl.querySelector(".anim-page-scrim");
+      if (scrim) scrim.style.height = h + "px";
+    }
+    if (cue.source === "sprite") {
+      // Full-bleed sprite: scale the N-frame strip so one frame fills the
+      // layer, then step background-position-x by frame via the percentage
+      // trick (i/(N-1) * 100%).
+      bg.classList.add("anim-page-bg--sprite");
+      bg.classList.remove("anim-page-bg--kenburns");
+      bg.style.backgroundSize = _animPage.frames * 100 + "% 100%";
+      bg.style.backgroundPosition = "0% 0%";
+    } else {
+      // Still image: cover + slow Ken-Burns drift (CSS), unless reduced motion.
+      bg.classList.remove("anim-page-bg--sprite");
+      bg.style.backgroundSize = "cover";
+      bg.style.backgroundPosition = "center";
+      bg.classList.toggle("anim-page-bg--kenburns", !_animReducedMotion());
+    }
+    if (_animPageLayerEl) _animPageLayerEl.classList.add("shown");
+    try { document.body.classList.add("anim-page-active"); } catch {}
+  });
+}
+
+function _animPagePlay(cue) {
+  if (_animPage.timer) return;
+  const fps = Math.max(1, Math.min(30, parseInt(cue.fps, 10) || 8));
+  const N = _animPage.frames;
+  if (N < 2) return; // single frame — nothing to cycle
+  _animPage.timer = setInterval(() => {
+    if (!_animPageBgEl) return;
+    _animPage.frameIdx = (_animPage.frameIdx + 1) % N;
+    _animPageBgEl.style.backgroundPosition =
+      (_animPage.frameIdx / (N - 1)) * 100 + "% 0%";
+  }, 1000 / fps);
+}
+
+// Drop all transient render state (badge hidden, emphasis + sprite + page cleared).
 function _animClearRender() {
   _animReconcileEmphasis(-1);
   _animReconcileBadge(null);
   _animSpriteHide();
+  _animPageHide();
 }
 
 (() => {
@@ -19533,7 +19670,8 @@ async function _animSaveCueForSentence(effect, opts) {
   const lineId = (span && span.dataset && span.dataset.lineId) || null;
   const cue = {
     id: "anim_" + _annotateNewId(),
-    kind: effect === "sprite" ? "sprite" : "ui",
+    kind:
+      effect === "sprite" ? "sprite" : effect === "page" ? "page" : "ui",
     effect,
     startIdx: idx,
     endIdx: idx,
@@ -19541,15 +19679,15 @@ async function _animSaveCueForSentence(effect, opts) {
     endLineId: lineId,
   };
   if (effect === "badge") cue.label = (opts.label || "").trim() || "✨ Animation";
-  if (effect === "sprite") {
+  if (effect === "sprite" || effect === "page") {
+    // Both store an image sheet in the separate store (only a small id rides on
+    // the clip — the audio-hitch fix). Page = full-bleed scene; sprite = corner.
     if (opts.blob) {
-      // New / replacement sheet → store it (own store; only a small id rides
-      // on the clip — see the audio-hitch fix). GC a replaced sheet.
       const sheetId = "sheet_" + _annotateNewId();
       try {
         await putAnimSheet(sheetId, opts.blob);
       } catch (e) {
-        setStatus("Couldn't store the sprite sheet — see console.", true);
+        setStatus("Couldn't store the image — see console.", true);
         console.warn("[anim] putAnimSheet failed:", e);
         return;
       }
@@ -19558,14 +19696,18 @@ async function _animSaveCueForSentence(effect, opts) {
         deleteAnimSheet(opts.reuseSheetId);
       }
     } else if (opts.reuseSheetId) {
-      // Editing in place: keep the existing sheet, just change frames/fps.
-      cue.sheetId = opts.reuseSheetId;
+      cue.sheetId = opts.reuseSheetId; // edit in place: keep the sheet
     } else {
-      setStatus("Pick a sprite-sheet image first.", true);
+      setStatus("Pick an image first.", true);
       return; // keep the palette open so the author can choose a file
     }
-    cue.frames = Math.max(1, parseInt(opts.frames, 10) || 1);
+    const frames = Math.max(1, parseInt(opts.frames, 10) || 1);
+    cue.frames = frames;
     cue.fps = Math.max(1, Math.min(30, parseInt(opts.fps, 10) || 8));
+    if (effect === "page") {
+      // 1 frame = still image (Ken-Burns drift); >1 = sprite-sheet loop.
+      cue.source = frames > 1 ? "sprite" : "image";
+    }
   }
   const clip = await _addAnimationCue(_currentClipId, cue);
   if (span) span.dataset.hasAnim = "1";
@@ -19612,10 +19754,10 @@ if (animatePalette) {
         animateLabel.focus();
       }
       if (animateSave) animateSave.hidden = false;
-    } else if (effect === "sprite") {
-      // Reveal the file picker + frames/fps + Save; the chosen File (a Blob)
-      // is captured on change. Save commits the sprite cue.
-      _animPendingEffect = "sprite";
+    } else if (effect === "sprite" || effect === "page") {
+      // Both reveal the file picker + frames/fps + Save. For a full page,
+      // leave Frames blank (or 1) for a still image; >1 = sprite-sheet loop.
+      _animPendingEffect = effect;
       _animPendingSheetBlob = null;
       if (animateSpriteFile) {
         animateSpriteFile.hidden = false;
@@ -19640,8 +19782,8 @@ if (animateSpriteFile) {
   });
 }
 function _animCommitFromInputs() {
-  if (_animPendingEffect === "sprite") {
-    _animSaveCueForSentence("sprite", {
+  if (_animPendingEffect === "sprite" || _animPendingEffect === "page") {
+    _animSaveCueForSentence(_animPendingEffect, {
       blob: _animPendingSheetBlob,
       reuseSheetId: _animEditSheetId,
       frames: animateFrames ? animateFrames.value : 1,
