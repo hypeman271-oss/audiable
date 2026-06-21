@@ -19672,6 +19672,33 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && _animMode) _setAnimMode(false);
 });
 
+// Settings → Mode → "Animation (preview)" toggle. Flips the
+// narrative.animPrototype flag so the 🎬 Animate button appears without the
+// ?anim=1 URL / console flag, and reveals/hides the button live.
+const animPreviewToggle = document.getElementById("settings-anim-preview-on");
+if (animPreviewToggle) {
+  try {
+    animPreviewToggle.checked =
+      typeof _animEnabled === "function" ? _animEnabled() : false;
+  } catch {}
+  animPreviewToggle.addEventListener("change", () => {
+    try {
+      localStorage.setItem(
+        "narrative.animPrototype",
+        animPreviewToggle.checked ? "1" : "0"
+      );
+    } catch {}
+    const on = typeof _animEnabled === "function" && _animEnabled();
+    if (animateModeBtn) animateModeBtn.hidden = !on;
+    if (!on && _animMode) _setAnimMode(false); // leave animate mode if disabling
+    setStatus(
+      animPreviewToggle.checked
+        ? "Animation preview on — 🎬 Animate is in the player toolbar."
+        : "Animation preview off."
+    );
+  });
+}
+
 // Esc dismisses the palette like every other dialog in the app.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && annotatePalette && !annotatePalette.hidden) {

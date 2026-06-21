@@ -1540,6 +1540,30 @@
                        user is already on Author (nothing left to unlock). -->
                   <p id="mode-unlock-hint" class="mode-unlock-hint" hidden></p>
                 </div>
+
+                <!-- Animation preview toggle: flips the narrative.animPrototype
+                     flag so the 🎬 Animate button appears, without needing the
+                     ?anim=1 URL / console flag. -->
+                <div
+                  class="settings-row"
+                  data-search="animation animate sprite badge highlight glow preview experimental cue illustration"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Animation <span style="font-weight:400;opacity:0.7;">(preview)</span></strong>
+                    <span class="settings-toggle-desc">
+                      Adds a <strong>🎬 Animate</strong> button in the player
+                      toolbar. Attach visual cues to sentences — highlight, glow,
+                      a labelled badge, or a hand-drawn sprite — that play as the
+                      narration reaches each line. Experimental; off by default.
+                    </span>
+                  </div>
+                  <div class="settings-toggle-controls">
+                    <label class="switch">
+                      <input id="settings-anim-preview-on" type="checkbox" />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
               </section>
 
               <!-- ============================================================
