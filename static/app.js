@@ -23107,16 +23107,25 @@ function _bookViewV3Setup(source) {
     spread.dataset.bookTheme = bookView.dataset.bookTheme;
   }
 
-  // v4.140: single centered page is the default (matches Kindle / Apple Books /
-  // Kobo / Play Books — modern readers don't show a two-page spread). The two-up
-  // spread is preserved behind `_bookViewTwoUpEnabled()` for a future magazine
-  // mode (localStorage narrative.bookTwoUp = "1"), never on phones. In one-up
-  // mode the page fills the viewport and a CSS max-width keeps the text a
-  // readable centered column (see .book-view-spread.v3.one-up).
+  // v4.147: RESPONSIVE pages-per-spread, like Apple Books — one centered page
+  // on phone / narrow windows, a two-page spread when there's room. Decide off
+  // the spread's actual width (not the window) so side panes / max-width don't
+  // fool it: ≥1000px of spread → 2 pages (each ≥~500px, comfortably readable);
+  // narrower → 1. `_bookViewTwoUpEnabled()` (localStorage narrative.bookTwoUp)
+  // still force-enables 2-up. Phones are always 1-up. In one-up mode a CSS
+  // max-width keeps the lone page a readable centered column.
+  // Threshold note: the desktop reading column (main.app) is capped ~904px, so
+  // a real two-up spread there is ~430px/page (mass-market paperback width —
+  // what Apple Books shows in a standard window). 760 keeps phones + small
+  // windows single-page while giving desktop/tablet-landscape two pages.
+  const TWO_UP_MIN_SPREAD_PX = 760;
   const isPhone = window.innerWidth <= 720;
-  const pagesPerSpread = !isPhone && _bookViewTwoUpEnabled() ? 2 : 1;
-  spread.classList.toggle("one-up", pagesPerSpread === 1);
   const spreadWidth = spread.clientWidth;
+  const pagesPerSpread =
+    !isPhone && (spreadWidth >= TWO_UP_MIN_SPREAD_PX || _bookViewTwoUpEnabled())
+      ? 2
+      : 1;
+  spread.classList.toggle("one-up", pagesPerSpread === 1);
   const pageWidth = spreadWidth / pagesPerSpread;
   const pageHeight = spread.clientHeight;
 
