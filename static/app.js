@@ -24382,6 +24382,36 @@ function _bookViewSpreadOfSentence(sIdx, ppr) {
 function _bookViewRepaginate() {
   if (!bookView || bookView.hidden) return;
   if (!_bookViewSource || !_bookViewSource.sentences.length) return;
+  // v4.150: V3 is the active paginator → re-run V3 setup (re-measures +
+  // responsive 1-up/2-up + paper themes + animation-scene hooks) and restore
+  // the reading position. Previously repaginate fell through to the LEGACY
+  // _bookViewRenderSpread below, flipping the V3 (.book-view-page) DOM to
+  // legacy (.book-page) on every font-size / theme change — which dropped the
+  // responsive layout, the one-up centering, and the re-applied scene layers.
+  if (
+    typeof _bookViewV3Enabled === "function" && _bookViewV3Enabled() &&
+    typeof _bookViewV3Setup === "function"
+  ) {
+    let anchor = -1;
+    const curFirst =
+      typeof _bookViewV3FirstSentenceIdxAtSpread === "function"
+        ? _bookViewV3FirstSentenceIdxAtSpread(_bookViewV3State.spreadIdx)
+        : -1;
+    // Keep the reader on their current spread; if the playing sentence is on
+    // it, anchor to that so karaoke stays aligned.
+    if (activeSentenceIdx >= 0 && typeof _bookViewV3PageOfSentence === "function") {
+      const ppr = _bookViewV3State.pagesPerSpread || 1;
+      const activeSpread = Math.floor(_bookViewV3PageOfSentence(activeSentenceIdx) / ppr);
+      anchor = activeSpread === _bookViewV3State.spreadIdx ? activeSentenceIdx : curFirst;
+    } else {
+      anchor = curFirst;
+    }
+    _bookViewV3Setup(_bookViewSource);
+    if (anchor >= 0 && typeof _bookViewV3GotoSentenceIdx === "function") {
+      _bookViewV3GotoSentenceIdx(anchor);
+    }
+    return;
+  }
   // Remember a sentence from the visible spread so we can return to
   // it. Use the active (audio-playing) sentence if it's on this
   // spread; otherwise the first sentence of the current spread.
