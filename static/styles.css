@@ -14834,6 +14834,69 @@ body.reader-mode #notes-btn,
 body.reader-mode #book-view-print {
   display: none !important;
 }
+
+/* v4.146: reading appearance — Apple-Books "Aa" panel + page themes. */
+.book-appearance {
+  position: fixed;
+  z-index: 60;
+  top: 70px;
+  right: 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 240px;
+}
+.book-appearance-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.book-appearance-size button {
+  width: 44px; height: 38px; border: 1px solid var(--border-soft);
+  border-radius: 8px; background: var(--bg-card-2); color: var(--fg);
+  cursor: pointer; font-family: serif;
+}
+.book-aa-size-label { font-size: 13px; opacity: 0.7; }
+.book-appearance-themes { gap: 8px; }
+.book-paper-swatch {
+  flex: 1; height: 46px; border-radius: 9px; cursor: pointer;
+  border: 2px solid transparent; font-family: serif; font-size: 16px; font-weight: 600;
+}
+.book-paper-swatch[data-paper="light"] { background: #fbfaf7; color: #1a1a1a; }
+.book-paper-swatch[data-paper="sepia"] { background: #f4ecd8; color: #5b4636; }
+.book-paper-swatch[data-paper="gray"]  { background: #3a3a3c; color: #e6e6e6; }
+.book-paper-swatch[data-paper="night"] { background: #0f0f12; color: #c9c9d0; }
+.book-paper-swatch.selected { border-color: var(--accent, #6c8cff); }
+
+/* Page-theme application: data-book-paper on #book-view drives the spread +
+   page background + text colour. Scene pages (.book-page--scene) keep their
+   own full-bleed background + scrim, so paper only affects plain text pages. */
+.book-view[data-book-paper="light"] { --paper-bg: #fbfaf7; --paper-fg: #1a1a1a; }
+.book-view[data-book-paper="sepia"] { --paper-bg: #f4ecd8; --paper-fg: #5b4636; }
+.book-view[data-book-paper="gray"]  { --paper-bg: #3a3a3c; --paper-fg: #e6e6e6; }
+.book-view[data-book-paper="night"] { --paper-bg: #0f0f12; --paper-fg: #c9c9d0; }
+/* Cover both renderers: V3 (.book-view-page / -body) and legacy
+   (.book-page / -body) — _bookViewRepaginate can produce either. */
+.book-view[data-book-paper] { background: var(--paper-bg); }
+.book-view[data-book-paper] .book-view-spread,
+.book-view[data-book-paper] .book-view-page,
+.book-view[data-book-paper] .book-page,
+.book-view[data-book-paper] .book-page-cover {
+  background: var(--paper-bg);
+}
+.book-view[data-book-paper] .book-view-page-body,
+.book-view[data-book-paper] .book-view-page-body .sentence,
+.book-view[data-book-paper] .book-page-body,
+.book-view[data-book-paper] .book-page-body .sentence,
+.book-view[data-book-paper] .book-page-cover-title {
+  color: var(--paper-fg);
+}
+.book-view[data-book-paper] .book-page-header,
+.book-view[data-book-paper] .book-page-footer {
+  color: var(--paper-fg);
+  opacity: 0.55;
+}
 /* The "Your text" card becomes just the reading surface — drop its frame so
    the book view reads edge-to-edge. */
 body.reader-mode .card.card-text {

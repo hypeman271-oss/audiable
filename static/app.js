@@ -24411,6 +24411,66 @@ function _applyBookTheme(theme) {
 }
 _applyBookTheme(_loadBookTheme());
 
+// v4.146: page-colour theme (Apple-Books "Aa"): Light / Sepia / Gray / Night.
+// Independent of the app Dark/Light theme + the typographic book-theme — this
+// is the reading background, surfaced via the in-book Aa appearance panel.
+const BOOK_PAPER_KEY = "bookPaper";
+const BOOK_PAPERS = ["light", "sepia", "gray", "night"];
+function _loadBookPaper() {
+  const v = localStorage.getItem(BOOK_PAPER_KEY);
+  return BOOK_PAPERS.includes(v) ? v : "light";
+}
+function _bookSyncPaperSwatches() {
+  const cur = (bookView && bookView.dataset.bookPaper) || "light";
+  document.querySelectorAll(".book-paper-swatch").forEach((s) => {
+    s.classList.toggle("selected", s.dataset.paper === cur);
+  });
+}
+function _applyBookPaper(p) {
+  const t = BOOK_PAPERS.includes(p) ? p : "light";
+  if (bookView) bookView.dataset.bookPaper = t;
+  try { localStorage.setItem(BOOK_PAPER_KEY, t); } catch {}
+  _bookSyncPaperSwatches();
+}
+_applyBookPaper(_loadBookPaper());
+
+// Step the book font size through the named sizes (drives the Aa A− / A+).
+const _BOOK_FONT_ORDER = ["small", "medium", "large", "xlarge"];
+function _bookStepFont(dir) {
+  let i = _BOOK_FONT_ORDER.indexOf(_loadBookFontSize());
+  if (i < 0) i = 1;
+  i = Math.max(0, Math.min(_BOOK_FONT_ORDER.length - 1, i + dir));
+  const v = _BOOK_FONT_ORDER[i];
+  try { localStorage.setItem(BOOK_FONT_SIZE_KEY, v); } catch {}
+  _applyBookFontSize(v);
+  if (typeof _bookViewRepaginate === "function") _bookViewRepaginate();
+}
+
+// Wire the Aa appearance panel (elements exist — app.js runs after the DOM).
+(() => {
+  const aaBtn = document.getElementById("book-view-aa");
+  const panel = document.getElementById("book-view-appearance");
+  if (aaBtn && panel) {
+    aaBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) _bookSyncPaperSwatches();
+    });
+    document.addEventListener("click", (e) => {
+      if (panel.hidden) return;
+      if (aaBtn.contains(e.target) || panel.contains(e.target)) return;
+      panel.hidden = true;
+    });
+  }
+  const sm = document.getElementById("book-aa-smaller");
+  const lg = document.getElementById("book-aa-larger");
+  if (sm) sm.addEventListener("click", () => _bookStepFont(-1));
+  if (lg) lg.addEventListener("click", () => _bookStepFont(1));
+  document.querySelectorAll(".book-paper-swatch").forEach((sw) => {
+    sw.addEventListener("click", () => _applyBookPaper(sw.dataset.paper));
+  });
+})();
+
 // Public: leave book view. Either back to reading view (default) or
 // onward to the textarea (when called from exitReadingView itself).
 function exitBookView(opts = {}) {

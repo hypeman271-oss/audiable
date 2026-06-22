@@ -2429,6 +2429,14 @@
               aria-label="Print book"
               title="Print the entire book — one page per sheet"
             >🖨 Print</button>
+            <!-- v4.146: appearance (themes + text size), Apple-Books style. -->
+            <button
+              id="book-view-aa"
+              type="button"
+              class="book-view-nav-btn book-view-aa-btn"
+              aria-label="Reading appearance — themes and text size"
+              title="Appearance — page theme + text size"
+            >A<span style="font-size:1.25em">a</span></button>
             <!-- v206 (M4.4): table of contents. Click opens a
                  dialog listing detected chapters with page numbers.
                  Hidden when the clip has no detected chapters
@@ -2441,6 +2449,22 @@
               title="Jump to a chapter"
               hidden
             >📑 Contents</button>
+          </div>
+
+          <!-- v4.146: appearance popover (Apple-Books "Aa"). Page theme +
+               text size. Toggled by #book-view-aa. -->
+          <div id="book-view-appearance" class="book-appearance" hidden>
+            <div class="book-appearance-row book-appearance-size">
+              <button id="book-aa-smaller" type="button" aria-label="Smaller text">A</button>
+              <span class="book-aa-size-label">Text size</span>
+              <button id="book-aa-larger" type="button" aria-label="Larger text" style="font-size:20px">A</button>
+            </div>
+            <div class="book-appearance-row book-appearance-themes" role="radiogroup" aria-label="Page theme">
+              <button class="book-paper-swatch" data-paper="light" title="Light">Aa</button>
+              <button class="book-paper-swatch" data-paper="sepia" title="Sepia">Aa</button>
+              <button class="book-paper-swatch" data-paper="gray" title="Gray">Aa</button>
+              <button class="book-paper-swatch" data-paper="night" title="Night">Aa</button>
+            </div>
           </div>
         </div>
 
