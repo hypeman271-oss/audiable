@@ -14808,6 +14808,33 @@ body.anim-page-active #reading-view {
 .book-chapter-row button:hover { opacity: 1; }
 .book-editor-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .link-btn.danger { color: var(--danger, #e06c75); }
+
+/* v4.143 (reader mode): a consumer opening a shared book (?book=token) should
+   see a clean reading app, not the author tool. Strip the author chrome but
+   keep playback (hero play, scrubber, chip row) + the Book/Audio view toggle +
+   the book view itself. Set by _openPublishedBook (body.reader-mode). */
+body.reader-mode .hero-icons,
+body.reader-mode #text,
+body.reader-mode #text-label,
+body.reader-mode .store-by-lines-row,
+body.reader-mode .actions.card-actions,
+body.reader-mode .player-actions,
+body.reader-mode #clear-btn,
+body.reader-mode #import-btn,
+body.reader-mode .import-menu-wrap,
+body.reader-mode #save-text-btn,
+body.reader-mode #edit-text,
+body.reader-mode #share-book-btn,
+body.reader-mode .hero-brand .tagline {
+  display: none !important;
+}
+/* The "Your text" card becomes just the reading surface — drop its frame so
+   the book view reads edge-to-edge. */
+body.reader-mode .card.card-text {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
 @media (prefers-reduced-motion: reduce) {
   .anim-sprite-card {
     transition: none;

@@ -20124,6 +20124,9 @@ async function _openPublishedBook(token) {
       return false;
     }
     _publishedBookToken = token; // routes sheet fetches to the public endpoint
+    // Reader mode: strip author chrome (see styles.css body.reader-mode) so the
+    // consumer sees a clean reading app, not the author tool.
+    try { document.body.classList.add("reader-mode"); } catch {}
     let blob;
     if (book.audioSha256) {
       try {

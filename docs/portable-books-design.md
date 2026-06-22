@@ -167,9 +167,17 @@ revoke→404) + live preview end-to-end (author publishes → fresh consumer wit
 **wiped IndexedDB + no key** opens the share link → book + audio load + the
 full-page scene fetches via the public endpoint and renders in book view).
 
-**Follow-ups (not built):** consumer chrome polish (hide author-only UI in
-reader mode), publish-management UI (list/revoke from Settings), re-publish
-updates the same link, consumer catalog (Phase 2 option B).
+**Reader mode (v4.144, SHIPPED):** opening `?book=token` sets `body.reader-mode`
+(in `_openPublishedBook`); CSS hides the author chrome (`.hero-icons`,
+`.player-actions`, generate/compose row, store-by-lines, Clear/Import/Edit/Save/
+Share, the textarea, the tagline) while keeping playback (hero play + chip row),
+the Book/Audio view toggle, and the book view. Verified live: a wiped-IDB
+consumer sees a clean reading app, not the author tool.
+
+**Follow-ups (not built):** publish-management UI (list/revoke from Settings),
+re-publish updates the same link, consumer catalog (Phase 2 option B), and for
+book packaging: multi-chapter publish + consumer chapter TOC/nav (book-packaging
+Phases 2–3).
 
 ## 5. Recommendation / phasing
 
