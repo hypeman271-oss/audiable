@@ -10516,6 +10516,37 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
 .book-view-spread.v3 .book-view-page-body .sentence {
   cursor: pointer;
 }
+/* v4.162: reader inline/block formatting from the author's markdown
+   (display-only; see _readerFmtSentence). strong/em/s render via defaults. */
+.book-view-spread.v3 .sentence code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: rgba(127, 127, 127, 0.14);
+  padding: 0.05em 0.3em;
+  border-radius: 4px;
+}
+.book-view-spread.v3 .sentence .bv-h {
+  display: block;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0.25em 0 0.45em;
+  text-align: left;
+}
+.book-view-spread.v3 .sentence .bv-h1 { font-size: 1.5em; }
+.book-view-spread.v3 .sentence .bv-h2 { font-size: 1.3em; }
+.book-view-spread.v3 .sentence .bv-h3 { font-size: 1.15em; }
+.book-view-spread.v3 .sentence .bv-h4,
+.book-view-spread.v3 .sentence .bv-h5,
+.book-view-spread.v3 .sentence .bv-h6 { font-size: 1.05em; }
+.book-view-spread.v3 .sentence .bv-quote {
+  display: block;
+  border-left: 3px solid var(--accent, #6c8cff);
+  padding-left: 0.8em;
+  font-style: italic;
+  opacity: 0.92;
+  margin: 0.35em 0;
+  text-align: left;
+}
 /* v4.140: one-up (single page) is the default. The page fills the viewport, so
    cap the text to a readable centered column with page-like side margins —
    matches Kindle / Apple Books / Kobo on a wide screen. On phones the page is

@@ -23429,6 +23429,67 @@ function _bookViewTwoUpEnabled() {
 // the rationale. _bookViewV3State.pages cache (set in setup) stays
 // because nav helpers benefit from it even without StPageFlip.
 
+// ── Reader inline formatting (v4.162) ─────────────────────────────────────
+// Render the author's markdown emphasis in the reader instead of dropping it.
+// The source text keeps its markdown; TTS already strips it (_stripSynthChars),
+// so this is DISPLAY-ONLY. XSS-safe: we escape HTML FIRST, then apply a
+// whitelisted set of inline transforms on the escaped string — no source byte
+// can inject a tag. Default on; kill with ?readerfmt=0 / localStorage
+// narrative.readerFmt="0".
+function _readerFmtEnabled() {
+  try {
+    if (new URLSearchParams(location.search).get("readerfmt") === "0") return false;
+  } catch {}
+  try { return localStorage.getItem("narrative.readerFmt") !== "0"; } catch {}
+  return true;
+}
+function _readerEscapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+function _readerInlineFmt(raw) {
+  let s = _readerEscapeHtml(raw);
+  // `code` first so * / _ inside a code span aren't reinterpreted.
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>"); // **bold**
+  s = s.replace(/__([^_]+?)__/g, "<strong>$1</strong>"); // __bold__
+  // *italic* (not part of **) / _italic_ (word-boundaried so snake_case is safe)
+  s = s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[^\w_])_([^_\n]+?)_(?![\w_])/g, "$1<em>$2</em>");
+  s = s.replace(/~~([^~]+?)~~/g, "<s>$1</s>"); // ~~strike~~
+  return s;
+}
+// Map a sentence to {html, cls}. A heading (#) or blockquote (>) marker at the
+// very start gets a style class + the marker stripped; everything else is
+// inline-only. Lists are intentionally left alone — a leading "- " is too often
+// real prose / dialogue to safely reinterpret.
+function _readerFmtSentence(raw) {
+  const t = raw.replace(/^\s+/, "");
+  // Heading / blockquote markers must isolate their OWN LINE only: a heading
+  // line has no terminal punctuation, so the sentence-splitter often merges it
+  // with the following prose. We style just the marked line (an inner block
+  // element) and render the rest of the merged blob as normal prose, so a
+  // heading never swallows the paragraph beneath it.
+  let m = t.match(/^(#{1,6})[ \t]+([^\n]*)(\n[\s\S]*)?$/);
+  if (m) {
+    const lvl = m[1].length;
+    const head =
+      '<span class="bv-h bv-h' + lvl + '">' +
+      _readerInlineFmt(m[2].replace(/\s*#*\s*$/, "")) + "</span>";
+    const rest = (m[3] || "").replace(/^\s+/, "");
+    return { html: head + (rest ? _readerInlineFmt(rest) : ""), cls: "" };
+  }
+  m = t.match(/^>[ \t]+([^\n]*)(\n[\s\S]*)?$/);
+  if (m) {
+    const q = '<span class="bv-quote">' + _readerInlineFmt(m[1]) + "</span>";
+    const rest = (m[2] || "").replace(/^\s+/, "");
+    return { html: q + (rest ? _readerInlineFmt(rest) : ""), cls: "" };
+  }
+  return { html: _readerInlineFmt(raw), cls: "" };
+}
+
 function _bookViewV3CreatePage(pageRow, pageWidth, pageHeight) {
   const page = document.createElement("div");
   page.className = "book-view-page";
@@ -23603,6 +23664,7 @@ function _bookViewV3Setup(source) {
 
   const sentences = source.sentences || [];
   const imgByIdx = source.imgByIdx;
+  const _bvFmtOn = _readerFmtEnabled();
   let firstBreakLogged = false;
 
   for (let i = 0; i < sentences.length; i++) {
@@ -23615,9 +23677,16 @@ function _bookViewV3Setup(source) {
 
     // Try to add the sentence to the current page.
     const span = document.createElement("span");
-    span.className = "sentence";
     span.dataset.idx = String(i);
-    span.textContent = sentences[i] + " ";
+    if (_bvFmtOn) {
+      // Render the author's emphasis (display-only; XSS-safe — escape-first).
+      const f = _readerFmtSentence(sentences[i]);
+      span.className = f.cls ? "sentence " + f.cls : "sentence";
+      span.innerHTML = f.html + " ";
+    } else {
+      span.className = "sentence";
+      span.textContent = sentences[i] + " ";
+    }
     cur.body.appendChild(span);
     hasContent = true;
     _bookSentenceToPage[i] = textPageIdx;
