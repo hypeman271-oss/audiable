@@ -19982,8 +19982,46 @@ async function _removeAnimationCue(clipId, sentenceIdx) {
 
 // Build a cue for the pending sentence, persist it, mark the span, and
 // refresh the live engine so it fires on the next play without a reload.
+// Downscale an image Blob so its longest side ≤ cap — keeps oversized sprite /
+// scene art within device GPU max-texture limits so it can't silently blank in
+// Book view (the phone-facing surface). A uniform scale preserves equal sprite-
+// frame widths. Returns the ORIGINAL blob if already small enough or on any
+// failure (never blocks the save). See manual §5 "Image requirements".
+const ANIM_IMG_MAX_SIDE = 2048;
+async function _animDownscaleImageBlob(blob, cap = ANIM_IMG_MAX_SIDE) {
+  if (!(blob instanceof Blob)) return blob;
+  let bmp;
+  try {
+    bmp = await createImageBitmap(blob);
+  } catch {
+    return blob; // can't decode (svg, exotic format) — store as-is
+  }
+  try {
+    const w = bmp.width;
+    const h = bmp.height;
+    const longest = Math.max(w, h);
+    if (longest <= cap) return blob;
+    const scale = cap / longest;
+    const nw = Math.max(1, Math.round(w * scale));
+    const nh = Math.max(1, Math.round(h * scale));
+    const cv = document.createElement("canvas");
+    cv.width = nw;
+    cv.height = nh;
+    const ctx = cv.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bmp, 0, 0, nw, nh);
+    const out = await new Promise((res) => cv.toBlob((b) => res(b), "image/png"));
+    return out || blob;
+  } catch {
+    return blob;
+  } finally {
+    if (bmp && bmp.close) bmp.close();
+  }
+}
+
 async function _animSaveCueForSentence(effect, opts) {
   opts = opts || {};
+  let _downscaledNote = false;
   const idx = _animSentenceIdx;
   if (idx == null || !_currentClipId) {
     _hideAnimatePalette();
@@ -20007,8 +20045,11 @@ async function _animSaveCueForSentence(effect, opts) {
     // the clip — the audio-hitch fix). Page = full-bleed scene; sprite = corner.
     if (opts.blob) {
       const sheetId = "sheet_" + _annotateNewId();
+      // Auto-downscale oversized art so it renders on phones (Book view).
+      const storeBlob = await _animDownscaleImageBlob(opts.blob);
+      _downscaledNote = storeBlob !== opts.blob;
       try {
-        await putAnimSheet(sheetId, opts.blob);
+        await putAnimSheet(sheetId, storeBlob);
       } catch (e) {
         setStatus("Couldn't store the image — see console.", true);
         console.warn("[anim] putAnimSheet failed:", e);
@@ -20039,7 +20080,12 @@ async function _animSaveCueForSentence(effect, opts) {
     _animLoadCues(clip);
   }
   _hideAnimatePalette();
-  setStatus(`✓ Animation (${effect}) on sentence ${idx + 1}.`);
+  setStatus(
+    `✓ Animation (${effect}) on sentence ${idx + 1}.` +
+      (_downscaledNote
+        ? ` (Image was large — resized to ${ANIM_IMG_MAX_SIDE}px so it renders in Book view.)`
+        : "")
+  );
 }
 
 async function _animRemoveCueForSentence() {

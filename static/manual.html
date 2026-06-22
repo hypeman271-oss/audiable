@@ -3521,6 +3521,13 @@ title: Spaced
         too wide can render fine in Audio view but show up blank in Book
         view</strong> — so size every image for the smallest target (a phone).
       </p>
+      <p>
+        Narrative now <strong>auto-resizes</strong> any image whose long side
+        exceeds 2048&nbsp;px when you add it (you'll see a note on save), so it
+        renders everywhere without you doing anything. The sizes below are still
+        worth following — they give the best quality and smallest files, and the
+        auto-resize is a safety net, not a substitute.
+      </p>
       <ul>
         <li><strong>Max dimensions:</strong> keep <em>every</em> side
           ≤ <strong>2048&nbsp;px</strong> for reliable rendering everywhere
@@ -3541,10 +3548,11 @@ title: Spaced
           full-page scene backdrops (transparency not needed there).</li>
       </ul>
       <div class="tip">
-        <strong>Blank scene in Book view but fine in Audio view?</strong> The
-        image is almost certainly too large. Re-export it at
-        ≤&nbsp;2048&nbsp;px on the long side (for a sprite sheet, reduce the
-        per-frame size so the whole strip fits) and re-pick it.
+        <strong>Blank scene in Book view but fine in Audio view?</strong> That
+        was the old symptom of an over-large image; new uploads are auto-resized
+        so it shouldn't recur. If you still see it on a cue added before this
+        change, just re-pick the image (it'll be resized on the way in), or
+        re-export it at ≤&nbsp;2048&nbsp;px on the long side.
       </div>
 
       <!-- ============================================================= -->
