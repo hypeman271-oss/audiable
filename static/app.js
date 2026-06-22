@@ -24627,6 +24627,72 @@ function _applyReaderMedia(m) {
 }
 _applyReaderMedia(_loadReaderMedia());
 
+// v4.154: typography depth — font face, line spacing, margins, brightness.
+// Each sets a CSS var on #book-view (inherited by the pages) + persists; the
+// layout-affecting three re-paginate. _bookSyncSeg marks the chosen button.
+function _bookSyncSeg(cls, attr, val) {
+  document.querySelectorAll("." + cls).forEach((b) => {
+    b.classList.toggle("selected", b.dataset[attr] === val);
+  });
+}
+const BOOK_FACE_KEY = "bookFace";
+const BOOK_FACES = {
+  serif: '"Iowan Old Style","Palatino Linotype","Book Antiqua",Palatino,Georgia,"Times New Roman",serif',
+  sans: 'system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
+  dyslexic: '"OpenDyslexic","Comic Sans MS",Verdana,Tahoma,sans-serif',
+};
+function _loadBookFace() { const v = localStorage.getItem(BOOK_FACE_KEY); return BOOK_FACES[v] ? v : "serif"; }
+function _applyBookFace(f) {
+  const t = BOOK_FACES[f] ? f : "serif";
+  if (bookView) bookView.style.setProperty("--book-font-family", BOOK_FACES[t]);
+  try { localStorage.setItem(BOOK_FACE_KEY, t); } catch {}
+  _bookSyncSeg("book-font-btn", "face", t);
+  if (typeof _bookViewRepaginate === "function") _bookViewRepaginate();
+}
+const BOOK_LH_KEY = "bookLineHeight";
+const BOOK_LHS = { tight: "1.4", normal: "1.65", loose: "2.0" };
+function _loadBookLh() { const v = localStorage.getItem(BOOK_LH_KEY); return BOOK_LHS[v] ? v : "normal"; }
+function _applyBookLh(l) {
+  const t = BOOK_LHS[l] ? l : "normal";
+  if (bookView) bookView.style.setProperty("--book-line-height", BOOK_LHS[t]);
+  try { localStorage.setItem(BOOK_LH_KEY, t); } catch {}
+  _bookSyncSeg("book-lh-btn", "lh", t);
+  if (typeof _bookViewRepaginate === "function") _bookViewRepaginate();
+}
+const BOOK_MARGIN_KEY = "bookMargin";
+const BOOK_MARGINS = { narrow: "16px", normal: "36px", wide: "64px" };
+function _loadBookMargin() { const v = localStorage.getItem(BOOK_MARGIN_KEY); return BOOK_MARGINS[v] ? v : "normal"; }
+function _applyBookMargin(m) {
+  const t = BOOK_MARGINS[m] ? m : "normal";
+  if (bookView) bookView.style.setProperty("--book-margin", BOOK_MARGINS[t]);
+  try { localStorage.setItem(BOOK_MARGIN_KEY, t); } catch {}
+  _bookSyncSeg("book-margin-btn", "margin", t);
+  if (typeof _bookViewRepaginate === "function") _bookViewRepaginate();
+}
+const BOOK_DIM_KEY = "bookDim";
+function _loadBookDim() {
+  const v = parseInt(localStorage.getItem(BOOK_DIM_KEY), 10);
+  return Number.isFinite(v) ? Math.max(0, Math.min(70, v)) : 0;
+}
+function _applyBookDim(pct) {
+  const p = Math.max(0, Math.min(70, parseInt(pct, 10) || 0));
+  if (bookView) bookView.style.setProperty("--book-dim", (p / 100).toFixed(2));
+  try { localStorage.setItem(BOOK_DIM_KEY, String(p)); } catch {}
+  const sl = document.getElementById("book-aa-brightness");
+  if (sl && String(sl.value) !== String(p)) sl.value = p;
+}
+function _bookSyncTypographyControls() {
+  _bookSyncSeg("book-font-btn", "face", _loadBookFace());
+  _bookSyncSeg("book-lh-btn", "lh", _loadBookLh());
+  _bookSyncSeg("book-margin-btn", "margin", _loadBookMargin());
+  const sl = document.getElementById("book-aa-brightness");
+  if (sl) sl.value = _loadBookDim();
+}
+_applyBookFace(_loadBookFace());
+_applyBookLh(_loadBookLh());
+_applyBookMargin(_loadBookMargin());
+_applyBookDim(_loadBookDim());
+
 // Step the book font size through the named sizes (drives the Aa A− / A+).
 const _BOOK_FONT_ORDER = ["small", "medium", "large", "xlarge"];
 function _bookStepFont(dir) {
@@ -24647,7 +24713,11 @@ function _bookStepFont(dir) {
     aaBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       panel.hidden = !panel.hidden;
-      if (!panel.hidden) { _bookSyncPaperSwatches(); _syncReaderMediaBtns(); }
+      if (!panel.hidden) {
+        _bookSyncPaperSwatches();
+        _syncReaderMediaBtns();
+        _bookSyncTypographyControls();
+      }
     });
     document.addEventListener("click", (e) => {
       if (panel.hidden) return;
@@ -24665,6 +24735,17 @@ function _bookStepFont(dir) {
   document.querySelectorAll(".book-media-btn").forEach((b) => {
     b.addEventListener("click", () => _applyReaderMedia(b.dataset.media));
   });
+  document.querySelectorAll(".book-font-btn").forEach((b) => {
+    b.addEventListener("click", () => _applyBookFace(b.dataset.face));
+  });
+  document.querySelectorAll(".book-lh-btn").forEach((b) => {
+    b.addEventListener("click", () => _applyBookLh(b.dataset.lh));
+  });
+  document.querySelectorAll(".book-margin-btn").forEach((b) => {
+    b.addEventListener("click", () => _applyBookMargin(b.dataset.margin));
+  });
+  const bright = document.getElementById("book-aa-brightness");
+  if (bright) bright.addEventListener("input", () => _applyBookDim(bright.value));
 })();
 
 // Public: leave book view. Either back to reading view (default) or

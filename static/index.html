@@ -2471,6 +2471,29 @@
               <button class="book-paper-swatch" data-paper="gray" title="Gray">Aa</button>
               <button class="book-paper-swatch" data-paper="night" title="Night">Aa</button>
             </div>
+            <!-- v4.154: typography depth — font face, line spacing, margins,
+                 brightness (Apple Books / Kindle parity). -->
+            <div class="book-appearance-row book-font-face" role="radiogroup" aria-label="Font">
+              <button class="book-aa-seg book-font-btn" data-face="serif" style="font-family:Georgia,serif">Serif</button>
+              <button class="book-aa-seg book-font-btn" data-face="sans" style="font-family:system-ui,sans-serif">Sans</button>
+              <button class="book-aa-seg book-font-btn" data-face="dyslexic" style="font-family:'Comic Sans MS',Verdana,sans-serif">Reader</button>
+            </div>
+            <div class="book-appearance-row book-line-height" role="radiogroup" aria-label="Line spacing">
+              <button class="book-aa-seg book-lh-btn" data-lh="tight" title="Tight spacing">≡</button>
+              <button class="book-aa-seg book-lh-btn" data-lh="normal" title="Normal spacing">☰</button>
+              <button class="book-aa-seg book-lh-btn" data-lh="loose" title="Loose spacing">𝄁</button>
+              <span class="book-aa-seg-label">Spacing</span>
+            </div>
+            <div class="book-appearance-row book-margins" role="radiogroup" aria-label="Margins">
+              <button class="book-aa-seg book-margin-btn" data-margin="narrow" title="Narrow margins">▮▮▮</button>
+              <button class="book-aa-seg book-margin-btn" data-margin="normal" title="Normal margins">▮ ▮</button>
+              <button class="book-aa-seg book-margin-btn" data-margin="wide" title="Wide margins">▏ ▕</button>
+              <span class="book-aa-seg-label">Margins</span>
+            </div>
+            <div class="book-appearance-row book-brightness">
+              <span class="book-aa-seg-label">☀ Brightness</span>
+              <input id="book-aa-brightness" type="range" min="0" max="70" step="5" value="0" aria-label="Screen brightness" />
+            </div>
           </div>
         </div>
 

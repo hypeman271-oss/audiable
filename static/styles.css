@@ -14850,7 +14850,10 @@ body.reader-mode #book-view-print {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-width: 240px;
+  min-width: 290px;
+  max-width: calc(100vw - 36px);
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
 }
 .book-appearance-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .book-appearance-size button {
@@ -14897,6 +14900,48 @@ body.reader-mode[data-reader-media="ebook"] .hero-controls {
   box-shadow: 0 0 0 3px rgba(108, 140, 255, 0.24);
   border-radius: 4px;
   transition: background 0.18s ease;
+}
+
+/* v4.154: typography-depth controls (font face, line spacing, margins,
+   brightness) — segmented buttons + a slider in the Aa panel. */
+.book-aa-seg {
+  flex: 1;
+  height: 36px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+}
+.book-aa-seg.selected {
+  border-color: var(--accent, #6c8cff);
+  background: var(--accent-soft, rgba(108, 140, 255, 0.16));
+}
+.book-aa-seg-label { font-size: 12px; opacity: 0.65; align-self: center; white-space: nowrap; }
+.book-brightness { gap: 10px; }
+.book-brightness input[type="range"] { flex: 1; }
+
+/* Margins drive the page side-padding (overrides the base + one-up hardcodes). */
+.book-view-spread.v3 .book-view-page,
+.book-view-spread.v3.one-up .book-view-page {
+  padding-left: var(--book-margin, 36px);
+  padding-right: var(--book-margin, 36px);
+}
+
+/* Brightness: a dim overlay over the reading area only (controls stay bright —
+   z below the chrome z55 + the Aa panel z60). pointer-events:none so the tap
+   zones still work through it. */
+#book-view { position: relative; }
+#book-view::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: #000;
+  opacity: var(--book-dim, 0);
+  pointer-events: none;
+  z-index: 45;
+  transition: opacity 0.15s ease;
 }
 
 /* Page-theme application: data-book-paper on #book-view drives the spread +
