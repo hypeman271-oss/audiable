@@ -2454,6 +2454,12 @@
           <!-- v4.146: appearance popover (Apple-Books "Aa"). Page theme +
                text size. Toggled by #book-view-aa. -->
           <div id="book-view-appearance" class="book-appearance" hidden>
+            <!-- v4.149: reading mode — Audiobook (with play bar) vs eBook only
+                 (no audio chrome). Reader-mode only. -->
+            <div class="book-appearance-row book-media-mode" role="radiogroup" aria-label="Reading mode">
+              <button class="book-media-btn" data-media="audio">🎧 Audiobook</button>
+              <button class="book-media-btn" data-media="ebook">📖 eBook</button>
+            </div>
             <div class="book-appearance-row book-appearance-size">
               <button id="book-aa-smaller" type="button" aria-label="Smaller text">A</button>
               <span class="book-aa-size-label">Text size</span>

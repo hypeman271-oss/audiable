@@ -14870,6 +14870,25 @@ body.reader-mode #book-view-print {
 .book-paper-swatch[data-paper="night"] { background: #0f0f12; color: #c9c9d0; }
 .book-paper-swatch.selected { border-color: var(--accent, #6c8cff); }
 
+/* v4.149: reading-mode toggle (Audiobook vs eBook). Shown only in reader mode. */
+.book-media-mode { gap: 8px; }
+.book-media-btn {
+  flex: 1; height: 38px; border: 1px solid var(--border-soft);
+  border-radius: 8px; background: var(--bg-card-2); color: var(--fg);
+  cursor: pointer; font-size: 13px;
+}
+.book-media-btn.selected {
+  border-color: var(--accent, #6c8cff);
+  background: var(--accent-soft, rgba(108, 140, 255, 0.16));
+}
+body:not(.reader-mode) .book-media-mode { display: none; }
+/* eBook mode (reader): no audio chrome — hide the bottom play bar + the
+   transport chip pill. Audiobook mode keeps them. */
+body.reader-mode[data-reader-media="ebook"] #player-card,
+body.reader-mode[data-reader-media="ebook"] .hero-controls {
+  display: none !important;
+}
+
 /* Page-theme application: data-book-paper on #book-view drives the spread +
    page background + text colour. Scene pages (.book-page--scene) keep their
    own full-bleed background + scrim, so paper only affects plain text pages. */

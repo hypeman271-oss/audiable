@@ -24487,6 +24487,32 @@ function _applyBookPaper(p) {
 }
 _applyBookPaper(_loadBookPaper());
 
+// v4.149: reading media mode — "audio" (audiobook, keep the play bar) vs
+// "ebook" (no audio chrome). Reader-mode only (CSS gates the effect); the
+// Aa-panel toggle is hidden outside reader mode.
+const READER_MEDIA_KEY = "readerMedia";
+function _loadReaderMedia() {
+  const v = localStorage.getItem(READER_MEDIA_KEY);
+  return v === "ebook" ? "ebook" : "audio";
+}
+function _syncReaderMediaBtns() {
+  const cur = document.body.dataset.readerMedia || "audio";
+  document.querySelectorAll(".book-media-btn").forEach((b) => {
+    b.classList.toggle("selected", b.dataset.media === cur);
+  });
+}
+function _applyReaderMedia(m) {
+  const t = m === "ebook" ? "ebook" : "audio";
+  document.body.dataset.readerMedia = t;
+  try { localStorage.setItem(READER_MEDIA_KEY, t); } catch {}
+  // eBook = silent reading: pause any playing narration.
+  if (t === "ebook") {
+    try { const a = document.querySelector("audio"); if (a && !a.paused) a.pause(); } catch {}
+  }
+  _syncReaderMediaBtns();
+}
+_applyReaderMedia(_loadReaderMedia());
+
 // Step the book font size through the named sizes (drives the Aa A− / A+).
 const _BOOK_FONT_ORDER = ["small", "medium", "large", "xlarge"];
 function _bookStepFont(dir) {
@@ -24507,7 +24533,7 @@ function _bookStepFont(dir) {
     aaBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       panel.hidden = !panel.hidden;
-      if (!panel.hidden) _bookSyncPaperSwatches();
+      if (!panel.hidden) { _bookSyncPaperSwatches(); _syncReaderMediaBtns(); }
     });
     document.addEventListener("click", (e) => {
       if (panel.hidden) return;
@@ -24521,6 +24547,9 @@ function _bookStepFont(dir) {
   if (lg) lg.addEventListener("click", () => _bookStepFont(1));
   document.querySelectorAll(".book-paper-swatch").forEach((sw) => {
     sw.addEventListener("click", () => _applyBookPaper(sw.dataset.paper));
+  });
+  document.querySelectorAll(".book-media-btn").forEach((b) => {
+    b.addEventListener("click", () => _applyReaderMedia(b.dataset.media));
   });
 })();
 
