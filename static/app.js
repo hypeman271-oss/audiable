@@ -20250,7 +20250,10 @@ function _readerImmerseInit() {
   bv.addEventListener(
     "click",
     (e) => {
-      if (!document.body.classList.contains("reader-mode")) return;
+      // v4.157: works in ANY book view (author + consumer reader), not just
+      // share-link reader mode — book view IS the reading surface, so tapping
+      // the page drives it everywhere (the user couldn't find any toggle).
+      if (!(typeof bookView !== "undefined" && bookView && !bookView.hidden)) return;
       // Let real controls (nav pill, Aa panel, buttons/links, the play bar)
       // work normally — only page-area taps drive the reader.
       if (
@@ -20261,7 +20264,7 @@ function _readerImmerseInit() {
       ) {
         return;
       }
-      e.stopPropagation(); // suppress per-sentence audio-seek in reader mode
+      e.stopPropagation(); // page-area tap = zone action, not per-sentence seek
       const w = window.innerWidth;
       const x = e.clientX;
       if (x < w * 0.3) _readerTurnSpread(-1);
@@ -24058,6 +24061,11 @@ async function enterBookView() {
     setStatus("Generate or load a clip first.", true);
     return;
   }
+  // v4.157: wire the tap-to-toggle / edge-tap-turn handler for ALL book views
+  // (author too, not just the share-link reader). Idempotent. Start with chrome
+  // shown (clear any prior immersion).
+  if (typeof _readerImmerseInit === "function") _readerImmerseInit();
+  document.body.classList.remove("reader-immersed");
   // v225v3.7 (#741): wire auto-hide listeners ONCE on first open
   // (idempotent — re-binding the same handler on same element with
   // addEventListener is a no-op for duplicate identical references,
@@ -24787,6 +24795,8 @@ function _bookStepFont(dir) {
 function exitBookView(opts = {}) {
   bookView.hidden = true;
   bookView.style.visibility = "";
+  // Clear immersion so chrome isn't left hidden outside book view.
+  document.body.classList.remove("reader-immersed");
   _bookSentenceSpans = [];
   if (typeof _animBookSpriteStopAll === "function") _animBookSpriteStopAll();
   if (typeof _animBookClearPerSentence === "function") _animBookClearPerSentence();
