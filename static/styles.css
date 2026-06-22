@@ -14889,6 +14889,16 @@ body.reader-mode[data-reader-media="ebook"] .hero-controls {
   display: none !important;
 }
 
+/* v4.152: read-along highlight — the "now reading" sentence as narration plays.
+   Narrative's differentiator (synced read+listen). A soft accent band, legible
+   on every page theme (light/sepia/gray/night) + animation scenes. */
+.book-view-spread .sentence.active {
+  background: rgba(108, 140, 255, 0.24);
+  box-shadow: 0 0 0 3px rgba(108, 140, 255, 0.24);
+  border-radius: 4px;
+  transition: background 0.18s ease;
+}
+
 /* Page-theme application: data-book-paper on #book-view drives the spread +
    page background + text colour. Scene pages (.book-page--scene) keep their
    own full-bleed background + scrim, so paper only affects plain text pages. */

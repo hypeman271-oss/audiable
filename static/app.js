@@ -18156,20 +18156,30 @@ function highlightCurrentSentence() {
   // (driven by _bookViewUpdateNav) gives the user a one-click way
   // back to the audio's location.
   if (bookView && !bookView.hidden && _bookSentenceToPage.length > 0) {
-    const ppr = _bookViewPagesPerSpread();
-    const desired = _bookViewSpreadOfSentence(idx, ppr);
-    if (desired === _bookViewCurrentSpread) {
-      // Audio caught up to where the user scrubbed to — drop the
-      // pinned flag silently so the next manual-nav re-arms it.
-      _bookViewUserPaged = false;
-      _bookViewApplyActive(idx);
-      _bookViewUpdateNav();
-    } else if (_bookViewUserPaged) {
-      // Pinned: leave the spread alone but refresh the nav so the
-      // "Return to current" button reflects the new distance.
-      _bookViewUpdateNav();
+    // v4.152: V3 (default) uses its own read-along mirror — highlight the
+    // spoken sentence + auto-flip to its spread. The legacy path below uses
+    // _bookSentenceSpans / _bookViewRenderSpread, which no-op / break under V3.
+    if (
+      typeof _bookViewV3Enabled === "function" && _bookViewV3Enabled() &&
+      typeof _bookViewV3SyncActive === "function"
+    ) {
+      _bookViewV3SyncActive(idx);
     } else {
-      _bookViewRenderSpread(desired);
+      const ppr = _bookViewPagesPerSpread();
+      const desired = _bookViewSpreadOfSentence(idx, ppr);
+      if (desired === _bookViewCurrentSpread) {
+        // Audio caught up to where the user scrubbed to — drop the
+        // pinned flag silently so the next manual-nav re-arms it.
+        _bookViewUserPaged = false;
+        _bookViewApplyActive(idx);
+        _bookViewUpdateNav();
+      } else if (_bookViewUserPaged) {
+        // Pinned: leave the spread alone but refresh the nav so the
+        // "Return to current" button reflects the new distance.
+        _bookViewUpdateNav();
+      } else {
+        _bookViewRenderSpread(desired);
+      }
     }
   }
   const activeSpan = sentenceSpans[idx];
@@ -20187,6 +20197,9 @@ async function _openPublishedBook(token) {
 let _readerImmerseWired = false;
 function _readerTurnSpread(dir) {
   try {
+    // Manual turn pins the spread so the read-along auto-flip doesn't yank the
+    // reader back to the spoken sentence (until audio catches up to them).
+    _bookViewUserPaged = true;
     if (typeof _bookViewV3GotoSpread === "function") {
       _bookViewV3GotoSpread((_bookViewV3State.spreadIdx || 0) + dir);
     } else if (typeof _bookViewNavigateManual === "function") {
@@ -20197,6 +20210,20 @@ function _readerTurnSpread(dir) {
 function _readerImmerseInit() {
   if (_readerImmerseWired) return;
   _readerImmerseWired = true;
+  // Read-along signature: while the narration plays, immerse (hide chrome) so
+  // the reader watches the page follow along; on pause, reveal the controls.
+  if (typeof playerEl !== "undefined" && playerEl) {
+    playerEl.addEventListener("play", () => {
+      if (document.body.classList.contains("reader-mode")) {
+        document.body.classList.add("reader-immersed");
+      }
+    });
+    playerEl.addEventListener("pause", () => {
+      if (document.body.classList.contains("reader-mode")) {
+        document.body.classList.remove("reader-immersed");
+      }
+    });
+  }
   const bv = document.getElementById("book-view");
   if (!bv) return;
   // Capture phase: handle the zone tap before the sentence's seek handler.
@@ -23937,6 +23964,39 @@ function _bookViewApplyActive(idx) {
   }
   const activeSpan = _bookSentenceSpans[idx];
   if (activeSpan) activeSpan.classList.add("active");
+}
+
+// v4.152 (read-along): V3 doesn't use _bookSentenceSpans — it marks spans
+// .sentence[data-idx] and keeps every page in the DOM. This is the V3 mirror
+// of the karaoke + auto-flip so the synchronized read-along (Narrative's real
+// differentiator vs pure ebook/audiobook apps) actually works in the default
+// book view. Applies played/active across all spans (all pages are present)
+// then flips to the spoken sentence's spread unless the user paged away.
+function _bookViewV3ApplyActive(idx) {
+  const spread = bookViewSpread;
+  if (!spread) return;
+  const spans = spread.querySelectorAll(".sentence[data-idx]");
+  spans.forEach((s) => {
+    const i = parseInt(s.dataset.idx, 10);
+    if (!Number.isFinite(i)) return;
+    s.classList.toggle("active", i === idx);
+    s.classList.toggle("played", i < idx);
+  });
+}
+function _bookViewV3SyncActive(idx) {
+  _bookViewV3ApplyActive(idx);
+  const pps = (_bookViewV3State && _bookViewV3State.pagesPerSpread) || 1;
+  let desired = _bookViewV3State ? _bookViewV3State.spreadIdx : 0;
+  if (typeof _bookViewV3PageOfSentence === "function") {
+    desired = Math.floor(_bookViewV3PageOfSentence(idx) / pps);
+  }
+  if (desired === _bookViewV3State.spreadIdx) {
+    _bookViewUserPaged = false; // audio caught up to where we are
+  } else if (!_bookViewUserPaged) {
+    // Auto page-turn: follow the narration to its spread.
+    if (typeof _bookViewV3GotoSpread === "function") _bookViewV3GotoSpread(desired);
+  }
+  if (typeof _bookViewUpdateNav === "function") _bookViewUpdateNav();
 }
 
 // Public: enter book view. Reads the stashed _bookViewSource (set by
