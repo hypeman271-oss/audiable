@@ -3512,6 +3512,41 @@ title: Spaced
         never affects the narration.
       </p>
 
+      <h4 id="image-requirements">Image requirements (sizes &amp; limits)</h4>
+      <p>
+        The same animation images are used in <strong>both</strong> the
+        scrolling <em>Audio view</em> and the paginated <em>Book view</em>. Book
+        view is the reader-facing surface and runs on phones, whose graphics
+        hardware caps how large an image it can paint. <strong>An image that's
+        too wide can render fine in Audio view but show up blank in Book
+        view</strong> — so size every image for the smallest target (a phone).
+      </p>
+      <ul>
+        <li><strong>Max dimensions:</strong> keep <em>every</em> side
+          ≤ <strong>2048&nbsp;px</strong> for reliable rendering everywhere
+          (phones included). 4096&nbsp;px is the hard ceiling on most modern
+          devices, but older phones can fail below that — 2048 is the safe
+          number.</li>
+        <li><strong>Full-page scene (still image):</strong> ~1200–1600&nbsp;px on
+          the long side is plenty — it's scaled to cover the page, so bigger just
+          wastes memory. Any aspect ratio works (it's center-cropped to fill);
+          portrait-ish matches a page best. PNG or JPG.</li>
+        <li><strong>Sprite sheet (per-sentence 🚶 <em>and</em> full-page sprite
+          loops):</strong> the strip's total width = <em>frames × frame
+          width</em>. With 4–8 frames at a few hundred px each, a strip lands
+          around 800–2400&nbsp;px — safe. Avoid large per-frame sizes that push
+          the whole strip past ~2048&nbsp;px wide. PNG with transparency.</li>
+        <li><strong>Format:</strong> PNG with a transparent background for
+          characters/sprites (so they're not in a white box); PNG or JPG for
+          full-page scene backdrops (transparency not needed there).</li>
+      </ul>
+      <div class="tip">
+        <strong>Blank scene in Book view but fine in Audio view?</strong> The
+        image is almost certainly too large. Re-export it at
+        ≤&nbsp;2048&nbsp;px on the long side (for a sprite sheet, reduce the
+        per-frame size so the whole strip fits) and re-pick it.
+      </div>
+
       <!-- ============================================================= -->
       <h2 id="book-view">6. Book view</h2>
       <p>
