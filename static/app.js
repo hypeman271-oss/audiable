@@ -23222,6 +23222,20 @@ function _bookViewV3Setup(source) {
       : 1;
   spread.classList.toggle("one-up", pagesPerSpread === 1);
   const pageWidth = spreadWidth / pagesPerSpread;
+  // v4.155: size the spread to the ACTUAL visible height — from its own top to
+  // the bottom of the live (dynamic) viewport. The CSS calc(100vh - reserve)
+  // over-counts on tablet/mobile browsers (100vh ignores the retractable
+  // toolbar) and the fixed reserve underestimates a tall header, so the page
+  // ran off the bottom (reported on tablet, and shared books open in-browser).
+  // visualViewport.height tracks the truly-visible area incl. the toolbar.
+  try {
+    const vh =
+      (window.visualViewport && window.visualViewport.height) ||
+      window.innerHeight;
+    const top = spread.getBoundingClientRect().top;
+    const avail = Math.round(vh - top - 12);
+    if (avail > 200) spread.style.height = avail + "px";
+  } catch {}
   const pageHeight = spread.clientHeight;
 
   const pageRow = document.createElement("div");
