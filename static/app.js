@@ -24429,8 +24429,12 @@ if (bookViewSpread) {
 // Keep the legacy DB name even after the app was renamed to Narrative — IndexedDB
 // is keyed on this string, and changing it would orphan any clips users already saved.
 const DB_NAME = "audiable";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE = "clips";
+// v4.143 (book packaging): a "book" groups ordered chapter clips with its own
+// title/author/cover. Chapters stay normal clips in STORE; a book just holds
+// their ids in order (no duplication). See docs/book-packaging-design.md.
+const BOOK_STORE = "books";
 // v225v4.128 (#901): sprite sheets live in their OWN store, NOT inside the
 // clip object. The throttled progress-save (every 5s during playback) does
 // get(clip) → put(clip) → _syncPushClip(clip); if a multi-MB sheet rode
@@ -24448,6 +24452,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains(ANIM_SHEET_STORE)) {
         db.createObjectStore(ANIM_SHEET_STORE); // out-of-line keys (sheetId)
+      }
+      if (!db.objectStoreNames.contains(BOOK_STORE)) {
+        db.createObjectStore(BOOK_STORE, { keyPath: "id" });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -24598,6 +24605,51 @@ async function deleteClipById(id) {
     _syncDeleteClip(id).catch((e) =>
       console.warn("[sync] delete failed:", e),
     );
+  }
+}
+
+// ── Book store (book packaging). A book groups ordered chapter clip ids +
+// its own title/author/cover. Mirrors the clip-store helpers + fire-and-forget
+// sync. See docs/book-packaging-design.md.
+async function putBook(book) {
+  if (!book || book.id == null) return;
+  book.updatedAt = new Date().toISOString();
+  if (!book.createdAt) book.createdAt = book.updatedAt;
+  const db = await openDB();
+  await idbReq(db.transaction(BOOK_STORE, "readwrite").objectStore(BOOK_STORE).put(book));
+  if (typeof _syncPushBook === "function") {
+    _syncPushBook(book).catch((e) => console.warn("[sync] book push failed:", e));
+  }
+  return book;
+}
+
+async function getBook(id) {
+  const db = await openDB();
+  return idbReq(db.transaction(BOOK_STORE, "readonly").objectStore(BOOK_STORE).get(id));
+}
+
+async function listBooks() {
+  const db = await openDB();
+  const all = await idbReq(
+    db.transaction(BOOK_STORE, "readonly").objectStore(BOOK_STORE).getAll()
+  );
+  return (all || []).filter((b) => b && !b.deleted);
+}
+
+async function deleteBookById(id) {
+  // Soft-delete (LWW) so the removal syncs; chapters (clips) are untouched —
+  // a book only references them.
+  const book = await getBook(id);
+  const db = await openDB();
+  if (book) {
+    book.deleted = true;
+    book.updatedAt = new Date().toISOString();
+    await idbReq(db.transaction(BOOK_STORE, "readwrite").objectStore(BOOK_STORE).put(book));
+  } else {
+    await idbReq(db.transaction(BOOK_STORE, "readwrite").objectStore(BOOK_STORE).delete(id));
+  }
+  if (typeof _syncPushBook === "function" && book) {
+    _syncPushBook(book).catch((e) => console.warn("[sync] book delete push failed:", e));
   }
 }
 
@@ -25034,10 +25086,15 @@ async function _syncPull(force) {
         await _syncFetchAndStoreClip(Number(idStr));
       }
 
+      // Books ride alongside clips (small JSON, LWW). Pull is independent of
+      // the clip delta so a downlevel server (no books route) just no-ops.
+      let booksChanged = false;
+      try { booksChanged = await _syncPullBooks(); } catch (e) { console.warn("[sync] books pull:", e); }
+
       localStorage.setItem(SYNC_LAST_PULL_KEY, String(Date.now()));
       _syncStatusText = "";
-      // Re-render so newly-pulled clips appear without a manual refresh.
-      if (toPull.length > 0 && typeof renderLibrary === "function") {
+      // Re-render so newly-pulled clips/books appear without a manual refresh.
+      if ((toPull.length > 0 || booksChanged) && typeof renderLibrary === "function") {
         renderLibrary();
       }
     } catch (e) {
@@ -25058,6 +25115,55 @@ async function _syncFetchAndStoreClip(clipId) {
   const sc = body && body.clip;
   if (!sc) return;
   await _syncAbsorbServerClip(sc);
+}
+
+// ── Book sync (book packaging). Books are small JSON (ordered chapter ids +
+// metadata + coverSha), so push/pull the whole object with LWW by updatedAt.
+async function _syncPushBook(book) {
+  if (!_syncIsEnabled() || !book || book.id == null) return;
+  try {
+    await fetch(`/api/library/books/${encodeURIComponent(book.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: book.id,
+        title: book.title || "",
+        author: book.author || "",
+        description: book.description || "",
+        coverSha: book.coverSha || null,
+        chapterClipIds: Array.isArray(book.chapterClipIds) ? book.chapterClipIds : [],
+        createdAt: book.createdAt || book.updatedAt,
+        updatedAt: book.updatedAt || new Date().toISOString(),
+        deleted: !!book.deleted,
+      }),
+    });
+  } catch (e) {
+    console.warn("[sync] book push failed:", e);
+  }
+}
+
+// Pull all server books, LWW-absorb into the local store. Returns true if any
+// local row changed (so the caller re-renders). No-ops on a downlevel server.
+async function _syncPullBooks() {
+  if (!_syncIsEnabled()) return false;
+  const res = await fetch("/api/library/books");
+  if (!res.ok) return false;
+  const body = await res.json();
+  const serverBooks = (body && body.books) || [];
+  if (!serverBooks.length) return false;
+  const db = await openDB();
+  let changed = false;
+  for (const sb of serverBooks) {
+    const local = await idbReq(
+      db.transaction(BOOK_STORE, "readonly").objectStore(BOOK_STORE).get(sb.id)
+    );
+    if (local && local.updatedAt && local.updatedAt >= sb.updatedAt) continue;
+    await idbReq(
+      db.transaction(BOOK_STORE, "readwrite").objectStore(BOOK_STORE).put(sb)
+    );
+    changed = true;
+  }
+  return changed;
 }
 
 async function _syncAbsorbServerClip(sc) {

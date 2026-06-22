@@ -749,6 +749,135 @@ def _conflict_response(server_row: sqlite3.Row):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# v4.143 (book packaging): books group ordered chapter clips with their own
+# title/author/cover. Small JSON, synced per-tenant with LWW like clips.
+# Chapters stay clip rows; a book just stores their ids in order.
+# ──────────────────────────────────────────────────────────────────────
+
+
+class BookUpsert(BaseModel):
+    id: int
+    title: str = ""
+    author: str = ""
+    description: str = ""
+    coverSha: str | None = None
+    chapterClipIds: list[int] = Field(default_factory=list)
+    createdAt: str | None = None
+    updatedAt: str = Field(..., min_length=1)
+    deleted: bool = False
+
+
+def _row_to_book_dict(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "title": row["title"] or "",
+        "author": row["author"] or "",
+        "description": row["description"] or "",
+        "coverSha": row["cover_sha"],
+        "chapterClipIds": library_db.jsload(row["chapter_clip_ids_json"]) or [],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "deleted": bool(row["deleted"]),
+    }
+
+
+@router.get("/books")
+def list_books(request: Request):
+    _require_enabled()
+    tk = _tenant(request)
+    rows = library_db.conn().execute(
+        "SELECT * FROM books WHERE tenant_key = ? AND deleted = 0 "
+        "ORDER BY updated_at DESC",
+        (tk,),
+    ).fetchall()
+    return {"books": [_row_to_book_dict(r) for r in rows]}
+
+
+@router.get("/books/{book_id}")
+def get_book(book_id: int, request: Request):
+    _require_enabled()
+    tk = _tenant(request)
+    row = library_db.conn().execute(
+        "SELECT * FROM books WHERE tenant_key = ? AND id = ?", (tk, book_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="book not found")
+    return {"book": _row_to_book_dict(row)}
+
+
+@router.put("/books/{book_id}")
+def put_book(book_id: int, payload: BookUpsert, request: Request):
+    _require_enabled()
+    tk = _tenant(request)
+    if payload.id != book_id:
+        raise HTTPException(status_code=400, detail="payload.id must match URL path")
+    with library_db.write_lock():
+        c = library_db.conn()
+        existing = c.execute(
+            "SELECT updated_at FROM books WHERE tenant_key = ? AND id = ?",
+            (tk, book_id),
+        ).fetchone()
+        # LWW: server newer → return its row (client absorbs).
+        if (
+            existing is not None
+            and existing["updated_at"]
+            and existing["updated_at"] > payload.updatedAt
+        ):
+            full = c.execute(
+                "SELECT * FROM books WHERE tenant_key = ? AND id = ?", (tk, book_id)
+            ).fetchone()
+            return {"conflict": True, "book": _row_to_book_dict(full)}
+        c.execute(
+            """
+            INSERT INTO books (
+              tenant_key, id, title, author, description, cover_sha,
+              chapter_clip_ids_json, created_at, updated_at, deleted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_key, id) DO UPDATE SET
+              title=excluded.title,
+              author=excluded.author,
+              description=excluded.description,
+              cover_sha=excluded.cover_sha,
+              chapter_clip_ids_json=excluded.chapter_clip_ids_json,
+              created_at=excluded.created_at,
+              updated_at=excluded.updated_at,
+              deleted=excluded.deleted
+            """,
+            (
+                tk,
+                payload.id,
+                payload.title,
+                payload.author,
+                payload.description,
+                payload.coverSha,
+                library_db.jsdump(payload.chapterClipIds),
+                payload.createdAt or payload.updatedAt,
+                payload.updatedAt,
+                int(payload.deleted),
+            ),
+        )
+        row = c.execute(
+            "SELECT * FROM books WHERE tenant_key = ? AND id = ?", (tk, book_id)
+        ).fetchone()
+        return {"book": _row_to_book_dict(row)}
+
+
+@router.delete("/books/{book_id}")
+def delete_book(book_id: int, updated_at: str, request: Request):
+    """Soft-delete (the client usually deletes via PUT deleted=true; this is
+    the parity DELETE)."""
+    _require_enabled()
+    tk = _tenant(request)
+    with library_db.write_lock():
+        library_db.conn().execute(
+            "UPDATE books SET deleted = 1, updated_at = ? "
+            "WHERE tenant_key = ? AND id = ?",
+            (updated_at, tk, book_id),
+        )
+    return {"ok": True}
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Audio streaming. Content-addressed by sha256 so URLs are immutable
 # and infinitely cacheable.
 #

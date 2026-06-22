@@ -44,7 +44,7 @@ SENTENCE_DIR = DATA_DIR / "sentences"
 ANIM_SHEET_DIR = DATA_DIR / "anim_sheets"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -320,6 +320,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v11(c)
         c.execute("UPDATE schema_version SET version = 11")
         current = 11
+
+    if current < 12:
+        _apply_v12(c)
+        c.execute("UPDATE schema_version SET version = 12")
+        current = 12
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -824,6 +829,35 @@ def _apply_v11(c: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_published_tenant
           ON published_books(tenant_key);
+        """
+    )
+
+
+def _apply_v12(c: sqlite3.Connection) -> None:
+    """Add the books table (book packaging). A book groups ordered chapter
+    clips with its own title/author/cover. Chapters stay rows in `clips`; a
+    book just stores their ids in order (no duplication). Synced per-tenant
+    with LWW like clips. Cover art lives content-addressed (cover_sha →
+    ANIM_SHEET_DIR reuse). See docs/book-packaging-design.md."""
+    print(
+        "[library_db] migrating to schema v12 (add books table for packaging)",
+        file=sys.stderr, flush=True,
+    )
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS books (
+          tenant_key            TEXT NOT NULL,
+          id                    INTEGER NOT NULL,
+          title                 TEXT,
+          author                TEXT,
+          description           TEXT,
+          cover_sha             TEXT,
+          chapter_clip_ids_json TEXT,
+          created_at            TEXT,
+          updated_at            TEXT,
+          deleted               INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (tenant_key, id)
+        );
         """
     )
 
