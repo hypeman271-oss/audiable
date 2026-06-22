@@ -139,6 +139,38 @@ with sheetSha, downlevel-preserve, explicit-`[]`-wipe) + live client round-trip
 re-pulls + re-caches). Cross-tenant author→author (your own two devices) is the
 user's two-device verification; needs library_db enabled (Fly).
 
+## 4c. AS-BUILT — Phase 2 share-link distribution (v4.142, SHIPPED)
+
+- **Schema v11** (`library_db.py`): `published_books(token PK, tenant_key,
+  clip_id, bundle_json, created_at, revoked)` + `create/get/list/revoke`
+  helpers. Snapshot-at-publish (stable link until re-publish).
+- **Authed** (`library_api.py`): `POST /api/library/clips/{id}/publish`
+  (snapshot text + audio sha + cover + animationCues w/ sheetSha → unguessable
+  `secrets.token_urlsafe` token), `GET /api/library/published` (author list),
+  `DELETE /api/library/published/{token}` (revoke, tenant-scoped).
+- **Public** (`public_router`, `/api/published`, carved out of
+  `require_api_key` in server.py): `GET /{token}` (bundle), `/{token}/audio.mp3`,
+  `/{token}/sheet/{sha}`. **Asset reads validate `sha` is referenced by THIS
+  token's bundle** — the public surface is bounded to exactly what the author
+  published (no blob enumeration).
+- **Client author** (`app.js`): `🔗 Share` button (in the reading-view actions
+  row, shown only when sync is on + not a consumer) → `_shareCurrentClip`
+  pushes the clip then POSTs publish, copies the `/?book=<token>` link.
+- **Client consumer** (`app.js`): `?book=<token>` on load → `_openPublishedBook`
+  fetches the bundle, pulls audio from the public endpoint, builds a local clip,
+  loads it + opens book view with animations on. `_publishedBookToken` routes
+  `_animEnsureSheetBlob` sheet fetches through the public `/sheet/{sha}` path
+  (a consumer has no API key). SW v4.142.
+
+**Verified:** TestClient (publish/read/audio/sheet, unreferenced-sha 404 gating,
+revoke→404) + live preview end-to-end (author publishes → fresh consumer with
+**wiped IndexedDB + no key** opens the share link → book + audio load + the
+full-page scene fetches via the public endpoint and renders in book view).
+
+**Follow-ups (not built):** consumer chrome polish (hide author-only UI in
+reader mode), publish-management UI (list/revoke from Settings), re-publish
+updates the same link, consumer catalog (Phase 2 option B).
+
 ## 5. Recommendation / phasing
 
 1. **Build Phase 1 now** (2a→2d). It's required for every distribution model and

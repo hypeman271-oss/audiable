@@ -9193,6 +9193,10 @@ let _animPage = { cueId: null, timer: null, frames: 1, frameIdx: 0, objUrl: null
 // Per-clip cache of sheetId -> object URL, preloaded at clip load so neither a
 // Book-view page flip nor a cue fire reads IndexedDB / decodes mid-playback.
 let _animSheetUrlCache = {};
+// Set when reading a shared/published book (?book=token). Routes sheet
+// fetch-on-miss through the public published-sheet endpoint instead of the
+// authed library one (a consumer has no API key). See _openPublishedBook.
+let _publishedBookToken = null;
 // Book-view full-page sprite-loop tickers (one setInterval per animated scene
 // bg). V3 builds all pages once + slides, so we step every sprite scene's
 // background-position regardless of which spread is visible — cheap (cached URL,
@@ -9811,10 +9815,16 @@ async function _animEnsureSheetBlob(cue) {
     let blob = await getAnimSheet(localKey);
     if (!blob && cue.sheetSha) {
       // Fetch-on-miss: cue present but bytes absent (synced from another
-      // device). Pull the content-addressed blob once + cache it locally.
+      // device, or a consumer reading a shared book). Pull the content-
+      // addressed blob once + cache it locally. In consumer mode the authed
+      // /api/library/anim-sheet route is unreachable, so route through the
+      // public published-sheet endpoint (gated to this book's shas).
       try {
         const r = await fetch(
-          "/api/library/anim-sheet/" + encodeURIComponent(cue.sheetSha)
+          _publishedBookToken
+            ? "/api/published/" + encodeURIComponent(_publishedBookToken) +
+                "/sheet/" + encodeURIComponent(cue.sheetSha)
+            : "/api/library/anim-sheet/" + encodeURIComponent(cue.sheetSha)
         );
         if (r.ok) {
           blob = await r.blob();
@@ -17640,6 +17650,14 @@ function enterReadingView(text, images, highlights, lines) {
   // v185 (M1): book view toggle is bound to "we have a loaded clip
   // with rendered sentences" — same lifecycle as the Edit button.
   if (bookViewToggle) bookViewToggle.hidden = false;
+  // Share is author-only + needs sync (the book must reach the server).
+  // Hide it for consumers reading a shared book (_publishedBookToken set).
+  if (typeof shareBookBtn !== "undefined" && shareBookBtn) {
+    const _canShare =
+      !_publishedBookToken &&
+      (typeof _syncIsEnabled !== "function" || _syncIsEnabled());
+    shareBookBtn.hidden = !_canShare;
+  }
   // Stash the current text + images so the book view can paginate
   // without re-running the splitter. Title comes from the loaded
   // clip when available; falls back to "Untitled chapter".
@@ -17683,6 +17701,7 @@ function exitReadingView() {
     exitBookView({ skipReadingView: true });
   }
   if (bookViewToggle) bookViewToggle.hidden = true;
+  if (typeof shareBookBtn !== "undefined" && shareBookBtn) shareBookBtn.hidden = true;
   _bookViewSource = null;
   // Save text only makes sense when there's a loaded clip to save into —
   // freshly-typed text with no clip yet still needs Generate first.
@@ -18833,6 +18852,12 @@ const bookViewNext = $("book-view-next");
 const bookViewIndicator = $("book-view-indicator");
 const bookViewReturn = $("book-view-return");
 const bookViewToggle = $("book-view-toggle");
+const shareBookBtn = $("share-book-btn");
+if (shareBookBtn) {
+  shareBookBtn.addEventListener("click", () => {
+    if (typeof _shareCurrentClip === "function") _shareCurrentClip();
+  });
+}
 const bookViewPrintBtn = $("book-view-print");
 const bookViewTocBtn = $("book-view-toc");
 const bookViewTocDialog = $("book-view-toc-dialog");
@@ -20079,6 +20104,133 @@ async function _animUploadSheet(blob) {
   }
   return null;
 }
+
+// ── Portable books Phase 2: share-link publish (author) + read (consumer) ──
+
+// Consumer: load a published book by token into the reader, no account
+// required. Audio + sheets stream from the public /api/published endpoints
+// (see _animEnsureSheetBlob + the require_api_key carve-out). Animations are
+// turned on so the reader sees the book exactly as the author intended.
+async function _openPublishedBook(token) {
+  try {
+    const r = await fetch("/api/published/" + encodeURIComponent(token));
+    if (!r.ok) {
+      setStatus("Couldn't load this shared book (link expired?).", true);
+      return false;
+    }
+    const book = (await r.json()).book;
+    if (!book) {
+      setStatus("Shared book not found.", true);
+      return false;
+    }
+    _publishedBookToken = token; // routes sheet fetches to the public endpoint
+    let blob;
+    if (book.audioSha256) {
+      try {
+        const ar = await fetch(
+          "/api/published/" + encodeURIComponent(token) + "/audio.mp3"
+        );
+        if (ar.ok) blob = await ar.blob();
+      } catch (e) {
+        console.warn("[published] audio fetch failed:", e);
+      }
+    }
+    const id = Date.now();
+    const nowIso = new Date().toISOString();
+    const clip = {
+      id,
+      title: book.title || "Shared book",
+      text: book.text || "",
+      kind: book.kind || (blob ? "audio" : "ebook"),
+      voiceName: book.voiceName || null,
+      durationSec: book.durationSec || null,
+      sentenceOffsetsSec: Array.isArray(book.sentenceOffsetsSec)
+        ? book.sentenceOffsetsSec
+        : [],
+      cover: book.cover || null,
+      images: Array.isArray(book.images) ? book.images : [],
+      animationCues: Array.isArray(book.animationCues) ? book.animationCues : [],
+      blob: blob || undefined,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      _publishedToken: token, // local-only marker (a consumed book)
+    };
+    await saveClip(clip);
+    await loadClip(id, { autoPlay: false });
+    // Show the author's animations (flag-gated normally; on for a shared read).
+    try { localStorage.setItem("narrative.animPrototype", "1"); } catch {}
+    if (typeof _animInit === "function") _animInit();
+    try {
+      const c = await getClip(id);
+      if (c && typeof _animLoadCues === "function") _animLoadCues(c);
+    } catch {}
+    try { if (typeof enterBookView === "function") await enterBookView(); } catch (e) { console.warn(e); }
+    setStatus(`Reading "${clip.title}".`);
+    return true;
+  } catch (e) {
+    console.warn("[published] open failed:", e);
+    setStatus("Couldn't open this shared book.", true);
+    return false;
+  }
+}
+
+// Author: publish the current clip + copy a share link.
+async function _shareCurrentClip() {
+  if (!_currentClipId) {
+    setStatus("Open a book first.", true);
+    return;
+  }
+  if (typeof _syncIsEnabled === "function" && !_syncIsEnabled()) {
+    setStatus("Turn on account sync first — publishing needs the book on the server.", true);
+    return;
+  }
+  setStatus("Publishing…");
+  try {
+    // Push the latest clip (cues + audio sha) so the snapshot is current.
+    if (typeof _syncPushClip === "function") {
+      try {
+        const c = await getClip(_currentClipId);
+        if (c) await _syncPushClip(c);
+      } catch (e) {
+        console.warn("[publish] pre-push:", e);
+      }
+    }
+    const r = await fetch(
+      "/api/library/clips/" + encodeURIComponent(_currentClipId) + "/publish",
+      { method: "POST" }
+    );
+    if (!r.ok) {
+      setStatus("Publish failed (is the book synced?).", true);
+      return;
+    }
+    const j = await r.json();
+    const url = location.origin + (j.url || "/?book=" + j.token);
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus("Share link copied to clipboard.");
+    } catch {
+      setStatus("Share link: " + url);
+    }
+    if (typeof window.prompt === "function") {
+      // Simple, dependency-free surfacing so the author can grab the link
+      // even if clipboard write was blocked.
+      try { window.prompt("Share this link — anyone can read your book:", url); } catch {}
+    }
+    return url;
+  } catch (e) {
+    console.warn("[publish] failed:", e);
+    setStatus("Publish failed — see console.", true);
+  }
+}
+
+// Consumer entry point: ?book=<token> opens a shared book on load.
+document.addEventListener("DOMContentLoaded", () => {
+  let tok = null;
+  try { tok = new URLSearchParams(location.search).get("book"); } catch {}
+  if (!tok) return;
+  // Defer so core init (DB, reading view, handlers) is ready first.
+  setTimeout(() => { _openPublishedBook(tok); }, 350);
+});
 
 async function _animSaveCueForSentence(effect, opts) {
   opts = opts || {};
