@@ -23184,12 +23184,22 @@ function _bookViewV3CreatePage(pageRow, pageWidth, pageHeight) {
   const body = document.createElement("div");
   body.className = "book-view-page-body";
   page.appendChild(body);
+  // v4.159: create the page-number footer UP FRONT (placeholder line, real
+  // number filled in at closeTextPage) so the body's flex height already
+  // excludes it DURING pagination. Previously the footer was appended only at
+  // close — after the fill loop measured the body — so adding it shrank the
+  // body afterward and clipped the last line(s) of every full page (~8px).
+  const footer = document.createElement("div");
+  footer.className = "book-page-footer";
+  footer.textContent = " "; // reserve a full line box (matches a digit)
+  page.appendChild(footer);
   pageRow.appendChild(page);
-  return { page, body };
+  return { page, body, footer };
 }
 
 function _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt) {
-  const { page, body } = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+  const { page, body, footer } = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+  if (footer) footer.remove(); // image/cover pages carry no page number
   page.classList.add("book-view-page-image");
   const img = document.createElement("img");
   img.src = src;
@@ -23280,10 +23290,11 @@ function _bookViewV3Setup(source) {
   // and stamping the text-page idx for the post-setup ribbon pass.
   const closeTextPage = (pageObj, tIdx) => {
     if (!pageObj || tIdx < 0) return;
-    const footer = document.createElement("div");
-    footer.className = "book-page-footer";
-    footer.textContent = String(tIdx + 1);
-    pageObj.page.appendChild(footer);
+    // v4.159: footer already exists (created with the page so the body sized
+    // around it during pagination); just stamp the real page number.
+    const footer = pageObj.footer ||
+      pageObj.page.querySelector(".book-page-footer");
+    if (footer) footer.textContent = String(tIdx + 1);
     pageObj.page.dataset.textPageIdx = String(tIdx);
   };
 
