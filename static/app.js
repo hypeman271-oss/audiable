@@ -20168,6 +20168,7 @@ async function _openPublishedBook(token) {
       if (c && typeof _animLoadCues === "function") _animLoadCues(c);
     } catch {}
     try { if (typeof enterBookView === "function") await enterBookView(); } catch (e) { console.warn(e); }
+    _readerImmerseInit();
     setStatus(`Reading "${clip.title}".`);
     return true;
   } catch (e) {
@@ -20175,6 +20176,49 @@ async function _openPublishedBook(token) {
     setStatus("Couldn't open this shared book.", true);
     return false;
   }
+}
+
+// Immersive reader (Apple-Books): fade the chrome after a few seconds of no
+// interaction; any move/tap/scroll/key brings it back. Only active in reader
+// mode (a shared book). Activity listeners are wired once.
+let _readerImmerseTimer = null;
+let _readerImmerseWired = false;
+const _READER_IMMERSE_DELAY_MS = 3500;
+function _readerScheduleImmerse() {
+  if (!document.body.classList.contains("reader-mode")) return;
+  if (_readerImmerseTimer) clearTimeout(_readerImmerseTimer);
+  _readerImmerseTimer = setTimeout(() => {
+    _readerImmerseTimer = null;
+    // Don't immerse while a panel/find/jump expects the chrome present.
+    const aaOpen = (() => { const p = document.getElementById("book-view-appearance"); return p && !p.hidden; })();
+    if (aaOpen) { _readerScheduleImmerse(); return; }
+    if (document.body.classList.contains("reader-mode")) {
+      document.body.classList.add("reader-immersed");
+    }
+  }, _READER_IMMERSE_DELAY_MS);
+}
+function _readerWakeChrome() {
+  if (!document.body.classList.contains("reader-mode")) return;
+  document.body.classList.remove("reader-immersed");
+  _readerScheduleImmerse();
+}
+function _readerImmerseInit() {
+  if (!_readerImmerseWired) {
+    _readerImmerseWired = true;
+    let last = 0;
+    const wake = () => {
+      // throttle the wake handler so a mousemove storm doesn't thrash classes
+      const now = (window.performance && performance.now()) ? performance.now() : 0;
+      if (now - last < 250) return;
+      last = now;
+      _readerWakeChrome();
+    };
+    ["mousemove", "pointerdown", "touchstart", "keydown", "wheel"].forEach((ev) =>
+      window.addEventListener(ev, wake, { passive: true })
+    );
+  }
+  document.body.classList.remove("reader-immersed");
+  _readerScheduleImmerse();
 }
 
 // Author: publish the current clip + copy a share link.

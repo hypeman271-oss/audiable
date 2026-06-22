@@ -14825,6 +14825,7 @@ body.reader-mode .import-menu-wrap,
 body.reader-mode #save-text-btn,
 body.reader-mode #edit-text,
 body.reader-mode #share-book-btn,
+body.reader-mode .meta,
 body.reader-mode .hero-brand .tagline,
 /* Author/practice controls a reader doesn't need — match Audible/Kindle:
    keep play, skip, scrubber, speed, sleep, bookmark; drop A↔B loop, Notes,
@@ -14896,6 +14897,33 @@ body.reader-mode #book-view-print {
 .book-view[data-book-paper] .book-page-footer {
   color: var(--paper-fg);
   opacity: 0.55;
+}
+
+/* v4.148: immersive reader (Apple-Books). In reader mode the chrome (chip
+   pill, book-view nav, the NOW READING row) fades + collapses after a few
+   seconds of no interaction, giving the page the whole screen; any move/tap
+   brings it back. Driven by body.reader-immersed (set on a timer, cleared on
+   activity — see _readerWakeChrome). Scoped to reader-mode so the author UI is
+   untouched. */
+body.reader-mode .hero-row,
+body.reader-mode #book-view-nav-slot,
+body.reader-mode #book-view-nav,
+body.reader-mode .card.card-text > .label-row {
+  transition: opacity 0.3s ease, max-height 0.3s ease,
+    margin 0.3s ease, padding 0.3s ease;
+  overflow: hidden;
+}
+body.reader-mode.reader-immersed .hero-row,
+body.reader-mode.reader-immersed #book-view-nav-slot,
+body.reader-mode.reader-immersed #book-view-nav,
+body.reader-mode.reader-immersed .card.card-text > .label-row {
+  opacity: 0;
+  max-height: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  pointer-events: none;
 }
 /* The "Your text" card becomes just the reading surface — drop its frame so
    the book view reads edge-to-edge. */
