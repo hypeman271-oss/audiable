@@ -22546,6 +22546,27 @@ function _bookViewV3Enabled() {
   }
 }
 
+// v4.140: two-page "spread" layout. Default OFF — modern e-readers show a
+// single page, so one-up is the default everywhere. Preserved for a future
+// magazine mode; opt in with localStorage narrative.bookTwoUp = "1" (or
+// ?booktwoup=1). Never applies on phones.
+function _bookViewTwoUpEnabled() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("booktwoup") === "1") {
+      localStorage.setItem("narrative.bookTwoUp", "1");
+      return true;
+    }
+    if (params.get("booktwoup") === "0") {
+      localStorage.setItem("narrative.bookTwoUp", "0");
+      return false;
+    }
+    return localStorage.getItem("narrative.bookTwoUp") === "1";
+  } catch {
+    return false;
+  }
+}
+
 // v225v3.21 (#359): StPageFlip corner-curl integration removed.
 // Decision: V3's translateX slide is the keeper. The bundle, helpers,
 // and pf.flip() routing have all been deleted. See whats-new.html for
@@ -22584,8 +22605,15 @@ function _bookViewV3Setup(source) {
     spread.dataset.bookTheme = bookView.dataset.bookTheme;
   }
 
+  // v4.140: single centered page is the default (matches Kindle / Apple Books /
+  // Kobo / Play Books — modern readers don't show a two-page spread). The two-up
+  // spread is preserved behind `_bookViewTwoUpEnabled()` for a future magazine
+  // mode (localStorage narrative.bookTwoUp = "1"), never on phones. In one-up
+  // mode the page fills the viewport and a CSS max-width keeps the text a
+  // readable centered column (see .book-view-spread.v3.one-up).
   const isPhone = window.innerWidth <= 720;
-  const pagesPerSpread = isPhone ? 1 : 2;
+  const pagesPerSpread = !isPhone && _bookViewTwoUpEnabled() ? 2 : 1;
+  spread.classList.toggle("one-up", pagesPerSpread === 1);
   const spreadWidth = spread.clientWidth;
   const pageWidth = spreadWidth / pagesPerSpread;
   const pageHeight = spread.clientHeight;

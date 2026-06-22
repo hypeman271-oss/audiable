@@ -77,7 +77,7 @@ Body data attributes that gate behavior:
 | Phone manual viewer (swipeable section sheets) | ✅ | ❌ | ❌ |
 | Desktop manual (iframe dialog with TOC sidebar) | ❌ | ✅ | ✅ |
 | Book view 3D page-flip | ✅ | ✅ | ✅ |
-| Magazine layout (2 columns) in book view | ❌ | ✅ | ✅ |
+| Two-page spread ("magazine mode") in book view — flag-gated, OFF by default (`narrative.bookTwoUp`/`?booktwoup=1`); single centered page is the v4.140 default on all tiers | ❌ | ✅ | ✅ |
 | Phone tour (overlay walkthrough) | ✅ | ❌ | ❌ |
 | Desktop tour (overlay walkthrough) | ❌ | ✅ | ✅ |
 | Author features tour | ❌ | ✅ | ✅ |
@@ -135,7 +135,7 @@ on tier. When changing how a feature works, hit ALL the entry points.
 | Player chip behavior | Three places: phone pull-up Playback strip · player-card chip row · floating hero chip clone (≥ 768) |
 | Library item rendering | One source `makeClipCard()`, but it renders inside library dialog (phone/tablet) AND inside the pinned left pane (wide desktop) |
 | Voice picker | One source `#voice-dialog`, but its body is relocated into the right pane on wide desktop (#647). Code must handle the "where am I rendered?" question |
-| Book view paginator | Same on all tiers but viewport size affects column count; phone vs desktop different page heights |
+| Book view paginator | v4.140: single centered page (one-up) is the default on ALL tiers — text capped to a 40rem readable column (`.book-view-spread.v3.one-up`). The two-page spread ("magazine mode") is preserved behind `_bookViewTwoUpEnabled()` (off by default, never on phone). Viewport size still affects page height + how much text fits per page |
 | Manual content | `manual.html` is shared, but the phone viewer clones sections into its own DOM (#525); the desktop manual loads it in an iframe with sticky TOC sidebar (#530) |
 | Tour steps | Phone tour has its own step content (#779) separate from desktop tours (#622+) |
 | New first-tap hint | Phone gets a pill anchored to a phone surface; desktop usually doesn't need one (icons are always visible) |
