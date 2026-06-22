@@ -14825,7 +14825,13 @@ body.reader-mode .import-menu-wrap,
 body.reader-mode #save-text-btn,
 body.reader-mode #edit-text,
 body.reader-mode #share-book-btn,
-body.reader-mode .hero-brand .tagline {
+body.reader-mode .hero-brand .tagline,
+/* Author/practice controls a reader doesn't need — match Audible/Kindle:
+   keep play, skip, scrubber, speed, sleep, bookmark; drop A↔B loop, Notes,
+   and Print. */
+body.reader-mode #ab-loop-btn,
+body.reader-mode #notes-btn,
+body.reader-mode #book-view-print {
   display: none !important;
 }
 /* The "Your text" card becomes just the reading surface — drop its frame so
