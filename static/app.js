@@ -23233,7 +23233,24 @@ function _bookViewV3Setup(source) {
       (window.visualViewport && window.visualViewport.height) ||
       window.innerHeight;
     const top = spread.getBoundingClientRect().top;
-    const avail = Math.round(vh - top - 12);
+    // v4.156: reserve space for the fixed bottom play bar (audiobook mode, esp.
+    // phone where it's the persistent bottom transport) so the page's last line
+    // doesn't hide behind it. eBook mode hides the player → no reserve.
+    let bottomReserve = 0;
+    try {
+      const pc = document.getElementById("player-card");
+      if (pc && !pc.hidden) {
+        const pcs = getComputedStyle(pc);
+        const pr = pc.getBoundingClientRect();
+        if (
+          pcs.position === "fixed" && pcs.display !== "none" &&
+          pr.height > 0 && pr.height < vh * 0.4 && pr.bottom >= vh - 4
+        ) {
+          bottomReserve = pr.height;
+        }
+      }
+    } catch {}
+    const avail = Math.round(vh - top - 12 - bottomReserve);
     if (avail > 200) spread.style.height = avail + "px";
   } catch {}
   const pageHeight = spread.clientHeight;
@@ -24638,6 +24655,9 @@ function _applyReaderMedia(m) {
     try { const a = document.querySelector("audio"); if (a && !a.paused) a.pause(); } catch {}
   }
   _syncReaderMediaBtns();
+  // The play bar appears/disappears → the page's reserved bottom space changes;
+  // re-paginate so the spread re-fits (no overlap in audio, full height in ebook).
+  if (typeof _bookViewRepaginate === "function") _bookViewRepaginate();
 }
 _applyReaderMedia(_loadReaderMedia());
 
