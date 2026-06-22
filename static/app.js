@@ -9217,6 +9217,13 @@ let _animSheetUrlCache = {};
 // fetch-on-miss through the public published-sheet endpoint instead of the
 // authed library one (a consumer has no API key). See _openPublishedBook.
 let _publishedBookToken = null;
+// Multi-chapter published-book reader state (book packaging Phase 3). Set when
+// a `?book=` token resolves to a whole book (type:"book"); drives the cover/TOC
+// overlay + cross-chapter nav. _pubReadClipId is reused across chapters so the
+// consumer's local DB isn't littered with one clip per chapter visited.
+let _pubBook = null;
+let _pubChapterIdx = 0;
+let _pubReadClipId = null;
 // Book-view full-page sprite-loop tickers (one setInterval per animated scene
 // bg). V3 builds all pages once + slides, so we step every sprite scene's
 // background-position regardless of which spread is visible — cheap (cached URL,
@@ -20153,6 +20160,8 @@ async function _openPublishedBook(token) {
       setStatus("Shared book not found.", true);
       return false;
     }
+    // Multi-chapter book (Phase 3): cover/TOC + per-chapter reader.
+    if (book.type === "book") return await _openPublishedMultiBook(token, book);
     _publishedBookToken = token; // routes sheet fetches to the public endpoint
     // Reader mode: strip author chrome (see styles.css body.reader-mode) so the
     // consumer sees a clean reading app, not the author tool.
@@ -20206,6 +20215,200 @@ async function _openPublishedBook(token) {
     setStatus("Couldn't open this shared book.", true);
     return false;
   }
+}
+
+// ── Multi-chapter published-book reader (book packaging Phase 3) ──────────
+// A `?book=` token can resolve to a whole book (cover + ordered chapters). We
+// open on a cover/TOC overlay, then load one chapter at a time into the same
+// reader the single-clip path uses, with cross-chapter nav (Prev/Contents/Next).
+async function _openPublishedMultiBook(token, book) {
+  try {
+    _publishedBookToken = token; // routes sheet fetches to the public endpoint
+    try { document.body.classList.add("reader-mode"); } catch {}
+    _pubBook = {
+      token,
+      title: book.title || "Shared book",
+      author: book.author || "",
+      coverSha: book.coverSha || null,
+      chapters: Array.isArray(book.chapters) ? book.chapters : [],
+    };
+    _pubChapterIdx = 0;
+    _pubReadClipId = null;
+    if (!_pubBook.chapters.length) {
+      setStatus("This shared book has no chapters.", true);
+      return false;
+    }
+    // Show the author's animations exactly as intended (flag-gated normally).
+    try { localStorage.setItem("narrative.animPrototype", "1"); } catch {}
+    if (typeof _animInit === "function") _animInit();
+    _ensurePubReaderEls();
+    _renderPubToc();
+    _showPubToc(true);
+    setStatus(`"${_pubBook.title}" — ${_pubBook.chapters.length} chapters.`);
+    return true;
+  } catch (e) {
+    console.warn("[published-book] open failed:", e);
+    setStatus("Couldn't open this shared book.", true);
+    return false;
+  }
+}
+
+async function _pubCoverUrl(sha) {
+  if (!sha || !_pubBook) return null;
+  try {
+    const r = await fetch(
+      "/api/published/" + encodeURIComponent(_pubBook.token) +
+      "/sheet/" + encodeURIComponent(sha)
+    );
+    if (r.ok) return URL.createObjectURL(await r.blob());
+  } catch {}
+  return null;
+}
+
+async function _loadPublishedChapter(idx) {
+  if (!_pubBook) return;
+  idx = Math.max(0, Math.min(idx, _pubBook.chapters.length - 1));
+  const ch = _pubBook.chapters[idx];
+  if (!ch) return;
+  _pubChapterIdx = idx;
+  const token = _pubBook.token;
+  let blob;
+  if (ch.audioSha256) {
+    try {
+      const ar = await fetch(
+        "/api/published/" + encodeURIComponent(token) +
+        "/chapter/" + idx + "/audio.mp3"
+      );
+      if (ar.ok) blob = await ar.blob();
+    } catch (e) { console.warn("[published-book] chapter audio:", e); }
+  }
+  // Reuse one local clip id across chapters so we don't litter the consumer's
+  // library with a row per chapter visited.
+  const id = _pubReadClipId || (_pubReadClipId = Date.now());
+  const nowIso = new Date().toISOString();
+  const clip = {
+    id,
+    title: ch.title || ("Chapter " + (idx + 1)),
+    text: ch.text || "",
+    kind: ch.kind || (blob ? "audio" : "ebook"),
+    voiceName: ch.voiceName || null,
+    durationSec: ch.durationSec || null,
+    sentenceOffsetsSec: Array.isArray(ch.sentenceOffsetsSec) ? ch.sentenceOffsetsSec : [],
+    cover: ch.cover || null,
+    images: Array.isArray(ch.images) ? ch.images : [],
+    animationCues: Array.isArray(ch.animationCues) ? ch.animationCues : [],
+    blob: blob || undefined,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    _publishedToken: token,
+  };
+  await saveClip(clip);
+  await loadClip(id, { autoPlay: false });
+  try {
+    const c = await getClip(id);
+    if (c && typeof _animLoadCues === "function") _animLoadCues(c);
+  } catch {}
+  try { if (typeof enterBookView === "function") await enterBookView(); } catch (e) { console.warn(e); }
+  _readerImmerseInit();
+  _showPubToc(false);
+  _updatePubChapterNav();
+  setStatus(`Reading "${clip.title}" (${idx + 1}/${_pubBook.chapters.length}).`);
+}
+
+// Build the cover/TOC overlay + the cross-chapter nav pill once, on first use.
+function _ensurePubReaderEls() {
+  if (!document.getElementById("pub-toc")) {
+    const toc = document.createElement("div");
+    toc.id = "pub-toc";
+    toc.className = "pub-toc";
+    toc.hidden = true;
+    toc.innerHTML =
+      '<div class="pub-toc-inner">' +
+      '  <div id="pub-toc-cover" class="pub-toc-cover" aria-hidden="true"></div>' +
+      '  <h1 id="pub-toc-title" class="pub-toc-title"></h1>' +
+      '  <p id="pub-toc-author" class="pub-toc-author"></p>' +
+      '  <ol id="pub-toc-list" class="pub-toc-list"></ol>' +
+      '</div>';
+    document.body.appendChild(toc);
+    // Tap the backdrop (not a chapter) to dismiss — but only once a chapter is
+    // already loaded (the first open is the cover page; the reader must pick).
+    toc.addEventListener("click", (e) => {
+      if (e.target === toc && _pubReadClipId != null) _showPubToc(false);
+    });
+  }
+  if (!document.getElementById("pub-chapter-nav")) {
+    const nav = document.createElement("div");
+    nav.id = "pub-chapter-nav";
+    nav.className = "pub-chapter-nav";
+    nav.hidden = true;
+    nav.innerHTML =
+      '<button id="pub-prev-ch" type="button" title="Previous chapter">‹</button>' +
+      '<button id="pub-toc-btn" type="button" title="Table of contents">Contents</button>' +
+      '<button id="pub-next-ch" type="button" title="Next chapter">›</button>';
+    document.body.appendChild(nav);
+    document.getElementById("pub-prev-ch").addEventListener("click", (e) => {
+      e.stopPropagation(); _loadPublishedChapter(_pubChapterIdx - 1);
+    });
+    document.getElementById("pub-next-ch").addEventListener("click", (e) => {
+      e.stopPropagation(); _loadPublishedChapter(_pubChapterIdx + 1);
+    });
+    document.getElementById("pub-toc-btn").addEventListener("click", (e) => {
+      e.stopPropagation(); _renderPubToc(); _showPubToc(true);
+    });
+  }
+}
+
+function _renderPubToc() {
+  if (!_pubBook) return;
+  const titleEl = document.getElementById("pub-toc-title");
+  const authorEl = document.getElementById("pub-toc-author");
+  const listEl = document.getElementById("pub-toc-list");
+  const coverEl = document.getElementById("pub-toc-cover");
+  if (titleEl) titleEl.textContent = _pubBook.title;
+  if (authorEl) {
+    authorEl.textContent = _pubBook.author ? "by " + _pubBook.author : "";
+    authorEl.hidden = !_pubBook.author;
+  }
+  if (coverEl) {
+    coverEl.style.backgroundImage = "";
+    coverEl.hidden = !_pubBook.coverSha;
+    if (_pubBook.coverSha) {
+      _pubCoverUrl(_pubBook.coverSha).then((u) => {
+        if (u && coverEl) coverEl.style.backgroundImage = 'url("' + u + '")';
+      });
+    }
+  }
+  if (listEl) {
+    listEl.innerHTML = "";
+    _pubBook.chapters.forEach((ch, i) => {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "pub-toc-ch" + (i === _pubChapterIdx ? " current" : "");
+      btn.textContent = ch.title || ("Chapter " + (i + 1));
+      btn.addEventListener("click", () => _loadPublishedChapter(i));
+      li.appendChild(btn);
+      listEl.appendChild(li);
+    });
+  }
+}
+
+function _showPubToc(show) {
+  const toc = document.getElementById("pub-toc");
+  if (toc) toc.hidden = !show;
+  // While the TOC covers the screen, hide the chapter nav pill.
+  const nav = document.getElementById("pub-chapter-nav");
+  if (nav && show) nav.hidden = true;
+}
+
+function _updatePubChapterNav() {
+  const nav = document.getElementById("pub-chapter-nav");
+  if (!nav || !_pubBook) return;
+  nav.hidden = false;
+  const prev = document.getElementById("pub-prev-ch");
+  const next = document.getElementById("pub-next-ch");
+  if (prev) prev.disabled = _pubChapterIdx <= 0;
+  if (next) next.disabled = _pubChapterIdx >= _pubBook.chapters.length - 1;
 }
 
 // Reader interaction (Apple Books / Kindle pattern): the chrome floats OVER the
@@ -20327,6 +20530,54 @@ async function _shareCurrentClip() {
   }
 }
 
+// Author: publish a WHOLE book (cover + ordered chapters) → one share link.
+// Mirrors _shareCurrentClip but pushes every chapter clip + the book first so
+// the server snapshot is current. (Reachable only from the Books dialog, which
+// is advanced-only — gated off in free simple mode.)
+async function _publishCurrentBook() {
+  if (_bookEditingId == null) { setStatus("Open a book first.", true); return; }
+  if (typeof _syncIsEnabled === "function" && !_syncIsEnabled()) {
+    setStatus("Turn on account sync first — publishing needs the book on the server.", true);
+    return;
+  }
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  const ids = (book.chapterClipIds || []).filter((x) => x != null);
+  if (!ids.length) { setStatus("Add at least one chapter first.", true); return; }
+  setStatus("Publishing book…");
+  try {
+    // Push chapters (text + cues + audio sha) then the book so the server's
+    // snapshot reflects the latest local state.
+    if (typeof _syncPushClip === "function") {
+      for (const cid of ids) {
+        try { const c = await getClip(cid); if (c) await _syncPushClip(c); }
+        catch (e) { console.warn("[publish-book] chapter push:", e); }
+      }
+    }
+    if (typeof _syncPushBook === "function") {
+      try { await _syncPushBook(book); } catch (e) { console.warn("[publish-book] book push:", e); }
+    }
+    const r = await fetch(
+      "/api/library/books/" + encodeURIComponent(_bookEditingId) + "/publish",
+      { method: "POST" }
+    );
+    if (!r.ok) { setStatus("Publish failed (is everything synced?).", true); return; }
+    const j = await r.json();
+    const url = location.origin + (j.url || "/?book=" + j.token);
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus("Book link copied — " + (j.chapters || ids.length) + " chapters.");
+    } catch {
+      setStatus("Book link: " + url);
+    }
+    try { window.prompt("Share this link — anyone can read your whole book:", url); } catch {}
+    return url;
+  } catch (e) {
+    console.warn("[publish-book] failed:", e);
+    setStatus("Publish failed — see console.", true);
+  }
+}
+
 // Consumer entry point: ?book=<token> opens a shared book on load.
 document.addEventListener("DOMContentLoaded", () => {
   let tok = null;
@@ -20419,6 +20670,7 @@ async function _openBookEditor(id) {
   _bookEl("book-chapter-picker").hidden = true;
   _bookEl("book-editor").hidden = false;
   _bookEl("books-dialog-title").textContent = "Edit book";
+  { const pb = _bookEl("book-publish-btn"); if (pb) pb.hidden = false; }
   _bookEl("book-title-input").value = book.title || "";
   _bookEl("book-author-input").value = book.author || "";
   const prev = _bookEl("book-cover-preview");
@@ -20593,6 +20845,7 @@ async function _bookPickerAdd() {
   on("book-add-chapter", () => _openChapterPicker());
   on("book-picker-back", () => { if (_bookEditingId != null) _openBookEditor(_bookEditingId); });
   on("book-picker-add", () => _bookPickerAdd());
+  on("book-publish-btn", () => _publishCurrentBook());
   on("book-delete-btn", () => _bookDelete());
   const t = document.getElementById("book-title-input");
   const a = document.getElementById("book-author-input");
@@ -24811,6 +25064,8 @@ function exitBookView(opts = {}) {
   bookView.style.visibility = "";
   // Clear immersion so chrome isn't left hidden outside book view.
   document.body.classList.remove("reader-immersed");
+  // Hide the multi-chapter reader chrome (only present for a consumed book).
+  { const n = document.getElementById("pub-chapter-nav"); if (n) n.hidden = true; }
   _bookSentenceSpans = [];
   if (typeof _animBookSpriteStopAll === "function") _animBookSpriteStopAll();
   if (typeof _animBookClearPerSentence === "function") _animBookClearPerSentence();

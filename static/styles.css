@@ -15026,11 +15026,105 @@ body.reader-mode.reader-immersed #player-card {
 body.reader-immersed .hero-row,
 body.reader-immersed #book-view-nav,
 body.reader-immersed #book-view-nav-slot,
-body.reader-immersed #player-card {
+body.reader-immersed #player-card,
+body.reader-immersed #pub-chapter-nav {
   opacity: 0 !important;
   pointer-events: none !important;
   transition: opacity 0.25s ease;
 }
+
+/* ── Multi-chapter published-book reader (book packaging Phase 3) ────────── */
+/* Cover + table-of-contents overlay shown when a shared book opens. */
+.pub-toc {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  overflow-y: auto;
+  background: var(--bg, #0c1020);
+  color: var(--fg, #e8ebf5);
+  -webkit-overflow-scrolling: touch;
+}
+.pub-toc-inner {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 40px 28px 64px;
+  text-align: center;
+}
+.pub-toc-cover {
+  width: 200px;
+  height: 300px;
+  margin: 8px auto 24px;
+  border-radius: 8px;
+  background: var(--bg-card, #161b2e) center / cover no-repeat;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+.pub-toc-title {
+  font-size: 1.7rem;
+  line-height: 1.2;
+  margin: 0 0 6px;
+}
+.pub-toc-author {
+  margin: 0 0 28px;
+  opacity: 0.7;
+  font-style: italic;
+}
+.pub-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+.pub-toc-list li { margin: 0; }
+.pub-toc-ch {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  color: inherit;
+  padding: 15px 8px;
+  font-size: 1.02rem;
+  cursor: pointer;
+}
+.pub-toc-list li:last-child .pub-toc-ch {
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.pub-toc-ch:hover { background: var(--bg-card, rgba(255, 255, 255, 0.05)); }
+.pub-toc-ch.current { color: var(--accent, #6c8cff); font-weight: 600; }
+
+/* Cross-chapter nav pill — floats over the page, part of reader chrome
+   (hidden on immerse via the rule above). */
+.pub-chapter-nav {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 62;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--bg-card, #161b2e);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  transition: opacity 0.25s ease;
+}
+.pub-chapter-nav button {
+  border: 0;
+  background: transparent;
+  color: var(--fg, #e8ebf5);
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.pub-chapter-nav button:disabled { opacity: 0.32; cursor: default; }
+.pub-chapter-nav button:not(:disabled):hover {
+  background: var(--bg, rgba(255, 255, 255, 0.08));
+}
+#pub-toc-btn { font-weight: 600; }
 /* The "Your text" card becomes just the reading surface — drop its frame so
    the book view reads edge-to-edge. */
 body.reader-mode .card.card-text {
