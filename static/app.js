@@ -20141,13 +20141,38 @@ if (animatePalette) {
   });
 }
 if (animateSpriteFile) {
-  animateSpriteFile.addEventListener("change", () => {
+  animateSpriteFile.addEventListener("change", async () => {
     const file = animateSpriteFile.files && animateSpriteFile.files[0];
     if (!file) return;
+    // Validate at choose-time so the author gets immediate feedback (instead of
+    // a silent no-op or a broken cue at Save). Reject non-images + anything the
+    // browser can't decode; surface dimensions + a heads-up if it'll be resized.
+    if (!file.type || !file.type.startsWith("image/")) {
+      _animPendingSheetBlob = null;
+      animateSpriteFile.value = "";
+      setStatus(`"${file.name}" isn't an image — choose a PNG or JPG.`, true);
+      return;
+    }
+    let dimNote = "";
+    try {
+      const bmp = await createImageBitmap(file);
+      const long = Math.max(bmp.width, bmp.height);
+      dimNote =
+        ` (${bmp.width}×${bmp.height}` +
+        (long > ANIM_IMG_MAX_SIDE ? `, will resize to ${ANIM_IMG_MAX_SIDE}px` : "") +
+        ")";
+      if (bmp.close) bmp.close();
+    } catch {
+      _animPendingSheetBlob = null;
+      animateSpriteFile.value = "";
+      setStatus(`Couldn't read "${file.name}" as an image — try a PNG or JPG.`, true);
+      return;
+    }
     // Keep the File itself (a Blob) — stored natively in IndexedDB, no base64
     // bloat. No FileReader / data URL.
     _animPendingSheetBlob = file;
-    setStatus(`Sprite sheet "${file.name}" loaded — set frames + FPS, then Save.`);
+    const kind = _animPendingEffect === "page" ? "Scene image" : "Sprite sheet";
+    setStatus(`${kind} "${file.name}"${dimNote} loaded — set frames + FPS, then Save.`);
   });
 }
 function _animCommitFromInputs() {
@@ -22780,6 +22805,20 @@ function _bookViewV3Setup(source) {
   _bookViewV3State.spreadCount =
     Math.max(1, Math.ceil(pageCount / pagesPerSpread));
   _bookViewSpreadsCount = _bookViewV3State.spreadCount;
+
+  // Short clip: the whole thing fits in fewer pages than a spread holds
+  // (e.g. a single page on a 2-up desktop). Center the lone page instead of
+  // jamming it against the spine with a blank half. We widen the row to the
+  // full viewport so justify-content:center actually centers (the row's inline
+  // width otherwise equals its one page, leaving it pinned left). Safe ONLY in
+  // the single-spread case — a multi-spread book's page-row is wider than the
+  // viewport and must stay left-aligned for the translateX slide math.
+  if (_bookViewV3State.spreadCount === 1 && pageCount < pagesPerSpread) {
+    pageRow.style.justifyContent = "center";
+    pageRow.style.width = spreadWidth + "px";
+  } else {
+    pageRow.style.justifyContent = "flex-start";
+  }
 
   if (typeof _dlog === "function") {
     _dlog("book-v3", "setup", {
