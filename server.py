@@ -112,6 +112,7 @@ import library_api  # noqa: E402
 import admin_api  # noqa: E402
 
 app.include_router(library_api.router)
+app.include_router(library_api.public_router)  # v4.142: public share-link reads
 app.include_router(admin_api.router)
 
 
@@ -640,6 +641,14 @@ async def require_api_key(request: Request, call_next):
     # without an auth header — it has no concept of NARRATIVE_KEY
     # and returns only public release metadata anyway.
     if path.startswith("/api/updates/"):
+        return await call_next(request)
+    # v4.142 (portable books Phase 2): published-book reads are public by
+    # design — the unguessable token is the capability, so a free-app
+    # consumer with a share link can read without an account/key. Only the
+    # public_router GETs live under /api/published/; publishing + revoking
+    # stay under /api/library/* (authed). Asset reads validate the sha
+    # against the token's bundle, so this can't be used to enumerate blobs.
+    if path.startswith("/api/published/"):
         return await call_next(request)
 
     provided = request.headers.get("X-Narrative-Key", "")

@@ -44,7 +44,7 @@ SENTENCE_DIR = DATA_DIR / "sentences"
 ANIM_SHEET_DIR = DATA_DIR / "anim_sheets"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -315,6 +315,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v10(c)
         c.execute("UPDATE schema_version SET version = 10")
         current = 10
+
+    if current < 11:
+        _apply_v11(c)
+        c.execute("UPDATE schema_version SET version = 11")
+        current = 11
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -793,6 +798,36 @@ def _apply_v10(c: sqlite3.Connection) -> None:
     c.execute("ALTER TABLE clips ADD COLUMN animation_cues_json TEXT")
 
 
+def _apply_v11(c: sqlite3.Connection) -> None:
+    """Add published_books for share-link distribution (portable books
+    Phase 2). A published book is an immutable, read-only snapshot of a
+    clip (text + audio sha + cover + animation cues + sheet shas) keyed by
+    an unguessable token, fetchable by anyone with the link — the path that
+    lets a free-app consumer read an author's book exactly as intended.
+    The snapshot lives in bundle_json so later author edits don't change a
+    shared link until the author re-publishes. See docs/portable-books-design.md.
+    """
+    print(
+        "[library_db] migrating to schema v11 (add published_books for "
+        "share-link distribution)",
+        file=sys.stderr, flush=True,
+    )
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS published_books (
+          token        TEXT PRIMARY KEY,
+          tenant_key   TEXT NOT NULL,
+          clip_id      INTEGER NOT NULL,
+          bundle_json  TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          revoked      INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_published_tenant
+          ON published_books(tenant_key);
+        """
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Tenant directory (/data/tenants.json).
 #
@@ -1088,6 +1123,63 @@ def anim_sheet_path(sha256: str) -> Path:
     ):
         raise ValueError(f"invalid sha256: {sha256!r}")
     return ANIM_SHEET_DIR / sha256
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Published books (share-link distribution — portable books Phase 2).
+# ──────────────────────────────────────────────────────────────────────
+
+
+def create_published(
+    token: str, tenant_key: str, clip_id: int, bundle_json: str, created_at: str
+) -> None:
+    """Insert (or replace) a published-book snapshot. Re-publishing the same
+    clip mints a new token (caller's choice); this just persists the row."""
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    with write_lock():
+        conn().execute(
+            "INSERT OR REPLACE INTO published_books "
+            "(token, tenant_key, clip_id, bundle_json, created_at, revoked) "
+            "VALUES (?, ?, ?, ?, ?, 0)",
+            (token, tenant_key, clip_id, bundle_json, created_at),
+        )
+
+
+def get_published(token: str) -> sqlite3.Row | None:
+    """Fetch a non-revoked published book by token (public read — no tenant
+    scope; the unguessable token IS the capability)."""
+    if not is_enabled():
+        return None
+    return conn().execute(
+        "SELECT * FROM published_books WHERE token = ? AND revoked = 0",
+        (token,),
+    ).fetchone()
+
+
+def list_published_for_tenant(tenant_key: str) -> list[sqlite3.Row]:
+    """All non-revoked published books for a tenant (author's own list)."""
+    if not is_enabled():
+        return []
+    return conn().execute(
+        "SELECT token, clip_id, created_at FROM published_books "
+        "WHERE tenant_key = ? AND revoked = 0 ORDER BY created_at DESC",
+        (tenant_key,),
+    ).fetchall()
+
+
+def revoke_published(token: str, tenant_key: str) -> bool:
+    """Revoke a published book (tenant-scoped so one author can't unpublish
+    another's). Returns True if a row was revoked."""
+    if not is_enabled():
+        return False
+    with write_lock():
+        cur = conn().execute(
+            "UPDATE published_books SET revoked = 1 "
+            "WHERE token = ? AND tenant_key = ? AND revoked = 0",
+            (token, tenant_key),
+        )
+        return cur.rowcount > 0
 
 
 def record_sentence_audio(

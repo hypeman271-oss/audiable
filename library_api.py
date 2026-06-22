@@ -44,7 +44,9 @@ surfacing a "Library updated on another device" status hint.
 from __future__ import annotations
 
 import base64
+import secrets
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +58,12 @@ import library_db
 
 
 router = APIRouter(prefix="/api/library", tags=["library"])
+
+# v4.142 (portable books Phase 2): public, UNAUTHENTICATED read surface for
+# published books. Carved out of require_api_key in server.py — the unguessable
+# token is the capability. Only ever serves snapshots the author explicitly
+# published; asset reads validate the sha is referenced by the bundle.
+public_router = APIRouter(prefix="/api/published", tags=["published"])
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -818,6 +826,146 @@ def get_anim_sheet(sha256: str):
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",
         },
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v4.142 (portable books Phase 2): share-link publishing. An author
+# publishes a clip → an immutable read-only snapshot keyed by an
+# unguessable token. The public_router endpoints below serve it to anyone
+# with the link (no auth) — the free-app consumer's "read as intended"
+# path. See docs/portable-books-design.md.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _build_bundle(row: sqlite3.Row, token: str, published_at: str) -> dict:
+    """Snapshot the publishable subset of a clip row. Excludes private/
+    device-local fields (progress, bookmarks, annotations, tester data).
+    Assets (audio, sheets) are referenced by sha and fetched via the public
+    asset endpoints — the bytes aren't inlined."""
+    return {
+        "token": token,
+        "title": row["title"] or "",
+        "text": row["text"] or "",
+        "kind": row["kind"],
+        "voiceName": row["voice_name"],
+        "durationSec": row["duration_sec"],
+        "sentenceOffsetsSec": library_db.jsload(row["sentence_offsets_json"]) or [],
+        "cover": library_db.jsload(row["cover_json"]),
+        "images": library_db.jsload(row["images_json"]) or [],
+        "audioSha256": row["audio_sha256"],
+        "animationCues": library_db.jsload(
+            row["animation_cues_json"] if "animation_cues_json" in row.keys() else None
+        ) or [],
+        "publishedAt": published_at,
+    }
+
+
+@router.post("/clips/{clip_id}/publish")
+def publish_clip(clip_id: int, request: Request):
+    """Snapshot the caller's clip into an immutable published book + return
+    the share token/URL. Re-publishing mints a fresh token (old links keep
+    serving their snapshot until revoked)."""
+    _require_enabled()
+    tk = _tenant(request)
+    row = library_db.conn().execute(
+        "SELECT * FROM clips WHERE tenant_key = ? AND id = ?", (tk, clip_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="clip not found")
+    if row["deleted"]:
+        raise HTTPException(status_code=400, detail="clip is deleted")
+    token = secrets.token_urlsafe(16)
+    now = datetime.now(timezone.utc).isoformat()
+    bundle = _build_bundle(row, token, now)
+    library_db.create_published(token, tk, clip_id, library_db.jsdump(bundle), now)
+    return {"token": token, "url": f"/?book={token}", "publishedAt": now}
+
+
+@router.get("/published")
+def list_published(request: Request):
+    """The caller's own published books (token + clip_id + when)."""
+    _require_enabled()
+    tk = _tenant(request)
+    rows = library_db.list_published_for_tenant(tk)
+    return {
+        "published": [
+            {"token": r["token"], "clipId": r["clip_id"], "createdAt": r["created_at"]}
+            for r in rows
+        ]
+    }
+
+
+@router.delete("/published/{token}")
+def unpublish(token: str, request: Request):
+    """Revoke a share link (tenant-scoped). Idempotent."""
+    _require_enabled()
+    tk = _tenant(request)
+    ok = library_db.revoke_published(token, tk)
+    return {"ok": True, "revoked": ok}
+
+
+def _published_bundle_or_404(token: str) -> dict:
+    row = library_db.get_published(token)
+    if row is None:
+        raise HTTPException(status_code=404, detail="published book not found")
+    bundle = library_db.jsload(row["bundle_json"])
+    if not isinstance(bundle, dict):
+        raise HTTPException(status_code=404, detail="published book not found")
+    return bundle
+
+
+@public_router.get("/{token}")
+def get_published_bundle(token: str):
+    """Public: the read-only book bundle (metadata + asset shas). No auth —
+    the token is the capability."""
+    _require_enabled()
+    return {"book": _published_bundle_or_404(token)}
+
+
+@public_router.get("/{token}/audio.mp3")
+def get_published_audio(token: str):
+    """Public: the book's narration. Serves only the sha recorded in this
+    token's bundle (no arbitrary blob access)."""
+    _require_enabled()
+    bundle = _published_bundle_or_404(token)
+    sha = bundle.get("audioSha256")
+    if not sha:
+        raise HTTPException(status_code=404, detail="no audio for this book")
+    try:
+        p = library_db.audio_path(sha)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="audio blob not found")
+    return FileResponse(
+        path=str(p),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@public_router.get("/{token}/sheet/{sha}")
+def get_published_sheet(token: str, sha: str):
+    """Public: an animation sheet — but ONLY if `sha` is referenced by a cue
+    in this token's bundle. This bounds the public surface to exactly the
+    assets the author published (no enumerating the whole sheet store)."""
+    _require_enabled()
+    bundle = _published_bundle_or_404(token)
+    cues = bundle.get("animationCues") or []
+    allowed = any(isinstance(c, dict) and c.get("sheetSha") == sha for c in cues)
+    if not allowed:
+        raise HTTPException(status_code=404, detail="sheet not part of this book")
+    try:
+        p = library_db.anim_sheet_path(sha)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="anim sheet not found")
+    return FileResponse(
+        path=str(p),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 
