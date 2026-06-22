@@ -9421,57 +9421,74 @@ function _animApplyToSpreadScenes() {
     ".book-view-page[data-text-page-idx], .book-page[data-text-page-idx]"
   );
   pages.forEach((pageEl) => {
-    pageEl.querySelectorAll(".anim-book-scene").forEach((e) => e.remove());
+    // Revoke any object URLs from the prior scene before removing it.
+    pageEl.querySelectorAll(".anim-book-scene").forEach((e) => {
+      if (e.__revokeUrl) { try { URL.revokeObjectURL(e.__revokeUrl); } catch {} }
+      e.remove();
+    });
     pageEl.classList.remove("book-page--scene");
     const tpi = parseInt(pageEl.dataset.textPageIdx, 10);
     if (!Number.isFinite(tpi)) return;
-    // First sentence on this page (smallest sentence idx mapped to it).
-    let first = -1;
+    // This page's sentence range. We select the scene by the page's LAST
+    // sentence (not the first): a scene-marker cue is active from its start
+    // onward, so a scene anchored partway down the page must still fill that
+    // page (spread-static). Using `first` here was the bug that hid scenes
+    // authored on any sentence after a page's opening line.
+    let lastS = -1;
     for (let i = 0; i < _bookSentenceToPage.length; i++) {
-      if (_bookSentenceToPage[i] === tpi) {
-        first = i;
-        break;
-      }
+      if (_bookSentenceToPage[i] === tpi) lastS = i;
     }
-    if (first < 0) return;
+    if (lastS < 0) return;
     let scene = null;
     let best = -1;
     for (const c of _animCues) {
       if (!c || c.kind !== "page") continue;
       const range = _animResolveRange(c);
-      if (!range || range[0] > first) continue;
+      if (!range || range[0] > lastS) continue;
       if (range[0] > best) {
         best = range[0];
         scene = c;
       }
     }
-    if (!scene || !scene.sheetId) return;
-    const url = _animSheetUrlCache[scene.sheetId];
-    if (!url) return; // not preloaded yet — appears after the preload re-render
-    const layer = document.createElement("div");
-    layer.className = "anim-book-scene";
-    const bg = document.createElement("div");
-    bg.className = "anim-book-scene-bg";
-    bg.style.backgroundImage = 'url("' + url + '")';
-    const frames = Math.max(1, parseInt(scene.frames, 10) || 1);
-    if (scene.source === "sprite" && frames > 1) {
-      // Full-bleed sprite strip: scale to N page-widths, show frame 0, then
-      // step background-position-x via a per-scene ticker (percentage trick,
-      // mirrors _animPagePlay). Cheap (cached URL) + audio-safe. Reduced motion
-      // freezes on frame 0.
-      bg.classList.add("anim-book-scene-bg--sprite");
-      bg.style.backgroundSize = frames * 100 + "% 100%";
-      bg.style.backgroundPosition = "0% 0%";
-      if (!_animReducedMotion()) _animBookSpriteStart(bg, frames, scene.fps);
-    } else if (scene.source !== "sprite" && !_animReducedMotion()) {
-      bg.classList.add("anim-page-bg--kenburns");
-    }
-    const scrim = document.createElement("div");
-    scrim.className = "anim-book-scene-scrim";
-    layer.appendChild(bg);
-    layer.appendChild(scrim);
-    pageEl.prepend(layer);
-    pageEl.classList.add("book-page--scene");
+    if (!scene) return;
+    // Resolve the sheet URL: preloaded cache (sheetId) preferred, else legacy
+    // inline sheetBlob/sheet data-URL via the shared resolver. Async, so the
+    // scene paints a tick later — but it handles un-migrated cues (which preload
+    // skips), the very cues that rendered in Audio view but not here.
+    _animResolveSheetUrl(scene).then((resolved) => {
+      if (!resolved) return;
+      const drop = () => {
+        if (resolved.revoke) { try { URL.revokeObjectURL(resolved.value); } catch {} }
+      };
+      if (!pageEl.isConnected) return drop();
+      // A later apply may already have painted this page — don't double-add.
+      if (pageEl.querySelector(".anim-book-scene")) return drop();
+      const url = resolved.value;
+      const layer = document.createElement("div");
+      layer.className = "anim-book-scene";
+      if (resolved.revoke) layer.__revokeUrl = url; // revoke on next re-apply
+      const bg = document.createElement("div");
+      bg.className = "anim-book-scene-bg";
+      bg.style.backgroundImage = 'url("' + url + '")';
+      const frames = Math.max(1, parseInt(scene.frames, 10) || 1);
+      if (scene.source === "sprite" && frames > 1) {
+        // Full-bleed sprite strip: scale to N page-widths, show frame 0, then
+        // step background-position-x via a per-scene ticker (percentage trick,
+        // mirrors _animPagePlay). Reduced motion freezes on frame 0.
+        bg.classList.add("anim-book-scene-bg--sprite");
+        bg.style.backgroundSize = frames * 100 + "% 100%";
+        bg.style.backgroundPosition = "0% 0%";
+        if (!_animReducedMotion()) _animBookSpriteStart(bg, frames, scene.fps);
+      } else if (scene.source !== "sprite" && !_animReducedMotion()) {
+        bg.classList.add("anim-page-bg--kenburns");
+      }
+      const scrim = document.createElement("div");
+      scrim.className = "anim-book-scene-scrim";
+      layer.appendChild(bg);
+      layer.appendChild(scrim);
+      pageEl.prepend(layer);
+      pageEl.classList.add("book-page--scene");
+    });
   });
 }
 
@@ -23787,6 +23804,13 @@ function exitBookView(opts = {}) {
   _bookSentenceSpans = [];
   if (typeof _animBookSpriteStopAll === "function") _animBookSpriteStopAll();
   if (typeof _animBookClearPerSentence === "function") _animBookClearPerSentence();
+  // Revoke any legacy-sheet object URLs held by scene layers before the
+  // innerHTML wipe drops the nodes (sheetId-cached URLs are owned by the cache).
+  if (bookViewSpread) {
+    bookViewSpread.querySelectorAll(".anim-book-scene").forEach((e) => {
+      if (e.__revokeUrl) { try { URL.revokeObjectURL(e.__revokeUrl); } catch {} }
+    });
+  }
   if (bookViewSpread) bookViewSpread.innerHTML = "";
   if (bookViewToggle) bookViewToggle.textContent = "📖 Book view";
   // v225v3.7 (#741): clean up auto-hide state so next open starts

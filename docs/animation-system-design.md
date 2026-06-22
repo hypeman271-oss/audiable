@@ -362,7 +362,7 @@ three ways that changed the integration:
   kill-switch path; harmless.)
 - **`_animApplyToSpreadScenes()`** (app.js) targets
   `.book-view-page[data-text-page-idx], .book-page[data-text-page-idx]`,
-  derives each page's first sentence from `_bookSentenceToPage`, picks the
+  derives each page's **last** sentence from `_bookSentenceToPage`, picks the
   scene-marker page cue with the largest start ≤ that sentence, and injects
   `.anim-book-scene` (`.anim-book-scene-bg` + `.anim-book-scene-scrim`) as the
   page's first child. The page's body/footer are lifted above via
@@ -385,6 +385,18 @@ Verified: scene renders behind readable text in V3 Book view; audio advanced
 **Still pending:** (c) phone (1-page) tier verification. (Sprite-loop full-page
 in Book view — done v4.135, verified: 4-frame strip cycled 0/33/66/100% in V3
 Book view.)
+
+**Bugfix v4.137 (full-page scene didn't show in Book view):** two causes, both
+in `_animApplyToSpreadScenes`. (1) It selected the scene by the page's **first**
+sentence — so a scene authored on any sentence *after* a page's opening line was
+excluded (`start > first`). It now selects by the page's **last** sentence
+(scene markers are active from start onward → a mid-page-anchored scene must
+still fill that page; spread-static). (2) It only read `sheetId` from the
+preload cache; legacy inline-sheet cues (no `sheetId`, which preload skips)
+rendered in Audio view but not Book view. It now resolves via
+`_animResolveSheetUrl` (cache-preferred, async legacy fallback), with object-URL
+revoke tracked on the layer (`__revokeUrl`) + cleared in `exitBookView`.
+Reproduced (page cue @sentence 2 on a 5-sentence single page) and verified fixed.
 
 ### 12b. AS-BUILT — Phase (b) per-sentence tiers (v4.136, SHIPPED)
 
