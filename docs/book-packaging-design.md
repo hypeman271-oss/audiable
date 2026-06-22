@@ -96,6 +96,26 @@ book = {
 
 Each phase is independently shippable; Phase 1 (the model) unblocks the rest.
 
+### AS-BUILT — Phase 1 (v4.143, SHIPPED)
+
+- **1a model + sync.** Client: IndexedDB v3 `books` store + `putBook/getBook/
+  listBooks/deleteBookById` (soft-delete, LWW), `_syncPushBook`/`_syncPullBooks`
+  (hooked into `_syncPull`). Server: schema v12 `books` table + `BookUpsert` +
+  `GET /books`, `GET/PUT/DELETE /books/{id}` (LWW upsert, soft-delete). Verified
+  TestClient (CRUD + LWW conflict + reorder + soft-delete) + client DB-v3 +
+  round-trip.
+- **1b authoring UI.** A self-contained **📕 Books** dialog (header trigger):
+  book list → editor (title, author, 🖼 cover upload, ordered chapter list with
+  ↑↓ reorder + ✕ remove) → chapter picker (multi-select clips, tap-order).
+  Cover bytes reuse the content-addressed sheet store (`coverSha` via
+  `_animUploadSheet`). Verified live: create book, set title/author, add 3
+  chapters, reorder, persist.
+- **Deviation from the chosen "group under a book header in the library":** built
+  a dedicated Books manager dialog instead (lower risk than surgery on the
+  multipane library render). The *packaging capability* is delivered; **inline
+  library grouping (book headers nesting their chapters) is the remaining
+  presentation piece** — a Phase-1 follow-up.
+
 ---
 
 ## 7. Decisions to confirm

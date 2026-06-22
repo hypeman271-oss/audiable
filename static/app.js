@@ -20232,6 +20232,272 @@ document.addEventListener("DOMContentLoaded", () => {
   setTimeout(() => { _openPublishedBook(tok); }, 350);
 });
 
+// ── Books manager (book packaging Phase 1b) ───────────────────────────────
+// Self-contained dialog: list books, edit one (title/author/cover + ordered
+// chapters added from the library). Persists via putBook (syncs). See
+// docs/book-packaging-design.md.
+let _bookEditingId = null;
+let _bookPickerSel = []; // clip ids selected in the chapter picker, in order
+
+function _bookEl(id) { return document.getElementById(id); }
+
+async function _bookCoverObjUrl(coverSha) {
+  if (!coverSha) return null;
+  try {
+    // Cover lives in the content-addressed sheet store (shared endpoint).
+    let blob = await getAnimSheet(coverSha);
+    if (!blob) {
+      const r = await fetch("/api/library/anim-sheet/" + encodeURIComponent(coverSha));
+      if (r.ok) { blob = await r.blob(); try { await putAnimSheet(coverSha, blob); } catch {} }
+    }
+    return blob ? URL.createObjectURL(blob) : null;
+  } catch { return null; }
+}
+
+async function _openBooksDialog() {
+  const dlg = _bookEl("books-dialog");
+  if (!dlg) return;
+  _showBooksListView();
+  await _renderBooksList();
+  if (!dlg.open) { try { dlg.showModal(); } catch { dlg.setAttribute("open", ""); } }
+}
+
+function _showBooksListView() {
+  _bookEl("books-list-view").hidden = false;
+  _bookEl("book-editor").hidden = true;
+  _bookEl("book-chapter-picker").hidden = true;
+  _bookEl("books-dialog-title").textContent = "📕 Books";
+}
+
+async function _renderBooksList() {
+  const wrap = _bookEl("books-list");
+  if (!wrap) return;
+  const books = await listBooks();
+  books.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  wrap.innerHTML = "";
+  _bookEl("books-empty").hidden = books.length > 0;
+  for (const b of books) {
+    const row = document.createElement("div");
+    row.className = "book-row";
+    const cover = document.createElement("div");
+    cover.className = "book-row-cover";
+    const meta = document.createElement("div");
+    meta.className = "book-row-meta";
+    const n = (b.chapterClipIds || []).length;
+    meta.innerHTML =
+      '<div class="book-row-title"></div>' +
+      '<div class="book-row-sub"></div>';
+    meta.querySelector(".book-row-title").textContent = b.title || "Untitled book";
+    meta.querySelector(".book-row-sub").textContent =
+      (b.author ? b.author + " · " : "") + n + (n === 1 ? " chapter" : " chapters");
+    row.appendChild(cover);
+    row.appendChild(meta);
+    row.addEventListener("click", () => _openBookEditor(b.id));
+    wrap.appendChild(row);
+    if (b.coverSha) {
+      _bookCoverObjUrl(b.coverSha).then((u) => { if (u) cover.style.backgroundImage = 'url("' + u + '")'; });
+    }
+  }
+}
+
+async function _newBook() {
+  const id = Date.now();
+  await putBook({ id, title: "Untitled book", author: "", description: "", coverSha: null, chapterClipIds: [] });
+  await _openBookEditor(id);
+  await _renderBooksList();
+}
+
+async function _openBookEditor(id) {
+  const book = await getBook(id);
+  if (!book) return;
+  _bookEditingId = id;
+  _bookEl("books-list-view").hidden = true;
+  _bookEl("book-chapter-picker").hidden = true;
+  _bookEl("book-editor").hidden = false;
+  _bookEl("books-dialog-title").textContent = "Edit book";
+  _bookEl("book-title-input").value = book.title || "";
+  _bookEl("book-author-input").value = book.author || "";
+  const prev = _bookEl("book-cover-preview");
+  prev.style.backgroundImage = "";
+  if (book.coverSha) {
+    _bookCoverObjUrl(book.coverSha).then((u) => { if (u) prev.style.backgroundImage = 'url("' + u + '")'; });
+  }
+  await _renderBookChapters(book);
+}
+
+async function _renderBookChapters(book) {
+  const wrap = _bookEl("book-chapters");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const ids = book.chapterClipIds || [];
+  if (!ids.length) {
+    const p = document.createElement("p");
+    p.className = "books-empty";
+    p.textContent = "No chapters yet — tap ＋ Add chapters.";
+    wrap.appendChild(p);
+    return;
+  }
+  for (let i = 0; i < ids.length; i++) {
+    const clip = await getClip(ids[i]);
+    const row = document.createElement("div");
+    row.className = "book-chapter-row";
+    const num = document.createElement("span");
+    num.textContent = i + 1 + ".";
+    num.style.opacity = "0.6";
+    const title = document.createElement("span");
+    title.className = "ch-title";
+    title.textContent = clip ? (clip.title || "Untitled chapter") : "(missing chapter)";
+    const up = document.createElement("button");
+    up.textContent = "↑"; up.title = "Move up"; up.disabled = i === 0;
+    up.addEventListener("click", () => _bookMoveChapter(i, -1));
+    const down = document.createElement("button");
+    down.textContent = "↓"; down.title = "Move down"; down.disabled = i === ids.length - 1;
+    down.addEventListener("click", () => _bookMoveChapter(i, 1));
+    const rm = document.createElement("button");
+    rm.textContent = "✕"; rm.title = "Remove from book";
+    rm.addEventListener("click", () => _bookRemoveChapter(i));
+    row.append(num, title, up, down, rm);
+    wrap.appendChild(row);
+  }
+}
+
+async function _bookEditorSave() {
+  if (_bookEditingId == null) return;
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  book.title = _bookEl("book-title-input").value.trim() || "Untitled book";
+  book.author = _bookEl("book-author-input").value.trim();
+  await putBook(book);
+}
+
+async function _bookMoveChapter(idx, dir) {
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  const ids = book.chapterClipIds || [];
+  const j = idx + dir;
+  if (j < 0 || j >= ids.length) return;
+  [ids[idx], ids[j]] = [ids[j], ids[idx]];
+  book.chapterClipIds = ids;
+  await putBook(book);
+  await _renderBookChapters(book);
+}
+
+async function _bookRemoveChapter(idx) {
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  (book.chapterClipIds || []).splice(idx, 1);
+  await putBook(book);
+  await _renderBookChapters(book);
+}
+
+async function _bookDelete() {
+  if (_bookEditingId == null) return;
+  if (!window.confirm("Delete this book? (Your chapters/clips are kept.)")) return;
+  await deleteBookById(_bookEditingId);
+  _bookEditingId = null;
+  _showBooksListView();
+  await _renderBooksList();
+}
+
+async function _bookCoverUploadFromFile(file) {
+  if (!file || !file.type || !file.type.startsWith("image/")) {
+    setStatus("Pick an image for the cover.", true);
+    return;
+  }
+  if (_bookEditingId == null) return;
+  let blob = file;
+  try { blob = await _animDownscaleImageBlob(file); } catch {}
+  const sha = await _animUploadSheet(blob);
+  if (!sha) { setStatus("Cover upload failed (is sync on?).", true); return; }
+  try { await putAnimSheet(sha, blob); } catch {}
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  book.coverSha = sha;
+  await putBook(book);
+  const prev = _bookEl("book-cover-preview");
+  if (prev) prev.style.backgroundImage = 'url("' + URL.createObjectURL(blob) + '")';
+  setStatus("Cover set.");
+}
+
+async function _openChapterPicker() {
+  _bookPickerSel = [];
+  _bookEl("book-editor").hidden = true;
+  _bookEl("book-chapter-picker").hidden = false;
+  const book = await getBook(_bookEditingId);
+  const already = new Set((book && book.chapterClipIds) || []);
+  const clips = (await listClips()).filter((c) => !already.has(c.id));
+  clips.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  const wrap = _bookEl("book-picker-list");
+  wrap.innerHTML = "";
+  if (!clips.length) {
+    const p = document.createElement("p");
+    p.className = "books-empty";
+    p.textContent = "No other clips to add. Synthesize a chapter first.";
+    wrap.appendChild(p);
+    return;
+  }
+  for (const c of clips) {
+    const row = document.createElement("div");
+    row.className = "book-pick-row";
+    const order = document.createElement("span");
+    order.className = "book-pick-order";
+    order.hidden = true;
+    const title = document.createElement("span");
+    title.className = "ch-title";
+    title.textContent = c.title || "Untitled clip";
+    row.append(order, title);
+    row.addEventListener("click", () => {
+      const at = _bookPickerSel.indexOf(c.id);
+      if (at >= 0) _bookPickerSel.splice(at, 1);
+      else _bookPickerSel.push(c.id);
+      // re-number
+      [...wrap.children].forEach((rw) => {
+        const cid = rw._clipId;
+        const pos = _bookPickerSel.indexOf(cid);
+        rw.classList.toggle("selected", pos >= 0);
+        const o = rw.querySelector(".book-pick-order");
+        if (pos >= 0) { o.hidden = false; o.textContent = pos + 1; } else { o.hidden = true; }
+      });
+    });
+    row._clipId = c.id;
+    wrap.appendChild(row);
+  }
+}
+
+async function _bookPickerAdd() {
+  if (_bookEditingId == null || !_bookPickerSel.length) {
+    _bookEl("book-chapter-picker").hidden = true;
+    if (_bookEditingId != null) _openBookEditor(_bookEditingId);
+    return;
+  }
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  book.chapterClipIds = (book.chapterClipIds || []).concat(_bookPickerSel);
+  await putBook(book);
+  _bookPickerSel = [];
+  await _openBookEditor(_bookEditingId);
+}
+
+// Wire the Books dialog (elements exist at parse time — script is at body end).
+(() => {
+  const trig = document.getElementById("books-trigger");
+  if (trig) trig.addEventListener("click", () => _openBooksDialog());
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
+  on("books-close", () => { const d = document.getElementById("books-dialog"); if (d && d.open) d.close(); });
+  on("books-new-btn", () => _newBook());
+  on("book-editor-back", async () => { _showBooksListView(); await _renderBooksList(); });
+  on("book-add-chapter", () => _openChapterPicker());
+  on("book-picker-back", () => { if (_bookEditingId != null) _openBookEditor(_bookEditingId); });
+  on("book-picker-add", () => _bookPickerAdd());
+  on("book-delete-btn", () => _bookDelete());
+  const t = document.getElementById("book-title-input");
+  const a = document.getElementById("book-author-input");
+  if (t) t.addEventListener("change", () => _bookEditorSave());
+  if (a) a.addEventListener("change", () => _bookEditorSave());
+  const cf = document.getElementById("book-cover-file");
+  if (cf) cf.addEventListener("change", () => { const f = cf.files && cf.files[0]; if (f) _bookCoverUploadFromFile(f); });
+})();
+
 async function _animSaveCueForSentence(effect, opts) {
   opts = opts || {};
   let _downscaledNote = false;
