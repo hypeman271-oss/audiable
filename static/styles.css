@@ -14918,30 +14918,50 @@ body.reader-mode[data-reader-media="ebook"] .hero-controls {
   opacity: 0.55;
 }
 
-/* v4.148: immersive reader (Apple-Books). In reader mode the chrome (chip
-   pill, book-view nav, the NOW READING row) fades + collapses after a few
-   seconds of no interaction, giving the page the whole screen; any move/tap
-   brings it back. Driven by body.reader-immersed (set on a timer, cleared on
-   activity — see _readerWakeChrome). Scoped to reader-mode so the author UI is
-   untouched. */
-body.reader-mode .hero-row,
-body.reader-mode #book-view-nav-slot,
-body.reader-mode #book-view-nav,
-body.reader-mode .card.card-text > .label-row {
-  transition: opacity 0.3s ease, max-height 0.3s ease,
-    margin 0.3s ease, padding 0.3s ease;
-  overflow: hidden;
+/* v4.150: immersive reader (Apple Books / Kindle). The chrome FLOATS over the
+   page as fixed overlays — top bar (brand + chips + nav pill) and the bottom
+   play bar — so toggling it never reshapes the page. Tap the page center to
+   show/hide (no timer; see _readerImmerseInit); tap the left/right third to
+   turn pages. The "NOW READING" row is dropped in reader mode. */
+body.reader-mode .hero-row {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 55;
+  padding: 8px 14px;
+  background: linear-gradient(
+    to bottom,
+    var(--bg, #0c1020) 60%,
+    rgba(12, 16, 32, 0)
+  );
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
-body.reader-mode.reader-immersed .hero-row,
-body.reader-mode.reader-immersed #book-view-nav-slot,
-body.reader-mode.reader-immersed #book-view-nav,
-body.reader-mode.reader-immersed .card.card-text > .label-row {
+body.reader-mode #player-card {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 55;
+  margin: 0;
+  border-radius: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+body.reader-mode .card.card-text > .label-row { display: none; }
+/* The floating top bar overlaps the page top; nudge the reading area down a
+   touch so the first line clears it. Constant (doesn't change on toggle), so
+   the page never reshapes. */
+body.reader-mode #book-view { padding-top: 4px; }
+
+/* Immersed = chrome slid out of view (page is untouched — overlays are fixed). */
+body.reader-mode.reader-immersed .hero-row {
   opacity: 0;
-  max-height: 0 !important;
-  margin-top: 0 !important;
-  margin-bottom: 0 !important;
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+body.reader-mode.reader-immersed #player-card {
+  opacity: 0;
+  transform: translateY(100%);
   pointer-events: none;
 }
 /* The "Your text" card becomes just the reading surface — drop its frame so

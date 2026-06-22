@@ -20178,47 +20178,51 @@ async function _openPublishedBook(token) {
   }
 }
 
-// Immersive reader (Apple-Books): fade the chrome after a few seconds of no
-// interaction; any move/tap/scroll/key brings it back. Only active in reader
-// mode (a shared book). Activity listeners are wired once.
-let _readerImmerseTimer = null;
+// Reader interaction (Apple Books / Kindle pattern): the chrome floats OVER the
+// page (CSS position:fixed, so toggling never reshapes the page), and a tap on
+// the page drives it by zone — left/right thirds turn the page, the center
+// toggles the chrome (no timer; it stays until tapped again). Only in reader
+// mode; wired once on the #book-view container in capture phase so a page-area
+// tap pre-empts the per-sentence audio-seek (a reader turns pages, not seeks).
 let _readerImmerseWired = false;
-const _READER_IMMERSE_DELAY_MS = 3500;
-function _readerScheduleImmerse() {
-  if (!document.body.classList.contains("reader-mode")) return;
-  if (_readerImmerseTimer) clearTimeout(_readerImmerseTimer);
-  _readerImmerseTimer = setTimeout(() => {
-    _readerImmerseTimer = null;
-    // Don't immerse while a panel/find/jump expects the chrome present.
-    const aaOpen = (() => { const p = document.getElementById("book-view-appearance"); return p && !p.hidden; })();
-    if (aaOpen) { _readerScheduleImmerse(); return; }
-    if (document.body.classList.contains("reader-mode")) {
-      document.body.classList.add("reader-immersed");
+function _readerTurnSpread(dir) {
+  try {
+    if (typeof _bookViewV3GotoSpread === "function") {
+      _bookViewV3GotoSpread((_bookViewV3State.spreadIdx || 0) + dir);
+    } else if (typeof _bookViewNavigateManual === "function") {
+      _bookViewNavigateManual((_bookViewCurrentSpread || 0) + dir);
     }
-  }, _READER_IMMERSE_DELAY_MS);
-}
-function _readerWakeChrome() {
-  if (!document.body.classList.contains("reader-mode")) return;
-  document.body.classList.remove("reader-immersed");
-  _readerScheduleImmerse();
+  } catch (e) { console.warn("[reader] turn:", e); }
 }
 function _readerImmerseInit() {
-  if (!_readerImmerseWired) {
-    _readerImmerseWired = true;
-    let last = 0;
-    const wake = () => {
-      // throttle the wake handler so a mousemove storm doesn't thrash classes
-      const now = (window.performance && performance.now()) ? performance.now() : 0;
-      if (now - last < 250) return;
-      last = now;
-      _readerWakeChrome();
-    };
-    ["mousemove", "pointerdown", "touchstart", "keydown", "wheel"].forEach((ev) =>
-      window.addEventListener(ev, wake, { passive: true })
-    );
-  }
-  document.body.classList.remove("reader-immersed");
-  _readerScheduleImmerse();
+  if (_readerImmerseWired) return;
+  _readerImmerseWired = true;
+  const bv = document.getElementById("book-view");
+  if (!bv) return;
+  // Capture phase: handle the zone tap before the sentence's seek handler.
+  bv.addEventListener(
+    "click",
+    (e) => {
+      if (!document.body.classList.contains("reader-mode")) return;
+      // Let real controls (nav pill, Aa panel, buttons/links, the play bar)
+      // work normally — only page-area taps drive the reader.
+      if (
+        e.target.closest(
+          ".book-view-nav, #book-view-appearance, .hero-row, " +
+            "#player-card, button, a, input, select, [role=\"button\"]"
+        )
+      ) {
+        return;
+      }
+      e.stopPropagation(); // suppress per-sentence audio-seek in reader mode
+      const w = window.innerWidth;
+      const x = e.clientX;
+      if (x < w * 0.3) _readerTurnSpread(-1);
+      else if (x > w * 0.7) _readerTurnSpread(1);
+      else document.body.classList.toggle("reader-immersed");
+    },
+    true
+  );
 }
 
 // Author: publish the current clip + copy a share link.
