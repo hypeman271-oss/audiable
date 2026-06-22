@@ -4135,6 +4135,26 @@ if (settingsDialog && !settingsDialog._hybridWrapped) {
     }
   }
 
+  // v4.153: on wide desktop the library's home is the LEFT pane. If the pane
+  // is hidden and the user clicks Library, RE-SHOW the left pane instead of
+  // opening the right-side drawer (reported bug: "Library opened on the right
+  // instead of the left"). Capture phase + stopImmediatePropagation so this
+  // pre-empts the trigger's drawer/modal open handler. Narrow viewports (no
+  // multipane) keep the dialog/drawer as before.
+  if (libraryTrigger) {
+    libraryTrigger.addEventListener(
+      "click",
+      (e) => {
+        if (_libMQ.matches && _paneIsHidden("library") && !libraryDialog.open) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          _setPaneHidden("library", false); // un-hide → relocates to left pane
+        }
+      },
+      true
+    );
+  }
+
   // v225fe (#647): voice relocation. The voice dialog has two
   // children we care about — .voice-browser-head and .voice-dialog-body.
   // On wide viewports both move into the .dap-voice-host container at
