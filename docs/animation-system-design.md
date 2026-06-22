@@ -382,9 +382,39 @@ scrolling-view sprite/page fire no longer reads IndexedDB at fire time either.
 Verified: scene renders behind readable text in V3 Book view; audio advanced
 0→4.37s smoothly during playback with the scene up.
 
-**Still pending:** (b) sprite/badge/highlight per page in Book view;
-(c) phone (1-page) tier verification. (Sprite-loop full-page in Book view —
-done v4.135, verified: 4-frame strip cycled 0/33/66/100% in V3 Book view.)
+**Still pending:** (c) phone (1-page) tier verification. (Sprite-loop full-page
+in Book view — done v4.135, verified: 4-frame strip cycled 0/33/66/100% in V3
+Book view.)
+
+### 12b. AS-BUILT — Phase (b) per-sentence tiers (v4.136, SHIPPED)
+
+Sentence-synced emphasis / badge / sprite in Book view, driven from `_animTick`
+(it fires every `timeupdate` and keeps running while Book view is open — the
+scrolling stage stays in the DOM, just hidden). At the end of `_animTick`, when
+`bookView` is visible, it calls three reconcilers with the same `idx` +
+active-cue values it computed for the scrolling view:
+
+- **Emphasis (highlight/glow):** `_animBookReconcileEmph` adds `.anim-emphasis`
+  (+`--glow`) to the active sentence's span.
+- **Badge:** `_animBookReconcileBadge` pins a `.anim-book-badge` pill (top-right)
+  onto the `.book-view-page` holding the active sentence.
+- **Sprite:** `_animBookReconcileSprite` builds a `.anim-book-sprite-card` PiP
+  (bottom-right of that page), sized to the frame aspect via a cached-image
+  probe, and frame-steps it via its own interval while playing (frozen when
+  paused / reduced-motion).
+
+**Span resolution (the V3 gotcha):** legacy stores spans in `_bookSentenceSpans`
+but **V3 does not** — it marks them `.sentence[data-idx]` and queries the DOM.
+`_animBookSpan(idx)` tries the cache, then a DOM query **scoped to
+`bookViewSpread`** (so it never matches the hidden reading-view spans, which
+share the `.sentence` class). All overlays attach to the host
+`.book-view-page` (made `position:relative` via `.anim-book-host`).
+
+Cleared on Book-view exit (`_animBookClearPerSentence` in `exitBookView`) — no
+leaked nodes or intervals. Verified in V3: sprite PiP looped all 4 frames + sized
+to aspect + pinned bottom-right inside the page; badge pill showed on its
+sentence's page; glow applied `.anim-emphasis--glow` to the active span;
+transitions clean (each clears as narration advances); exit left zero overlays/timers.
 
 ---
 

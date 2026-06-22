@@ -9221,6 +9221,155 @@ function _animBookSpriteStart(bgEl, frames, fps) {
   _animBookSpriteTimers.push(timer);
 }
 
+// ── Book-view PER-SENTENCE tier (Phase b): emphasis / badge / sprite that fire
+// as narration reaches their sentence (vs. the spread-static full-page scene).
+// Driven from _animTick (runs every timeupdate even while Book view is open).
+// Targets _bookSentenceSpans[idx] — the active sentence's span — and overlays
+// onto the .book-view-page that contains it. V3 builds all pages once, so the
+// span + its host page persist regardless of which spread is visible.
+let _animBookEmph = null;       // currently emphasized book span
+let _animBookBadgeEl = null;    // current badge pill element
+let _animBookSpriteEl = null;   // current sprite PiP card
+let _animBookSentSprite = { cueId: null, timer: null, frames: 1, idx: 0, frameEl: null };
+
+// Resolve the active sentence's span inside the Book view. Legacy stores spans
+// in _bookSentenceSpans (by global idx); V3 marks them with .sentence[data-idx]
+// and queries the DOM. Try the cache first, then a DOM query scoped to the book
+// spread (so we never match the hidden reading-view spans, which share .sentence).
+function _animBookSpan(idx) {
+  const cached = _bookSentenceSpans[idx];
+  if (cached && cached.isConnected) return cached;
+  if (typeof bookViewSpread !== "undefined" && bookViewSpread) {
+    return bookViewSpread.querySelector('.sentence[data-idx="' + idx + '"]');
+  }
+  return null;
+}
+
+function _animBookHostPage(idx) {
+  const span = _animBookSpan(idx);
+  if (!span) return null;
+  return span.closest(".book-view-page, .book-page");
+}
+
+function _animBookSentSpriteStop() {
+  if (_animBookSentSprite.timer) {
+    clearInterval(_animBookSentSprite.timer);
+    _animBookSentSprite.timer = null;
+  }
+}
+
+// Clear all per-sentence overlays (Book-view close / no active sentence).
+function _animBookClearPerSentence() {
+  if (_animBookEmph) {
+    _animBookEmph.classList.remove("anim-emphasis", "anim-emphasis--glow");
+    _animBookEmph = null;
+  }
+  if (_animBookBadgeEl) { _animBookBadgeEl.remove(); _animBookBadgeEl = null; }
+  _animBookSentSpriteStop();
+  if (_animBookSpriteEl) { _animBookSpriteEl.remove(); _animBookSpriteEl = null; }
+  _animBookSentSprite.cueId = null;
+  _animBookSentSprite.frameEl = null;
+}
+
+function _animBookReconcileEmph(idx, effect, glow) {
+  const next = effect ? _animBookSpan(idx) : null;
+  if (_animBookEmph && _animBookEmph !== next) {
+    _animBookEmph.classList.remove("anim-emphasis", "anim-emphasis--glow");
+    _animBookEmph = null;
+  }
+  if (next) {
+    next.classList.add("anim-emphasis");
+    next.classList.toggle("anim-emphasis--glow", !!glow);
+    _animBookEmph = next;
+  }
+}
+
+function _animBookReconcileBadge(idx, label) {
+  const page = label ? _animBookHostPage(idx) : null;
+  if (!page) {
+    if (_animBookBadgeEl) { _animBookBadgeEl.remove(); _animBookBadgeEl = null; }
+    return;
+  }
+  if (!_animBookBadgeEl) {
+    _animBookBadgeEl = document.createElement("div");
+    _animBookBadgeEl.className = "anim-book-badge";
+  }
+  if (_animBookBadgeEl.textContent !== label) _animBookBadgeEl.textContent = label;
+  if (_animBookBadgeEl.parentElement !== page) {
+    page.classList.add("anim-book-host");
+    page.appendChild(_animBookBadgeEl);
+  }
+}
+
+function _animBookReconcileSprite(idx, cue, playing) {
+  if (!cue || !(cue.sheetId || cue.sheetBlob || cue.sheet)) {
+    _animBookSentSpriteStop();
+    if (_animBookSpriteEl) { _animBookSpriteEl.remove(); _animBookSpriteEl = null; }
+    _animBookSentSprite.cueId = null;
+    return;
+  }
+  const page = _animBookHostPage(idx);
+  const url = cue.sheetId ? _animSheetUrlCache[cue.sheetId] : null;
+  if (!page || !url) {
+    // host page not resolvable, or sheet not preloaded yet — drop the card; a
+    // later tick (once preloaded / on-spread) rebuilds it.
+    _animBookSentSpriteStop();
+    if (_animBookSpriteEl) { _animBookSpriteEl.remove(); _animBookSpriteEl = null; }
+    _animBookSentSprite.cueId = null;
+    return;
+  }
+  const frames = Math.max(1, parseInt(cue.frames, 10) || 1);
+  // (Re)build the card if the cue changed or it's not on the right page.
+  if (
+    _animBookSentSprite.cueId !== cue.id ||
+    !_animBookSpriteEl ||
+    _animBookSpriteEl.parentElement !== page
+  ) {
+    _animBookSentSpriteStop();
+    if (_animBookSpriteEl) _animBookSpriteEl.remove();
+    _animBookSpriteEl = document.createElement("div");
+    _animBookSpriteEl.className = "anim-book-sprite-card";
+    const frame = document.createElement("div");
+    frame.className = "anim-book-sprite-frame";
+    frame.style.backgroundImage = 'url("' + url + '")';
+    frame.style.backgroundSize = frames * 100 + "% 100%";
+    frame.style.backgroundPosition = "0% 0%";
+    _animBookSpriteEl.appendChild(frame);
+    page.classList.add("anim-book-host");
+    page.appendChild(_animBookSpriteEl);
+    _animBookSentSprite.cueId = cue.id;
+    _animBookSentSprite.frames = frames;
+    _animBookSentSprite.idx = 0;
+    _animBookSentSprite.frameEl = frame;
+    // Size the card to the frame aspect (cached image → cheap).
+    const probe = new Image();
+    probe.onload = () => {
+      if (!_animBookSpriteEl || _animBookSentSprite.frameEl !== frame) return;
+      const fw = probe.naturalWidth / frames;
+      const fh = probe.naturalHeight;
+      if (fh > 0) {
+        const cardH = 120;
+        _animBookSpriteEl.style.height = cardH + "px";
+        _animBookSpriteEl.style.width = Math.round(cardH * (fw / fh)) + "px";
+      }
+    };
+    probe.src = url;
+  }
+  // Play / freeze the loop.
+  const N = _animBookSentSprite.frames;
+  if (playing && N > 1 && !_animBookSentSprite.timer && !_animReducedMotion()) {
+    const fps = Math.max(1, Math.min(30, parseInt(cue.fps, 10) || 8));
+    _animBookSentSprite.timer = setInterval(() => {
+      const f = _animBookSentSprite.frameEl;
+      if (!f || !f.isConnected) { _animBookSentSpriteStop(); return; }
+      _animBookSentSprite.idx = (_animBookSentSprite.idx + 1) % N;
+      f.style.backgroundPosition = (_animBookSentSprite.idx / (N - 1)) * 100 + "% 0%";
+    }, 1000 / fps);
+  } else if (!playing) {
+    _animBookSentSpriteStop();
+  }
+}
+
 function _animClearSheetCache() {
   for (const k in _animSheetUrlCache) {
     try { URL.revokeObjectURL(_animSheetUrlCache[k]); } catch {}
@@ -9562,6 +9711,17 @@ function _animTick() {
   _animReconcileBadge(badgeLabel);
   _animReconcileSprite(activeSprite, !playerEl.paused);
   _animReconcilePage(activePage, !playerEl.paused);
+  // Book view (consumer surface): mirror the per-sentence tiers onto the active
+  // sentence's page. The scrolling reconcilers above target the hidden reading
+  // view; these drive the visible Book-view overlays. (Full-page scenes are
+  // handled spread-static by _animApplyToSpreadScenes, not here.)
+  if (typeof bookView !== "undefined" && bookView && !bookView.hidden) {
+    _animBookReconcileEmph(idx, emphasizeEffect, emphasizeEffect === "glow");
+    _animBookReconcileBadge(idx, badgeLabel);
+    _animBookReconcileSprite(idx, activeSprite, !playerEl.paused);
+  } else if (_animBookEmph || _animBookBadgeEl || _animBookSpriteEl) {
+    _animBookClearPerSentence();
+  }
 }
 
 // Emphasis follows the narration: at most one span carries the effect class,
@@ -23626,6 +23786,7 @@ function exitBookView(opts = {}) {
   bookView.style.visibility = "";
   _bookSentenceSpans = [];
   if (typeof _animBookSpriteStopAll === "function") _animBookSpriteStopAll();
+  if (typeof _animBookClearPerSentence === "function") _animBookClearPerSentence();
   if (bookViewSpread) bookViewSpread.innerHTML = "";
   if (bookViewToggle) bookViewToggle.textContent = "📖 Book view";
   // v225v3.7 (#741): clean up auto-hide state so next open starts
