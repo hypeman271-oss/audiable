@@ -20232,16 +20232,19 @@ function _readerImmerseInit() {
   _readerImmerseWired = true;
   // Read-along signature: while the narration plays, immerse (hide chrome) so
   // the reader watches the page follow along; on pause, reveal the controls.
+  // v4.158: applies to the CONSUMER read contexts — the share-link reader
+  // (reader-mode) AND in-app SIMPLE mode (the free consumer experience) — but
+  // NOT author/standard modes (an author editing wants the controls to stay).
+  const _isConsumerRead = () =>
+    typeof bookView !== "undefined" && bookView && !bookView.hidden &&
+    (document.body.classList.contains("reader-mode") ||
+      document.body.dataset.uiMode === "simple");
   if (typeof playerEl !== "undefined" && playerEl) {
     playerEl.addEventListener("play", () => {
-      if (document.body.classList.contains("reader-mode")) {
-        document.body.classList.add("reader-immersed");
-      }
+      if (_isConsumerRead()) document.body.classList.add("reader-immersed");
     });
     playerEl.addEventListener("pause", () => {
-      if (document.body.classList.contains("reader-mode")) {
-        document.body.classList.remove("reader-immersed");
-      }
+      if (_isConsumerRead()) document.body.classList.remove("reader-immersed");
     });
   }
   const bv = document.getElementById("book-view");
