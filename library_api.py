@@ -990,6 +990,28 @@ def _build_bundle(row: sqlite3.Row, token: str, published_at: str) -> dict:
     }
 
 
+def _build_book_bundle(
+    book_row: sqlite3.Row, chapter_rows: list[sqlite3.Row], token: str,
+    published_at: str,
+) -> dict:
+    """Snapshot a whole multi-chapter book: book metadata + an ordered list of
+    per-chapter clip bundles (each the same shape as a single-clip publish, so
+    the consumer reader can render any chapter exactly as intended). `type:
+    "book"` distinguishes it from a single-clip bundle at read time."""
+    return {
+        "token": token,
+        "type": "book",
+        "title": book_row["title"] or "",
+        "author": book_row["author"] or "",
+        "description": book_row["description"] or "",
+        "coverSha": book_row["cover_sha"],
+        "publishedAt": published_at,
+        "chapters": [
+            _build_bundle(r, token, published_at) for r in chapter_rows
+        ],
+    }
+
+
 @router.post("/clips/{clip_id}/publish")
 def publish_clip(clip_id: int, request: Request):
     """Snapshot the caller's clip into an immutable published book + return
@@ -1009,6 +1031,48 @@ def publish_clip(clip_id: int, request: Request):
     bundle = _build_bundle(row, token, now)
     library_db.create_published(token, tk, clip_id, library_db.jsdump(bundle), now)
     return {"token": token, "url": f"/?book={token}", "publishedAt": now}
+
+
+@router.post("/books/{book_id}/publish")
+def publish_book(book_id: int, request: Request):
+    """Snapshot a whole book (cover + ordered chapters) into one immutable
+    published bundle + return the share token/URL. Missing/deleted chapter
+    clips are skipped; publishing requires at least one readable chapter.
+    Re-publishing mints a fresh token (old links keep serving their snapshot)."""
+    _require_enabled()
+    tk = _tenant(request)
+    conn = library_db.conn()
+    book = conn.execute(
+        "SELECT * FROM books WHERE tenant_key = ? AND id = ?", (tk, book_id)
+    ).fetchone()
+    if book is None:
+        raise HTTPException(status_code=404, detail="book not found")
+    if book["deleted"]:
+        raise HTTPException(status_code=400, detail="book is deleted")
+    ids = library_db.jsload(book["chapter_clip_ids_json"]) or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="book has no chapters")
+    # Load the chapter clips in the book's order, dropping any that are
+    # missing or deleted. One lookup per id keeps it simple (chapter counts
+    # are small) and avoids a dynamic IN(...) binding.
+    rows_by_id = {}
+    for cid in ids:
+        r = conn.execute(
+            "SELECT * FROM clips WHERE tenant_key = ? AND id = ?", (tk, cid)
+        ).fetchone()
+        if r is not None and not r["deleted"]:
+            rows_by_id[cid] = r
+    chapter_rows = [rows_by_id[cid] for cid in ids if cid in rows_by_id]
+    if not chapter_rows:
+        raise HTTPException(status_code=400, detail="no readable chapters")
+    token = secrets.token_urlsafe(16)
+    now = datetime.now(timezone.utc).isoformat()
+    bundle = _build_book_bundle(book, chapter_rows, token, now)
+    library_db.create_published(token, tk, book_id, library_db.jsdump(bundle), now)
+    return {
+        "token": token, "url": f"/?book={token}", "publishedAt": now,
+        "chapters": len(chapter_rows),
+    }
 
 
 @router.get("/published")
@@ -1074,16 +1138,66 @@ def get_published_audio(token: str):
     )
 
 
-@public_router.get("/{token}/sheet/{sha}")
-def get_published_sheet(token: str, sha: str):
-    """Public: an animation sheet — but ONLY if `sha` is referenced by a cue
-    in this token's bundle. This bounds the public surface to exactly the
-    assets the author published (no enumerating the whole sheet store)."""
+@public_router.get("/{token}/chapter/{idx}/audio.mp3")
+def get_published_chapter_audio(token: str, idx: int):
+    """Public: the narration for chapter `idx` of a multi-chapter published
+    book. Serves only the sha recorded for that chapter in this token's
+    bundle (no arbitrary blob access)."""
     _require_enabled()
     bundle = _published_bundle_or_404(token)
-    cues = bundle.get("animationCues") or []
-    allowed = any(isinstance(c, dict) and c.get("sheetSha") == sha for c in cues)
-    if not allowed:
+    chapters = bundle.get("chapters") or []
+    if idx < 0 or idx >= len(chapters):
+        raise HTTPException(status_code=404, detail="chapter not found")
+    sha = (chapters[idx] or {}).get("audioSha256")
+    if not sha:
+        raise HTTPException(status_code=404, detail="no audio for this chapter")
+    try:
+        p = library_db.audio_path(sha)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="audio blob not found")
+    return FileResponse(
+        path=str(p),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+def _published_sha_allowed(bundle: dict, sha: str) -> bool:
+    """True if `sha` is an asset this published bundle references — a cover or
+    an animation-sheet cue, in the bundle itself OR any of its chapters. Bounds
+    public asset reads to exactly what the author published."""
+    if not sha or not isinstance(bundle, dict):
+        return False
+
+    def _b_refs(b) -> bool:
+        if not isinstance(b, dict):
+            return False
+        if b.get("coverSha") == sha:
+            return True
+        cov = b.get("cover")
+        if isinstance(cov, dict) and cov.get("sheetSha") == sha:
+            return True
+        return any(
+            isinstance(c, dict) and c.get("sheetSha") == sha
+            for c in (b.get("animationCues") or [])
+        )
+
+    if _b_refs(bundle):
+        return True
+    return any(_b_refs(ch) for ch in (bundle.get("chapters") or []))
+
+
+@public_router.get("/{token}/sheet/{sha}")
+def get_published_sheet(token: str, sha: str):
+    """Public: an animation sheet or cover — but ONLY if `sha` is referenced by
+    this token's bundle (a cover or a cue, in the book itself or any chapter).
+    This bounds the public surface to exactly the assets the author published
+    (no enumerating the whole sheet store)."""
+    _require_enabled()
+    bundle = _published_bundle_or_404(token)
+    if not _published_sha_allowed(bundle, sha):
         raise HTTPException(status_code=404, detail="sheet not part of this book")
     try:
         p = library_db.anim_sheet_path(sha)
