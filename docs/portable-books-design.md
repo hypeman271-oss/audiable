@@ -114,6 +114,31 @@ These compose — A is the natural first distribution step and B/C can follow.
 
 ---
 
+## 4b. AS-BUILT — Phase 1 (v4.141, SHIPPED)
+
+- **Schema v10** (`library_db.py`): `clips.animation_cues_json` column (mirrors
+  `annotations_json`). Migration verified.
+- **Content-addressed sheet store** (`library_db.py`): `store_anim_sheet(bytes)
+  -> sha`, `anim_sheet_path(sha)` (path-traversal guarded), `ANIM_SHEET_DIR`.
+- **Endpoints** (`library_api.py`): `POST /api/library/anim-sheet` (raw body →
+  `{sha256}`, 8MB cap), `GET /api/library/anim-sheet/{sha}` (immutable cache).
+- **Cue sync** (`library_api.py`): `ClipUpsert.animationCues: list|None`.
+  None = downlevel/empty push → **preserve stored** (no wipe); explicit array
+  (incl. `[]`) = authoritative whole-array LWW. Added to UPSERT + GET
+  serialization.
+- **Client** (`app.js`): `animationCues` added to `_syncPushClip` payload +
+  applied in `_syncAbsorbServerClip`. `_animSaveCueForSentence` uploads the
+  (downscaled) blob → `cue.sheetSha` (both fresh + edit-in-place + legacy
+  migration). `_animEnsureSheetBlob` = local IDB → **fetch-on-miss by
+  `sheetSha`** → cache; used by `_animResolveSheetUrl` + `_animPreloadSheets`,
+  so every renderer (scene, sprite, book-view) resolves cross-device.
+
+**Verified:** server round-trip via TestClient (upload/fetch/404, cue PUT/GET
+with sheetSha, downlevel-preserve, explicit-`[]`-wipe) + live client round-trip
+(save → upload → sheetSha persisted → delete local blob → fetch-on-miss
+re-pulls + re-caches). Cross-tenant author→author (your own two devices) is the
+user's two-device verification; needs library_db enabled (Fly).
+
 ## 5. Recommendation / phasing
 
 1. **Build Phase 1 now** (2a→2d). It's required for every distribution model and

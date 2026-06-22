@@ -36,8 +36,15 @@ AUDIO_DIR = DATA_DIR / "audio"
 # across clips. See docs/phase-b-design.md for the full design.
 SENTENCE_DIR = DATA_DIR / "sentences"
 
+# v4.141 (portable books): content-addressed store for animation sprite/scene
+# sheets. Same pattern as SENTENCE_DIR — sha256(bytes) is the filename, so an
+# identical image dedups across clips/tenants. Lets an author's animation art
+# travel to their other devices (and, later, to consumers) instead of being
+# stranded in one device's IndexedDB. See docs/portable-books-design.md.
+ANIM_SHEET_DIR = DATA_DIR / "anim_sheets"
+
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -303,6 +310,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v9(c)
         c.execute("UPDATE schema_version SET version = 9")
         current = 9
+
+    if current < 10:
+        _apply_v10(c)
+        c.execute("UPDATE schema_version SET version = 10")
+        current = 10
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -763,6 +775,24 @@ def _apply_v9(c: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v10(c: sqlite3.Connection) -> None:
+    """Add animation_cues_json column to clips for portable animations.
+
+    Each clip carries an array of animation cues (full-page scenes,
+    per-sentence sprites, badges, emphasis). Previously cue metadata never
+    synced; this column lets it travel with the clip the same way
+    annotations_json does. Additive — existing rows get NULL, read as [].
+    The cue's image bytes live in the content-addressed ANIM_SHEET_DIR,
+    referenced by a `sheetSha` inside the cue JSON (not in this column as a
+    blob). See docs/portable-books-design.md.
+    """
+    print(
+        "[library_db] migrating to schema v10 (add clips.animation_cues_json)",
+        file=sys.stderr, flush=True,
+    )
+    c.execute("ALTER TABLE clips ADD COLUMN animation_cues_json TEXT")
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Tenant directory (/data/tenants.json).
 #
@@ -1024,6 +1054,40 @@ def sentence_audio_path(sha256: str) -> Path:
     ):
         raise ValueError(f"invalid sha256: {sha256!r}")
     return SENTENCE_DIR / f"{sha256}.flac"
+
+
+def store_anim_sheet(data: bytes) -> str:
+    """Write animation sheet `data` to ANIM_SHEET_DIR / <sha256> and return
+    the sha. Mirrors store_sentence_audio: idempotent (sha collision ⇒
+    identical bytes), tmp-then-rename guards partial writes. The bytes are
+    already bounded client-side (downscaled ≤2048px). No extension — the
+    sha is the whole filename; the GET endpoint serves it as image/*.
+    """
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    if not data:
+        raise ValueError("data is empty")
+    ANIM_SHEET_DIR.mkdir(parents=True, exist_ok=True)
+    sha = hashlib.sha256(data).hexdigest()
+    dest = ANIM_SHEET_DIR / sha
+    if not dest.exists():
+        tmp = ANIM_SHEET_DIR / f".{sha}.tmp"
+        tmp.write_bytes(data)
+        tmp.replace(dest)
+    return sha
+
+
+def anim_sheet_path(sha256: str) -> Path:
+    """Path to an animation sheet blob. Caller checks .exists().
+
+    Same defensive sha validation as sentence_audio_path so a path-
+    traversal attempt via the API endpoint can't escape ANIM_SHEET_DIR.
+    """
+    if not sha256 or len(sha256) != 64 or any(
+        c not in "0123456789abcdef" for c in sha256.lower()
+    ):
+        raise ValueError(f"invalid sha256: {sha256!r}")
+    return ANIM_SHEET_DIR / sha256
 
 
 def record_sentence_audio(

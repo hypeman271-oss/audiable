@@ -253,6 +253,11 @@ def _row_to_clip_dict(row: sqlite3.Row) -> dict:
             ) or [])
             if isinstance(a, dict) and not a.get("deletedAt")
         ],
+        # v4.141 (portable books): animation cues. NULL column (legacy rows)
+        # normalizes to [] so the client always sees an array.
+        "animationCues": library_db.jsload(
+            row["animation_cues_json"] if "animation_cues_json" in row.keys() else None
+        ) or [],
         # v225v4.0 (#810): per-sentence storage. lines is omitted from
         # the response when the column is NULL — clients use the
         # presence of `lines` to detect "this clip is opted in." We
@@ -427,6 +432,15 @@ class ClipUpsert(BaseModel):
     # v223.annotate-1.5: phone-native revision annotations.
     # See STRATEGY.md "Phone-native annotation" section.
     annotations: list[dict] = Field(default_factory=list)
+    # v4.141 (portable books): animation cues (full-page scenes, per-sentence
+    # sprites, badges, emphasis). None = downlevel client that doesn't know
+    # about cues → server preserves the stored value (never wipes). An explicit
+    # array (incl. []) is authoritative — whole-array LWW, since cues are
+    # single-author (not concurrently edited like annotations). Each cue carries
+    # a `sheetSha` referencing the content-addressed ANIM_SHEET_DIR blob; the
+    # image bytes are uploaded separately via POST /api/library/anim-sheet, so
+    # this column stays small JSON. See docs/portable-books-design.md.
+    animationCues: list[dict] | None = None
     # v225v4.0 (#810 / #586): Author-mode per-sentence storage. NULL on
     # legacy clips and on clips the user hasn't opted in; populated on
     # opt-in with [{id, text, hash, updatedAt, voiceOverride?}, ...].
@@ -535,6 +549,22 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
         candidates = [v for v in (payload.nextLineSeq, existing_seq) if v is not None]
         merged_next_line_seq = max(candidates) if candidates else None
 
+        # v4.141 (portable books): animation cues. Whole-array LWW with a
+        # None-preserve guard — a downlevel client (animationCues omitted →
+        # None) must not wipe cues authored on another device. An explicit
+        # array (incl. []) replaces stored. Cues are single-author so a
+        # per-id merge (like annotations) isn't needed.
+        existing_cues_json = (
+            existing["animation_cues_json"]
+            if existing is not None and "animation_cues_json" in existing.keys()
+            else None
+        )
+        merged_cues_json = (
+            library_db.jsdump(payload.animationCues)
+            if payload.animationCues is not None
+            else existing_cues_json
+        )
+
         # Decode + store audio if a blob came along, OR validate the
         # sha if the client only sent the reference.
         audio_sha = payload.audioSha256
@@ -582,7 +612,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               speaker_id, duration_sec, progress_sec,
               sentence_offsets_json, bookmarks_json, note, notes,
               tags_json, cover_json, git_ref_json, audio_sha256,
-              images_json, annotations_json,
+              images_json, annotations_json, animation_cues_json,
               lines_json, next_line_seq,
               synth_ok, synth_silent_sentence_count,
               created_at, updated_at, last_synced_at, deleted
@@ -592,7 +622,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               ?, ?, ?,
               ?, ?, ?, ?,
               ?, ?, ?, ?,
-              ?, ?,
+              ?, ?, ?,
               ?, ?,
               ?, ?,
               ?, ?, ?, ?
@@ -618,6 +648,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               audio_sha256=excluded.audio_sha256,
               images_json=excluded.images_json,
               annotations_json=excluded.annotations_json,
+              animation_cues_json=excluded.animation_cues_json,
               lines_json=excluded.lines_json,
               next_line_seq=excluded.next_line_seq,
               synth_ok=excluded.synth_ok,
@@ -650,6 +681,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
                 audio_sha,
                 library_db.jsdump(payload.images),
                 library_db.jsdump(merged_annotations),
+                merged_cues_json,
                 lines_json_value,
                 merged_next_line_seq,
                 int(payload.synthOk),
@@ -738,6 +770,52 @@ def stream_audio(sha256: str):
         headers={
             # Content-addressed → can never change for this URL → cache
             # forever. Saves the client a HEAD on every play.
+            "Cache-Control": "public, max-age=31536000, immutable",
+        },
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v4.141 (portable books): animation sheet blobs. Content-addressed image
+# store so an author's animation art travels to their other devices (and,
+# later, to consumers) instead of being stranded in one device's IndexedDB.
+# The cue JSON (synced via the clip row) references blobs by `sheetSha`.
+# Kept OFF the per-clip sync row so progress-save never re-uploads MBs
+# (preserves the audio-hitch fix). See docs/portable-books-design.md.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@router.post("/anim-sheet")
+async def upload_anim_sheet(request: Request):
+    """Store raw image bytes (the request body) content-addressed; return
+    the sha. Idempotent — re-uploading identical bytes is a no-op + same sha.
+    Bytes are bounded client-side (downscaled ≤2048px); we cap at 8MB as a
+    defensive backstop."""
+    _require_enabled()
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty body")
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="anim sheet too large (>8MB)")
+    sha = library_db.store_anim_sheet(data)
+    return {"sha256": sha}
+
+
+@router.get("/anim-sheet/{sha256}")
+def get_anim_sheet(sha256: str):
+    _require_enabled()
+    try:
+        p = library_db.anim_sheet_path(sha256)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="anim sheet not found")
+    # media_type is a hint only — backgrounds/<img> decode by content sniff,
+    # so PNG vs JPG source both render correctly through the object URL.
+    return FileResponse(
+        path=str(p),
+        media_type="image/png",
+        headers={
             "Cache-Control": "public, max-age=31536000, immutable",
         },
     )

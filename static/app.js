@@ -9302,14 +9302,15 @@ function _animBookReconcileBadge(idx, label) {
 }
 
 function _animBookReconcileSprite(idx, cue, playing) {
-  if (!cue || !(cue.sheetId || cue.sheetBlob || cue.sheet)) {
+  if (!cue || !(cue.sheetId || cue.sheetSha || cue.sheetBlob || cue.sheet)) {
     _animBookSentSpriteStop();
     if (_animBookSpriteEl) { _animBookSpriteEl.remove(); _animBookSpriteEl = null; }
     _animBookSentSprite.cueId = null;
     return;
   }
   const page = _animBookHostPage(idx);
-  const url = cue.sheetId ? _animSheetUrlCache[cue.sheetId] : null;
+  const _sheetKey = cue.sheetId || cue.sheetSha;
+  const url = _sheetKey ? _animSheetUrlCache[_sheetKey] : null;
   if (!page || !url) {
     // host page not resolvable, or sheet not preloaded yet — drop the card; a
     // later tick (once preloaded / on-spread) rebuilds it.
@@ -9381,12 +9382,13 @@ async function _animPreloadSheets(clip) {
   const cues = (clip && clip.animationCues) || [];
   let added = false;
   for (const c of cues) {
-    if (c && c.sheetId && !_animSheetUrlCache[c.sheetId]) {
-      const blob = await getAnimSheet(c.sheetId);
-      if (blob) {
-        _animSheetUrlCache[c.sheetId] = URL.createObjectURL(blob);
-        added = true;
-      }
+    const key = c && (c.sheetId || c.sheetSha);
+    if (!key || _animSheetUrlCache[key]) continue;
+    // Local IDB, else fetch-on-miss by sheetSha (synced-from-another-device).
+    const blob = await _animEnsureSheetBlob(c);
+    if (blob) {
+      _animSheetUrlCache[key] = URL.createObjectURL(blob);
+      added = true;
     }
   }
   // Scenes may now be renderable — re-apply onto the open Book-view pages
@@ -9645,6 +9647,12 @@ async function _animMigrateLegacySheets(clip) {
     c.sheetId = id;
     delete c.sheetBlob;
     delete c.sheet;
+    // Portable books: also upload so the migrated cue gets a sheetSha and
+    // becomes cross-device-portable without needing a manual re-edit.
+    if (!c.sheetSha) {
+      const _sha = await _animUploadSheet(blob);
+      if (_sha) c.sheetSha = _sha;
+    }
     changed = true;
   }
   if (changed && typeof _mutateClipAtomic === "function") {
@@ -9790,19 +9798,48 @@ function _animReconcileSprite(cue, playing) {
 
 // Resolve a cue's sheet to a displayable URL. Returns { value, revoke } where
 // revoke is true if we created an object URL (so the caller revokes it).
-async function _animResolveSheetUrl(cue) {
-  if (cue.sheetId) {
-    // Prefer the preloaded cache (no IDB read / decode at fire time). The
-    // cached URL is shared + revoked by _animClearSheetCache, so revoke:false.
-    if (_animSheetUrlCache[cue.sheetId]) {
-      return { value: _animSheetUrlCache[cue.sheetId], revoke: false };
+// Resolve a cue's sheet bytes to a Blob, with fallbacks (portable books):
+//   1. local IndexedDB (anim_sheets, keyed by sheetId — the authoring device)
+//   2. server fetch by content hash (cue.sheetSha) when the bytes aren't local
+//      — i.e. a device that received the cue via sync. Cached locally after.
+//   3. legacy inline sheetBlob.
+// Returns the Blob or null. Never throws.
+async function _animEnsureSheetBlob(cue) {
+  if (!cue) return null;
+  const localKey = cue.sheetId || cue.sheetSha;
+  if (localKey) {
+    let blob = await getAnimSheet(localKey);
+    if (!blob && cue.sheetSha) {
+      // Fetch-on-miss: cue present but bytes absent (synced from another
+      // device). Pull the content-addressed blob once + cache it locally.
+      try {
+        const r = await fetch(
+          "/api/library/anim-sheet/" + encodeURIComponent(cue.sheetSha)
+        );
+        if (r.ok) {
+          blob = await r.blob();
+          try { await putAnimSheet(localKey, blob); } catch {}
+        }
+      } catch (e) {
+        console.warn("[anim] sheet fetch-on-miss failed:", e);
+      }
     }
-    const blob = await getAnimSheet(cue.sheetId);
-    if (blob) return { value: URL.createObjectURL(blob), revoke: true };
-    return null;
+    if (blob) return blob;
   }
-  if (cue.sheetBlob) return { value: URL.createObjectURL(cue.sheetBlob), revoke: true };
-  if (cue.sheet) return { value: cue.sheet, revoke: false };
+  if (cue.sheetBlob instanceof Blob) return cue.sheetBlob; // legacy inline
+  return null;
+}
+
+async function _animResolveSheetUrl(cue) {
+  const key = cue.sheetId || cue.sheetSha;
+  // Prefer the preloaded cache (no IDB read / decode / refetch at fire time).
+  // The cached URL is shared + revoked by _animClearSheetCache, so revoke:false.
+  if (key && _animSheetUrlCache[key]) {
+    return { value: _animSheetUrlCache[key], revoke: false };
+  }
+  const blob = await _animEnsureSheetBlob(cue);
+  if (blob) return { value: URL.createObjectURL(blob), revoke: true };
+  if (cue.sheet) return { value: cue.sheet, revoke: false }; // legacy data URL
   return null;
 }
 
@@ -19831,6 +19868,7 @@ let _animSentenceIdx = null; // sentence the animate palette is acting on
 let _animPendingEffect = null; // which effect Save commits ('badge'|'sprite')
 let _animPendingSheetBlob = null; // the chosen sprite sheet as a Blob/File
 let _animEditSheetId = null; // sheetId to reuse when editing an existing sprite cue
+let _animEditSheetSha = null; // server sha of the reused sheet (skip re-upload)
 
 // Reveal the standalone Animate button only when the prototype flag is on.
 if (animateModeBtn) {
@@ -19871,6 +19909,7 @@ function _animResetPaletteInputs() {
   _animPendingEffect = null;
   _animPendingSheetBlob = null;
   _animEditSheetId = null;
+  _animEditSheetSha = null;
   for (const el of [animateLabel, animateSpriteFile, animateFrames, animateFps]) {
     if (el) {
       el.hidden = true;
@@ -19896,6 +19935,7 @@ function _showAnimatePalette(idx, text) {
   if (existingSprite) {
     _animPendingEffect = "sprite";
     _animEditSheetId = existingSprite.sheetId || null;
+    _animEditSheetSha = existingSprite.sheetSha || null;
     if (animateFrames) {
       animateFrames.hidden = false;
       animateFrames.value = existingSprite.frames || 4;
@@ -20019,6 +20059,27 @@ async function _animDownscaleImageBlob(blob, cap = ANIM_IMG_MAX_SIDE) {
   }
 }
 
+// Portable books: upload sheet bytes to the content-addressed server store
+// and return the sha (or null on failure — offline just leaves sheetSha
+// unset; the cue still works locally + uploads on a later edit). The sha
+// rides in the cue JSON so the image travels with the synced clip.
+async function _animUploadSheet(blob) {
+  try {
+    const r = await fetch("/api/library/anim-sheet", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: blob,
+    });
+    if (r.ok) {
+      const j = await r.json();
+      return (j && j.sha256) || null;
+    }
+  } catch (e) {
+    console.warn("[anim] sheet upload failed (retries on next edit):", e);
+  }
+  return null;
+}
+
 async function _animSaveCueForSentence(effect, opts) {
   opts = opts || {};
   let _downscaledNote = false;
@@ -20056,11 +20117,30 @@ async function _animSaveCueForSentence(effect, opts) {
         return;
       }
       cue.sheetId = sheetId;
+      // Portable books: upload the (downscaled) bytes content-addressed so
+      // the cue's image travels with the synced clip. Best-effort.
+      const _sha = await _animUploadSheet(storeBlob);
+      if (_sha) cue.sheetSha = _sha;
       if (opts.reuseSheetId && opts.reuseSheetId !== sheetId) {
         deleteAnimSheet(opts.reuseSheetId);
       }
     } else if (opts.reuseSheetId) {
       cue.sheetId = opts.reuseSheetId; // edit in place: keep the sheet
+      // Carry the server reference. Reuse the sha if known; else re-derive
+      // from the local sheet bytes so an edit-in-place still becomes portable.
+      if (opts.reuseSheetSha) {
+        cue.sheetSha = opts.reuseSheetSha;
+      } else {
+        try {
+          const _b = await getAnimSheet(opts.reuseSheetId);
+          if (_b) {
+            const _sha = await _animUploadSheet(_b);
+            if (_sha) cue.sheetSha = _sha;
+          }
+        } catch (e) {
+          console.warn("[anim] reuse-sheet upload failed:", e);
+        }
+      }
     } else {
       setStatus("Pick an image first.", true);
       return; // keep the palette open so the author can choose a file
@@ -20180,6 +20260,7 @@ function _animCommitFromInputs() {
     _animSaveCueForSentence(_animPendingEffect, {
       blob: _animPendingSheetBlob,
       reuseSheetId: _animEditSheetId,
+      reuseSheetSha: _animEditSheetSha,
       frames: animateFrames ? animateFrames.value : 1,
       fps: animateFps ? animateFps.value : 8,
     });
@@ -24652,6 +24733,11 @@ async function _syncPushClip(clip) {
     // them in clips.annotations_json (schema v3). Empty array when
     // missing so the Pydantic default_factory works either way.
     annotations: Array.isArray(clip.annotations) ? clip.annotations : [],
+    // v4.141 (portable books): animation cues. Send the array when present
+    // (incl. [] when the author cleared the last cue → authoritative wipe);
+    // null when the clip never had cues so a downlevel/empty push can't
+    // wipe cues added on another device (server preserves on null).
+    animationCues: Array.isArray(clip.animationCues) ? clip.animationCues : null,
     // v225v4.0 (#810): Author-mode per-sentence storage. lines is null
     // for clips not opted in (server keeps lines_json NULL → blob path
     // runs unchanged). Sending null is critical: omitting the field
@@ -24865,6 +24951,11 @@ async function _syncAbsorbServerClip(sc) {
     // column; preserve them on the local IDB row so the receiving
     // device sees the same flags + marker dots without a re-fetch.
     annotations: Array.isArray(sc.annotations) ? sc.annotations : [],
+    // v4.141 (portable books): animation cues sync via the clip JSON
+    // column. Preserve them on the local row so the receiving device
+    // renders the same scenes/sprites/badges. The cue's image is fetched
+    // on demand by `sheetSha` (see _animResolveSheetUrl fetch-on-miss).
+    animationCues: Array.isArray(sc.animationCues) ? sc.animationCues : [],
     // v225v4.0 (#810): per-sentence storage. Server only emits these
     // fields when the clip is opted in; absent → undefined locally →
     // clip stays in the legacy blob model on the receiving device. A
