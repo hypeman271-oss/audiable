@@ -10547,6 +10547,12 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   margin: 0.35em 0;
   text-align: left;
 }
+.book-view-spread.v3 .sentence .bv-li {
+  display: block;
+  padding-left: 1.4em;
+  text-indent: -0.7em;
+  text-align: left;
+}
 /* v4.140: one-up (single page) is the default. The page fills the viewport, so
    cap the text to a readable centered column with page-like side margins —
    matches Kindle / Apple Books / Kobo on a wide screen. On phones the page is

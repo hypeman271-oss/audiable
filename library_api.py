@@ -44,14 +44,18 @@ surfacing a "Library updated on another device" status hint.
 from __future__ import annotations
 
 import base64
+import html as _html
+import os
+import re
 import secrets
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 import library_db
@@ -1073,6 +1077,193 @@ def publish_book(book_id: int, request: Request):
         "token": token, "url": f"/?book={token}", "publishedAt": now,
         "chapters": len(chapter_rows),
     }
+
+
+# ── EPUB export (v4.163) ──────────────────────────────────────────────────
+# Generate a standard .epub from a clip or a whole book so it opens in Apple
+# Books / Kindle / Kobo. Mirrors the reader's markdown formatting (bold/italic/
+# headings/lists/blockquotes) via a tiny converter so we add no new dependency
+# (ebooklib is already used for import; `markdown` is not installed).
+
+def _md_inline(s: str) -> str:
+    """Inline markdown → XHTML on an XML-escaped string (escape FIRST so no
+    source byte can inject markup). Mirrors the client's _readerInlineFmt."""
+    s = _html.escape(s or "", quote=False)
+    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    s = re.sub(r"\*\*([^*]+?)\*\*", r"<strong>\1</strong>", s)
+    s = re.sub(r"__([^_]+?)__", r"<strong>\1</strong>", s)
+    s = re.sub(r"(^|[^*])\*([^*\n]+?)\*(?!\*)", r"\1<em>\2</em>", s)
+    s = re.sub(r"(^|[^\w_])_([^_\n]+?)_(?![\w_])", r"\1<em>\2</em>", s)
+    s = re.sub(r"~~([^~]+?)~~", r"<s>\1</s>", s)
+    return s
+
+
+def _md_to_xhtml(text: str) -> str:
+    """Block-level markdown → XHTML: paragraphs, ATX headings, blockquotes,
+    ordered/unordered lists. Conservative; anything unrecognized is prose."""
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+    list_tag: str | None = None
+
+    def flush_para():
+        if para:
+            out.append("<p>" + " ".join(para) + "</p>")
+            para.clear()
+
+    def flush_list():
+        nonlocal list_tag
+        if items:
+            inner = "".join("<li>" + li + "</li>" for li in items)
+            out.append("<" + list_tag + ">" + inner + "</" + list_tag + ">")
+            items.clear()
+            list_tag = None
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            flush_para(); flush_list(); continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m:
+            flush_para(); flush_list()
+            lvl = len(m.group(1))
+            out.append(f"<h{lvl}>" + _md_inline(m.group(2).rstrip("#").strip()) + f"</h{lvl}>")
+            continue
+        if line.startswith("> "):
+            flush_para(); flush_list()
+            out.append("<blockquote><p>" + _md_inline(line[2:].strip()) + "</p></blockquote>")
+            continue
+        m = re.match(r"^(\d+)\.\s+(.*)$", line)
+        if m:
+            flush_para()
+            if list_tag != "ol":
+                flush_list(); list_tag = "ol"
+            items.append(_md_inline(m.group(2))); continue
+        m = re.match(r"^[-*+]\s+(.*)$", line)
+        if m:
+            flush_para()
+            if list_tag != "ul":
+                flush_list(); list_tag = "ul"
+            items.append(_md_inline(m.group(1))); continue
+        flush_list()
+        para.append(_md_inline(line))
+    flush_para(); flush_list()
+    return "\n".join(out) if out else "<p></p>"
+
+
+def _safe_filename(name: str) -> str:
+    base = re.sub(r"[^\w \-]+", "", (name or "").strip()) or "book"
+    return re.sub(r"\s+", "_", base)[:80]
+
+
+def _build_epub(
+    title: str, author: str, chapters: list[dict],
+    cover_bytes: bytes | None = None, cover_mime: str | None = None,
+) -> bytes:
+    """Build a valid .epub (bytes) from ordered chapters [{title, text}, …]."""
+    from ebooklib import epub
+
+    book = epub.EpubBook()
+    book.set_identifier("urn:narrative:" + secrets.token_hex(8))
+    book.set_title(title or "Untitled")
+    book.set_language("en")
+    if author:
+        book.add_author(author)
+    if cover_bytes:
+        ext = "png" if (cover_mime and "png" in cover_mime) else "jpg"
+        try:
+            book.set_cover("cover." + ext, cover_bytes)
+        except Exception:
+            pass
+    spine: list = ["nav"]
+    toc: list = []
+    for i, ch in enumerate(chapters):
+        ct = (ch.get("title") or f"Chapter {i + 1}").strip()
+        item = epub.EpubHtml(
+            title=ct, file_name=f"chap_{i}.xhtml", lang="en"
+        )
+        # Body fragment only — ebooklib wraps it in a valid XHTML document.
+        item.content = (
+            f"<h2>{_html.escape(ct, quote=False)}</h2>"
+            + _md_to_xhtml(ch.get("text") or "")
+        )
+        book.add_item(item)
+        spine.append(item)
+        toc.append(item)
+    book.toc = tuple(toc)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = spine
+    tmp = tempfile.NamedTemporaryFile(suffix=".epub", delete=False)
+    tmp.close()
+    try:
+        epub.write_epub(tmp.name, book)
+        with open(tmp.name, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+def _epub_response(data: bytes, title: str) -> Response:
+    fname = _safe_filename(title) + ".epub"
+    return Response(
+        content=data,
+        media_type="application/epub+zip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/clips/{clip_id}/export.epub")
+def export_clip_epub(clip_id: int, request: Request):
+    """Download a single clip as a one-chapter .epub."""
+    _require_enabled()
+    tk = _tenant(request)
+    row = library_db.conn().execute(
+        "SELECT * FROM clips WHERE tenant_key = ? AND id = ?", (tk, clip_id)
+    ).fetchone()
+    if row is None or row["deleted"]:
+        raise HTTPException(status_code=404, detail="clip not found")
+    title = row["title"] or "Untitled"
+    data = _build_epub(title, "", [{"title": title, "text": row["text"] or ""}])
+    return _epub_response(data, title)
+
+
+@router.get("/books/{book_id}/export.epub")
+def export_book_epub(book_id: int, request: Request):
+    """Download a whole book (cover + ordered chapters) as a multi-chapter .epub."""
+    _require_enabled()
+    tk = _tenant(request)
+    conn = library_db.conn()
+    book = conn.execute(
+        "SELECT * FROM books WHERE tenant_key = ? AND id = ?", (tk, book_id)
+    ).fetchone()
+    if book is None or book["deleted"]:
+        raise HTTPException(status_code=404, detail="book not found")
+    ids = library_db.jsload(book["chapter_clip_ids_json"]) or []
+    chapters: list[dict] = []
+    for cid in ids:
+        r = conn.execute(
+            "SELECT title, text FROM clips WHERE tenant_key = ? AND id = ? AND deleted = 0",
+            (tk, cid),
+        ).fetchone()
+        if r is not None:
+            chapters.append({"title": r["title"], "text": r["text"]})
+    if not chapters:
+        raise HTTPException(status_code=400, detail="book has no readable chapters")
+    cover_bytes = None
+    if book["cover_sha"]:
+        try:
+            p = library_db.anim_sheet_path(book["cover_sha"])
+            if p.exists():
+                cover_bytes = p.read_bytes()
+        except Exception:
+            pass
+    data = _build_epub(book["title"] or "Untitled", book["author"] or "", chapters, cover_bytes)
+    return _epub_response(data, book["title"] or "book")
 
 
 @router.get("/published")

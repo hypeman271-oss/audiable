@@ -20578,6 +20578,52 @@ async function _publishCurrentBook() {
   }
 }
 
+// Author: export the current book as a downloadable .epub (opens in Apple
+// Books / Kindle / Kobo). Built server-side from the synced copy; we push
+// chapters + book first so the file is current. Fetch-as-blob (carries the
+// app's auth) then trigger a download.
+async function _exportBookEpub() {
+  if (_bookEditingId == null) { setStatus("Open a book first.", true); return; }
+  if (typeof _syncIsEnabled === "function" && !_syncIsEnabled()) {
+    setStatus("Turn on account sync first — export builds from the server copy.", true);
+    return;
+  }
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  const ids = (book.chapterClipIds || []).filter((x) => x != null);
+  if (!ids.length) { setStatus("Add at least one chapter first.", true); return; }
+  setStatus("Building EPUB…");
+  try {
+    if (typeof _syncPushClip === "function") {
+      for (const cid of ids) {
+        try { const c = await getClip(cid); if (c) await _syncPushClip(c); } catch {}
+      }
+    }
+    if (typeof _syncPushBook === "function") {
+      try { await _syncPushBook(book); } catch {}
+    }
+    const r = await fetch(
+      "/api/library/books/" + encodeURIComponent(_bookEditingId) + "/export.epub"
+    );
+    if (!r.ok) { setStatus("EPUB export failed.", true); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download =
+      ((book.title || "book").replace(/[^\w \-]+/g, "").trim().replace(/\s+/g, "_") || "book") +
+      ".epub";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus("EPUB downloaded.");
+  } catch (e) {
+    console.warn("[epub] export failed:", e);
+    setStatus("EPUB export failed — see console.", true);
+  }
+}
+
 // Consumer entry point: ?book=<token> opens a shared book on load.
 document.addEventListener("DOMContentLoaded", () => {
   let tok = null;
@@ -20671,6 +20717,7 @@ async function _openBookEditor(id) {
   _bookEl("book-editor").hidden = false;
   _bookEl("books-dialog-title").textContent = "Edit book";
   { const pb = _bookEl("book-publish-btn"); if (pb) pb.hidden = false; }
+  { const eb = _bookEl("book-export-epub-btn"); if (eb) eb.hidden = false; }
   _bookEl("book-title-input").value = book.title || "";
   _bookEl("book-author-input").value = book.author || "";
   const prev = _bookEl("book-cover-preview");
@@ -20846,6 +20893,7 @@ async function _bookPickerAdd() {
   on("book-picker-back", () => { if (_bookEditingId != null) _openBookEditor(_bookEditingId); });
   on("book-picker-add", () => _bookPickerAdd());
   on("book-publish-btn", () => _publishCurrentBook());
+  on("book-export-epub-btn", () => _exportBookEpub());
   on("book-delete-btn", () => _bookDelete());
   const t = document.getElementById("book-title-input");
   const a = document.getElementById("book-author-input");
@@ -23465,29 +23513,36 @@ function _readerInlineFmt(raw) {
 // very start gets a style class + the marker stripped; everything else is
 // inline-only. Lists are intentionally left alone — a leading "- " is too often
 // real prose / dialogue to safely reinterpret.
-function _readerFmtSentence(raw) {
-  const t = raw.replace(/^\s+/, "");
-  // Heading / blockquote markers must isolate their OWN LINE only: a heading
-  // line has no terminal punctuation, so the sentence-splitter often merges it
-  // with the following prose. We style just the marked line (an inner block
-  // element) and render the rest of the merged blob as normal prose, so a
-  // heading never swallows the paragraph beneath it.
-  let m = t.match(/^(#{1,6})[ \t]+([^\n]*)(\n[\s\S]*)?$/);
+// Format ONE line. Block markers (heading #, blockquote >, numbered/bullet
+// list) become their own inner block element; a normal line is inline prose.
+function _readerFmtLine(line) {
+  const t = line.replace(/^[ \t]+/, "");
+  let m = t.match(/^(#{1,6})[ \t]+(.*)$/);
   if (m) {
-    const lvl = m[1].length;
-    const head =
-      '<span class="bv-h bv-h' + lvl + '">' +
+    return '<span class="bv-h bv-h' + m[1].length + '">' +
       _readerInlineFmt(m[2].replace(/\s*#*\s*$/, "")) + "</span>";
-    const rest = (m[3] || "").replace(/^\s+/, "");
-    return { html: head + (rest ? _readerInlineFmt(rest) : ""), cls: "" };
   }
-  m = t.match(/^>[ \t]+([^\n]*)(\n[\s\S]*)?$/);
+  if (/^>[ \t]+/.test(t)) {
+    return '<span class="bv-quote">' +
+      _readerInlineFmt(t.replace(/^>[ \t]+/, "")) + "</span>";
+  }
+  m = t.match(/^(\d+)\.[ \t]+(.*)$/); // numbered list
   if (m) {
-    const q = '<span class="bv-quote">' + _readerInlineFmt(m[1]) + "</span>";
-    const rest = (m[2] || "").replace(/^\s+/, "");
-    return { html: q + (rest ? _readerInlineFmt(rest) : ""), cls: "" };
+    return '<span class="bv-li">' + m[1] + ". " + _readerInlineFmt(m[2]) + "</span>";
   }
-  return { html: _readerInlineFmt(raw), cls: "" };
+  if (/^[-*+][ \t]+/.test(t)) { // bullet list
+    return '<span class="bv-li">• ' +
+      _readerInlineFmt(t.replace(/^[-*+][ \t]+/, "")) + "</span>";
+  }
+  return _readerInlineFmt(line) + " ";
+}
+// Format a sentence. We process line-by-line because the sentence-splitter
+// often merges a marker line (heading / list item / quote — none end in
+// terminal punctuation) with the prose after it; per-line classification keeps
+// each block on its own line and never lets a heading swallow the paragraph.
+function _readerFmtSentence(raw) {
+  if (raw.indexOf("\n") === -1) return { html: _readerFmtLine(raw), cls: "" };
+  return { html: raw.split(/\n/).map(_readerFmtLine).join(""), cls: "" };
 }
 
 function _bookViewV3CreatePage(pageRow, pageWidth, pageHeight) {
