@@ -138,7 +138,10 @@ def _caller_entitlement(request: Request) -> dict:
 def require_entitlement(request: Request, kind: str) -> None:
     """Phase 2 gate (HTTP 402 if the caller lacks it). 'pro' = the one-time
     creator-tools unlock (an active subscription also grants it); 'sub' = the
-    ongoing server subscription."""
+    ongoing server subscription. No-op while enforcement is toggled OFF (the
+    admin master switch — see /api/library/paywall)."""
+    if not _paywall_enforced():
+        return
     ent = _caller_entitlement(request)
     if kind == "sub":
         if not ent["sub"]:
@@ -927,9 +930,57 @@ class EntitlementGrant(BaseModel):
 
 @router.get("/entitlement")
 def get_entitlement_ep(request: Request):
-    """The caller's entitlement (server source of truth). Free tier = all false."""
+    """The caller's entitlement (server source of truth) + whether enforcement
+    is currently on. Free tier = all false."""
     _require_enabled()
-    return {"entitlement": _caller_entitlement(request)}
+    return {
+        "entitlement": _caller_entitlement(request),
+        "enforced": _paywall_enforced(),
+    }
+
+
+# ── Paywall enforcement master switch (admin) ─────────────────────────────
+# Global JSON flag (mirrors maintenance.json). Default OFF so nothing is gated
+# until the admin flips it. require_entitlement no-ops while OFF.
+def _paywall_file() -> Path:
+    return library_db.DATA_DIR / "paywall.json"
+
+
+def _paywall_enforced() -> bool:
+    try:
+        f = _paywall_file()
+        if not f.exists():
+            return False
+        import json
+        return bool(json.loads(f.read_text(encoding="utf-8")).get("enforced", False))
+    except Exception:
+        return False
+
+
+class PaywallToggle(BaseModel):
+    enforced: bool
+
+
+@router.get("/paywall")
+def get_paywall():
+    """Whether paywall enforcement is currently ON (global, admin-controlled)."""
+    return {"enforced": _paywall_enforced()}
+
+
+@router.post("/paywall")
+def set_paywall(payload: PaywallToggle, request: Request):
+    """Flip enforcement on/off. Admin only. Atomic write."""
+    _require_enabled()
+    _require_admin(request)
+    import json
+    f = _paywall_file()
+    tmp = f.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps({"enforced": bool(payload.enforced)}, indent=2),
+        encoding="utf-8",
+    )
+    tmp.replace(f)
+    return {"ok": True, "enforced": bool(payload.enforced)}
 
 
 @router.post("/admin/entitlement")

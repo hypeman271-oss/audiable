@@ -1191,6 +1191,31 @@
                 >
                   <summary>Advanced</summary>
 
+                  <!-- v4.170: paywall enforcement master switch (admin). OFF by
+                       default — everything is unlocked until the admin flips it.
+                       Hidden for non-admins by _refreshAdminSectionsVisibility. -->
+                  <div
+                    id="settings-paywall-section"
+                    class="settings-section"
+                    data-search="paywall enforcement monetization pro subscription admin gate lock unlock"
+                    hidden
+                  >
+                    <label class="settings-section-label">
+                      Paywall enforcement
+                    </label>
+                    <p class="settings-section-hint">
+                      Master switch for the Pro / Subscription gates. OFF =
+                      every feature is unlocked for everyone (current behavior).
+                      ON = creator features require an entitlement; the free
+                      reader + personal-TTS tier stays open. Applies to all
+                      users immediately.
+                    </p>
+                    <label class="settings-toggle-row">
+                      <input type="checkbox" id="settings-paywall-enforce" />
+                      <span>Enforce paywall</span>
+                    </label>
+                  </div>
+
                   <!-- v221.maint: admin form for scheduling a server-side
                        maintenance window. Hidden by JS unless an API key is
                        present (NARRATIVE_KEY identifies the admin in

@@ -2134,6 +2134,15 @@ dialog.manual-dialog:not([open]) {
   text-transform: none;
   color: var(--fg);
 }
+/* v4.170: settings toggle row (checkbox + label). */
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.settings-toggle-row input { width: 16px; height: 16px; }
 /* v180: GitHub OAuth row in Settings. Sits above the PAT input —
    primary path is the Sign-in button; PAT paste below is the
    fallback for fine-grained tokens, GHE, or unconfigured servers. */

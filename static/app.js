@@ -2097,8 +2097,15 @@ function isAuthorMode() {
 //   pro  = the one-time creator-tools unlock (an active sub also grants it)
 //   sub  = the optional ongoing server subscription
 let _entitlement = { pro: false, sub: false, subStatus: "none", provider: null };
+let _paywallEnforced = false; // admin master switch (server-controlled)
 function hasPro() { return !!(_entitlement && (_entitlement.pro || _entitlement.sub)); }
 function hasSub() { return !!(_entitlement && _entitlement.sub); }
+// Phase 2 will call this: a feature is locked only when enforcement is ON and
+// the caller lacks the entitlement.
+function _featureLocked(kind) {
+  if (!_paywallEnforced) return false;
+  return kind === "sub" ? !hasSub() : !hasPro();
+}
 async function _fetchEntitlement() {
   try {
     // No account → free tier; nothing to fetch (and the call would 401).
@@ -2110,6 +2117,7 @@ async function _fetchEntitlement() {
     if (r.ok) {
       const j = await r.json();
       if (j && j.entitlement) _entitlement = j.entitlement;
+      _paywallEnforced = !!(j && j.enforced);
     }
   } catch (e) {
     console.warn("[entitlement] fetch failed:", e);
@@ -2420,6 +2428,41 @@ _startMaintenanceTick();
 // identifier for "this is the admin." Other testers don't see the
 // controls because they (presumably) have a different or no key.
 // ──────────────────────────────────────────────────────────────────────
+// Paywall enforcement master switch (admin). Reflects + flips the global
+// server flag; require_entitlement no-ops while it's OFF.
+const _paywallToggle = $("settings-paywall-enforce");
+async function _refreshPaywallToggle() {
+  if (!_paywallToggle) return;
+  try {
+    const r = await fetch("/api/library/paywall");
+    if (r.ok) { const j = await r.json(); _paywallEnforced = !!j.enforced; }
+  } catch {}
+  _paywallToggle.checked = _paywallEnforced;
+}
+if (_paywallToggle) {
+  _paywallToggle.addEventListener("change", async () => {
+    const on = _paywallToggle.checked;
+    try {
+      const r = await fetch("/api/library/paywall", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enforced: on }),
+      });
+      if (!r.ok) {
+        _paywallToggle.checked = !on;
+        setStatus("Couldn't change enforcement (admin only).", true);
+        return;
+      }
+      const j = await r.json();
+      _paywallEnforced = !!j.enforced;
+      setStatus(_paywallEnforced ? "Paywall enforcement ON." : "Paywall enforcement OFF.");
+    } catch (e) {
+      _paywallToggle.checked = !on;
+      setStatus("Couldn't change enforcement.", true);
+    }
+  });
+}
+
 const _maintSection = $("settings-maintenance-section");
 const _maintMessage = $("maintenance-message");
 const _maintStartsAt = $("maintenance-starts-at");
@@ -2429,12 +2472,17 @@ const _maintClearBtn = $("maintenance-clear-btn");
 const _maintFormStatus = $("maintenance-form-status");
 
 function _refreshMaintenanceFormVisibility() {
-  if (!_maintSection) return;
-  // Show the form only when a NARRATIVE_KEY is locally stored — the
+  // Show admin controls only when a NARRATIVE_KEY is locally stored — the
   // single-tenant proxy for "admin user." Hidden otherwise so testers
   // browsing without a key don't see admin controls they couldn't
   // use anyway (the POST would 401).
-  _maintSection.hidden = !getApiKey();
+  const admin = !!getApiKey();
+  if (_maintSection) _maintSection.hidden = !admin;
+  const pw = document.getElementById("settings-paywall-section");
+  if (pw) {
+    pw.hidden = !admin;
+    if (admin && typeof _refreshPaywallToggle === "function") _refreshPaywallToggle();
+  }
 }
 
 function _toLocalDatetimeInputValue(d) {
