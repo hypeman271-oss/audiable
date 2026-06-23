@@ -44,7 +44,7 @@ SENTENCE_DIR = DATA_DIR / "sentences"
 ANIM_SHEET_DIR = DATA_DIR / "anim_sheets"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -330,6 +330,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v13(c)
         c.execute("UPDATE schema_version SET version = 13")
         current = 13
+
+    if current < 14:
+        _apply_v14(c)
+        c.execute("UPDATE schema_version SET version = 14")
+        current = 14
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -880,6 +885,30 @@ def _apply_v13(c: sqlite3.Connection) -> None:
     c.execute("ALTER TABLE books ADD COLUMN style TEXT")
 
 
+def _apply_v14(c: sqlite3.Connection) -> None:
+    """Add entitlements — the SERVER-side source of truth for the paywall
+    (client localStorage can't be trusted to gate paid features). One row per
+    tenant: `pro` = the one-time creator-tools unlock; `sub_status` = the
+    optional subscription for ongoing server services. Flipped by the payment
+    providers' webhooks (or an admin grant). See MONETIZATION_SETUP.md."""
+    print(
+        "[library_db] migrating to schema v14 (add entitlements for paywall)",
+        file=sys.stderr, flush=True,
+    )
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS entitlements (
+          tenant_key  TEXT PRIMARY KEY,
+          pro         INTEGER NOT NULL DEFAULT 0,
+          sub_status  TEXT NOT NULL DEFAULT 'none',
+          provider    TEXT,
+          external_id TEXT,
+          updated_at  TEXT NOT NULL
+        );
+        """
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Tenant directory (/data/tenants.json).
 #
@@ -1232,6 +1261,55 @@ def revoke_published(token: str, tenant_key: str) -> bool:
             (token, tenant_key),
         )
         return cur.rowcount > 0
+
+
+def get_entitlement(tenant_key: str) -> sqlite3.Row | None:
+    """The tenant's entitlement row, or None (= free tier)."""
+    if not is_enabled():
+        return None
+    return conn().execute(
+        "SELECT * FROM entitlements WHERE tenant_key = ?", (tenant_key,)
+    ).fetchone()
+
+
+def set_entitlement(
+    tenant_key: str,
+    *,
+    pro: bool | None = None,
+    sub_status: str | None = None,
+    provider: str | None = None,
+    external_id: str | None = None,
+    updated_at: str,
+) -> None:
+    """Upsert a tenant's entitlement. Only the passed fields change (partial
+    update) — a webhook flipping sub_status must not clobber a one-time pro
+    flag, and vice-versa."""
+    if not is_enabled():
+        raise RuntimeError(f"library_db not enabled: {_disabled_reason}")
+    with write_lock():
+        c = conn()
+        existing = c.execute(
+            "SELECT pro, sub_status, provider, external_id FROM entitlements "
+            "WHERE tenant_key = ?", (tenant_key,)
+        ).fetchone()
+        cur_pro = existing["pro"] if existing else 0
+        cur_sub = existing["sub_status"] if existing else "none"
+        cur_prov = existing["provider"] if existing else None
+        cur_ext = existing["external_id"] if existing else None
+        new_pro = int(pro) if pro is not None else cur_pro
+        new_sub = sub_status if sub_status is not None else cur_sub
+        new_prov = provider if provider is not None else cur_prov
+        new_ext = external_id if external_id is not None else cur_ext
+        c.execute(
+            "INSERT INTO entitlements "
+            "(tenant_key, pro, sub_status, provider, external_id, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(tenant_key) DO UPDATE SET "
+            "pro=excluded.pro, sub_status=excluded.sub_status, "
+            "provider=excluded.provider, external_id=excluded.external_id, "
+            "updated_at=excluded.updated_at",
+            (tenant_key, new_pro, new_sub, new_prov, new_ext, updated_at),
+        )
 
 
 def record_sentence_audio(

@@ -2090,6 +2090,38 @@ function isAuthorMode() {
   return getUIMode() === "author";
 }
 
+// ── Entitlement (paywall) ─────────────────────────────────────────────────
+// The SERVER is the source of truth (see /api/library/entitlement); this is a
+// client cache for UI gating only — the money-protecting checks live on the
+// paid endpoints. Phase 1: read-only, nothing is gated yet.
+//   pro  = the one-time creator-tools unlock (an active sub also grants it)
+//   sub  = the optional ongoing server subscription
+let _entitlement = { pro: false, sub: false, subStatus: "none", provider: null };
+function hasPro() { return !!(_entitlement && (_entitlement.pro || _entitlement.sub)); }
+function hasSub() { return !!(_entitlement && _entitlement.sub); }
+async function _fetchEntitlement() {
+  try {
+    // No account → free tier; nothing to fetch (and the call would 401).
+    if (typeof _syncIsEnabled === "function" && !_syncIsEnabled()) {
+      _entitlement = { pro: false, sub: false, subStatus: "none", provider: null };
+      return _entitlement;
+    }
+    const r = await fetch("/api/library/entitlement");
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.entitlement) _entitlement = j.entitlement;
+    }
+  } catch (e) {
+    console.warn("[entitlement] fetch failed:", e);
+  }
+  return _entitlement;
+}
+// Refresh on boot (deferred so auth/sync is ready first). Additive — Phase 2
+// wires hasPro()/hasSub() into the actual gates.
+document.addEventListener("DOMContentLoaded", () => {
+  setTimeout(() => { _fetchEntitlement(); }, 700);
+});
+
 // v4.90: pre-synth symbol stripper. Markdown source (`# Heading`, `*emphasis*`)
 // gets pronounced literally by Piper/Kokoro — the engines read `*` as "asterisk"
 // or garble it as a phoneme. This strips a user-defined set of chars from the

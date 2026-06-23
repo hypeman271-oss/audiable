@@ -116,6 +116,38 @@ def _require_admin(request: Request) -> None:
         )
 
 
+# ── Entitlement (paywall) — the SERVER-side source of truth. Client UI may
+# read this for gating, but the money-protecting checks are require_entitlement
+# on the paid endpoints (Phase 2). See MONETIZATION_SETUP.md.
+def _entitlement_dict(row: sqlite3.Row | None) -> dict:
+    if row is None:
+        return {"pro": False, "sub": False, "subStatus": "none", "provider": None}
+    sub_status = row["sub_status"] or "none"
+    return {
+        "pro": bool(row["pro"]),
+        "sub": sub_status == "active",
+        "subStatus": sub_status,
+        "provider": row["provider"],
+    }
+
+
+def _caller_entitlement(request: Request) -> dict:
+    return _entitlement_dict(library_db.get_entitlement(_tenant(request)))
+
+
+def require_entitlement(request: Request, kind: str) -> None:
+    """Phase 2 gate (HTTP 402 if the caller lacks it). 'pro' = the one-time
+    creator-tools unlock (an active subscription also grants it); 'sub' = the
+    ongoing server subscription."""
+    ent = _caller_entitlement(request)
+    if kind == "sub":
+        if not ent["sub"]:
+            raise HTTPException(status_code=402, detail="subscription required")
+    else:  # "pro"
+        if not (ent["pro"] or ent["sub"]):
+            raise HTTPException(status_code=402, detail="pro entitlement required")
+
+
 # v224 (#495): defense-in-depth merge for the annotations column. If
 # any client pushes a stale snapshot whose annotations array is missing
 # entries the server already has, we DON'T accept that as a deletion —
@@ -883,6 +915,39 @@ def delete_book(book_id: int, updated_at: str, request: Request):
             (updated_at, tk, book_id),
         )
     return {"ok": True}
+
+
+# ── Entitlement endpoints (paywall Phase 1) ───────────────────────────────
+class EntitlementGrant(BaseModel):
+    tenantKey: str | None = None  # None/"self" → the caller's own tenant
+    pro: bool | None = None
+    subStatus: str | None = None  # "active" | "none" | "canceled" | "past_due"
+    provider: str | None = "admin"
+
+
+@router.get("/entitlement")
+def get_entitlement_ep(request: Request):
+    """The caller's entitlement (server source of truth). Free tier = all false."""
+    _require_enabled()
+    return {"entitlement": _caller_entitlement(request)}
+
+
+@router.post("/admin/entitlement")
+def admin_set_entitlement(payload: EntitlementGrant, request: Request):
+    """Admin-only manual grant — unlock yourself or comp an account before the
+    payment providers are wired (and for support). Targets the caller's own
+    tenant when tenantKey is omitted/'self'."""
+    _require_enabled()
+    _require_admin(request)
+    tk = payload.tenantKey
+    if not tk or tk == "self":
+        tk = _tenant(request)
+    now = datetime.now(timezone.utc).isoformat()
+    library_db.set_entitlement(
+        tk, pro=payload.pro, sub_status=payload.subStatus,
+        provider=payload.provider, updated_at=now,
+    )
+    return {"ok": True, "entitlement": _entitlement_dict(library_db.get_entitlement(tk))}
 
 
 # ──────────────────────────────────────────────────────────────────────
