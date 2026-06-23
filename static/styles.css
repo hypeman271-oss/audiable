@@ -11610,11 +11610,21 @@ body:not(.reader-mode):not([data-ui-mode="simple"]) .book-view-spread.v3 .book-v
   body:has(#player-card[hidden]) {
     padding-bottom: env(safe-area-inset-bottom);
   }
-  /* Empty state hides the tag row too — without a playing clip
-     there's no "current sentence" to flag, so the chips would only
-     produce error toasts. (#515) */
-  body:has(#player-card[hidden]) .phone-tag-row {
+  /* TRULY empty (no clip → empty-state showing) hides the tag row — there's
+     no current sentence to flag. (#515) */
+  body:has(#player-card[hidden]):has(#empty-state:not([hidden])) .phone-tag-row {
     display: none;
+  }
+  /* v4.179: a clip IS loaded but has no audio (ebook / not-yet-narrated /
+     audio not downloaded) → the player bar is hidden, but KEEP the tag row's
+     chevron so the pull-up (☰ menu + controls) is still reachable while reading.
+     Drop the annotation chips (they need playback → error toasts) and lower the
+     bar to the bottom edge since there's no 64px player bar beneath it. */
+  body:has(#player-card[hidden]):has(#empty-state[hidden]) .phone-tag-row-chips {
+    display: none;
+  }
+  body:has(#player-card[hidden]):has(#empty-state[hidden]) .phone-tag-row {
+    bottom: env(safe-area-inset-bottom);
   }
 
   /* v225dg: hide the first-tap hint in book view (a discoverability nag
