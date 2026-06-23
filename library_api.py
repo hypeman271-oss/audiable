@@ -1413,6 +1413,102 @@ def _epub_response(data: bytes, title: str) -> Response:
     )
 
 
+def _build_pdf(
+    title: str, author: str, chapters: list[dict],
+    *, dedication: str | None = None, about_author: str | None = None,
+) -> bytes:
+    """Build a print-ready 6×9 paperback PDF (interior only — POD covers are
+    uploaded separately) via PyMuPDF: mirrored margins (binding gutter), serif
+    justified body, each chapter + matter section starting on a new page,
+    running headers, and page numbers. Auto title/copyright + optional
+    dedication/about-author, like the EPUB."""
+    import io
+    import fitz
+
+    W, H = 6 * 72, 9 * 72            # 6×9in trade paperback
+    INNER, OUTER = 0.9 * 72, 0.6 * 72  # gutter (binding) vs outer margin
+    TOP, BOT = 0.72 * 72, 0.72 * 72
+    year = datetime.now(timezone.utc).year
+    et = lambda s: _html.escape(s or "", quote=False)
+    css = (
+        "body{font-family:serif;font-size:11pt;line-height:1.5;text-align:justify}"
+        "h1{text-align:center;font-size:22pt}"
+        "h2{text-align:center;font-size:15pt;margin-bottom:14pt}"
+        "h3{font-size:12pt}"
+        "p{margin:0 0 2pt;text-indent:16pt}"
+        "blockquote{font-style:italic;margin:6pt 16pt}"
+        "li{margin:0 0 2pt}"
+    )
+
+    # (kind, html, chapter_title)
+    secs: list[tuple] = []
+    secs.append(("front",
+        "<div style='text-align:center'>"
+        f"<h1 style='margin-top:120pt'>{et(title or 'Untitled')}</h1>"
+        + (f"<p style='text-indent:0;font-size:13pt'>{et(author)}</p>" if author else "")
+        + "</div>", ""))
+    secs.append(("front",
+        "<div style='text-align:center;font-size:9pt'>"
+        f"<p style='text-indent:0;margin-top:320pt'>© {year}" + (f" {et(author)}" if author else "") + "</p>"
+        "<p style='text-indent:0'>All rights reserved.</p>"
+        "<p style='text-indent:0'>Made with Narrative</p></div>", ""))
+    if dedication and dedication.strip():
+        secs.append(("front",
+            "<div style='text-align:center;font-style:italic;margin-top:200pt'>"
+            + _md_to_xhtml(dedication) + "</div>", ""))
+    for i, ch in enumerate(chapters):
+        ct = (ch.get("title") or f"Chapter {i + 1}").strip()
+        secs.append(("chapter", f"<h2>{et(ct)}</h2>" + _md_to_xhtml(ch.get("text") or ""), ct))
+    if about_author and about_author.strip():
+        secs.append(("chapter", "<h2>About the Author</h2>" + _md_to_xhtml(about_author), "About the Author"))
+
+    # Flow each section across pages (new section ⇒ starts a new page).
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    mediabox = fitz.Rect(0, 0, W, H)
+    meta: list[tuple] = []  # (kind, first_page_of_section)
+    pn = 0
+    for kind, htm, _ct in secs:
+        story = fitz.Story(html=htm, user_css=css)
+        more, first = 1, True
+        while more:
+            dev = writer.begin_page(mediabox)
+            left = INNER if pn % 2 == 0 else OUTER
+            right = OUTER if pn % 2 == 0 else INNER
+            more, _ = story.place(fitz.Rect(left, TOP, W - right, H - BOT))
+            story.draw(dev)
+            writer.end_page()
+            meta.append((kind, first))
+            first = False
+            pn += 1
+    writer.close()
+
+    # Second pass: running header (book title) + page numbers on body pages.
+    doc = fitz.open(stream=buf.getvalue(), filetype="pdf")
+    first_ch = next((i for i, m in enumerate(meta) if m[0] == "chapter"), len(meta))
+    hdr = title or ""
+    for i, pg in enumerate(doc):
+        kind, first = meta[i]
+        if kind != "chapter":
+            continue
+        num = str(i - first_ch + 1)
+        tw = fitz.get_text_length(num, fontname="Times-Roman", fontsize=9)
+        pg.insert_text((W / 2 - tw / 2, H - 0.4 * 72), num, fontsize=9, fontname="Times-Roman")
+        if not first and hdr:
+            tw2 = fitz.get_text_length(hdr, fontname="Times-Italic", fontsize=8.5)
+            pg.insert_text((W / 2 - tw2 / 2, 0.5 * 72), hdr, fontsize=8.5, fontname="Times-Italic")
+    return doc.tobytes()
+
+
+def _pdf_response(data: bytes, title: str) -> Response:
+    fname = _safe_filename(title) + ".pdf"
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/clips/{clip_id}/export.epub")
 def export_clip_epub(clip_id: int, request: Request):
     """Download a single clip as a one-chapter .epub."""
@@ -1466,6 +1562,53 @@ def export_book_epub(book_id: int, request: Request):
         about_author=(book["about_author"] if "about_author" in book.keys() else None),
     )
     return _epub_response(data, book["title"] or "book")
+
+
+@router.get("/clips/{clip_id}/export.pdf")
+def export_clip_pdf(clip_id: int, request: Request):
+    """Download a single clip as a print-ready one-chapter PDF (6×9)."""
+    _require_enabled()
+    require_entitlement(request, "pro")
+    tk = _tenant(request)
+    row = library_db.conn().execute(
+        "SELECT * FROM clips WHERE tenant_key = ? AND id = ?", (tk, clip_id)
+    ).fetchone()
+    if row is None or row["deleted"]:
+        raise HTTPException(status_code=404, detail="clip not found")
+    title = row["title"] or "Untitled"
+    data = _build_pdf(title, "", [{"title": title, "text": row["text"] or ""}])
+    return _pdf_response(data, title)
+
+
+@router.get("/books/{book_id}/export.pdf")
+def export_book_pdf(book_id: int, request: Request):
+    """Download a whole book as a print-ready paperback PDF (6×9, interior)."""
+    _require_enabled()
+    require_entitlement(request, "pro")
+    tk = _tenant(request)
+    conn = library_db.conn()
+    book = conn.execute(
+        "SELECT * FROM books WHERE tenant_key = ? AND id = ?", (tk, book_id)
+    ).fetchone()
+    if book is None or book["deleted"]:
+        raise HTTPException(status_code=404, detail="book not found")
+    ids = library_db.jsload(book["chapter_clip_ids_json"]) or []
+    chapters: list[dict] = []
+    for cid in ids:
+        r = conn.execute(
+            "SELECT title, text FROM clips WHERE tenant_key = ? AND id = ? AND deleted = 0",
+            (tk, cid),
+        ).fetchone()
+        if r is not None:
+            chapters.append({"title": r["title"], "text": r["text"]})
+    if not chapters:
+        raise HTTPException(status_code=400, detail="book has no readable chapters")
+    data = _build_pdf(
+        book["title"] or "Untitled", book["author"] or "", chapters,
+        dedication=(book["dedication"] if "dedication" in book.keys() else None),
+        about_author=(book["about_author"] if "about_author" in book.keys() else None),
+    )
+    return _pdf_response(data, book["title"] or "book")
 
 
 @router.get("/published")

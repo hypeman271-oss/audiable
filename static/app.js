@@ -20914,18 +20914,21 @@ async function _publishCurrentBook() {
 // Books / Kindle / Kobo). Built server-side from the synced copy; we push
 // chapters + book first so the file is current. Fetch-as-blob (carries the
 // app's auth) then trigger a download.
-async function _exportBookEpub() {
+async function _exportBookAs(fmt) {
+  const meta = fmt === "pdf"
+    ? { ext: "pdf", path: "export.pdf", building: "Building print PDF…", done: "Print PDF downloaded.", fail: "PDF export failed", feat: "Print-PDF export" }
+    : { ext: "epub", path: "export.epub", building: "Building EPUB…", done: "EPUB downloaded.", fail: "EPUB export failed", feat: "EPUB export" };
   if (_bookEditingId == null) { setStatus("Open a book first.", true); return; }
   if (typeof _syncIsEnabled === "function" && !_syncIsEnabled()) {
     setStatus("Turn on account sync first — export builds from the server copy.", true);
     return;
   }
-  if (_featureLocked("pro")) { _promptUpgrade("pro", "EPUB export"); return; }
+  if (_featureLocked("pro")) { _promptUpgrade("pro", meta.feat); return; }
   const book = await getBook(_bookEditingId);
   if (!book) return;
   const ids = (book.chapterClipIds || []).filter((x) => x != null);
   if (!ids.length) { setStatus("Add at least one chapter first.", true); return; }
-  setStatus("Building EPUB…");
+  setStatus(meta.building);
   try {
     if (typeof _syncPushClip === "function") {
       for (const cid of ids) {
@@ -20936,26 +20939,32 @@ async function _exportBookEpub() {
       try { await _syncPushBook(book); } catch {}
     }
     const r = await fetch(
-      "/api/library/books/" + encodeURIComponent(_bookEditingId) + "/export.epub"
+      "/api/library/books/" + encodeURIComponent(_bookEditingId) + "/" + meta.path
     );
-    if (!r.ok) { setStatus("EPUB export failed.", true); return; }
+    if (!r.ok) {
+      if (r.status === 402) { _promptUpgrade("pro", meta.feat); return; }
+      setStatus(meta.fail + ".", true);
+      return;
+    }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download =
       ((book.title || "book").replace(/[^\w \-]+/g, "").trim().replace(/\s+/g, "_") || "book") +
-      ".epub";
+      "." + meta.ext;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    setStatus("EPUB downloaded.");
+    setStatus(meta.done);
   } catch (e) {
-    console.warn("[epub] export failed:", e);
-    setStatus("EPUB export failed — see console.", true);
+    console.warn("[export]", fmt, "failed:", e);
+    setStatus(meta.fail + " — see console.", true);
   }
 }
+function _exportBookEpub() { return _exportBookAs("epub"); }
+function _exportBookPdf() { return _exportBookAs("pdf"); }
 
 // Author: set the book's Style preset (stored on the book; the reader resolves
 // it per chapter). Reflow-safe — see _bookViewV3Setup + the data-book-style CSS.
@@ -21072,6 +21081,7 @@ async function _openBookEditor(id) {
   _bookEl("books-dialog-title").textContent = "Edit book";
   { const pb = _bookEl("book-publish-btn"); if (pb) pb.hidden = false; }
   { const eb = _bookEl("book-export-epub-btn"); if (eb) eb.hidden = false; }
+  { const pb2 = _bookEl("book-export-pdf-btn"); if (pb2) pb2.hidden = false; }
   _bookSyncStyleButtons(book.style || "");
   _bookEl("book-title-input").value = book.title || "";
   _bookEl("book-author-input").value = book.author || "";
@@ -21254,6 +21264,7 @@ async function _bookPickerAdd() {
   on("book-picker-add", () => _bookPickerAdd());
   on("book-publish-btn", () => _publishCurrentBook());
   on("book-export-epub-btn", () => _exportBookEpub());
+  on("book-export-pdf-btn", () => _exportBookPdf());
   on("book-delete-btn", () => _bookDelete());
   {
     const seg = document.getElementById("book-style-seg");
