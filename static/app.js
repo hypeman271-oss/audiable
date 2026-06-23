@@ -20331,6 +20331,7 @@ async function _openPublishedMultiBook(token, book) {
       title: book.title || "Shared book",
       author: book.author || "",
       coverSha: book.coverSha || null,
+      style: book.style || null,
       chapters: Array.isArray(book.chapters) ? book.chapters : [],
     };
     _pubChapterIdx = 0;
@@ -20737,6 +20738,27 @@ async function _exportBookEpub() {
   }
 }
 
+// Author: set the book's Style preset (stored on the book; the reader resolves
+// it per chapter). Reflow-safe — see _bookViewV3Setup + the data-book-style CSS.
+async function _bookSetStyle(style) {
+  if (_bookEditingId == null) return;
+  const book = await getBook(_bookEditingId);
+  if (!book) return;
+  book.style = style || null;
+  book.updatedAt = new Date().toISOString();
+  await putBook(book);
+  if (typeof _syncPushBook === "function") { try { await _syncPushBook(book); } catch {} }
+  _bookSyncStyleButtons(book.style);
+  setStatus(style ? "Book style: " + style + "." : "Book style cleared.");
+}
+function _bookSyncStyleButtons(style) {
+  const seg = document.getElementById("book-style-seg");
+  if (!seg) return;
+  seg.querySelectorAll("[data-book-style]").forEach((b) => {
+    b.classList.toggle("active", (b.dataset.bookStyle || "") === (style || ""));
+  });
+}
+
 // Consumer entry point: ?book=<token> opens a shared book on load.
 document.addEventListener("DOMContentLoaded", () => {
   let tok = null;
@@ -20831,6 +20853,7 @@ async function _openBookEditor(id) {
   _bookEl("books-dialog-title").textContent = "Edit book";
   { const pb = _bookEl("book-publish-btn"); if (pb) pb.hidden = false; }
   { const eb = _bookEl("book-export-epub-btn"); if (eb) eb.hidden = false; }
+  _bookSyncStyleButtons(book.style || "");
   _bookEl("book-title-input").value = book.title || "";
   _bookEl("book-author-input").value = book.author || "";
   const prev = _bookEl("book-cover-preview");
@@ -21008,6 +21031,13 @@ async function _bookPickerAdd() {
   on("book-publish-btn", () => _publishCurrentBook());
   on("book-export-epub-btn", () => _exportBookEpub());
   on("book-delete-btn", () => _bookDelete());
+  {
+    const seg = document.getElementById("book-style-seg");
+    if (seg) seg.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-book-style]");
+      if (b) _bookSetStyle(b.dataset.bookStyle || "");
+    });
+  }
   const t = document.getElementById("book-title-input");
   const a = document.getElementById("book-author-input");
   if (t) t.addEventListener("change", () => _bookEditorSave());
@@ -23486,6 +23516,12 @@ async function _enterBookViewV2() {
       _bookViewSource.cover = clip.cover || null;
       _bookViewSource.bookmarks = clip.bookmarks || [];
       _bookViewSource.highlights = clip.highlights || [];
+      // Book Style preset: consumer reads it from the published book; the
+      // author resolves it from whichever local book contains this chapter.
+      _bookViewSource.bookStyle =
+        (typeof _pubBook !== "undefined" && _pubBook && _pubBook.style)
+          ? _pubBook.style
+          : await _bookStyleForClip(_currentClipId);
     }
   } else {
     _bookViewSource.title = "Untitled chapter";
@@ -23636,6 +23672,13 @@ function _readerInlineFmt(raw) {
 // list) become their own inner block element; a normal line is inline prose.
 function _readerFmtLine(line) {
   const t = line.replace(/^[ \t]+/, "");
+  // Scene-break divider: a line of only break marks (*** / * * * / ⁂ / ◆ /
+  // ••• / --- …). Rendered as a centered divider whose glyph is set by the
+  // book style (CSS). Detect before inline formatting eats the * marks.
+  const sbk = t.replace(/\s+/g, "");
+  if ((sbk.length >= 3 && /^[*#·•⁂◆—–-]+$/.test(sbk)) || sbk === "⁂" || sbk === "◆") {
+    return '<span class="bv-scenebreak" role="separator" aria-label="scene break"></span>';
+  }
   let m = t.match(/^(#{1,6})[ \t]+(.*)$/);
   if (m) {
     return '<span class="bv-h bv-h' + m[1].length + '">' +
@@ -23780,6 +23823,22 @@ async function _bookPersistImages() {
   }
 }
 
+// Resolve the author's Book Style preset for a clip = the style of whichever
+// local book lists it as a chapter (books are few; cheap scan). null if none.
+async function _bookStyleForClip(clipId) {
+  try {
+    if (clipId == null || typeof listBooks !== "function") return null;
+    const books = await listBooks();
+    for (const b of books || []) {
+      if (b && !b.deleted && Array.isArray(b.chapterClipIds) &&
+          b.chapterClipIds.includes(clipId)) {
+        return b.style || null;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 function _bookViewV3Setup(source) {
   const spread = bookViewSpread;
   spread.classList.add("v3");
@@ -23790,6 +23849,17 @@ function _bookViewV3Setup(source) {
   if (bookView && bookView.dataset.bookTheme) {
     spread.dataset.bookTheme = bookView.dataset.bookTheme;
   }
+
+  // v4.168: author "Book Style" preset (reflow-safe). Drives chapter-heading
+  // treatment + scene-break glyph (CSS), drop-cap presence + default image
+  // layout (here). Reader typography is untouched.
+  const bookStyle = (_bookViewSource && _bookViewSource.bookStyle) || "";
+  try {
+    if (bookStyle) spread.dataset.bookStyle = bookStyle;
+    else delete spread.dataset.bookStyle;
+  } catch {}
+  const _bvDefaultImgLayout = bookStyle === "illustrated" ? "page" : "inline";
+  const _bvWantDropCap = bookStyle !== "modern" && bookStyle !== "illustrated";
 
   // v4.147: RESPONSIVE pages-per-spread, like Apple Books — one centered page
   // on phone / narrow windows, a two-page spread when there's room. Decide off
@@ -23893,8 +23963,8 @@ function _bookViewV3Setup(source) {
   let hasContent = false;
   // v225v3.10: drop cap on first text page (clip opens here even
   // when no chapters detected — single-clip fallback, mirrors V1
-  // line 17073).
-  cur.body.dataset.dropCap = "true";
+  // line 17073). Gated by the book style (off for modern/illustrated).
+  if (_bvWantDropCap) cur.body.dataset.dropCap = "true";
 
   // Helper: insert an image page, swapping the current empty page for
   // an image page and starting a fresh text page after.
@@ -23936,7 +24006,8 @@ function _bookViewV3Setup(source) {
     for (const img of imgs) {
       const src = img.url || img.src;
       if (!src) continue;
-      if (img.layout === "page") {
+      const layout = img.layout || _bvDefaultImgLayout; // style sets the default
+      if (layout === "page") {
         pushImage(src, img.alt || "", img);
         continue;
       }
@@ -24002,7 +24073,7 @@ function _bookViewV3Setup(source) {
       // page break right before a chapter-start sentence, so when
       // that sentence opens a new page it's always the body's first
       // node — ::first-letter targets it correctly.
-      if (typeof _bookViewIsChapterStart === "function"
+      if (_bvWantDropCap && typeof _bookViewIsChapterStart === "function"
           && _bookViewIsChapterStart(i)) {
         cur.body.dataset.dropCap = "true";
       }
@@ -24285,6 +24356,12 @@ async function _enterBookViewV3() {
       _bookViewSource.cover = clip.cover || null;
       _bookViewSource.bookmarks = clip.bookmarks || [];
       _bookViewSource.highlights = clip.highlights || [];
+      // Book Style preset: consumer reads it from the published book; the
+      // author resolves it from whichever local book contains this chapter.
+      _bookViewSource.bookStyle =
+        (typeof _pubBook !== "undefined" && _pubBook && _pubBook.style)
+          ? _pubBook.style
+          : await _bookStyleForClip(_currentClipId);
     }
   } else {
     _bookViewSource.title = "Untitled chapter";

@@ -44,7 +44,7 @@ SENTENCE_DIR = DATA_DIR / "sentences"
 ANIM_SHEET_DIR = DATA_DIR / "anim_sheets"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -325,6 +325,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v12(c)
         c.execute("UPDATE schema_version SET version = 12")
         current = 12
+
+    if current < 13:
+        _apply_v13(c)
+        c.execute("UPDATE schema_version SET version = 13")
+        current = 13
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -860,6 +865,19 @@ def _apply_v12(c: sqlite3.Connection) -> None:
         );
         """
     )
+
+
+def _apply_v13(c: sqlite3.Connection) -> None:
+    """Add books.style — an author-chosen reflow-safe 'Book Style' preset
+    (classic / atmospheric / modern / illustrated) that drives chapter-heading
+    treatment, drop caps, scene-break dividers + default image layout in the
+    reader. Reader-controlled typography is unaffected. See
+    docs/book-packaging-design.md."""
+    print(
+        "[library_db] migrating to schema v13 (add books.style preset)",
+        file=sys.stderr, flush=True,
+    )
+    c.execute("ALTER TABLE books ADD COLUMN style TEXT")
 
 
 # ──────────────────────────────────────────────────────────────────────

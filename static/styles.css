@@ -10576,6 +10576,46 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   opacity: 0.7;
   text-align: center;
 }
+
+/* v4.168: author Book Style presets (reflow-safe — drop-cap presence is set in
+   JS; these set chapter-heading treatment + the scene-break glyph). Reader
+   typography (font/size/theme) is untouched. */
+.book-view-spread.v3 .bv-scenebreak {
+  display: block;
+  text-align: center;
+  margin: 1.1em 0;
+  opacity: 0.55;
+  line-height: 1;
+}
+.book-view-spread.v3 .bv-scenebreak::before {
+  content: "* * *";
+  letter-spacing: 0.4em;
+}
+/* Classic — centered headings, asterism divider */
+.book-view-spread.v3[data-book-style="classic"] .sentence .bv-h { text-align: center; }
+.book-view-spread.v3[data-book-style="classic"] .bv-scenebreak::before {
+  content: "⁂"; letter-spacing: 0; font-size: 1.2em;
+}
+/* Atmospheric — centered italic headings, floral divider */
+.book-view-spread.v3[data-book-style="atmospheric"] .sentence .bv-h {
+  text-align: center; font-style: italic;
+}
+.book-view-spread.v3[data-book-style="atmospheric"] .bv-scenebreak::before {
+  content: "❧"; letter-spacing: 0; font-size: 1.4em;
+}
+/* Modern — left uppercase headings, thin-rule divider */
+.book-view-spread.v3[data-book-style="modern"] .sentence .bv-h {
+  text-align: left; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.book-view-spread.v3[data-book-style="modern"] .bv-scenebreak {
+  width: 38%; margin: 1.3em auto; height: 1px; background: currentColor; opacity: 0.22;
+}
+.book-view-spread.v3[data-book-style="modern"] .bv-scenebreak::before { content: none; }
+/* Illustrated — centered headings, dotted divider */
+.book-view-spread.v3[data-book-style="illustrated"] .sentence .bv-h { text-align: center; }
+.book-view-spread.v3[data-book-style="illustrated"] .bv-scenebreak::before {
+  content: "•  •  •"; letter-spacing: 0;
+}
 /* Author affordance: images are tappable to switch inline ↔ full-page (gated
    off in the consumer reader by JS). */
 body:not(.reader-mode):not([data-ui-mode="simple"]) .book-view-spread.v3 .bv-figure,
@@ -14955,6 +14995,25 @@ body.anim-page-active #reading-view {
   border-radius: 8px; background: var(--bg-card-2); color: var(--fg);
 }
 .book-cover-upload { cursor: pointer; }
+/* v4.168: Book Style preset picker (segmented control in the Books editor). */
+.book-style-row { display: flex; align-items: center; gap: 10px; margin: 12px 0 4px; flex-wrap: wrap; }
+.book-style-label { font-weight: 600; opacity: 0.8; }
+.book-style-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.book-style-seg button {
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.book-style-seg button:hover { background: var(--bg-card, rgba(127, 127, 127, 0.1)); }
+.book-style-seg button.active {
+  background: var(--accent, #6c8cff);
+  border-color: var(--accent, #6c8cff);
+  color: #fff;
+}
 .book-chapters-head { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
 .book-chapters { display: flex; flex-direction: column; gap: 6px; }
 .book-chapter-row {

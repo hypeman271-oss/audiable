@@ -766,6 +766,7 @@ class BookUpsert(BaseModel):
     description: str = ""
     coverSha: str | None = None
     chapterClipIds: list[int] = Field(default_factory=list)
+    style: str | None = None
     createdAt: str | None = None
     updatedAt: str = Field(..., min_length=1)
     deleted: bool = False
@@ -779,6 +780,7 @@ def _row_to_book_dict(row: sqlite3.Row) -> dict:
         "description": row["description"] or "",
         "coverSha": row["cover_sha"],
         "chapterClipIds": library_db.jsload(row["chapter_clip_ids_json"]) or [],
+        "style": (row["style"] if "style" in row.keys() else None),
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "deleted": bool(row["deleted"]),
@@ -835,14 +837,15 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
             """
             INSERT INTO books (
               tenant_key, id, title, author, description, cover_sha,
-              chapter_clip_ids_json, created_at, updated_at, deleted
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              chapter_clip_ids_json, style, created_at, updated_at, deleted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_key, id) DO UPDATE SET
               title=excluded.title,
               author=excluded.author,
               description=excluded.description,
               cover_sha=excluded.cover_sha,
               chapter_clip_ids_json=excluded.chapter_clip_ids_json,
+              style=excluded.style,
               created_at=excluded.created_at,
               updated_at=excluded.updated_at,
               deleted=excluded.deleted
@@ -855,6 +858,7 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
                 payload.description,
                 payload.coverSha,
                 library_db.jsdump(payload.chapterClipIds),
+                payload.style,
                 payload.createdAt or payload.updatedAt,
                 payload.updatedAt,
                 int(payload.deleted),
@@ -1009,6 +1013,7 @@ def _build_book_bundle(
         "author": book_row["author"] or "",
         "description": book_row["description"] or "",
         "coverSha": book_row["cover_sha"],
+        "style": (book_row["style"] if "style" in book_row.keys() else None),
         "publishedAt": published_at,
         "chapters": [
             _build_bundle(r, token, published_at) for r in chapter_rows

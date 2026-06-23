@@ -4884,6 +4884,19 @@
               </label>
             </div>
           </div>
+          <!-- v4.168: Book Style preset — a reflow-safe "look" (chapter
+               headings, drop caps, scene-break divider, default image layout)
+               applied to every chapter. Readers still control fonts/theme. -->
+          <div class="book-style-row">
+            <span class="book-style-label">Style</span>
+            <div class="book-style-seg" id="book-style-seg">
+              <button type="button" data-book-style="" title="Plain default">None</button>
+              <button type="button" data-book-style="classic" title="Centered headings, drop caps, asterism scene breaks, inline images">Classic</button>
+              <button type="button" data-book-style="atmospheric" title="Italic centered headings, drop caps, floral scene breaks">Atmospheric</button>
+              <button type="button" data-book-style="modern" title="Left uppercase headings, no drop cap, thin-rule scene breaks">Modern</button>
+              <button type="button" data-book-style="illustrated" title="Centered headings, full-page images, dotted scene breaks">Illustrated</button>
+            </div>
+          </div>
           <div class="book-chapters-head">
             <strong>Chapters</strong>
             <button id="book-add-chapter" type="button" class="link-btn">＋ Add chapters</button>
