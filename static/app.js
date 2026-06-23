@@ -9197,6 +9197,9 @@ let _animSpriteEl = null; // sprite-sheet frame box inside the sprite card (Phas
 let _animEmphasized = null; // sentence span currently emphasized (cleanup)
 let _animReady = false; // stage overlay built
 let _animCues = []; // current clip's animationCues (raw)
+// v4.166: built-in ambient effects (no author art) — rendered as a full-bleed
+// CSS scene behind the text. A cue carries kind:"page" + fx:<name>.
+const _ANIM_FX = new Set(["rain", "snow", "embers", "fog", "dust", "glow"]);
 let _animLineIdToIdx = null; // Map(lineId -> idx) for the loaded clip, or null
 // Sprite playback state (Phase 2): the active sprite cue + frame cycler.
 // objUrl is a live URL.createObjectURL for a Blob-backed sheet (revoked on
@@ -9484,6 +9487,23 @@ function _animApplyToSpreadScenes() {
       }
     }
     if (!scene) return;
+    // Built-in ambient effect: a CSS scene, no sheet to resolve. Render it
+    // synchronously and move on.
+    if (scene.fx) {
+      const layer = document.createElement("div");
+      layer.className = "anim-book-scene anim-book-scene--fx";
+      const fx = document.createElement("div");
+      fx.className = "bv-fx";
+      fx.dataset.fx = scene.fx;
+      if (_animReducedMotion()) fx.dataset.reduced = "1";
+      const scrim = document.createElement("div");
+      scrim.className = "anim-book-scene-scrim";
+      layer.appendChild(fx);
+      layer.appendChild(scrim);
+      pageEl.prepend(layer);
+      pageEl.classList.add("book-page--scene");
+      return;
+    }
     // Resolve the sheet URL: preloaded cache (sheetId) preferred, else legacy
     // inline sheetBlob/sheet data-URL via the shared resolver. Async, so the
     // scene paints a tick later — but it handles un-migrated cues (which preload
@@ -20929,16 +20949,22 @@ async function _animSaveCueForSentence(effect, opts) {
   }
   const span = sentenceSpans && sentenceSpans[idx];
   const lineId = (span && span.dataset && span.dataset.lineId) || null;
+  // Built-in ambient effects render as a full-bleed SCENE (kind:"page") behind
+  // the text — no art, just a named CSS effect carried on cue.fx.
+  const isFx = _ANIM_FX.has(effect);
   const cue = {
     id: "anim_" + _annotateNewId(),
     kind:
-      effect === "sprite" ? "sprite" : effect === "page" ? "page" : "ui",
+      effect === "sprite" ? "sprite"
+        : effect === "page" || isFx ? "page"
+        : "ui",
     effect,
     startIdx: idx,
     endIdx: idx,
     startLineId: lineId,
     endLineId: lineId,
   };
+  if (isFx) cue.fx = effect;
   if (effect === "badge") cue.label = (opts.label || "").trim() || "✨ Animation";
   if (effect === "sprite" || effect === "page") {
     // Both store an image sheet in the separate store (only a small id rides on
