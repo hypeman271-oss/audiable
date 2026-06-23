@@ -20951,7 +20951,18 @@ function _readerImmerseInit() {
       const x = e.clientX;
       if (x < w * 0.3) _readerTurnSpread(-1);
       else if (x > w * 0.7) _readerTurnSpread(1);
-      else document.body.classList.toggle("reader-immersed");
+      // v4.181: center tap toggles fullscreen reading. On phone, book view is
+      // already a fixed fullscreen takeover (CSS @media ≤720), so the tap only
+      // fades chrome (reader-immersed) as before. On tablet/desktop the book
+      // renders inline inside the app card, so the same tap promotes it to a
+      // fullscreen takeover (reader-fullscreen) AND re-fits the pages to fill
+      // the reclaimed space — the chrome above no longer squishes it.
+      else if (w > 720) {
+        document.body.classList.toggle("reader-fullscreen");
+        requestAnimationFrame(_bookViewImmersionRefit);
+      } else {
+        document.body.classList.toggle("reader-immersed");
+      }
     },
     true
   );
@@ -24231,6 +24242,33 @@ async function _bookStyleForClip(clipId) {
   return null;
 }
 
+// v4.181: re-fit the book after a fullscreen-reading toggle. Entering/leaving
+// the fullscreen takeover changes the spread's available geometry, so we
+// re-run the paginator and restore the reader to the spread they were on
+// (anchored on the sentence in view). The ResizeObserver below would catch
+// this too, but doing it explicitly here makes the transition crisp instead
+// of waiting out the observer's debounce — and we sync the observer's
+// last-seen dimensions so it doesn't fire a redundant second repaginate.
+function _bookViewImmersionRefit() {
+  try {
+    if (typeof _bookViewV3Enabled === "function" && !_bookViewV3Enabled()) return;
+    if (!bookView || bookView.hidden) return;
+    if (!bookViewSpread || !bookViewSpread.classList.contains("v3")) return;
+    const anchor = _bookViewV3State.anchorSentenceIdx;
+    _bookViewV3Setup(_bookViewSource);
+    if (anchor !== null && anchor !== undefined) {
+      _bookViewV3GotoSentenceIdx(anchor);
+    } else {
+      _bookViewV3GotoSpread(_bookViewCurrentSpread || 0);
+    }
+    const r = bookViewSpread.getBoundingClientRect();
+    _bookViewV3LastW = Math.round(r.width);
+    _bookViewV3LastH = Math.round(r.height);
+  } catch (e) {
+    console.warn("[reader] fullscreen refit:", e);
+  }
+}
+
 function _bookViewV3Setup(source) {
   const spread = bookViewSpread;
   spread.classList.add("v3");
@@ -24288,9 +24326,13 @@ function _bookViewV3Setup(source) {
     // phone where it's the persistent bottom transport) so the page's last line
     // doesn't hide behind it. eBook mode hides the player → no reserve.
     let bottomReserve = 0;
+    // v4.181: in fullscreen reading the book takes over the viewport and covers
+    // the chrome (the play bar / tag row slide off or sit behind it), so they
+    // must NOT reserve space — otherwise the spread stops short of the bottom.
+    const _bvFullscreen = document.body.classList.contains("reader-fullscreen");
     try {
       const pc = document.getElementById("player-card");
-      if (pc && !pc.hidden) {
+      if (pc && !pc.hidden && !_bvFullscreen) {
         const pcs = getComputedStyle(pc);
         const pr = pc.getBoundingClientRect();
         if (
@@ -24303,7 +24345,7 @@ function _bookViewV3Setup(source) {
       // v4.178: on phone the pull-up opener (tag row) sits just above the play
       // bar in book view — reserve its height too so the last line clears it.
       const tr = document.getElementById("phone-tag-row");
-      if (tr) {
+      if (tr && !_bvFullscreen) {
         const trs = getComputedStyle(tr);
         const trr = tr.getBoundingClientRect();
         if (
@@ -25893,7 +25935,10 @@ function exitBookView(opts = {}) {
   bookView.hidden = true;
   bookView.style.visibility = "";
   // Clear immersion so chrome isn't left hidden outside book view.
+  // reader-fullscreen also restores body scroll (it locks overflow), so it
+  // must come off on exit too — otherwise the app stays unscrollable.
   document.body.classList.remove("reader-immersed");
+  document.body.classList.remove("reader-fullscreen");
   // Hide the multi-chapter reader chrome (only present for a consumed book).
   { const n = document.getElementById("pub-chapter-nav"); if (n) n.hidden = true; }
   _bookSentenceSpans = [];

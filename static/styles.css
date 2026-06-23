@@ -15352,6 +15352,44 @@ body.reader-immersed #pub-chapter-nav {
   transition: opacity 0.25s ease;
 }
 
+/* v4.181: fullscreen reading on tablet + desktop. On phone (≤720px) book view
+   is ALREADY a fixed fullscreen takeover (see the @media block ~10794) — the
+   whole screen is the book. On wider screens book view renders inline inside
+   the app card, so the header chrome above squishes the spread into the lower
+   part of the screen. A center-tap toggles `reader-fullscreen`, which promotes
+   book view to the same fixed takeover here, covering the chrome and letting
+   `_bookViewV3Setup` (with the height cap lifted below) fill the viewport. The
+   ResizeObserver + the explicit refit re-paginate to the new, taller geometry
+   so the pages fill — no big blank bottom margins. Gated >720px so the phone's
+   own tuned fullscreen rules are untouched. */
+@media (min-width: 721px) {
+  body.reader-fullscreen div#book-view:not([hidden]) {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    margin: 0;
+    border-radius: 0;
+    overflow-y: auto;
+    padding: 16px 20px calc(16px + env(safe-area-inset-bottom));
+    background:
+      radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0.35), transparent 60%),
+      linear-gradient(180deg, rgba(20, 16, 12, 0.85), rgba(8, 6, 4, 0.95));
+  }
+  [data-theme="light"] body.reader-fullscreen div#book-view:not([hidden]) {
+    background:
+      radial-gradient(ellipse at 50% 120%, rgba(120, 90, 60, 0.18), transparent 60%),
+      linear-gradient(180deg, rgba(225, 210, 180, 0.95), rgba(200, 175, 140, 0.98));
+  }
+  /* Lock the underlying app so it doesn't scroll behind the takeover. */
+  body.reader-fullscreen:has(div#book-view:not([hidden])) {
+    overflow: hidden;
+  }
+  /* Lift the spread's height cap so the JS-computed fill height applies. */
+  body.reader-fullscreen .book-view-spread {
+    max-height: none;
+  }
+}
+
 /* ── Multi-chapter published-book reader (book packaging Phase 3) ────────── */
 /* Cover + table-of-contents overlay shown when a shared book opens. */
 .pub-toc {
