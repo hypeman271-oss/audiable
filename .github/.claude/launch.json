@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "narrative-venv",
+      "runtimeExecutable": "D:\\audiable\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "server:app", "--app-dir", "D:\\audiable", "--port", "8099", "--host", "127.0.0.1"],
+      "port": 8099
+    }
+  ]
+}
