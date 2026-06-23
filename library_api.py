@@ -1143,6 +1143,7 @@ def publish_clip(clip_id: int, request: Request):
     the share token/URL. Re-publishing mints a fresh token (old links keep
     serving their snapshot until revoked)."""
     _require_enabled()
+    require_entitlement(request, "sub")  # hosting a share link = server tier
     tk = _tenant(request)
     row = library_db.conn().execute(
         "SELECT * FROM clips WHERE tenant_key = ? AND id = ?", (tk, clip_id)
@@ -1165,6 +1166,7 @@ def publish_book(book_id: int, request: Request):
     clips are skipped; publishing requires at least one readable chapter.
     Re-publishing mints a fresh token (old links keep serving their snapshot)."""
     _require_enabled()
+    require_entitlement(request, "sub")  # hosting a share link = server tier
     tk = _tenant(request)
     conn = library_db.conn()
     book = conn.execute(
@@ -1342,6 +1344,7 @@ def _epub_response(data: bytes, title: str) -> Response:
 def export_clip_epub(clip_id: int, request: Request):
     """Download a single clip as a one-chapter .epub."""
     _require_enabled()
+    require_entitlement(request, "pro")  # EPUB export = creator toolkit
     tk = _tenant(request)
     row = library_db.conn().execute(
         "SELECT * FROM clips WHERE tenant_key = ? AND id = ?", (tk, clip_id)
@@ -1357,6 +1360,7 @@ def export_clip_epub(clip_id: int, request: Request):
 def export_book_epub(book_id: int, request: Request):
     """Download a whole book (cover + ordered chapters) as a multi-chapter .epub."""
     _require_enabled()
+    require_entitlement(request, "pro")  # EPUB export = creator toolkit
     tk = _tenant(request)
     conn = library_db.conn()
     book = conn.execute(

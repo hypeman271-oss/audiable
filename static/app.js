@@ -2044,6 +2044,17 @@ function getUIMode() {
 
 function setUIMode(mode) {
   if (!VALID_UI_MODES.includes(mode)) mode = "standard";
+  // Paywall gate: the paid modes (Standard/Author) are the creator unlock and
+  // require the Pro entitlement when enforcement is on. Coerce to free Simple
+  // if locked. (No-op while enforcement is off, or before entitlement loads —
+  // _featureLocked is false then, so boot keeps the saved mode.)
+  if (
+    mode !== "simple" &&
+    typeof _featureLocked === "function" && _featureLocked("pro")
+  ) {
+    if (typeof _promptUpgrade === "function") _promptUpgrade("pro", "Creator mode");
+    mode = "simple";
+  }
   try { localStorage.setItem(UI_MODE_KEY, mode); } catch {}
   document.body.dataset.uiMode = mode;
   _updateModeUnlockHint(mode);
@@ -2106,6 +2117,17 @@ function _featureLocked(kind) {
   if (!_paywallEnforced) return false;
   return kind === "sub" ? !hasSub() : !hasPro();
 }
+// Minimal upgrade nudge (Phase 3 replaces this with a real upgrade screen).
+function _promptUpgrade(kind, feature) {
+  const what = kind === "sub"
+    ? "a subscription (server features)"
+    : "a one-time Pro unlock";
+  setStatus(
+    (feature ? feature + " needs " : "This needs ") + what +
+      " — open Settings → Account to upgrade.",
+    true
+  );
+}
 async function _fetchEntitlement() {
   try {
     // No account → free tier; nothing to fetch (and the call would 401).
@@ -2127,7 +2149,13 @@ async function _fetchEntitlement() {
 // Refresh on boot (deferred so auth/sync is ready first). Additive — Phase 2
 // wires hasPro()/hasSub() into the actual gates.
 document.addEventListener("DOMContentLoaded", () => {
-  setTimeout(() => { _fetchEntitlement(); }, 700);
+  setTimeout(() => {
+    _fetchEntitlement().then(() => {
+      // Re-apply the saved mode now that entitlement is known — coerces to
+      // Simple if a paid mode is locked under enforcement.
+      try { if (typeof setUIMode === "function") setUIMode(getUIMode()); } catch {}
+    });
+  }, 700);
 });
 
 // v4.90: pre-synth symbol stripper. Markdown source (`# Heading`, `*emphasis*`)
@@ -20685,6 +20713,7 @@ async function _shareCurrentClip() {
     setStatus("Turn on account sync first — publishing needs the book on the server.", true);
     return;
   }
+  if (_featureLocked("sub")) { _promptUpgrade("sub", "Publishing"); return; }
   setStatus("Publishing…");
   try {
     // Push the latest clip (cues + audio sha) so the snapshot is current.
@@ -20734,6 +20763,7 @@ async function _publishCurrentBook() {
     setStatus("Turn on account sync first — publishing needs the book on the server.", true);
     return;
   }
+  if (_featureLocked("sub")) { _promptUpgrade("sub", "Publishing"); return; }
   const book = await getBook(_bookEditingId);
   if (!book) return;
   const ids = (book.chapterClipIds || []).filter((x) => x != null);
@@ -20782,6 +20812,7 @@ async function _exportBookEpub() {
     setStatus("Turn on account sync first — export builds from the server copy.", true);
     return;
   }
+  if (_featureLocked("pro")) { _promptUpgrade("pro", "EPUB export"); return; }
   const book = await getBook(_bookEditingId);
   if (!book) return;
   const ids = (book.chapterClipIds || []).filter((x) => x != null);
