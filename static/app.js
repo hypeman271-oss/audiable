@@ -18922,6 +18922,10 @@ let _bookViewFindCursor = 0;
 // spread (they're indicating they want to engage here).
 let _bookViewUserPaged = false;
 let _bookViewSource = null;
+// v4.165: per-paginate registry of image objects rendered in book view, so an
+// author tap on an image can find its source object and flip its layout
+// (inline ↔ full-page). Reset each _bookViewV3Setup.
+let _bookImgRefs = [];
 let _bookViewPages = [];           // [[sentenceIdx, ...], ...]
 let _bookSentenceToPage = [];      // sentenceIdx -> pageIdx
 let _bookSentenceSpans = [];       // sentenceIdx -> <span> in book DOM
@@ -20460,6 +20464,18 @@ function _readerImmerseInit() {
       // share-link reader mode — book view IS the reading surface, so tapping
       // the page drives it everywhere (the user couldn't find any toggle).
       if (!(typeof bookView !== "undefined" && bookView && !bookView.hidden)) return;
+      // Author per-image switch: tapping an image flips inline ↔ full-page —
+      // but only in an AUTHORING context (not the consumer reader, where a tap
+      // is a page turn / immersion toggle).
+      const figEl = e.target.closest(".bv-figure, .book-view-page.book-view-page-image");
+      const _consumerCtx =
+        document.body.classList.contains("reader-mode") ||
+        document.body.dataset.uiMode === "simple";
+      if (figEl && figEl.dataset.imgRef != null && !_consumerCtx) {
+        e.stopPropagation();
+        _bookToggleImageLayout(figEl);
+        return;
+      }
       // Let real controls (nav pill, Aa panel, buttons/links, the play bar)
       // work normally — only page-area taps drive the reader.
       if (
@@ -23596,7 +23612,7 @@ function _bookViewV3CreatePage(pageRow, pageWidth, pageHeight) {
   return { page, body, footer };
 }
 
-function _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt) {
+function _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt, imgObj) {
   const { page, body, footer } = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
   if (footer) footer.remove(); // image/cover pages carry no page number
   page.classList.add("book-view-page-image");
@@ -23605,6 +23621,60 @@ function _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt) {
   img.alt = alt || "";
   img.loading = "lazy";
   body.appendChild(img);
+  // Register for the author layout toggle (not the cover — no imgObj passed).
+  if (imgObj) page.dataset.imgRef = String(_bookImgRefs.push(imgObj) - 1);
+}
+
+// Inline figure: an image that floats in the text flow (reflowable convention).
+// A reserved-height slot keeps pagination deterministic without waiting on the
+// image to load. Registered for the author layout toggle.
+function _bookViewInlineFigure(src, alt, imgObj) {
+  const fig = document.createElement("figure");
+  fig.className = "bv-figure";
+  const im = document.createElement("img");
+  im.src = src;
+  im.alt = alt || "";
+  im.loading = "lazy";
+  fig.appendChild(im);
+  if (alt) {
+    const cap = document.createElement("figcaption");
+    cap.textContent = alt;
+    fig.appendChild(cap);
+  }
+  if (imgObj) fig.dataset.imgRef = String(_bookImgRefs.push(imgObj) - 1);
+  return fig;
+}
+
+// Author per-image switch: flip an image between inline and full-page, persist
+// to the clip, and re-paginate. Reached by tapping an image in book view when
+// NOT in a consumer reading context (see the click handler in _readerImmerseInit).
+function _bookToggleImageLayout(el) {
+  const ref = el && el.dataset ? el.dataset.imgRef : null;
+  if (ref == null) return;
+  const img = _bookImgRefs[Number(ref)];
+  if (!img) return;
+  img.layout = img.layout === "page" ? "inline" : "page";
+  _bookPersistImages();
+  if (typeof _bookViewRepaginate === "function") _bookViewRepaginate();
+  setStatus(img.layout === "page" ? "Image → full page." : "Image → inline.");
+}
+
+async function _bookPersistImages() {
+  if (_currentClipId == null || !_bookViewSource) return;
+  try {
+    const c = await getClip(_currentClipId);
+    if (!c) return;
+    // The figure/page registry holds references INTO _bookViewSource.images,
+    // which are the clip's own image objects — write the array back + save.
+    c.images = _bookViewSource.images;
+    c.updatedAt = new Date().toISOString();
+    await saveClip(c);
+    if (typeof _syncPushClip === "function") {
+      try { await _syncPushClip(c); } catch {}
+    }
+  } catch (e) {
+    console.warn("[img-layout] persist failed:", e);
+  }
 }
 
 function _bookViewV3Setup(source) {
@@ -23612,6 +23682,7 @@ function _bookViewV3Setup(source) {
   spread.classList.add("v3");
   spread.classList.remove("v2");
   spread.innerHTML = "";
+  _bookImgRefs = []; // fresh per build (the author image-layout toggle reads it)
 
   if (bookView && bookView.dataset.bookTheme) {
     spread.dataset.bookTheme = bookView.dataset.bookTheme;
@@ -23724,7 +23795,7 @@ function _bookViewV3Setup(source) {
 
   // Helper: insert an image page, swapping the current empty page for
   // an image page and starting a fresh text page after.
-  const pushImage = (src, alt) => {
+  const pushImage = (src, alt, imgObj) => {
     if (hasContent) {
       // Close the populated text page first (footer + stamp).
       closeTextPage(cur, textPageIdx);
@@ -23736,7 +23807,7 @@ function _bookViewV3Setup(source) {
     // cur is now empty — replace with image page.
     pageRow.removeChild(cur.page);
     pageCount--;
-    _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt);
+    _bookViewV3MakeImagePage(pageRow, pageWidth, pageHeight, src, alt, imgObj);
     pageCount++;
     // Start a fresh text page for following content. textPageIdx
     // stays where it is — we replaced the empty text page with an
@@ -23756,11 +23827,29 @@ function _bookViewV3Setup(source) {
   let firstBreakLogged = false;
 
   for (let i = 0; i < sentences.length; i++) {
-    // Images attached to this sentence index get their own page first.
+    // Images attached to this sentence index. Default INLINE (float in the
+    // text, reflowable-novel convention); layout:"page" → its own full page.
     const imgs = imgByIdx ? (imgByIdx.get(i) || []) : [];
     for (const img of imgs) {
       const src = img.url || img.src;
-      if (src) pushImage(src, img.alt || "");
+      if (!src) continue;
+      if (img.layout === "page") {
+        pushImage(src, img.alt || "", img);
+        continue;
+      }
+      // Inline figure in the text flow; if it doesn't fit, move to a new page.
+      const fig = _bookViewInlineFigure(src, img.alt || "", img);
+      cur.body.appendChild(fig);
+      if (cur.body.scrollHeight > cur.body.clientHeight + 1 &&
+          cur.body.childNodes.length > 1) {
+        cur.body.removeChild(fig);
+        closeTextPage(cur, textPageIdx);
+        cur = _bookViewV3CreatePage(pageRow, pageWidth, pageHeight);
+        pageCount++;
+        textPageIdx++;
+        cur.body.appendChild(fig);
+      }
+      hasContent = true;
     }
 
     // Try to add the sentence to the current page.
