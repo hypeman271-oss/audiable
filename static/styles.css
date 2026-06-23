@@ -11617,14 +11617,17 @@ body:not(.reader-mode):not([data-ui-mode="simple"]) .book-view-spread.v3 .book-v
     display: none;
   }
 
-  /* v225dg: hide the tag row + its first-tap hint in book view.
-     Book view is reading-focused (paginated, looks like a printed
-     book) — the annotation chip strip is an audio-revision
-     affordance that has its home in the audio view. One tap on
-     📖 (which becomes 📜 in book view) swaps back. Keeps 📚 / ✎ /
-     🔖 in the top bar so global nav + bookmarking still work. */
-  body:has(#book-view:not([hidden])) .phone-tag-row,
+  /* v225dg: hide the first-tap hint in book view (a discoverability nag
+     that doesn't belong over the page). v4.178: but KEEP the tag row itself —
+     it carries the chevron that opens the pull-up (speed / sleep / A↔B / skip /
+     ☰ menu), the only way to reach those while reading in book view on phone.
+     The book-view page height reserves space for it (see _bookViewV3Setup). */
   body:has(#book-view:not([hidden])) .phone-tag-row-hint {
+    display: none;
+  }
+  /* In book view, drop the annotation chips (audio-revision affordance) but
+     keep the chevron + voice control, so the bar is just the pull-up opener. */
+  body:has(#book-view:not([hidden])) .phone-tag-row-chips {
     display: none;
   }
 

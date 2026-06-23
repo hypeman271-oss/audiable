@@ -24300,6 +24300,19 @@ function _bookViewV3Setup(source) {
           bottomReserve = pr.height;
         }
       }
+      // v4.178: on phone the pull-up opener (tag row) sits just above the play
+      // bar in book view — reserve its height too so the last line clears it.
+      const tr = document.getElementById("phone-tag-row");
+      if (tr) {
+        const trs = getComputedStyle(tr);
+        const trr = tr.getBoundingClientRect();
+        if (
+          trs.position === "fixed" && trs.display !== "none" &&
+          trr.height > 0 && trr.height < vh * 0.3 && trr.top < vh - 2
+        ) {
+          bottomReserve += trr.height;
+        }
+      }
     } catch {}
     const avail = Math.round(vh - top - 12 - bottomReserve);
     if (avail > 200) spread.style.height = avail + "px";
