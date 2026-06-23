@@ -1075,11 +1075,14 @@ body[data-ui-mode="simple"] .advanced-only {
   display: none !important;
 }
 
-/* v225.tn75 (#557): annotation features (flag chips, tag row, voice
-   notes, palette) are revision tools — they live in Standard +
-   Author tier, alongside bookmarks. Simple mode hides them so
-   "just listen" actually means just listen. */
-body[data-ui-mode="simple"] .phone-tag-row,
+/* v225.tn75 (#557): annotation features (flag chips, voice notes, palette) are
+   revision tools — Standard + Author tier. Simple mode hides them so "just
+   listen" means just listen. v4.180: hide the annotation CHIPS + voice-note
+   within the tag row, but KEEP the tag row itself — its chevron is the only way
+   to open the pull-up (speed / sleep timer / A↔B / ☰ menu), which a listening
+   consumer absolutely needs. */
+body[data-ui-mode="simple"] .phone-tag-row-chips,
+body[data-ui-mode="simple"] .phone-tag-row-voice,
 body[data-ui-mode="simple"] .annotate-tag-chip,
 body[data-ui-mode="simple"] .annotate-voice-play,
 body[data-ui-mode="simple"] .annotate-voice-transcript,
