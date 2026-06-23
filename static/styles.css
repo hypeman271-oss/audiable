@@ -14732,6 +14732,16 @@ html, body {
   /* darken the art so the light read-along text stays legible on top */
   background: linear-gradient(rgba(8, 10, 20, 0.45), rgba(8, 10, 20, 0.62));
 }
+/* v4.167: built-in effect scene in the Audio (scrolling) view. Mirrors the bg's
+   absolute top-anchored box (NOT .bv-fx's inset:0, which would collapse to the
+   sticky layer's 0 height); JS sets the real height to the reading pane. */
+.anim-page-fx {
+  bottom: auto;
+  height: 70vh;
+}
+.anim-page-layer--fx .anim-page-scrim {
+  background: linear-gradient(rgba(10, 12, 26, 0.16), rgba(10, 12, 26, 0.3));
+}
 .anim-page-bg--kenburns {
   animation: anim-page-kenburns 24s ease-in-out infinite alternate;
   transform-origin: center;

@@ -2055,6 +2055,8 @@ function setUIMode(mode) {
   if (mode !== "author" && typeof _clearAssignSelection === "function") {
     try { _clearAssignSelection(); } catch {}
   }
+  // Animation authoring is a paid-mode creator tool — show/hide on mode change.
+  if (typeof _animSyncAuthoringBtn === "function") _animSyncAuthoringBtn();
 }
 // v150: dynamic "+ unlocks" copy below the Mode picker. Each mode has
 // a list of what it grants on top of the previous tier; the hint
@@ -9212,6 +9214,7 @@ const _animSpriteDimCache = {}; // cue.id -> { w, h } natural dims
 // spread). Source is a sprite-sheet loop or a still image (Ken-Burns motion).
 let _animPageLayerEl = null; // sticky full-bleed layer (behind text)
 let _animPageBgEl = null; // the image/sprite element inside the layer
+let _animPageFxEl = null; // v4.167: procedural effect element (rain/snow/…)
 let _animPage = { cueId: null, timer: null, frames: 1, frameIdx: 0, objUrl: null };
 // Per-clip cache of sheetId -> object URL, preloaded at clip load so neither a
 // Book-view page flip nor a cue fire reads IndexedDB / decodes mid-playback.
@@ -9545,13 +9548,41 @@ function _animApplyToSpreadScenes() {
   });
 }
 
+// v4.167: animation PLAYBACK is on by default for everyone (consumers must see
+// the author's animations; authors must see their own without a flag). Kill with
+// ?anim=0 or localStorage narrative.animPrototype="0". (Authoring availability is
+// separate — see _animAuthoringAvailable: a paid-mode creator feature.)
 function _animEnabled() {
   try {
-    if (new URLSearchParams(location.search).get("anim") === "1") return true;
-    return localStorage.getItem("narrative.animPrototype") === "1";
+    const p = new URLSearchParams(location.search).get("anim");
+    if (p === "0") return false;
+    if (p === "1") return true;
+    return localStorage.getItem("narrative.animPrototype") !== "0";
   } catch {
-    return false;
+    return true;
   }
+}
+
+// Animation AUTHORING (the 🎬 Animate button + palette) is a creator tool —
+// available in the paid modes (Standard/Author), hidden in free Simple. See
+// [[monetization_model]].
+function _animAuthoringAvailable() {
+  try {
+    return (typeof getUIMode === "function" ? getUIMode() : "standard") !== "simple";
+  } catch {
+    return true;
+  }
+}
+function _animSyncAuthoringBtn() {
+  // Guard: setUIMode runs at boot before animateModeBtn's const initializes
+  // (TDZ) — the try/catch makes that early call a safe no-op; the boot wiring
+  // below sets the initial state once the const exists.
+  try {
+    if (!animateModeBtn) return;
+    const ok = _animAuthoringAvailable();
+    animateModeBtn.hidden = !ok;
+    if (!ok && _animMode) _setAnimMode(false);
+  } catch {}
 }
 
 // Honor the OS reduced-motion setting AND a user opt-out. With motion off the
@@ -9594,13 +9625,18 @@ function _animInit() {
   pageLayer.className = "anim-page-layer";
   const pageBg = document.createElement("div");
   pageBg.className = "anim-page-bg";
+  const pageFx = document.createElement("div"); // procedural effects (no art)
+  pageFx.className = "bv-fx anim-page-fx";
+  pageFx.style.display = "none";
   const pageScrim = document.createElement("div");
   pageScrim.className = "anim-page-scrim";
   pageLayer.appendChild(pageBg);
+  pageLayer.appendChild(pageFx);
   pageLayer.appendChild(pageScrim);
   host.prepend(pageLayer);
   _animPageLayerEl = pageLayer;
   _animPageBgEl = pageBg;
+  _animPageFxEl = pageFx;
   // Top: the badge overlay (small, top-right).
   const stage = document.createElement("div");
   stage.className = "anim-stage";
@@ -9993,6 +10029,11 @@ function _animSpritePlay(cue) {
 // slow pan/zoom). A page cue holds until the next one.
 function _animReconcilePage(cue, playing) {
   if (!_animPageLayerEl || !_animPageBgEl) return;
+  // Built-in effect scene (no art).
+  if (cue && cue.fx) {
+    if (_animPage.cueId !== cue.id) _animPageShowFx(cue);
+    return;
+  }
   if (!cue || !(cue.sheetId || cue.sheetBlob || cue.sheet)) {
     _animPageHide();
     return;
@@ -10023,12 +10064,45 @@ function _animPageHide() {
   _animPageStopTimer();
   _animPageRevoke();
   _animPage.cueId = null;
-  if (_animPageLayerEl) _animPageLayerEl.classList.remove("shown");
+  if (_animPageLayerEl) {
+    _animPageLayerEl.classList.remove("shown");
+    _animPageLayerEl.classList.remove("anim-page-layer--fx");
+  }
   if (_animPageBgEl) {
     _animPageBgEl.style.backgroundImage = "";
     _animPageBgEl.classList.remove("anim-page-bg--sprite", "anim-page-bg--kenburns");
   }
+  if (_animPageFxEl) {
+    _animPageFxEl.style.display = "none";
+    delete _animPageFxEl.dataset.fx;
+  }
   try { document.body.classList.remove("anim-page-active"); } catch {}
+}
+
+// Built-in effect scene in the Audio (scrolling reading) view — no sheet to
+// resolve; just show the procedural CSS layer sized to the reading pane.
+function _animPageShowFx(cue) {
+  _animPageStopTimer();
+  _animPageRevoke();
+  _animPage.cueId = cue.id;
+  if (_animPageBgEl) {
+    _animPageBgEl.style.backgroundImage = "";
+    _animPageBgEl.classList.remove("anim-page-bg--sprite", "anim-page-bg--kenburns");
+  }
+  if (_animPageFxEl) {
+    _animPageFxEl.dataset.fx = cue.fx;
+    if (_animReducedMotion()) _animPageFxEl.dataset.reduced = "1";
+    else delete _animPageFxEl.dataset.reduced;
+    const host = typeof readingView !== "undefined" && readingView;
+    const h = host ? host.clientHeight : 0;
+    if (h) _animPageFxEl.style.height = h + "px";
+    _animPageFxEl.style.display = "";
+  }
+  if (_animPageLayerEl) {
+    _animPageLayerEl.classList.add("shown");
+    _animPageLayerEl.classList.add("anim-page-layer--fx"); // lighter scrim
+  }
+  try { document.body.classList.add("anim-page-active"); } catch {}
 }
 
 function _animPageShow(cue) {
@@ -10037,6 +10111,8 @@ function _animPageShow(cue) {
   _animPage.cueId = cue.id;
   _animPage.frames = Math.max(1, parseInt(cue.frames, 10) || 1);
   _animPage.frameIdx = 0;
+  if (_animPageFxEl) { _animPageFxEl.style.display = "none"; delete _animPageFxEl.dataset.fx; }
+  if (_animPageLayerEl) _animPageLayerEl.classList.remove("anim-page-layer--fx");
   const bg = _animPageBgEl;
   _animResolveSheetUrl(cue).then((resolved) => {
     if (!resolved || _animPage.cueId !== cue.id) {
@@ -19956,9 +20032,10 @@ let _animPendingSheetBlob = null; // the chosen sprite sheet as a Blob/File
 let _animEditSheetId = null; // sheetId to reuse when editing an existing sprite cue
 let _animEditSheetSha = null; // server sha of the reused sheet (skip re-upload)
 
-// Reveal the standalone Animate button only when the prototype flag is on.
+// Reveal the standalone Animate button in the paid (Standard/Author) modes.
 if (animateModeBtn) {
-  animateModeBtn.hidden = !(typeof _animEnabled === "function" && _animEnabled());
+  animateModeBtn.classList.add("advanced-only"); // CSS also hides it in Simple
+  _animSyncAuthoringBtn();
 }
 
 function _animHasCueOnIdx(idx) {
@@ -21170,13 +21247,13 @@ if (animPreviewToggle) {
         animPreviewToggle.checked ? "1" : "0"
       );
     } catch {}
-    const on = typeof _animEnabled === "function" && _animEnabled();
-    if (animateModeBtn) animateModeBtn.hidden = !on;
-    if (!on && _animMode) _setAnimMode(false); // leave animate mode if disabling
+    // Authoring button follows mode, not this toggle; the toggle now governs
+    // animation PLAYBACK on/off (the kill-switch _animEnabled reads).
+    if (typeof _animSyncAuthoringBtn === "function") _animSyncAuthoringBtn();
     setStatus(
       animPreviewToggle.checked
-        ? "Animation preview on — 🎬 Animate is in the player toolbar."
-        : "Animation preview off."
+        ? "Animations on."
+        : "Animations off."
     );
   });
 }
