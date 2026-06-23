@@ -23544,6 +23544,36 @@ function _readerFmtSentence(raw) {
   if (raw.indexOf("\n") === -1) return { html: _readerFmtLine(raw), cls: "" };
   return { html: raw.split(/\n/).map(_readerFmtLine).join(""), cls: "" };
 }
+// Format ALL sentences with cross-sentence state so NUMBERED lists survive the
+// sentence-splitter. The splitter cuts "1. wake early\n2. walk far" into
+// ["1.", "wake early\n2.", "walk far\n…"] — each item's number lands at the END
+// of the previous sentence. We carry a trailing bare "N." forward and use it to
+// prefix the next item, reconstructing the list. Returns html[] aligned 1:1 to
+// `sentences` (indices unchanged → read-along + audio offsets stay valid; a
+// stray "N." marker just yields an empty span where it used to live).
+function _readerFmtAll(sentences) {
+  const out = new Array(sentences.length);
+  let pending = null; // a numbered marker carried from a prior trailing "N."
+  for (let i = 0; i < sentences.length; i++) {
+    const lines = String(sentences[i]).split(/\n/);
+    let html = "";
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      const t = line.replace(/^[ \t]+/, "");
+      const bare = t.match(/^(\d+)\.\s*$/); // a lone "N." (split artifact)
+      if (bare) { pending = bare[1]; continue; }
+      if (pending && t !== "") {
+        html += '<span class="bv-li">' + pending + ". " + _readerInlineFmt(t) + "</span>";
+        pending = null;
+        continue;
+      }
+      if (t === "") continue;
+      html += _readerFmtLine(line);
+    }
+    out[i] = html;
+  }
+  return out;
+}
 
 function _bookViewV3CreatePage(pageRow, pageWidth, pageHeight) {
   const page = document.createElement("div");
@@ -23720,6 +23750,9 @@ function _bookViewV3Setup(source) {
   const sentences = source.sentences || [];
   const imgByIdx = source.imgByIdx;
   const _bvFmtOn = _readerFmtEnabled();
+  // Precompute formatted HTML per sentence (cross-sentence pass reconstructs
+  // numbered lists the splitter scrambled). Indices stay 1:1 with `sentences`.
+  const _bvFmt = _bvFmtOn ? _readerFmtAll(sentences) : null;
   let firstBreakLogged = false;
 
   for (let i = 0; i < sentences.length; i++) {
@@ -23735,9 +23768,8 @@ function _bookViewV3Setup(source) {
     span.dataset.idx = String(i);
     if (_bvFmtOn) {
       // Render the author's emphasis (display-only; XSS-safe — escape-first).
-      const f = _readerFmtSentence(sentences[i]);
-      span.className = f.cls ? "sentence " + f.cls : "sentence";
-      span.innerHTML = f.html + " ";
+      span.className = "sentence";
+      span.innerHTML = (_bvFmt[i] || "") + " ";
     } else {
       span.className = "sentence";
       span.textContent = sentences[i] + " ";
