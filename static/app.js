@@ -1439,6 +1439,7 @@ async function _openAsEbook() {
     scrivenerRef: _pendingScrivenerRef || null,
     sentenceAssignments: {},
     assignmentsDirty: false,
+    prosodyHints: {},
     notes: "",
     tags: [],
     cover,
@@ -13366,6 +13367,145 @@ function attributeSentencesForDisplay(text, characters, overrides) {
   return out;
 }
 
+// ── Offline emotion / prosody detection (no AI) ───────────────────────────
+// Reads what authors already encode — dialogue quotes + speech verbs ("she
+// whispered" → quiet) + punctuation → a per-sentence emotion label + a "beat"
+// (short playback pause) before charged lines. Deterministic, runs in-browser,
+// no model/network. Drives the levers we have: pauses now (playback-time, no
+// re-synth); voice/rate are separate phases. See docs/emotion-detection-design.md.
+// Suggest-then-confirm; flag-gated until promoted. prosodyHints persists on the
+// clip (idx -> {emotion, prePauseMs, source}).
+let _currentProsodyHints = {};
+const _PROSODY_SPEECH_VERBS = {
+  quiet: ["whispered", "murmured", "muttered", "breathed", "mouthed"],
+  loud: ["shouted", "yelled", "screamed", "bellowed", "roared"],
+  sad: ["sobbed", "cried", "wailed", "wept", "choked"],
+  bright: ["laughed", "giggled", "chuckled", "beamed", "cheered"],
+  tense: ["snapped", "hissed", "growled", "snarled", "demanded", "spat"],
+};
+const _PROSODY_VERB_RE = {};
+for (const [emo, verbs] of Object.entries(_PROSODY_SPEECH_VERBS)) {
+  _PROSODY_VERB_RE[emo] = new RegExp(String.raw`\b(?:${verbs.join("|")})\b`, "i");
+}
+const _PROSODY_QUOTE = /[“”].*?[“”]|".*?"|'.*?'/;
+const _PROSODY_EMOJI = {
+  quiet: "🔇", loud: "🔊", sad: "😢",
+  bright: "✨", tense: "😠", emphatic: "❗",
+  questioning: "❓", trailing: "…",
+};
+function _emotionEnabled() {
+  try {
+    const p = new URLSearchParams(location.search).get("emotion");
+    if (p === "1") { localStorage.setItem("narrative.emotion", "1"); return true; }
+    if (p === "0") { localStorage.setItem("narrative.emotion", "0"); return false; }
+    return localStorage.getItem("narrative.emotion") === "1";
+  } catch { return false; }
+}
+function _detectProsodySentence(s) {
+  const t = (s || "").trim();
+  const out = { emotion: "neutral", prePauseMs: 0, source: null };
+  out.dialogue = _PROSODY_QUOTE.test(s);
+  for (const emo of Object.keys(_PROSODY_VERB_RE)) {
+    if (_PROSODY_VERB_RE[emo].test(s)) { out.emotion = emo; out.source = "speech-verb"; break; }
+  }
+  if (out.emotion === "neutral") {
+    if (/!/.test(t)) { out.emotion = "emphatic"; out.source = "punct"; }
+    else if (/\?/.test(t)) { out.emotion = "questioning"; out.source = "punct"; }
+    else if (/(\.\.\.|…)\s*$/.test(t)) { out.emotion = "trailing"; out.source = "punct"; }
+  }
+  // Beat (a breath BEFORE this sentence) on strong signals only.
+  if (/^([“”"']|—|--)/.test(t)) out.prePauseMs = 350; // a new dialogue turn / aside
+  if (/(\.\.\.|…)\s*$/.test(t)) out.prePauseMs = Math.max(out.prePauseMs, 450); // trailing off
+  return out;
+}
+// Detect over the SAME per-paragraph split attributeSentencesForDisplay uses so
+// indices line up with sentenceSpans. Returns a sparse map (only charged lines).
+function _detectProsody(text) {
+  const hints = {};
+  if (!text) return hints;
+  let idx = -1;
+  const paragraphs = text.split(/\r?\n\s*\r?\n+/).map((p) => p.trim()).filter(Boolean);
+  for (const paragraph of paragraphs) {
+    for (const sentence of splitSentencesClient(paragraph)) {
+      idx++;
+      const h = _detectProsodySentence(sentence);
+      if (h.emotion !== "neutral" || h.prePauseMs > 0) {
+        hints[String(idx)] = { emotion: h.emotion, prePauseMs: h.prePauseMs, source: h.source };
+      }
+    }
+  }
+  return hints;
+}
+async function _persistProsodyHints() {
+  if (!_currentClipId) return;
+  try {
+    const c = await getClip(_currentClipId);
+    if (c) { c.prosodyHints = { ..._currentProsodyHints }; c.updatedAt = new Date().toISOString(); await saveClip(c); }
+  } catch (e) { console.warn("[emotion] persist:", e); }
+}
+// Paint per-sentence emotion chips (tooltip + data-emotion) over the reading
+// view spans from _currentProsodyHints.
+function _repaintProsodyMarks() {
+  if (typeof sentenceSpans === "undefined" || !Array.isArray(sentenceSpans)) return;
+  sentenceSpans.forEach((span, i) => {
+    if (!span) return;
+    const h = _currentProsodyHints[String(i)];
+    if (h && h.emotion && h.emotion !== "neutral") {
+      span.dataset.emotion = h.emotion;
+      span.dataset.emoIcon = _PROSODY_EMOJI[h.emotion] || "";
+      span.title = (_PROSODY_EMOJI[h.emotion] || "") + " " + h.emotion +
+        (h.source ? " (" + h.source + ")" : "") +
+        (h.prePauseMs ? " · beat" : "");
+    } else {
+      delete span.dataset.emotion;
+      delete span.dataset.emoIcon;
+      if (span.title && /\b(quiet|loud|sad|bright|tense|emphatic|questioning|trailing)\b/.test(span.title)) span.removeAttribute("title");
+    }
+  });
+}
+// Author action: run the detector over the loaded clip, store + persist hints,
+// paint marks. Suggest+apply in one (clearable); the audible effect is the beats.
+async function _suggestEmotion() {
+  if (!_bookViewSource && (typeof _currentClipId === "undefined" || !_currentClipId)) {
+    setStatus("Load a clip first.", true); return;
+  }
+  let text = "";
+  try { const c = await getClip(_currentClipId); text = (c && c.text) || ""; } catch {}
+  if (!text) { setStatus("No text to analyze.", true); return; }
+  _currentProsodyHints = _detectProsody(text);
+  await _persistProsodyHints();
+  _repaintProsodyMarks();
+  const n = Object.keys(_currentProsodyHints).length;
+  setStatus(n
+    ? `Emotion: tagged ${n} line${n === 1 ? "" : "s"} (speech verbs + punctuation). Pauses apply on play.`
+    : "Emotion: no charged lines detected.");
+}
+async function _clearEmotion() {
+  _currentProsodyHints = {};
+  await _persistProsodyHints();
+  _repaintProsodyMarks();
+  setStatus("Emotion tags cleared.");
+}
+// Short playback "beat" — reuses the paragraph-pause timer (pause → timed
+// resume). Generalized from the fixed paragraph pause to a per-sentence ms.
+function _triggerBeat(ms) {
+  if (!ms || ms <= 0) return;
+  if (!playerEl || playerEl.paused) return;
+  if (_paragraphPauseTimer) return;
+  try { _pauseAsUser(); } catch { try { playerEl.pause(); } catch {} }
+  _paragraphPauseTimer = setTimeout(() => {
+    _paragraphPauseTimer = null;
+    if (playerEl && playerEl.paused) { try { playerEl.play().catch(() => {}); } catch {} }
+  }, ms);
+}
+{
+  const eb = document.getElementById("emotion-suggest-btn");
+  if (eb) {
+    eb.hidden = !_emotionEnabled();
+    eb.addEventListener("click", () => _suggestEmotion());
+  }
+}
+
 // Repaint reading-view sentence colors using the current characters
 // roster + the loaded clip's overrides. Cheap; safe to call from the
 // color picker's "input" event to give the user live feedback as they
@@ -17933,6 +18073,8 @@ function enterReadingView(text, images, highlights, lines) {
   for (let i = 0; i < sentenceSpans.length; i++) {
     _applySentenceAssignmentMark(sentenceSpans[i], i);
   }
+  // Paint emotion/prosody chips for any detected lines (offline detector).
+  if (typeof _repaintProsodyMarks === "function") _repaintProsodyMarks();
   // v220-AB: also paint each sentence's text in its attributed
   // character's color. Runs once per reading-view build; the color
   // picker calls _repaintReadingViewAttribution directly for live
@@ -18432,6 +18574,10 @@ function highlightCurrentSentence() {
       _paragraphEndIndices.has(previousIdx)
     ) {
       _triggerParagraphPause();
+    } else if (previousIdx >= 0 && idx > previousIdx && _emotionEnabled()) {
+      // Emotion beat: a short breath before a charged line (… / dialogue turn).
+      const h = _currentProsodyHints[String(idx)];
+      if (h && h.prePauseMs > 0) _triggerBeat(h.prePauseMs);
     }
     // v223.tn12: rebuild word intervals for the newly-active sentence
     // and wrap its words on first activation. Previous sentence keeps
@@ -33677,6 +33823,11 @@ async function loadClip(id, { autoPlay = true } = {}) {
   // page reloads if the user made changes but didn't re-render.
   _currentClipAssignmentsDirty = !!clip.assignmentsDirty;
   _updatePendingAssignmentsBanner();
+  // Emotion/prosody hints (offline detector output) for this clip.
+  _currentProsodyHints =
+    clip.prosodyHints && typeof clip.prosodyHints === "object"
+      ? { ...clip.prosodyHints }
+      : {};
 
   // Drop any in-progress streaming state so the chained-playback / virtualTime
   // logic doesn't try to walk a queue from a previous generate().

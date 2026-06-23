@@ -4022,6 +4022,18 @@ body[data-ui-mode="author"]
   color: var(--fg);
   background-color: var(--accent-tint-3);
 }
+/* Emotion/prosody marks (offline detector): a subtle dotted underline + a tiny
+   superscript emoji chip after the sentence. */
+.reading-view .sentence[data-emotion] {
+  border-bottom: 1px dotted var(--accent, #6c8cff);
+}
+.reading-view .sentence[data-emo-icon]::after {
+  content: attr(data-emo-icon);
+  font-size: 0.62em;
+  vertical-align: super;
+  opacity: 0.65;
+  margin-left: 1px;
+}
 
 /* v583: "Selected, awaiting confirm" visual for the tap-then-confirm
    sentence behavior. Uses a dotted outline rather than a solid box so
