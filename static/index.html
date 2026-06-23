@@ -1586,6 +1586,15 @@
                        Standard / Author would gain them. Hidden when the
                        user is already on Author (nothing left to unlock). -->
                   <p id="mode-unlock-hint" class="mode-unlock-hint" hidden></p>
+                  <!-- v4.172: open the upgrade screen. Shown only while the
+                       paywall is enforced AND the user lacks Pro (set by
+                       _refreshUpgradeEntry); otherwise there's nothing to buy. -->
+                  <button
+                    type="button"
+                    id="settings-upgrade-btn"
+                    class="primary settings-upgrade-btn"
+                    hidden
+                  >Upgrade to unlock creator tools</button>
                 </div>
 
                 <!-- Animation preview toggle: flips the narrative.animPrototype
@@ -4945,6 +4954,68 @@
             <button id="book-picker-add" type="button" class="primary">Add selected</button>
           </div>
         </div>
+      </dialog>
+
+      <!-- v4.172 (paywall Phase 3): upgrade screen. Tiers + a buyer-chosen
+           payment rail (Stripe / Lemon Squeezy) with an explainer. Checkout is
+           wired in Phase 4; the buttons hit /api/library/checkout. -->
+      <dialog id="upgrade-dialog" class="upgrade-dialog">
+        <div class="upgrade-head">
+          <strong id="upgrade-title">Unlock the creator tools</strong>
+          <button id="upgrade-close" type="button" class="link-btn" aria-label="Close">✕</button>
+        </div>
+        <p class="upgrade-sub">The free tier — reading, listening, and personal text-to-speech — stays free forever. Upgrade to create and publish.</p>
+        <div class="upgrade-tiers">
+          <div class="upgrade-tier" data-tier="free">
+            <h3>Free</h3>
+            <p class="upgrade-price">$0</p>
+            <ul>
+              <li>Read &amp; listen to published books</li>
+              <li>Personal text-to-speech (your own text)</li>
+              <li>The full reading experience</li>
+            </ul>
+            <div class="upgrade-owned" data-owned="free" hidden>✓ Included</div>
+          </div>
+          <div class="upgrade-tier upgrade-tier--accent" data-tier="pro">
+            <h3>Pro <span class="upgrade-badge">one-time</span></h3>
+            <p class="upgrade-price" id="upgrade-price-pro">$49 once</p>
+            <ul>
+              <li>Book packaging &amp; Book Styles</li>
+              <li>Animations &amp; ambient effects</li>
+              <li>Multi-voice / character voices</li>
+              <li>EPUB export</li>
+            </ul>
+            <div class="upgrade-buy">
+              <span class="upgrade-buy-label">Buy with</span>
+              <button type="button" class="primary" data-buy-tier="pro" data-buy-provider="lemonsqueezy">Lemon Squeezy</button>
+              <button type="button" class="primary" data-buy-tier="pro" data-buy-provider="stripe">Stripe</button>
+            </div>
+            <div class="upgrade-owned" data-owned="pro" hidden>✓ You own Pro</div>
+          </div>
+          <div class="upgrade-tier" data-tier="sub">
+            <h3>Pro + Hosting <span class="upgrade-badge">subscription</span></h3>
+            <p class="upgrade-price" id="upgrade-price-sub">$5 / month</p>
+            <ul>
+              <li>Everything in Pro</li>
+              <li>Publish shareable book links (we host them)</li>
+              <li>Premium voices &amp; higher limits</li>
+            </ul>
+            <div class="upgrade-buy">
+              <span class="upgrade-buy-label">Subscribe with</span>
+              <button type="button" class="primary" data-buy-tier="sub" data-buy-provider="lemonsqueezy">Lemon Squeezy</button>
+              <button type="button" class="primary" data-buy-tier="sub" data-buy-provider="stripe">Stripe</button>
+            </div>
+            <div class="upgrade-owned" data-owned="sub" hidden>✓ Subscription active</div>
+          </div>
+        </div>
+        <p class="upgrade-explainer">
+          <strong>Which payment option?</strong> Both are secure and unlock the
+          same features. <strong>Lemon Squeezy</strong> includes any sales tax/VAT
+          and emails you a proper invoice — handy for international or business
+          buyers. <strong>Stripe</strong> is a direct card payment. Pick whichever
+          you prefer.
+        </p>
+        <p id="upgrade-status" class="upgrade-status" hidden></p>
       </dialog>
 
       <!-- v225fz3 (#670): clear-marks confirmation dialog. Centered

@@ -2117,16 +2117,92 @@ function _featureLocked(kind) {
   if (!_paywallEnforced) return false;
   return kind === "sub" ? !hasSub() : !hasPro();
 }
-// Minimal upgrade nudge (Phase 3 replaces this with a real upgrade screen).
+// Upgrade nudge → opens the upgrade screen focused on the relevant tier.
 function _promptUpgrade(kind, feature) {
-  const what = kind === "sub"
-    ? "a subscription (server features)"
-    : "a one-time Pro unlock";
-  setStatus(
-    (feature ? feature + " needs " : "This needs ") + what +
-      " — open Settings → Account to upgrade.",
-    true
-  );
+  const what = kind === "sub" ? "a subscription" : "a one-time Pro unlock";
+  setStatus((feature ? feature + " needs " : "This needs ") + what + ".", true);
+  if (typeof _openUpgradeDialog === "function") {
+    _openUpgradeDialog(kind === "sub" ? "sub" : "pro");
+  }
+}
+
+// ── Upgrade screen (paywall Phase 3) ──────────────────────────────────────
+function _openUpgradeDialog(focusTier) {
+  const dlg = document.getElementById("upgrade-dialog");
+  if (!dlg) return;
+  _fetchEntitlement().then(_upgradeRenderState).catch(_upgradeRenderState);
+  _upgradeRenderState();
+  const st = document.getElementById("upgrade-status");
+  if (st) { st.hidden = true; st.textContent = ""; }
+  try { if (!dlg.open) dlg.showModal(); } catch { dlg.setAttribute("open", ""); }
+  if (focusTier) {
+    const card = dlg.querySelector('.upgrade-tier[data-tier="' + focusTier + '"]');
+    if (card) try { card.scrollIntoView({ block: "nearest" }); } catch {}
+  }
+}
+function _upgradeRenderState() {
+  const dlg = document.getElementById("upgrade-dialog");
+  if (!dlg) return;
+  const pro = hasPro(), sub = hasSub();
+  const owned = (tier, on) => {
+    const el = dlg.querySelector('[data-owned="' + tier + '"]');
+    if (el) el.hidden = !on;
+  };
+  owned("free", true);
+  owned("pro", pro);
+  owned("sub", sub);
+  dlg.querySelectorAll("[data-buy-tier]").forEach((b) => {
+    const t = b.dataset.buyTier;
+    b.disabled = (t === "pro" && pro) || (t === "sub" && sub);
+  });
+}
+async function _startCheckout(tier, provider) {
+  const st = document.getElementById("upgrade-status");
+  const show = (msg, err) => {
+    if (!st) { setStatus(msg, !!err); return; }
+    st.hidden = false; st.textContent = msg;
+    st.classList.toggle("upgrade-status--err", !!err);
+  };
+  if (typeof _syncIsEnabled === "function" && !_syncIsEnabled()) {
+    show("Turn on account sync first (Settings → Account) so your purchase attaches to your account.", true);
+    return;
+  }
+  show("Opening checkout…");
+  try {
+    const r = await fetch("/api/library/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tier, provider }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.url) { location.href = j.url; return; }
+    const name = provider === "stripe" ? "Stripe" : "Lemon Squeezy";
+    if (j && j.configured === false) {
+      show(name + " checkout isn’t set up yet — coming soon.", true);
+      return;
+    }
+    show("Couldn’t start checkout. Try the other payment option.", true);
+  } catch (e) {
+    show("Couldn’t reach checkout — check your connection.", true);
+  }
+}
+{
+  const dlg = document.getElementById("upgrade-dialog");
+  const close = document.getElementById("upgrade-close");
+  if (close && dlg) close.addEventListener("click", () => { try { dlg.close(); } catch {} });
+  if (dlg) dlg.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-buy-tier]");
+    if (b && !b.disabled) _startCheckout(b.dataset.buyTier, b.dataset.buyProvider);
+  });
+  const upBtn = document.getElementById("settings-upgrade-btn");
+  if (upBtn) upBtn.addEventListener("click", () => _openUpgradeDialog("pro"));
+}
+// Settings "Upgrade" entry: shown only while enforcement is ON and the account
+// isn't fully upgraded (nothing to sell otherwise).
+function _refreshUpgradeEntry() {
+  const btn = document.getElementById("settings-upgrade-btn");
+  if (!btn) return;
+  btn.hidden = !(_paywallEnforced && !(hasPro() && hasSub()));
 }
 async function _fetchEntitlement() {
   try {
@@ -2154,6 +2230,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // Re-apply the saved mode now that entitlement is known — coerces to
       // Simple if a paid mode is locked under enforcement.
       try { if (typeof setUIMode === "function") setUIMode(getUIMode()); } catch {}
+      try { if (typeof _refreshUpgradeEntry === "function") _refreshUpgradeEntry(); } catch {}
     });
   }, 700);
 });
@@ -2511,6 +2588,7 @@ function _refreshMaintenanceFormVisibility() {
     pw.hidden = !admin;
     if (admin && typeof _refreshPaywallToggle === "function") _refreshPaywallToggle();
   }
+  if (typeof _refreshUpgradeEntry === "function") _refreshUpgradeEntry();
 }
 
 function _toLocalDatetimeInputValue(d) {

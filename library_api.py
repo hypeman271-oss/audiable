@@ -983,6 +983,23 @@ def set_paywall(payload: PaywallToggle, request: Request):
     return {"ok": True, "enforced": bool(payload.enforced)}
 
 
+# ── Checkout (paywall Phase 3 seam; providers wired in Phase 4) ───────────
+class CheckoutStart(BaseModel):
+    tier: str  # "pro" | "sub"
+    provider: str  # "stripe" | "lemonsqueezy"
+
+
+@router.post("/checkout")
+def start_checkout(payload: CheckoutStart, request: Request):
+    """Begin a purchase for the calling account. Phase 4 creates a real
+    Stripe / Lemon Squeezy checkout session and returns {url} to redirect to;
+    until a provider is configured we report configured:false so the client
+    shows a 'coming soon' message instead of a dead button."""
+    _require_enabled()
+    _tenant(request)  # purchase attaches to this account later
+    return {"configured": False, "provider": payload.provider, "tier": payload.tier}
+
+
 @router.post("/admin/entitlement")
 def admin_set_entitlement(payload: EntitlementGrant, request: Request):
     """Admin-only manual grant — unlock yourself or comp an account before the
