@@ -20518,6 +20518,8 @@ async function _openPublishedMultiBook(token, book) {
       author: book.author || "",
       coverSha: book.coverSha || null,
       style: book.style || null,
+      dedication: book.dedication || "",
+      aboutAuthor: book.aboutAuthor || "",
       chapters: Array.isArray(book.chapters) ? book.chapters : [],
     };
     _pubChapterIdx = 0;
@@ -20526,6 +20528,7 @@ async function _openPublishedMultiBook(token, book) {
       setStatus("This shared book has no chapters.", true);
       return false;
     }
+    _pubBuildReading(); // wrap chapters with auto front/back matter pages
     // Show the author's animations exactly as intended (flag-gated normally).
     try { localStorage.setItem("narrative.animPrototype", "1"); } catch {}
     if (typeof _animInit === "function") _animInit();
@@ -20553,19 +20556,42 @@ async function _pubCoverUrl(sha) {
   return null;
 }
 
-async function _loadPublishedChapter(idx) {
+// Build the reading sequence = auto front matter + real chapters + back matter.
+// Matter pages are synthetic text-only bundles (no audio) styled via markdown so
+// the existing reader formatter renders them (title heading, etc.).
+function _pubBuildReading() {
   if (!_pubBook) return;
-  idx = Math.max(0, Math.min(idx, _pubBook.chapters.length - 1));
-  const ch = _pubBook.chapters[idx];
-  if (!ch) return;
+  const b = _pubBook;
+  let year = "";
+  try { year = String(new Date().getFullYear()); } catch {}
+  const front = [];
+  front.push({ bundle: { title: b.title, text: "# " + b.title + (b.author ? "\n\n" + b.author : "") }, audioIdx: null, matter: true });
+  front.push({ bundle: { title: "Copyright", text: "© " + year + (b.author ? " " + b.author : "") + "\n\nAll rights reserved.\n\nMade with Narrative" }, audioIdx: null, matter: true });
+  if (b.dedication && b.dedication.trim()) {
+    front.push({ bundle: { title: "Dedication", text: b.dedication }, audioIdx: null, matter: true });
+  }
+  const mid = (b.chapters || []).map((ch, i) => ({ bundle: ch, audioIdx: i, matter: false }));
+  const back = [];
+  if (b.aboutAuthor && b.aboutAuthor.trim()) {
+    back.push({ bundle: { title: "About the Author", text: "## About the Author\n\n" + b.aboutAuthor }, audioIdx: null, matter: true });
+  }
+  b.reading = front.concat(mid, back);
+}
+
+async function _loadPublishedChapter(idx) {
+  if (!_pubBook || !_pubBook.reading) return;
+  idx = Math.max(0, Math.min(idx, _pubBook.reading.length - 1));
+  const entry = _pubBook.reading[idx];
+  if (!entry) return;
+  const ch = entry.bundle;
   _pubChapterIdx = idx;
   const token = _pubBook.token;
   let blob;
-  if (ch.audioSha256) {
+  if (entry.audioIdx != null && ch.audioSha256) {
     try {
       const ar = await fetch(
         "/api/published/" + encodeURIComponent(token) +
-        "/chapter/" + idx + "/audio.mp3"
+        "/chapter/" + entry.audioIdx + "/audio.mp3"
       );
       if (ar.ok) blob = await ar.blob();
     } catch (e) { console.warn("[published-book] chapter audio:", e); }
@@ -20600,7 +20626,7 @@ async function _loadPublishedChapter(idx) {
   _readerImmerseInit();
   _showPubToc(false);
   _updatePubChapterNav();
-  setStatus(`Reading "${clip.title}" (${idx + 1}/${_pubBook.chapters.length}).`);
+  setStatus(`Reading "${clip.title}" (${idx + 1}/${_pubBook.reading.length}).`);
 }
 
 // Build the cover/TOC overlay + the cross-chapter nav pill once, on first use.
@@ -20668,12 +20694,15 @@ function _renderPubToc() {
   }
   if (listEl) {
     listEl.innerHTML = "";
-    _pubBook.chapters.forEach((ch, i) => {
+    const list = _pubBook.reading || [];
+    list.forEach((entry, i) => {
       const li = document.createElement("li");
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "pub-toc-ch" + (i === _pubChapterIdx ? " current" : "");
-      btn.textContent = ch.title || ("Chapter " + (i + 1));
+      btn.className = "pub-toc-ch"
+        + (i === _pubChapterIdx ? " current" : "")
+        + (entry.matter ? " pub-toc-ch--matter" : "");
+      btn.textContent = (entry.bundle && entry.bundle.title) || ("Chapter " + (i + 1));
       btn.addEventListener("click", () => _loadPublishedChapter(i));
       li.appendChild(btn);
       listEl.appendChild(li);
@@ -20695,8 +20724,9 @@ function _updatePubChapterNav() {
   nav.hidden = false;
   const prev = document.getElementById("pub-prev-ch");
   const next = document.getElementById("pub-next-ch");
+  const n = (_pubBook.reading || _pubBook.chapters || []).length;
   if (prev) prev.disabled = _pubChapterIdx <= 0;
-  if (next) next.disabled = _pubChapterIdx >= _pubBook.chapters.length - 1;
+  if (next) next.disabled = _pubChapterIdx >= n - 1;
 }
 
 // Reader interaction (Apple Books / Kindle pattern): the chrome floats OVER the

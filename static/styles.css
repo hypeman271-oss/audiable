@@ -15383,6 +15383,7 @@ body.reader-immersed #pub-chapter-nav {
 }
 .pub-toc-ch:hover { background: var(--bg-card, rgba(255, 255, 255, 0.05)); }
 .pub-toc-ch.current { color: var(--accent, #6c8cff); font-weight: 600; }
+.pub-toc-ch--matter { font-style: italic; opacity: 0.75; }
 
 /* Cross-chapter nav pill — floats over the page, part of reader chrome
    (hidden on immerse via the rule above). */
