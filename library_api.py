@@ -1413,19 +1413,27 @@ def _epub_response(data: bytes, title: str) -> Response:
     )
 
 
+_PDF_TRIMS = {
+    "5x8": (5 * 72, 8 * 72),
+    "6x9": (6 * 72, 9 * 72),
+    "letter": (8.5 * 72, 11 * 72),
+}
+
+
 def _build_pdf(
     title: str, author: str, chapters: list[dict],
     *, dedication: str | None = None, about_author: str | None = None,
+    trim: str = "6x9",
 ) -> bytes:
-    """Build a print-ready 6×9 paperback PDF (interior only — POD covers are
-    uploaded separately) via PyMuPDF: mirrored margins (binding gutter), serif
-    justified body, each chapter + matter section starting on a new page,
-    running headers, and page numbers. Auto title/copyright + optional
-    dedication/about-author, like the EPUB."""
+    """Build a print-ready paperback PDF (interior only — POD covers are
+    uploaded separately) via PyMuPDF: selectable trim size, mirrored margins
+    (binding gutter), serif justified body (Charis SIL, embedded by MuPDF),
+    chapters forced onto a right-hand (recto) page, running headers, and page
+    numbers. Auto title/copyright + optional dedication/about-author."""
     import io
     import fitz
 
-    W, H = 6 * 72, 9 * 72            # 6×9in trade paperback
+    W, H = _PDF_TRIMS.get(trim, _PDF_TRIMS["6x9"])
     INNER, OUTER = 0.9 * 72, 0.6 * 72  # gutter (binding) vs outer margin
     TOP, BOT = 0.72 * 72, 0.72 * 72
     year = datetime.now(timezone.utc).year
@@ -1469,6 +1477,14 @@ def _build_pdf(
     meta: list[tuple] = []  # (kind, first_page_of_section)
     pn = 0
     for kind, htm, _ct in secs:
+        # Chapters start on a right-hand (recto) page. Recto = even 0-based page
+        # index (page 1 = recto); if the next page would be a verso, insert a
+        # blank verso first.
+        if kind == "chapter" and pn % 2 == 1:
+            dev = writer.begin_page(mediabox)
+            writer.end_page()
+            meta.append(("blank", False))
+            pn += 1
         story = fitz.Story(html=htm, user_css=css)
         more, first = 1, True
         while more:
@@ -1564,9 +1580,13 @@ def export_book_epub(book_id: int, request: Request):
     return _epub_response(data, book["title"] or "book")
 
 
+def _norm_trim(trim: str) -> str:
+    return trim if trim in _PDF_TRIMS else "6x9"
+
+
 @router.get("/clips/{clip_id}/export.pdf")
-def export_clip_pdf(clip_id: int, request: Request):
-    """Download a single clip as a print-ready one-chapter PDF (6×9)."""
+def export_clip_pdf(clip_id: int, request: Request, trim: str = "6x9"):
+    """Download a single clip as a print-ready one-chapter PDF."""
     _require_enabled()
     require_entitlement(request, "pro")
     tk = _tenant(request)
@@ -1576,13 +1596,13 @@ def export_clip_pdf(clip_id: int, request: Request):
     if row is None or row["deleted"]:
         raise HTTPException(status_code=404, detail="clip not found")
     title = row["title"] or "Untitled"
-    data = _build_pdf(title, "", [{"title": title, "text": row["text"] or ""}])
+    data = _build_pdf(title, "", [{"title": title, "text": row["text"] or ""}], trim=_norm_trim(trim))
     return _pdf_response(data, title)
 
 
 @router.get("/books/{book_id}/export.pdf")
-def export_book_pdf(book_id: int, request: Request):
-    """Download a whole book as a print-ready paperback PDF (6×9, interior)."""
+def export_book_pdf(book_id: int, request: Request, trim: str = "6x9"):
+    """Download a whole book as a print-ready paperback PDF (interior)."""
     _require_enabled()
     require_entitlement(request, "pro")
     tk = _tenant(request)
@@ -1607,6 +1627,7 @@ def export_book_pdf(book_id: int, request: Request):
         book["title"] or "Untitled", book["author"] or "", chapters,
         dedication=(book["dedication"] if "dedication" in book.keys() else None),
         about_author=(book["about_author"] if "about_author" in book.keys() else None),
+        trim=_norm_trim(trim),
     )
     return _pdf_response(data, book["title"] or "book")
 

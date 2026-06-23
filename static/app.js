@@ -20938,8 +20938,14 @@ async function _exportBookAs(fmt) {
     if (typeof _syncPushBook === "function") {
       try { await _syncPushBook(book); } catch {}
     }
+    let q = "";
+    if (fmt === "pdf") {
+      const sel = document.getElementById("book-pdf-trim");
+      const trim = (sel && sel.value) || "6x9";
+      q = "?trim=" + encodeURIComponent(trim);
+    }
     const r = await fetch(
-      "/api/library/books/" + encodeURIComponent(_bookEditingId) + "/" + meta.path
+      "/api/library/books/" + encodeURIComponent(_bookEditingId) + "/" + meta.path + q
     );
     if (!r.ok) {
       if (r.status === 402) { _promptUpgrade("pro", meta.feat); return; }
@@ -21082,6 +21088,7 @@ async function _openBookEditor(id) {
   { const pb = _bookEl("book-publish-btn"); if (pb) pb.hidden = false; }
   { const eb = _bookEl("book-export-epub-btn"); if (eb) eb.hidden = false; }
   { const pb2 = _bookEl("book-export-pdf-btn"); if (pb2) pb2.hidden = false; }
+  { const tr = _bookEl("book-pdf-trim"); if (tr) tr.hidden = false; }
   _bookSyncStyleButtons(book.style || "");
   _bookEl("book-title-input").value = book.title || "";
   _bookEl("book-author-input").value = book.author || "";
