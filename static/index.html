@@ -4918,6 +4918,13 @@
               </label>
             </div>
           </div>
+          <!-- v4.173: front/back matter — auto title + copyright pages are
+               generated from the title/author; these optional fields add a
+               dedication and an about-the-author page to the EPUB + reader. -->
+          <div class="book-matter-fields">
+            <textarea id="book-dedication-input" class="settings-input" rows="2" placeholder="Dedication (optional) — e.g. For Mara, who read every draft."></textarea>
+            <textarea id="book-about-input" class="settings-input" rows="3" placeholder="About the author (optional) — a short bio for the back of the book."></textarea>
+          </div>
           <!-- v4.168: Book Style preset — a reflow-safe "look" (chapter
                headings, drop caps, scene-break divider, default image layout)
                applied to every chapter. Readers still control fonts/theme. -->

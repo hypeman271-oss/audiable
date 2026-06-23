@@ -21045,6 +21045,8 @@ async function _openBookEditor(id) {
   _bookSyncStyleButtons(book.style || "");
   _bookEl("book-title-input").value = book.title || "";
   _bookEl("book-author-input").value = book.author || "";
+  { const d = _bookEl("book-dedication-input"); if (d) d.value = book.dedication || ""; }
+  { const a = _bookEl("book-about-input"); if (a) a.value = book.aboutAuthor || ""; }
   const prev = _bookEl("book-cover-preview");
   prev.style.backgroundImage = "";
   if (book.coverSha) {
@@ -21095,7 +21097,10 @@ async function _bookEditorSave() {
   if (!book) return;
   book.title = _bookEl("book-title-input").value.trim() || "Untitled book";
   book.author = _bookEl("book-author-input").value.trim();
+  { const d = _bookEl("book-dedication-input"); if (d) book.dedication = d.value.trim(); }
+  { const a = _bookEl("book-about-input"); if (a) book.aboutAuthor = a.value.trim(); }
   await putBook(book);
+  if (typeof _syncPushBook === "function") { try { await _syncPushBook(book); } catch {} }
 }
 
 async function _bookMoveChapter(idx, dir) {
@@ -21231,6 +21236,10 @@ async function _bookPickerAdd() {
   const a = document.getElementById("book-author-input");
   if (t) t.addEventListener("change", () => _bookEditorSave());
   if (a) a.addEventListener("change", () => _bookEditorSave());
+  const ded = document.getElementById("book-dedication-input");
+  const abt = document.getElementById("book-about-input");
+  if (ded) ded.addEventListener("change", () => _bookEditorSave());
+  if (abt) abt.addEventListener("change", () => _bookEditorSave());
   const cf = document.getElementById("book-cover-file");
   if (cf) cf.addEventListener("change", () => { const f = cf.files && cf.files[0]; if (f) _bookCoverUploadFromFile(f); });
 })();

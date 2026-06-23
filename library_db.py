@@ -44,7 +44,7 @@ SENTENCE_DIR = DATA_DIR / "sentences"
 ANIM_SHEET_DIR = DATA_DIR / "anim_sheets"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -335,6 +335,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v14(c)
         c.execute("UPDATE schema_version SET version = 14")
         current = 14
+
+    if current < 15:
+        _apply_v15(c)
+        c.execute("UPDATE schema_version SET version = 15")
+        current = 15
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -907,6 +912,19 @@ def _apply_v14(c: sqlite3.Connection) -> None:
         );
         """
     )
+
+
+def _apply_v15(c: sqlite3.Connection) -> None:
+    """Add books.dedication + books.about_author — optional author-entered
+    front/back matter. Combined with title/author (+ year), the EPUB export and
+    reader auto-generate a title page, copyright page, dedication, and an
+    about-the-author page, like Vellum/Atticus. See book-packaging-design.md."""
+    print(
+        "[library_db] migrating to schema v15 (add books front/back matter)",
+        file=sys.stderr, flush=True,
+    )
+    c.execute("ALTER TABLE books ADD COLUMN dedication TEXT")
+    c.execute("ALTER TABLE books ADD COLUMN about_author TEXT")
 
 
 # ──────────────────────────────────────────────────────────────────────

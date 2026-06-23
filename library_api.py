@@ -802,6 +802,8 @@ class BookUpsert(BaseModel):
     coverSha: str | None = None
     chapterClipIds: list[int] = Field(default_factory=list)
     style: str | None = None
+    dedication: str | None = None
+    aboutAuthor: str | None = None
     createdAt: str | None = None
     updatedAt: str = Field(..., min_length=1)
     deleted: bool = False
@@ -816,6 +818,8 @@ def _row_to_book_dict(row: sqlite3.Row) -> dict:
         "coverSha": row["cover_sha"],
         "chapterClipIds": library_db.jsload(row["chapter_clip_ids_json"]) or [],
         "style": (row["style"] if "style" in row.keys() else None),
+        "dedication": (row["dedication"] if "dedication" in row.keys() else None),
+        "aboutAuthor": (row["about_author"] if "about_author" in row.keys() else None),
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "deleted": bool(row["deleted"]),
@@ -872,8 +876,9 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
             """
             INSERT INTO books (
               tenant_key, id, title, author, description, cover_sha,
-              chapter_clip_ids_json, style, created_at, updated_at, deleted
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              chapter_clip_ids_json, style, dedication, about_author,
+              created_at, updated_at, deleted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_key, id) DO UPDATE SET
               title=excluded.title,
               author=excluded.author,
@@ -881,6 +886,8 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
               cover_sha=excluded.cover_sha,
               chapter_clip_ids_json=excluded.chapter_clip_ids_json,
               style=excluded.style,
+              dedication=excluded.dedication,
+              about_author=excluded.about_author,
               created_at=excluded.created_at,
               updated_at=excluded.updated_at,
               deleted=excluded.deleted
@@ -894,6 +901,8 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
                 payload.coverSha,
                 library_db.jsdump(payload.chapterClipIds),
                 payload.style,
+                payload.dedication,
+                payload.aboutAuthor,
                 payload.createdAt or payload.updatedAt,
                 payload.updatedAt,
                 int(payload.deleted),
@@ -1147,6 +1156,8 @@ def _build_book_bundle(
         "description": book_row["description"] or "",
         "coverSha": book_row["cover_sha"],
         "style": (book_row["style"] if "style" in book_row.keys() else None),
+        "dedication": (book_row["dedication"] if "dedication" in book_row.keys() else None),
+        "aboutAuthor": (book_row["about_author"] if "about_author" in book_row.keys() else None),
         "publishedAt": published_at,
         "chapters": [
             _build_bundle(r, token, published_at) for r in chapter_rows
@@ -1300,8 +1311,11 @@ def _safe_filename(name: str) -> str:
 def _build_epub(
     title: str, author: str, chapters: list[dict],
     cover_bytes: bytes | None = None, cover_mime: str | None = None,
+    *, dedication: str | None = None, about_author: str | None = None,
 ) -> bytes:
-    """Build a valid .epub (bytes) from ordered chapters [{title, text}, …]."""
+    """Build a valid .epub (bytes) from ordered chapters [{title, text}, …],
+    with auto-generated front matter (title page, copyright, optional
+    dedication) and back matter (optional about-the-author) — like Vellum."""
     from ebooklib import epub
 
     book = epub.EpubBook()
@@ -1318,6 +1332,39 @@ def _build_epub(
             pass
     spine: list = ["nav"]
     toc: list = []
+    et = lambda s: _html.escape(s or "", quote=False)
+    year = datetime.now(timezone.utc).year
+
+    def _page(fn, title_attr, body):
+        it = epub.EpubHtml(title=title_attr, file_name=fn, lang="en")
+        it.content = body
+        book.add_item(it)
+        return it
+
+    # ── Front matter (spine, not in the reading TOC) ──
+    spine.append(_page(
+        "title.xhtml", "Title Page",
+        '<div style="text-align:center;margin-top:28%">'
+        + f"<h1>{et(title or 'Untitled')}</h1>"
+        + (f'<p style="font-size:1.15em;margin-top:1em">{et(author)}</p>' if author else "")
+        + "</div>",
+    ))
+    spine.append(_page(
+        "copyright.xhtml", "Copyright",
+        '<div style="text-align:center;margin-top:42%;font-size:0.85em">'
+        + f"<p>© {year}" + (f" {et(author)}" if author else "") + "</p>"
+        + "<p>All rights reserved.</p>"
+        + '<p style="margin-top:1.5em">Made with Narrative</p>'
+        + "</div>",
+    ))
+    if dedication and dedication.strip():
+        spine.append(_page(
+            "dedication.xhtml", "Dedication",
+            '<div style="text-align:center;margin-top:38%;font-style:italic">'
+            + _md_to_xhtml(dedication) + "</div>",
+        ))
+
+    # ── Chapters (in the TOC) ──
     for i, ch in enumerate(chapters):
         ct = (ch.get("title") or f"Chapter {i + 1}").strip()
         item = epub.EpubHtml(
@@ -1325,12 +1372,21 @@ def _build_epub(
         )
         # Body fragment only — ebooklib wraps it in a valid XHTML document.
         item.content = (
-            f"<h2>{_html.escape(ct, quote=False)}</h2>"
-            + _md_to_xhtml(ch.get("text") or "")
+            f"<h2>{et(ct)}</h2>" + _md_to_xhtml(ch.get("text") or "")
         )
         book.add_item(item)
         spine.append(item)
         toc.append(item)
+
+    # ── Back matter (about the author → spine + TOC) ──
+    if about_author and about_author.strip():
+        ab = _page(
+            "about_author.xhtml", "About the Author",
+            "<h2>About the Author</h2>" + _md_to_xhtml(about_author),
+        )
+        spine.append(ab)
+        toc.append(ab)
+
     book.toc = tuple(toc)
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
@@ -1404,7 +1460,11 @@ def export_book_epub(book_id: int, request: Request):
                 cover_bytes = p.read_bytes()
         except Exception:
             pass
-    data = _build_epub(book["title"] or "Untitled", book["author"] or "", chapters, cover_bytes)
+    data = _build_epub(
+        book["title"] or "Untitled", book["author"] or "", chapters, cover_bytes,
+        dedication=(book["dedication"] if "dedication" in book.keys() else None),
+        about_author=(book["about_author"] if "about_author" in book.keys() else None),
+    )
     return _epub_response(data, book["title"] or "book")
 
 
