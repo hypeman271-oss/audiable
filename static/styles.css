@@ -15346,6 +15346,8 @@ body.reader-immersed .hero-row,
 body.reader-immersed #book-view-nav,
 body.reader-immersed #book-view-nav-slot,
 body.reader-immersed #player-card,
+body.reader-immersed #phone-tag-row,
+body.reader-immersed #phone-pullup,
 body.reader-immersed #pub-chapter-nav {
   opacity: 0 !important;
   pointer-events: none !important;
