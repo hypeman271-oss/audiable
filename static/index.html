@@ -27,9 +27,9 @@
 
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Audition" />
+    <meta name="apple-mobile-web-app-title" content="Lyrith" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <title>Audition</title>
+    <title>Lyrith</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png" />
@@ -143,8 +143,8 @@
          "narrative:ready" event from app.js OR a 4s safety timeout).
          Markup is intentionally minimal so it parses + paints fast. -->
     <div id="app-splash" aria-hidden="true">
-      <div id="app-splash-mark">Audition</div>
-      <div id="app-splash-tagline">Audition your story.</div>
+      <div id="app-splash-mark">Lyrith</div>
+      <div id="app-splash-tagline">Hear your story.</div>
       <div id="app-splash-dots"><span></span><span></span><span></span></div>
     </div>
     <script>
@@ -223,7 +223,7 @@
     <div id="install-banner" class="install-banner" hidden>
       <span class="install-banner-icon" aria-hidden="true">📱</span>
       <span class="install-banner-text">
-        <strong>Install Audition</strong> for offline access and a
+        <strong>Install Lyrith</strong> for offline access and a
         full-screen reading view.
       </span>
       <button
@@ -242,7 +242,7 @@
       <span class="install-banner-icon" aria-hidden="true">📱</span>
       <span class="install-banner-text">
         Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>
-        to install Audition for offline access.
+        to install Lyrith for offline access.
       </span>
       <button
         id="install-banner-ios-dismiss"
@@ -514,7 +514,7 @@
         <div class="hero-row">
           <div class="hero-brand">
             <h1>
-              Audition
+              Lyrith
               <!-- v225v4.23 (#828): visible build stamp in the header.
                    Useful for bug reports (testers can read it off
                    without opening Settings) and as a quick "is the
@@ -530,7 +530,7 @@
                 title="What's new in this build"
               >v225v4.106</a>
             </h1>
-            <p class="tagline">Audition your story.</p>
+            <p class="tagline">Hear your story.</p>
           </div>
           <!-- Inline strip: sits in the hero's empty middle slot
                between the title block and the icon rail. Chips are
@@ -811,7 +811,7 @@
                   <div class="settings-toggle-label">
                     <strong>Sync library across devices</strong>
                     <span class="settings-toggle-desc">
-                      Stores your library on the Audition server so you can
+                      Stores your library on the Lyrith server so you can
                       edit on your desktop and listen on your phone. New
                       saves push as you go; pulls happen when you open the
                       library. Off by default — flip on per device.
@@ -939,7 +939,7 @@
                     tokens, GitHub Enterprise, or if your operator hasn't
                     configured OAuth). Token stays on this device.
                     <a
-                      href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Audition"
+                      href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Lyrith"
                       target="_blank"
                       rel="noopener"
                     >Create one →</a>
@@ -993,24 +993,24 @@
                         </figcaption>
                       </figure>
                       <!-- v181: PAT scope audit. Spells out per-scope what
-                           Audition actually uses the token for, what it
+                           Lyrith actually uses the token for, what it
                            does NOT touch, and which scopes can be safely
                            dropped if you only need public-repo access. -->
                       <div class="settings-pat-scope-audit">
                         <h4 class="settings-pat-scope-heading">
-                          Which scopes does Audition actually use?
+                          Which scopes does Lyrith actually use?
                         </h4>
                         <p class="settings-pat-scope-intro">
                           The <em>Create one →</em> link pre-ticks
                           <code>repo</code> because that's what most writers
                           need (private drafts). Here's what each scope
-                          grants and what Audition does with it.
+                          grants and what Lyrith does with it.
                         </p>
                         <table class="settings-pat-scope-table" aria-label="PAT scope audit">
                           <thead>
                             <tr>
                               <th scope="col">Scope</th>
-                              <th scope="col">Audition uses it for</th>
+                              <th scope="col">Lyrith uses it for</th>
                               <th scope="col">Recommended?</th>
                             </tr>
                           </thead>
@@ -1056,7 +1056,7 @@
                             <tr>
                               <td><em>everything else</em></td>
                               <td>
-                                <em>Not touched.</em> Audition never
+                                <em>Not touched.</em> Lyrith never
                                 calls write, admin, gist (mutate), pages,
                                 workflow, or organization scopes.
                               </td>
@@ -1069,7 +1069,7 @@
                         </table>
                         <p class="settings-pat-scope-note">
                           Fine-grained PATs work too — pick the exact repos
-                          you want Audition to see, then grant
+                          you want Lyrith to see, then grant
                           <em>Contents → Read-only</em>. Sync GitHub +
                           re-narrate need <em>Metadata → Read-only</em>
                           too.
@@ -1146,7 +1146,7 @@
                   <p class="settings-section-hint">
                     Connect Google Drive to import your private Docs and
                     files via <em>Import ▾ → Google Drive</em>. You only
-                    grant access to the files you pick — Audition can't
+                    grant access to the files you pick — Lyrith can't
                     see the rest of your Drive. The connection lives on the
                     server, not this device. Public share links work
                     without signing in.
@@ -2035,7 +2035,7 @@
                      "I'm not on the version I expect" — pair the diagnostic
                      and the fix. Switch key moved to the Account pane. -->
                 <p id="settings-version" class="settings-version">
-                  Audition <span id="settings-version-tag">v225v4.91</span>
+                  Lyrith <span id="settings-version-tag">v225v4.91</span>
                   <button
                     type="button"
                     id="settings-force-update"
@@ -2267,7 +2267,7 @@
             title="Hide this helper (Settings can bring it back)"
           >×</button>
           <p class="empty-state-head">
-            New to Audition? Try one of these to get started.
+            New to Lyrith? Try one of these to get started.
           </p>
           <div class="empty-state-grid">
             <button
@@ -3852,7 +3852,7 @@
         <iframe
           id="manual-dialog-frame"
           class="manual-dialog-frame"
-          title="Audition manual"
+          title="Lyrith manual"
           loading="lazy"
         ></iframe>
       </dialog>
@@ -3939,7 +3939,7 @@
             <h3 id="key-prompt-title">🔑 API key</h3>
           </header>
           <p class="key-prompt-body">
-            This Audition server requires an API key. Paste your
+            This Lyrith server requires an API key. Paste your
             <code>X-Narrative-Key</code> value below — your server admin
             issued it when they invited you.
           </p>

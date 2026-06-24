@@ -10,7 +10,7 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf4e3" />
     <!-- v225v3.27: reverted color-scheme meta. -->
 
-    <title>Audition — What's new</title>
+    <title>Lyrith — What's new</title>
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
     <link rel="stylesheet" href="/styles.css" />
     <script>
@@ -129,7 +129,7 @@
   </head>
   <body>
     <main class="manual">
-      <a href="/" class="back-link">← Back to Audition</a>
+      <a href="/" class="back-link">← Back to Lyrith</a>
 
       <h1>What's new</h1>
       <p class="lede">
@@ -252,7 +252,7 @@
             needed.
           </li>
           <li>
-            <strong>You pick exactly what we see.</strong> Audition only
+            <strong>You pick exactly what we see.</strong> Lyrith only
             gets access to the files you choose in the picker — never the
             rest of your Drive. The connection lives on the server, not
             your device, and you can <em>Disconnect</em> any time from the
@@ -340,7 +340,7 @@
             author below, audiobook badge with a small waveform. If the
             clip has an uploaded cover, it fills the front face. Click
             <em>Download PNG</em> for a 1080×1080 social-share image
-            with a "Made with Audition" wordmark in the footer. Title
+            with a "Made with Lyrith" wordmark in the footer. Title
             and author are editable in the dialog so you can hand-tune
             the share without changing the clip.
           </li>
@@ -567,7 +567,7 @@
             you import a markdown file from GitHub that has a
             <code>--- … ---</code> frontmatter block at the top (Jekyll,
             Obsidian, hand-rolled metadata — anything in that shape),
-            Audition now stashes the block as-is on the clip's gitRef.
+            Lyrith now stashes the block as-is on the clip's gitRef.
             On <em>⇡ Push to GitHub</em>, the original frontmatter is
             prepended back to your revised body, so the file on GitHub
             keeps its <code>title:</code> / <code>tags:</code> /
@@ -940,8 +940,8 @@
         <ul>
           <li>
             <strong>Closing the loop.</strong> Until now, edits you made
-            in Audition (single-sentence ✎ edits, full-clip text changes
-            in the Edit dialog) lived only inside Audition. The source
+            in Lyrith (single-sentence ✎ edits, full-clip text changes
+            in the Edit dialog) lived only inside Lyrith. The source
             file on GitHub stayed exactly as you imported it, which meant
             copy-pasting the edits back by hand if you wanted them in
             your manuscript repo. Now there's a <strong>⇡ Push to GitHub</strong>
@@ -959,7 +959,7 @@
           <li>
             <strong>What gets pushed:</strong> the clip's current text,
             UTF-8 encoded. <em>What doesn't:</em> bookmarks, annotations,
-            voice presets, cover art — those live in Audition because
+            voice presets, cover art — those live in Lyrith because
             they have nowhere to land in a plain markdown file.
             <strong>Known limitation:</strong> if your source file had
             YAML frontmatter (<code>---</code> at the top), it'll be
@@ -1152,7 +1152,7 @@
             <strong>Nav pill moved into the header on desktop.</strong>
             The page-flip / Print / Contents controls used to float at
             the bottom of the book view. They now live in the
-            Audition header strip, in the empty space between the
+            Lyrith header strip, in the empty space between the
             title and the icon rail — closer to where your eyes
             already are, and out of the spread itself so the page
             looks more like a real book.
@@ -1343,7 +1343,7 @@
             <strong>Generation now snapshots license metadata onto the
             clip.</strong> The voice id, speaker, license, dataset, and
             required attribution string are captured the moment the
-            audio is rendered — so even if Audition's audit later
+            audio is rendered — so even if Lyrith's audit later
             revises the catalog, the clip remembers what was true when
             you made it.
           </li>
@@ -2203,7 +2203,7 @@
           <li>
             <strong>Hero strip lives in the hero again.</strong>
             At the top of the page the chips sit inside the hero's
-            empty middle slot — between the "Audition" wordmark
+            empty middle slot — between the "Lyrith" wordmark
             and the Voice / Library / ⚙ icon rail. Zero overlap
             with the text card buttons below, because the strip
             isn't even at that vertical position.
@@ -2253,7 +2253,7 @@
             kind of centered) to a hard <code>left: 160px</code>
             anchor with no translate. The strip now starts 160px
             from the viewport's left edge — just past the
-            "Audition" wordmark — and extends rightward, sitting
+            "Lyrith" wordmark — and extends rightward, sitting
             firmly in the upper-left quadrant.
           </li>
           <li>
@@ -2285,7 +2285,7 @@
             Clear / Import / Edit text / Audio view buttons one
             row below. v193 shifts the anchor to
             <code>calc(50% - 220px)</code>, parking the strip in
-            the empty band between the "Audition" wordmark on
+            the empty band between the "Lyrith" wordmark on
             the left and those action buttons on the right. The
             buttons are fully reachable now.
           </li>
@@ -2346,7 +2346,7 @@
             ~50px of vertical bulk to every page. v191 switches the
             strip to <code>position: fixed</code> and parks it in
             the empty middle space of the hero, between the
-            "Audition" wordmark on the left and the Voice/Library/
+            "Lyrith" wordmark on the left and the Voice/Library/
             Settings icon rail on the right. At rest, no content is
             pushed down. Scroll, and the strip stays pinned at
             <code>top: 6px</code> of the viewport.
@@ -2435,7 +2435,7 @@
             <strong>The chip strip lives in the hero now.</strong>
             Skip ±, 🔖 Bookmark, Sleep, A↔B, 1× speed, and 📝
             Notes — all moved from the player card up into the
-            hero's empty middle slot (between the Audition title
+            hero's empty middle slot (between the Lyrith title
             and the icon rail). One glance, one tap, no scrolling.
           </li>
           <li>
@@ -2664,7 +2664,7 @@
           <li>
             <strong>PAT scope audit in Settings.</strong> The GitHub
             help disclosure now includes a per-scope breakdown:
-            what each scope actually grants, what Audition uses it
+            what each scope actually grants, what Lyrith uses it
             for, and what it does NOT touch. Fine-grained PATs get
             their own row (<em>Contents → Read</em> + <em>Metadata
             → Read</em> is enough).
@@ -2683,7 +2683,7 @@
             <strong>One-click GitHub sign-in, no more PAT paste.</strong>
             Settings → GitHub now has a <em>Sign in with GitHub</em>
             button. Click it, authorize on github.com, you're back
-            on Audition with the token already saved. Settings shows
+            on Lyrith with the token already saved. Settings shows
             <em>Signed in as @yourhandle</em>. PAT paste stays as
             the fallback (fine-grained tokens, GitHub Enterprise,
             unconfigured servers).
@@ -2870,7 +2870,7 @@
         <ul>
           <li>
             <strong>Tour sits in the empty space between
-            <em>Audition</em> and the icon rail.</strong> Even at
+            <em>Lyrith</em> and the icon rail.</strong> Even at
             the top of the page it kept getting glanced past;
             putting it inside the hero row — directly in the
             left-to-right scan — makes it impossible to miss. On
@@ -2960,7 +2960,7 @@
         <ul>
           <li>
             <strong>Press <kbd>?</kbd> for a shortcuts overlay.</strong>
-            A new dialog lists every keyboard shortcut Audition
+            A new dialog lists every keyboard shortcut Lyrith
             knows about — Ctrl+Enter to generate, Esc to clear
             search, Enter to fetch URLs, and more. Reach it via
             <kbd>?</kbd> (when you're not typing in a field) or

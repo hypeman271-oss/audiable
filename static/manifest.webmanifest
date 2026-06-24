@@ -1,7 +1,7 @@
 {
-  "name": "Audition",
-  "short_name": "Audition",
-  "description": "Audition your story — turn your manuscript into a narrated audiobook you can hear, revise, and publish.",
+  "name": "Lyrith",
+  "short_name": "Lyrith",
+  "description": "Lyrith — turn your manuscript into a narrated audiobook you can hear, revise, and publish.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

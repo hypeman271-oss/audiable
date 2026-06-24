@@ -9,8 +9,8 @@ const $ = (id) => document.getElementById(id);
 // prefix (the version pill parses it), the `audiable` IndexedDB, and the
 // NARRATIVE_BACKUP export marker. Renaming any of those would orphan existing
 // users' data and break the auto-updater + backup round-trip.
-const APP_NAME = "Audition";
-const APP_TAGLINE = "Audition your story.";
+const APP_NAME = "Lyrith";
+const APP_TAGLINE = "Hear your story.";
 
 // ---- Debug log ---------------------------------------------------------
 // v177: ring buffer for diagnosing "chapter X keeps failing to synthesize"
