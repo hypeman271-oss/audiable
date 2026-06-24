@@ -3538,6 +3538,17 @@
             aria-expanded="false"
             aria-controls="bookmarks-drawer"
           >🔖 Bookmarks</button>
+          <!-- v4.188: clear this clip's flags + bookmarks + notes. Sits
+               next to Download notes (its natural complement — export, then
+               clear). Opens the same confirm dialog, which lets the user
+               pick which categories to clear and offers export-first. -->
+          <button
+            id="toolbar-clear-marks-btn"
+            type="button"
+            class="notes-btn advanced-only"
+            aria-label="Clear this clip's flags, bookmarks, and notes"
+            title="Clear this clip's flags, bookmarks, and notes"
+          >🧹 Clear marks</button>
         </div>
         <aside
           id="bookmarks-drawer"

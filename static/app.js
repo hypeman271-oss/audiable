@@ -31597,7 +31597,7 @@ if (_clipEditClearMarksBtn) {
 // which then lets the user pick bookmarks / flags / notes (or all) and
 // optionally export first. stopPropagation keeps the bookmark-drawer head's
 // click-to-close from firing when the button is tapped.
-for (const _id of ["bookmarks-drawer-clear", "notes-dialog-clear", "dap-clear-marks"]) {
+for (const _id of ["bookmarks-drawer-clear", "notes-dialog-clear", "dap-clear-marks", "toolbar-clear-marks-btn"]) {
   const _btn = document.getElementById(_id);
   if (!_btn) continue;
   _btn.addEventListener("click", (e) => {
