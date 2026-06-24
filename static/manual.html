@@ -8,7 +8,7 @@
     <!-- v225v3.27: reverted v3.23 color-scheme meta (was breaking
          rendering). -->
 
-    <title>Narrative — Manual</title>
+    <title>Audition — Manual</title>
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png" />
     <link rel="stylesheet" href="/styles.css" />
     <!-- v225eh (#625): walkthrough engine shared between this page
@@ -1772,9 +1772,9 @@
   </head>
   <body>
     <main class="manual">
-      <a href="/" class="back-link">← Back to Narrative</a>
+      <a href="/" class="back-link">← Back to Audition</a>
 
-      <h1>Narrative Manual</h1>
+      <h1>Audition Manual</h1>
       <p class="lede">
         Local text-to-speech for readers and writers. Type, paste a URL,
         upload a chapter — listen anywhere. Everything below is in the
@@ -1838,7 +1838,7 @@
       <!-- ============================================================= -->
       <h2 id="layout">1. How the page is laid out</h2>
       <p>
-        Narrative is one scrolling page divided into stacked cards. Top
+        Audition is one scrolling page divided into stacked cards. Top
         to bottom, here's the whole thing (rendered live with the actual
         app's CSS — what you see below is exactly what the app paints):
       </p>
@@ -1848,7 +1848,7 @@
             <header class="hero">
               <div class="hero-row">
                 <div>
-                  <h1>Narrative</h1>
+                  <h1>Audition</h1>
                   <p class="tagline">Write. Listen. Revise.</p>
                 </div>
                 <div class="hero-icons">
@@ -1953,7 +1953,7 @@
         <strong>Voice</strong> and <strong>Library</strong> live in
         dialogs opened from the hero icons rather than as in-page cards.
         That keeps the text window dominant on every viewport — the
-        manuscript is the work, and Narrative gets out of its way.
+        manuscript is the work, and Audition gets out of its way.
       </p>
       <p>
         Each card is independent — you can keep listening to one clip
@@ -2057,7 +2057,7 @@
         pre-synthesized, auto-advancing — that lets you walk through
         a whole project without touching the app between chapters.</p>
       <div class="tip">
-        <strong>New to Narrative?</strong> Land on an empty library
+        <strong>New to Audition?</strong> Land on an empty library
         with nothing typed and you'll see a "Get started" card with
         three big clickable starters — paste a URL, upload a file,
         browse a GitHub repo. Auto-hides the moment you type or save
@@ -2295,7 +2295,7 @@
           <td><strong>Signed in?</strong> Connect Google Drive in
             <em>Settings → Account → Google Drive</em> and this opens
             Google's file picker — choose a private Doc or file and it
-            imports directly. Narrative only sees the files you pick, and
+            imports directly. Audition only sees the files you pick, and
             the connection lives on the server (nothing stored on your
             device).<br />
             <strong>Not signed in?</strong> Paste a Drive share URL set
@@ -2575,7 +2575,7 @@
           + env vars in <a href="/OAUTH_SETUP.md" target="_blank" rel="noopener"><code>OAUTH_SETUP.md</code></a>.
           Once configured, the <em>Sign in with GitHub</em> button
           in Settings lights up; click it, authorize on github.com,
-          you're back on Narrative with the token saved + the
+          you're back on Audition with the token saved + the
           section reads <em>"Signed in as @yourhandle"</em>.
         </li>
         <li>
@@ -2640,11 +2640,11 @@
             button on the right edge commits the clip's current
             <strong>text</strong> back to the source file. Opens a prompt
             with the default commit message
-            (<em>"Revised in Narrative: &lt;title&gt;"</em>); edit and OK
+            (<em>"Revised in Audition: &lt;title&gt;"</em>); edit and OK
             to push, cancel to abort. Refuses with a clear error if the
             source has moved on GitHub since you imported (use the
             per-card ↻ Sync chip to Pull first). Voice presets stay
-            Narrative-side (a TTS detail, not part of your manuscript).
+            Audition-side (a TTS detail, not part of your manuscript).
             <strong>YAML frontmatter</strong> — your
             <code>--- title: … ---</code> block at the top of the file —
             is captured at import and prepended back on push, so
@@ -2690,7 +2690,7 @@
             patched scenes lose RTF formatting (bold / italic / font
             in those scenes only); all untouched scenes round-trip
             byte-for-byte. Only scenes that were actually imported as
-            clips get touched. Use case: revise in Narrative on the
+            clips get touched. Use case: revise in Audition on the
             phone or desktop, push back when you sit down at the
             project file.</td>
         </tr>
@@ -2724,7 +2724,7 @@
            Reachable as #frontmatter-examples from the v4.60 row above. -->
       <h3 id="frontmatter-examples">Frontmatter — what works on push-back</h3>
       <p>
-        When you import a markdown file from GitHub, Narrative captures
+        When you import a markdown file from GitHub, Audition captures
         any YAML frontmatter block at the top of the file and stashes
         it on the clip's <code>gitRef</code>. The block doesn't appear
         in the reading view and TTS never says it. On
@@ -2947,7 +2947,7 @@ title: Spaced
       <p>
         Voices that haven't been audited yet default to
         non-commercial — safer than promising the opposite. Future
-        Narrative versions will flip more voices to green as the
+        Audition versions will flip more voices to green as the
         audit catches up.
       </p>
 
@@ -3169,7 +3169,7 @@ title: Spaced
         <li>
           <strong>Title + version stamp</strong> at the top, so when
           you paste the file into Scrivener or send it to an editor,
-          they know which Narrative build produced it.
+          they know which Audition build produced it.
         </li>
         <li>
           <strong>Notes</strong> — the free-form scratchpad above,
@@ -3193,7 +3193,7 @@ title: Spaced
         </li>
       </ul>
       <p>
-        Filename includes the Narrative build version so multiple
+        Filename includes the Audition build version so multiple
         exports of the same clip don't collide:
         <code>chapter-00-draft-notes-2026-06-03.md</code>.
       </p>
@@ -3385,7 +3385,7 @@ title: Spaced
       <h3 id="animation">Animating sentences <span style="font-weight:400;opacity:0.7;">(preview)</span></h3>
       <div class="tip" style="margin-top:0;">
         <strong>Preview feature.</strong> Animation is still being built and
-        is off by default. Turn it on by opening Narrative with
+        is off by default. Turn it on by opening Audition with
         <code>?anim=1</code> in the address bar (or run
         <code>localStorage.setItem('narrative.animPrototype','1')</code> in the
         browser console once). With it off, the 🎬 Animate button is hidden and
@@ -3420,7 +3420,7 @@ title: Spaced
       <p>
         A sprite sheet is a single image holding every frame of the animation
         in <strong>one horizontal row, all the same width and height</strong>.
-        Narrative slices it into <em>N</em> equal frames and cycles through them.
+        Audition slices it into <em>N</em> equal frames and cycles through them.
       </p>
       <ul>
         <li><strong>Layout:</strong> frames left → right in one row (e.g. four 200×200 frames = an 800×200 image).</li>
@@ -3522,7 +3522,7 @@ title: Spaced
         view</strong> — so size every image for the smallest target (a phone).
       </p>
       <p>
-        Narrative now <strong>auto-resizes</strong> any image whose long side
+        Audition now <strong>auto-resizes</strong> any image whose long side
         exceeds 2048&nbsp;px when you add it (you'll see a note on save), so it
         renders everywhere without you doing anything. The sizes below are still
         worth following — they give the best quality and smallest files, and the
@@ -3588,7 +3588,7 @@ title: Spaced
 
       <h3>Chapter awareness</h3>
       <p>
-        Narrative tries to find chapter boundaries inside the clip's
+        Audition tries to find chapter boundaries inside the clip's
         text using three heuristics: Markdown ATX headings
         (<code># Title</code> / <code>## Title</code>), explicit
         "Chapter N" / "Part Three" patterns, and bare Roman numerals
@@ -3839,7 +3839,7 @@ title: Spaced
         <li>A <strong>Copy</strong> button that lifts the attribution string to your clipboard in one click.</li>
       </ul>
       <p>
-        Provenance is a snapshot, not a live lookup: even if Narrative's
+        Provenance is a snapshot, not a live lookup: even if Audition's
         license audit later changes (a voice gets reclassified, an
         attribution string updates), the clip remembers what was true
         when it was generated. That's the right behavior — the audio
@@ -4054,7 +4054,7 @@ title: Spaced
         </li>
       </ul>
       <p>
-        The PNG includes a <em>Made with Narrative</em> wordmark in
+        The PNG includes a <em>Made with Audition</em> wordmark in
         the footer and the URL below it. That's the only branding —
         no watermark on the cover itself, no logo on the spine.
       </p>
@@ -4339,7 +4339,7 @@ title: Spaced
       <ul>
         <li>
           <strong>Sync library across devices</strong> — Off / On.
-          Stores your library on the Narrative server so you can
+          Stores your library on the Audition server so you can
           edit on desktop and listen on phone. Below the toggle:
           <strong>Pull now</strong> (safe — fetches newest clips,
           presets, annotations) and <strong>Force-push to server</strong>
@@ -4485,7 +4485,7 @@ title: Spaced
           overlay tour for the Author-tier features: Mode picker, 🔖
           bookmark while listening, ✎ inline-edit a sentence, cross-clip
           bookmark timeline, ⌘K command palette. Seven steps, opt-in
-          only. Useful after you've used Narrative for a bit and want
+          only. Useful after you've used Audition for a bit and want
           to see what unlocks in Author mode without hunting through
           the manual.
         </li>
@@ -4500,7 +4500,7 @@ title: Spaced
             <li>
               <strong>Sign in with GitHub</strong> (preferred) —
               click the accent button, authorize on github.com,
-              you're back on Narrative with the token already
+              you're back on Audition with the token already
               saved. Settings shows <em>"Signed in as
               @yourhandle"</em>. Token comes back via URL fragment
               so it never appears in server logs. <strong>Requires
@@ -4525,11 +4525,11 @@ title: Spaced
           guide opens a faithful mock of GitHub's token-generated
           screen (it shows the token only once; easy to scroll past)
           AND a <strong>PAT scope audit table</strong>: per-scope
-          breakdown of what each permission grants, what Narrative
+          breakdown of what each permission grants, what Audition
           actually uses it for, and what it does NOT touch. Use
           <code>repo</code> for private drafts, <code>public_repo</code>
           for read-only on public manuscripts, and skip everything
-          else — Narrative never calls write, admin, gist-mutate,
+          else — Audition never calls write, admin, gist-mutate,
           pages, workflow, or org scopes. Fine-grained PATs need
           <em>Contents → Read-only</em> + <em>Metadata → Read-only</em>
           for the import + Sync flows.
@@ -4539,7 +4539,7 @@ title: Spaced
       <h4>About</h4>
       <ul>
         <li>
-          <strong>Version stamp</strong> — Narrative <code>vXXX</code>
+          <strong>Version stamp</strong> — Audition <code>vXXX</code>
           + <strong>Force update</strong> button next to it. Force
           update wipes the local Service Worker cache and reloads —
           use if a new version doesn't seem to be showing up after
@@ -4599,7 +4599,7 @@ title: Spaced
         <figcaption>A character row: name · voice · speaker · delete</figcaption>
       </figure>
       <p>
-        When you hit Generate, Narrative scans your text sentence by
+        When you hit Generate, Audition scans your text sentence by
         sentence. Each sentence is routed to a character (or the main
         narrator voice) using this priority order:
       </p>
@@ -4648,7 +4648,7 @@ She set both hands flat on the table.</pre>
       <h3 id="sync">Cross-device sync (v221+)</h3>
       <p>
         Settings → Account → <strong>Sync library across devices</strong>
-        ties your library to the Narrative server so you can edit on
+        ties your library to the Audition server so you can edit on
         a desktop and listen on a phone without exporting/importing.
         <strong>Off by default.</strong> Flip on per device.
       </p>
@@ -4724,7 +4724,7 @@ She set both hands flat on the table.</pre>
       <div class="warn">
         <strong>Privacy caveat:</strong> with sync on, your draft
         text and the synthesized audio do leave your machine —
-        they live on the Narrative server until you delete the
+        they live on the Audition server until you delete the
         clip. Sync off keeps everything 100% local. The privacy
         guarantee from the landing page (<em>"Your draft never
         leaves your machine"</em>) applies to sync-off mode only.
@@ -4747,7 +4747,7 @@ She set both hands flat on the table.</pre>
       <!-- ============================================================= -->
       <h2 id="phone">9. Listening on your phone</h2>
       <p>
-        Narrative is a Progressive Web App (PWA) — install it from the
+        Audition is a Progressive Web App (PWA) — install it from the
         browser and it lives on your home screen, runs in the background,
         and surfaces play / pause / skip on the lock screen.
       </p>
@@ -5083,7 +5083,7 @@ She set both hands flat on the table.</pre>
 
       <h3>Install on iOS (iPhone / iPad)</h3>
       <ol>
-        <li>Open the Narrative URL in <strong>Safari</strong> (not Chrome — iOS only installs PWAs from Safari).</li>
+        <li>Open the Audition URL in <strong>Safari</strong> (not Chrome — iOS only installs PWAs from Safari).</li>
         <li>Tap the <strong>Share</strong> button (square with an up-arrow).</li>
         <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
         <li>Confirm the name → <strong>Add</strong>.</li>
@@ -5091,7 +5091,7 @@ She set both hands flat on the table.</pre>
 
       <h3>Install on Android</h3>
       <ol>
-        <li>Open the Narrative URL in <strong>Chrome</strong>.</li>
+        <li>Open the Audition URL in <strong>Chrome</strong>.</li>
         <li>An "Install" prompt usually appears at the bottom — tap it.</li>
         <li>If you missed the prompt: <strong>⋮ menu → Install app</strong> (or "Add to Home screen").</li>
       </ol>
@@ -5110,7 +5110,7 @@ She set both hands flat on the table.</pre>
         <strong>Your key is unique to you.</strong> Each tester gets
         their own key so your library stays isolated from every other
         tester's. Don't share it — anyone with the key sees (and can
-        edit) your library. If you want to use Narrative on more than
+        edit) your library. If you want to use Audition on more than
         one of your own devices, paste the <em>same</em> key on each.
         That's what makes cross-device sync land on the same library.
       </div>
@@ -5141,10 +5141,10 @@ She set both hands flat on the table.</pre>
         </li>
         <li>
           A small browser dialog appears with the message
-          <em>"This Narrative server requires an API key. Paste your
+          <em>"This Audition server requires an API key. Paste your
           X-Narrative-Key value (set by the server admin):"</em> and
           an input field. <strong>This is a native browser prompt</strong>
-          (not a Narrative-styled dialog), so it'll look like every
+          (not a Audition-styled dialog), so it'll look like every
           other prompt your browser shows.
         </li>
         <li>
@@ -5233,7 +5233,7 @@ She set both hands flat on the table.</pre>
         Locking the phone, switching apps, even closing the browser
         UI to one tab — audio keeps playing. The current clip's
         progress saves automatically, so if the OS does eventually
-        evict the tab, you can reopen Narrative and Continue
+        evict the tab, you can reopen Audition and Continue
         Listening picks up where you left off.
       </p>
 
@@ -5245,7 +5245,7 @@ She set both hands flat on the table.</pre>
       </p>
 
       <div class="note">
-        Running Narrative on your own machine instead of using the
+        Running Audition on your own machine instead of using the
         hosted alpha? See <code>DEPLOY.md</code> for Fly.io deployment,
         and <code>scripts/tunnel.py</code> for sharing a local instance
         over a Cloudflare tunnel.
@@ -5342,7 +5342,7 @@ She set both hands flat on the table.</pre>
         </div>
       </div>
       <p>
-        That's the whole loop. From here, everything else in Narrative
+        That's the whole loop. From here, everything else in Audition
         builds on top: bookmarks save moments, annotations flag
         sentences, Edit text fixes typos.
       </p>
@@ -5462,7 +5462,7 @@ She set both hands flat on the table.</pre>
 
       <h3 id="wt-paste-url">Tutorial 3 — Paste an article URL</h3>
       <p>
-        Bring any web article into Narrative by URL. The fetch + extraction
+        Bring any web article into Audition by URL. The fetch + extraction
         path strips ads and nav, leaving just the prose.
       </p>
       <div class="tip" style="margin-bottom: 0;">
@@ -5594,7 +5594,7 @@ She set both hands flat on the table.</pre>
       <h3 id="wt-browse-github">Tutorial 5 — Browse a GitHub repo</h3>
       <p>
         Connect a manuscript repo once, then pick chapters from a file
-        tree. Narrative stores the commit SHA on each clip so it can
+        tree. Audition stores the commit SHA on each clip so it can
         flag "this chapter has been updated" when you push a new draft.
       </p>
       <div class="tip" style="margin-bottom: 0;">
@@ -5651,7 +5651,7 @@ She set both hands flat on the table.</pre>
         The on-screen book is rendered live in 3D — what you see is
         the same component that anchors the landing-page hero. The
         downloaded PNG flattens it to a clean square with a "Made with
-        Narrative" wordmark footer.
+        Audition" wordmark footer.
       </p>
       <div class="tip" style="margin-bottom: 16px;">
         <strong>Live demo.</strong> The block below is the actual
@@ -5709,7 +5709,7 @@ She set both hands flat on the table.</pre>
           <strong>Click <em>Download PNG</em>.</strong> The file lands
           in your Downloads folder as
           <code>{title}-narrative-mockup.png</code>. Open it to see the
-          flat 1080×1080 version with a <em>Made with Narrative</em>
+          flat 1080×1080 version with a <em>Made with Audition</em>
           wordmark in the footer.
         </li>
         <li>
@@ -6216,7 +6216,7 @@ She set both hands flat on the table.</pre>
         </li>
         <li>
           Click Sign in. Browser navigates to github.com,
-          authorize. You're back on Narrative — status reads
+          authorize. You're back on Audition — status reads
           <em>"✓ Signed in with GitHub — token saved."</em>
           Reopen Settings; the GitHub section now reads
           <em>"Signed in as @yourhandle"</em>.
@@ -6268,7 +6268,7 @@ She set both hands flat on the table.</pre>
           @ <code>a1b2c3d</code>"</em> meta line. Close. Open
           DevTools → Application → IndexedDB → narrative → clips.
           Edit that clip's <code>gitRef.sha</code> to anything
-          (drop the last char). Reload Narrative. Click Sync
+          (drop the last char). Reload Audition. Click Sync
           GitHub. Status now reads <em>"1 of N clips have newer
           commits."</em> A <strong>Re-narrate outdated (1)</strong>
           button appears next to Sync. Click it → the background
@@ -6481,7 +6481,7 @@ She set both hands flat on the table.</pre>
         media-session integration on the lock screen.</p>
       <ol>
         <li>
-          Open Narrative on your phone (over LAN, Cloudflare tunnel,
+          Open Audition on your phone (over LAN, Cloudflare tunnel,
           or Fly URL — anything HTTPS or localhost).
           <strong>iOS</strong>: Safari → Share → <em>Add to Home
           Screen</em>. <strong>Android</strong>: Chrome → menu →
@@ -6516,7 +6516,7 @@ She set both hands flat on the table.</pre>
       <p><em>Tests</em>: Server-side library, per-tester isolation,
         push-on-save, pull-on-open, per-clip last-write-wins.</p>
       <p>
-        Prereq: you have Narrative installed (or just bookmarked) on
+        Prereq: you have Audition installed (or just bookmarked) on
         two devices — typically desktop browser + phone PWA — and
         your tester key is pasted on <em>both</em>. Same key on both
         devices is what makes them land on the same library; if
@@ -6540,7 +6540,7 @@ She set both hands flat on the table.</pre>
           to do anything for it to happen.
         </li>
         <li>
-          <strong>Phone.</strong> Open Narrative. Settings → same
+          <strong>Phone.</strong> Open Audition. Settings → same
           row, flip <strong>Sync</strong> to <strong>On</strong>.
           Status line transitions through <em>"Pulling…"</em> →
           <em>"Last pulled just now."</em>
@@ -6628,7 +6628,7 @@ She set both hands flat on the table.</pre>
             <li>
               <strong>Send feedback (mail app) →</strong> opens
               your phone's default mail app with the subject
-              prefilled (<em>"Narrative feedback — vNNN"</em>) and
+              prefilled (<em>"Audition feedback — vNNN"</em>) and
               a body that already includes your build version, the
               currently-loaded clip's id, and a blank space to
               describe what happened.
@@ -6686,7 +6686,7 @@ She set both hands flat on the table.</pre>
       </div>
 
       <p style="margin-top: 48px;">
-        <a href="/" class="back-link">← Back to Narrative</a>
+        <a href="/" class="back-link">← Back to Audition</a>
       </p>
       </article>
       </div>

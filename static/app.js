@@ -1,5 +1,17 @@
 const $ = (id) => document.getElementById(id);
 
+// ---- Brand --------------------------------------------------------------
+// v4.186: product display name + tagline, centralized so a future rename is
+// a one-line change here (plus the static spots in index.html / manifest).
+// IMPORTANT: this is the DISPLAY name only. Internal identifiers stay
+// "narrative" forever — localStorage `narrative.*` keys, the `X-Narrative-*`
+// HTTP headers, the `narrative:ready` event, the `narrative-shell-` SW cache
+// prefix (the version pill parses it), the `audiable` IndexedDB, and the
+// NARRATIVE_BACKUP export marker. Renaming any of those would orphan existing
+// users' data and break the auto-updater + backup round-trip.
+const APP_NAME = "Audition";
+const APP_TAGLINE = "Audition your story.";
+
 // ---- Debug log ---------------------------------------------------------
 // v177: ring buffer for diagnosing "chapter X keeps failing to synthesize"
 // reports. Every interesting step in the GitHub fetch → background queue →
@@ -501,7 +513,7 @@ window.addEventListener("narrative:menu", (e) => {
           (document.getElementById("settings-version-tag") || {}).textContent ||
           "";
         window.alert(
-          "Narrative " + v + "\n\nWrite. Listen. Revise.\n\nThe writer's audiobook tool."
+          APP_NAME + " " + v + "\n\n" + APP_TAGLINE + "\n\nThe writer's audiobook tool."
         );
       } catch {}
       break;
@@ -572,13 +584,13 @@ window.addEventListener("narrative:update-installing", () => {
   const text = document.getElementById("update-banner-text");
   const pctEl = document.getElementById("update-banner-pct");
   const bar = document.getElementById("update-banner-bar");
-  if (text) text.textContent = "Installing — Narrative will restart…";
+  if (text) text.textContent = `Installing — ${APP_NAME} will restart…`;
   if (pctEl) pctEl.textContent = "";
   if (bar) bar.style.width = "100%";
 });
 window.addEventListener("narrative:update-none", () => {
   try {
-    window.alert("You're on the latest version of Narrative.");
+    window.alert(`You're on the latest version of ${APP_NAME}.`);
   } catch {}
 });
 window.addEventListener("narrative:update-error", (e) => {
@@ -6524,7 +6536,7 @@ async function _refreshGithubOAuthUI() {
 
   btn.disabled = false;
   btn.title =
-    "Opens GitHub in this tab so you can authorize Narrative. " +
+    `Opens GitHub in this tab so you can authorize ${APP_NAME}. ` +
     "Token comes back via a redirect — never typed.";
   if (token) {
     if (labelEl) labelEl.textContent = "Re-authorize with GitHub";
@@ -6608,7 +6620,7 @@ async function _refreshGdriveOAuthUI() {
   btn.disabled = false;
   if (status.connected) {
     btn.dataset.connected = "true";
-    btn.title = "Disconnect Google Drive from Narrative.";
+    btn.title = `Disconnect Google Drive from ${APP_NAME}.`;
     setLabel("Disconnect");
     note.textContent = status.account_email
       ? `Connected as ${status.account_email}.`
@@ -6618,7 +6630,7 @@ async function _refreshGdriveOAuthUI() {
   } else {
     btn.dataset.connected = "false";
     btn.title =
-      "Opens Google in this tab so you can authorize Narrative to read " +
+      `Opens Google in this tab so you can authorize ${APP_NAME} to read ` +
       "the files you pick. Nothing is stored on this device.";
     setLabel("Sign in with Google");
     note.textContent = "";
@@ -6844,7 +6856,7 @@ async function _disableTotp() {
   dlCodes && dlCodes.addEventListener("click", () => {
     const c = (document.getElementById("totp-recovery-codes") || {}).textContent || "";
     const blob = new Blob([
-      "Narrative — two-step verification recovery codes\n" +
+      APP_NAME + " — two-step verification recovery codes\n" +
       "Each code works once. Keep these somewhere safe.\n\n" + c + "\n",
     ], { type: "text/plain" });
     const a = document.createElement("a");
@@ -7065,7 +7077,7 @@ async function _buildFeedbackParts() {
     `Playing:   ${_currentClipId ? `clip ${_currentClipId}` : "(no clip loaded)"}`,
     `When:      ${new Date().toISOString()}`,
   ].join("\n");
-  const subject = "Narrative alpha feedback";
+  const subject = `${APP_NAME} alpha feedback`;
   const body =
     "What were you doing?\n" +
     "\n\n" +
@@ -7272,7 +7284,7 @@ function _buildFirstTour() {
       steps: [
         {
           target: null,
-          title: "Welcome to Narrative",
+          title: `Welcome to ${APP_NAME}`,
           body: "Quick tour of the main controls. Use ← / → or the buttons below; Esc to skip anytime.",
         },
         {
@@ -7409,7 +7421,7 @@ function _buildFirstTour() {
     steps: [
       {
         target: null,
-        title: "Welcome to Narrative",
+        title: `Welcome to ${APP_NAME}`,
         body: "Quick tour of the main controls. Use ← / → or the buttons below; Esc to skip anytime.",
       },
       {
@@ -7460,7 +7472,7 @@ function _buildAuthorTour() {
       {
         target: null,
         title: "Author tools — the deep end",
-        body: "Tour of the features that turn Narrative from 'play my text' into a revision tool: edit, bookmark, annotate, export.",
+        body: `Tour of the features that turn ${APP_NAME} from 'play my text' into a revision tool: edit, bookmark, annotate, export.`,
       },
       {
         target: "#settings-btn",
@@ -7613,7 +7625,7 @@ function _formatDebugLogForDisplay() {
   // a Settings screenshot to confirm cache state. Always emit the
   // header, even when the log itself is empty.
   const header =
-    `# Narrative ${_currentAppVersion()} · ` +
+    `# ${APP_NAME} ${_currentAppVersion()} · ` +
     `captured ${new Date().toISOString()}\n` +
     `# ${_debugLog.length} entries\n#\n`;
   if (_debugLog.length === 0) {
@@ -11052,7 +11064,7 @@ function _updateEmptyState() {
     if (head) {
       head.textContent = _libraryHasClips
         ? "Start a new clip:"
-        : "New to Narrative? Try one of these to get started.";
+        : `New to ${APP_NAME}? Try one of these to get started.`;
     }
     // v225fw (#665): pulse the "Watch tutorial" rows so users notice
     // the secondary affordance. Only fire on the EDGE (hidden → shown)
@@ -11104,7 +11116,7 @@ function _pulseEmptyStateTutorialLinks() {
 // vs ElevenLabs-style voices are audible, and (c) be short enough that
 // a brand-new user hears the synth complete in under 20 seconds.
 const _SAMPLE_TEXT =
-  "Welcome to Narrative. I'm a sample paragraph, here so you can hear " +
+  `Welcome to ${APP_NAME}. I'm a sample paragraph, here so you can hear ` +
   "what this voice sounds like before you paste your own text. Try " +
   "swapping the voice in the top-right corner, or change the speed " +
   "and volume sliders below. Then come back and replace me with your " +
@@ -13104,7 +13116,7 @@ function _openSentenceAssignmentDialog(target) {
     li.appendChild(btn);
     list.appendChild(li);
   };
-  makeRow("↩ Auto-detect (let Narrative decide)", null, null);
+  makeRow(`↩ Auto-detect (let ${APP_NAME} decide)`, null, null);
   makeRow("🎙 Narrator (force)", "narrator", null);
   for (const c of characters) {
     makeRow(`🎭 ${c.name}`, c.name, _tagColor(c.name));
@@ -15420,7 +15432,7 @@ setupMediaSession();
 
 function makeTitle(text) {
   const raw = (text || "").trim();
-  if (!raw) return "Narrative";
+  if (!raw) return APP_NAME;
   // v225v4.4 (#815): public-domain library packagings (Roy Glashan's
   // Library is the canonical offender) ship a credit preamble — e.g.
   // "Roy Glashan's Library  Non sibi sed omnibus  RGL e-Book Cover
@@ -15474,7 +15486,7 @@ function makeTitle(text) {
   // we still produce something the user can rename in Edit.
   const firstLine = raw.split(/\r?\n/, 1)[0];
   const trimmed = firstLine.slice(0, 60).trim();
-  if (!trimmed) return "Narrative";
+  if (!trimmed) return APP_NAME;
   return firstLine.length > 60 ? `${trimmed}…` : trimmed;
 }
 
@@ -20785,7 +20797,7 @@ function _pubBuildReading() {
   try { year = String(new Date().getFullYear()); } catch {}
   const front = [];
   front.push({ bundle: { title: b.title, text: "# " + b.title + (b.author ? "\n\n" + b.author : "") }, audioIdx: null, matter: true });
-  front.push({ bundle: { title: "Copyright", text: "© " + year + (b.author ? " " + b.author : "") + "\n\nAll rights reserved.\n\nMade with Narrative" }, audioIdx: null, matter: true });
+  front.push({ bundle: { title: "Copyright", text: "© " + year + (b.author ? " " + b.author : "") + "\n\nAll rights reserved.\n\nMade with " + APP_NAME }, audioIdx: null, matter: true });
   if (b.dedication && b.dedication.trim()) {
     front.push({ bundle: { title: "Dedication", text: b.dedication }, audioIdx: null, matter: true });
   }
@@ -30702,7 +30714,7 @@ async function downloadBookMockupPng() {
   ctx.textAlign = "center";
   ctx.fillStyle = "rgba(231, 236, 255, 0.55)";
   ctx.font = "600 22px -apple-system, 'Segoe UI', Roboto, sans-serif";
-  ctx.fillText("Made with Narrative", W / 2, H - 70);
+  ctx.fillText(`Made with ${APP_NAME}`, W / 2, H - 70);
   ctx.fillStyle = "rgba(231, 236, 255, 0.32)";
   ctx.font = "400 16px -apple-system, 'Segoe UI', Roboto, sans-serif";
   ctx.fillText("narrative-alpha.fly.dev", W / 2, H - 44);
@@ -31154,7 +31166,7 @@ if (_clipEditPushGithubBtn) {
     // target path/branch so the user can't get confused about which
     // file they're about to overwrite.
     const branch = clip.gitRef.branch || "main";
-    const defaultMessage = `Revised in Narrative: ${clip.title || "(untitled)"}`;
+    const defaultMessage = `Revised in ${APP_NAME}: ${clip.title || "(untitled)"}`;
     const previewMessage = window.prompt(
       `Push to GitHub?\n\n` +
       `  Repo:   ${clip.gitRef.repoUrl}\n` +
@@ -31609,7 +31621,7 @@ if (_clipEditRestoreMarksBtn && _clipEditRestoreInput) {
     const backup = _parseClipBackupFromMd(text);
     if (!backup) {
       setStatus(
-        "This file doesn't contain Narrative backup data.",
+        `This file doesn't contain ${APP_NAME} backup data.`,
         true,
       );
       return;
@@ -32351,7 +32363,7 @@ function _buildClipNotesMarkdown(clip) {
   lines.push(`# ${title}`);
   lines.push("");
   lines.push(
-    `*Exported from Narrative ${v} · ${dateStr}` +
+    `*Exported from ${APP_NAME} ${v} · ${dateStr}` +
     (durStr ? ` · ${durStr}` : "") +
     "*"
   );
@@ -33751,7 +33763,7 @@ async function exportLibrary(idsFilter = null) {
 
     const manifest = {
       schema: 1,
-      app: "Narrative",
+      app: APP_NAME,
       exportedAt: new Date().toISOString(),
       clips: manifestClips,
       presets,
@@ -33773,7 +33785,7 @@ async function exportLibrary(idsFilter = null) {
     const today = new Date().toISOString().slice(0, 10);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `narrative-library-${today}.zip`;
+    a.download = `${APP_NAME.toLowerCase()}-library-${today}.zip`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -33800,7 +33812,7 @@ async function importLibraryFromFile(file) {
 
     const manifestEntry = entries.find((e) => e.name === "manifest.json");
     if (!manifestEntry) {
-      throw new Error("no manifest.json — is this a Narrative export?");
+      throw new Error(`no manifest.json — is this an ${APP_NAME} export?`);
     }
     const manifest = JSON.parse(new TextDecoder().decode(manifestEntry.data));
     if (!manifest.clips || !Array.isArray(manifest.clips)) {
@@ -36779,7 +36791,7 @@ function setMediaMetadata(text) {
   if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
   navigator.mediaSession.metadata = new MediaMetadata({
     title: makeTitle(text),
-    artist: "Narrative",
+    artist: APP_NAME,
     album: "Local TTS",
     artwork: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },

@@ -1,7 +1,7 @@
 {
-  "name": "Narrative",
-  "short_name": "Narrative",
-  "description": "Local text-to-speech — type, listen, download.",
+  "name": "Audition",
+  "short_name": "Audition",
+  "description": "Audition your story — turn your manuscript into a narrated audiobook you can hear, revise, and publish.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
