@@ -2279,7 +2279,24 @@ setUIMode(getUIMode());
 // scheme; an inline boot script in index.html applies the saved choice
 // before paint so testers don't see a dark→light flash on light mode.
 const THEME_KEY = "narrative.theme";
-const VALID_THEMES = ["auto", "dark", "light"];
+// v4.184: named themes. "auto" follows the OS (resolves to light/dark only);
+// every other value is an explicit pick that maps 1:1 to a :root[data-theme]
+// token block in styles.css. "dark" is the base (:root), applied by REMOVING
+// the attribute, so it stays the fallback.
+const VALID_THEMES = ["auto", "dark", "light", "sepia", "midnight", "nord", "forest"];
+// Which themes are "light family" — drives data-theme-base, which the
+// light-specific component rules (book-view shelf, nav, banners) key off so
+// a new light theme inherits them without per-theme CSS.
+const _LIGHT_FAMILY_THEMES = new Set(["light", "sepia"]);
+// Status-bar / browser-chrome color per theme (mirrors each block's --bg).
+const _THEME_CHROME_BG = {
+  light: "#faf4e3",
+  sepia: "#f4ecd8",
+  midnight: "#000000",
+  nord: "#2e3440",
+  forest: "#12201a",
+  dark: "#0b1020",
+};
 
 function getThemePref() {
   try {
@@ -2313,14 +2330,24 @@ function _detectSystemTheme() {
 
 function applyTheme(pref) {
   const resolved = resolveTheme(pref);
-  if (resolved === "light") {
-    document.documentElement.setAttribute("data-theme", "light");
+  const root = document.documentElement;
+  // "dark" is the base palette (:root) — apply it by removing the attribute
+  // so the fallback tokens win. Every other theme sets data-theme to its name.
+  if (resolved === "dark") {
+    root.removeAttribute("data-theme");
   } else {
-    document.documentElement.removeAttribute("data-theme");
+    root.setAttribute("data-theme", resolved);
   }
+  // data-theme-base lets light-specific component rules (book-view shelf, nav,
+  // banners) match ANY light-family theme (light, sepia, …) without per-theme
+  // CSS. Dark-family themes get "dark".
+  root.setAttribute(
+    "data-theme-base",
+    _LIGHT_FAMILY_THEMES.has(resolved) ? "light" : "dark"
+  );
   // Keep iOS / Android browser chrome in sync. index.html ships two
   // media-keyed theme-color tags that handle the Auto case for free.
-  // For explicit Dark/Light, prepend an unmediated override so it wins
+  // For an explicit pick, prepend an unmediated override so it wins
   // (browsers use the first applicable theme-color in document order).
   const head = document.head;
   let override = head.querySelector('meta[name="theme-color"][data-narrative]');
@@ -2335,7 +2362,7 @@ function applyTheme(pref) {
     }
     override.setAttribute(
       "content",
-      resolved === "light" ? "#faf4e3" : "#0b1020"
+      _THEME_CHROME_BG[resolved] || "#0b1020"
     );
   }
 }

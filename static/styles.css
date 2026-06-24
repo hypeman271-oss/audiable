@@ -165,6 +165,191 @@
   --progress-glow: rgba(72, 88, 217, 0.55);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   v4.184: named app themes. Each block overrides the SAME token set as the
+   light block above — every color in the file resolves through these, so one
+   data-theme flip recolors the whole UI. Light-family themes (sepia) also set
+   data-theme-base="light" (in JS) so they inherit the light-specific component
+   rules. Keep the value names in sync with VALID_THEMES in app.js.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Sepia — warm parchment, deep-brown ink. The classic e-reader page; the
+   gentlest light theme for long daytime reading. */
+:root[data-theme="sepia"] {
+  --bg: #f4ecd8;
+  --bg-card: #fbf6e9;
+  --bg-card-2: #ece1c6;
+  --fg: #3a2f1f;
+  --fg-dim: #7a6a52;
+  --accent: #a05a2c;
+  --accent-strong: #7d3f17;
+  --danger: #b3402e;
+  --shadow: 0 4px 18px rgba(60, 40, 10, 0.12);
+
+  --border-soft: rgba(60, 40, 20, 0.07);
+  --border: rgba(60, 40, 20, 0.11);
+  --border-strong: rgba(60, 40, 20, 0.15);
+  --border-emph: rgba(60, 40, 20, 0.20);
+  --scrim: rgba(50, 35, 15, 0.40);
+  --glass: rgba(251, 246, 233, 0.92);
+  --hover-soft: rgba(60, 40, 20, 0.05);
+  --on-accent: #fbf6e9;
+  --accent-tint: rgba(160, 90, 44, 0.10);
+  --accent-tint-2: rgba(160, 90, 44, 0.16);
+  --accent-tint-3: rgba(160, 90, 44, 0.22);
+  --danger-tint: rgba(179, 64, 46, 0.12);
+  --danger-tint-soft: rgba(179, 64, 46, 0.08);
+  --bg-gradient-edge: #efe3c4;
+  --played-fg: #8a7a60;
+  --shadow-mini: 0 4px 14px rgba(60, 40, 10, 0.14);
+  --shadow-drag: 0 10px 26px rgba(60, 40, 10, 0.20);
+  --shadow-tooltip: 0 6px 18px rgba(60, 40, 10, 0.20);
+  --hero-grad-start: #7d3f17;
+  --spinner-ring: rgba(255, 255, 255, 0.4);
+  --danger-border: rgba(179, 64, 46, 0.35);
+  --accent-border-dashed: rgba(160, 90, 44, 0.45);
+  --long-sentence-tint: rgba(200, 120, 20, 0.16);
+  --working: #b4651a;
+  --working-strong: #8a4d12;
+  --working-tint: rgba(180, 101, 26, 0.14);
+  --working-tint-2: rgba(180, 101, 26, 0.22);
+  --progress: #a05a2c;
+  --progress-glow: rgba(160, 90, 44, 0.5);
+}
+
+/* Midnight — near-true-black for OLED screens + night reading. Surfaces sit
+   just above pure black so cards still separate; the bg gradient edge stays
+   black so the screen reads as genuinely dark (battery + glare). */
+:root[data-theme="midnight"] {
+  --bg: #000000;
+  --bg-card: #0c0c10;
+  --bg-card-2: #15151c;
+  --fg: #e9e9f2;
+  --fg-dim: #8e8ea6;
+  --accent: #6aa9ff;
+  --accent-strong: #3f8cff;
+  --danger: #ff6b6b;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+
+  --border-soft: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.11);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-emph: rgba(255, 255, 255, 0.22);
+  --scrim: rgba(0, 0, 0, 0.70);
+  --glass: rgba(10, 10, 14, 0.90);
+  --hover-soft: rgba(255, 255, 255, 0.05);
+  --on-accent: #00060f;
+  --accent-tint: rgba(106, 169, 255, 0.14);
+  --accent-tint-2: rgba(106, 169, 255, 0.20);
+  --accent-tint-3: rgba(106, 169, 255, 0.28);
+  --danger-tint: rgba(255, 107, 107, 0.14);
+  --danger-tint-soft: rgba(255, 107, 107, 0.08);
+  --bg-gradient-edge: #0a0a14;
+  --played-fg: #aeb4cf;
+  --shadow-mini: 0 6px 22px rgba(0, 0, 0, 0.65);
+  --shadow-drag: 0 14px 38px rgba(0, 0, 0, 0.7);
+  --shadow-tooltip: 0 6px 18px rgba(0, 0, 0, 0.7);
+  --hero-grad-start: #ffffff;
+  --spinner-ring: rgba(0, 0, 0, 0.4);
+  --danger-border: rgba(255, 107, 107, 0.35);
+  --accent-border-dashed: rgba(106, 169, 255, 0.4);
+  --long-sentence-tint: rgba(255, 200, 60, 0.12);
+  --working: #f5a524;
+  --working-strong: #d97706;
+  --working-tint: rgba(245, 165, 36, 0.18);
+  --working-tint-2: rgba(245, 165, 36, 0.28);
+  --progress: #6aa9ff;
+  --progress-glow: rgba(106, 169, 255, 0.55);
+}
+
+/* Nord — the cool slate-blue palette. Polar-night surfaces, snow-storm text,
+   frost-blue accent, aurora red/yellow for danger/working. */
+:root[data-theme="nord"] {
+  --bg: #2e3440;
+  --bg-card: #3b4252;
+  --bg-card-2: #434c5e;
+  --fg: #eceff4;
+  --fg-dim: #9aa4ba;
+  --accent: #88c0d0;
+  --accent-strong: #81a1c1;
+  --danger: #bf616a;
+  --shadow: 0 6px 24px rgba(20, 24, 33, 0.5);
+
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-emph: rgba(255, 255, 255, 0.20);
+  --scrim: rgba(20, 24, 33, 0.60);
+  --glass: rgba(46, 52, 64, 0.90);
+  --hover-soft: rgba(255, 255, 255, 0.05);
+  --on-accent: #2e3440;
+  --accent-tint: rgba(136, 192, 208, 0.14);
+  --accent-tint-2: rgba(136, 192, 208, 0.20);
+  --accent-tint-3: rgba(136, 192, 208, 0.28);
+  --danger-tint: rgba(191, 97, 106, 0.16);
+  --danger-tint-soft: rgba(191, 97, 106, 0.08);
+  --bg-gradient-edge: #3b4252;
+  --played-fg: #c0c7d6;
+  --shadow-mini: 0 6px 22px rgba(20, 24, 33, 0.55);
+  --shadow-drag: 0 14px 38px rgba(20, 24, 33, 0.6);
+  --shadow-tooltip: 0 6px 18px rgba(20, 24, 33, 0.6);
+  --hero-grad-start: #eceff4;
+  --spinner-ring: rgba(46, 52, 64, 0.4);
+  --danger-border: rgba(191, 97, 106, 0.35);
+  --accent-border-dashed: rgba(136, 192, 208, 0.4);
+  --long-sentence-tint: rgba(235, 203, 139, 0.16);
+  --working: #ebcb8b;
+  --working-strong: #d0a85f;
+  --working-tint: rgba(235, 203, 139, 0.18);
+  --working-tint-2: rgba(235, 203, 139, 0.28);
+  --progress: #88c0d0;
+  --progress-glow: rgba(136, 192, 208, 0.55);
+}
+
+/* Forest — soft green-tinted dark. Restful and organic; warm amber for the
+   "working" family so in-progress states still pop against the greens. */
+:root[data-theme="forest"] {
+  --bg: #12201a;
+  --bg-card: #1b2e25;
+  --bg-card-2: #243c30;
+  --fg: #e3efe6;
+  --fg-dim: #93ab9c;
+  --accent: #7fb98a;
+  --accent-strong: #5fa06d;
+  --danger: #e07a6a;
+  --shadow: 0 6px 24px rgba(0, 10, 5, 0.5);
+
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-emph: rgba(255, 255, 255, 0.20);
+  --scrim: rgba(5, 15, 10, 0.60);
+  --glass: rgba(18, 32, 26, 0.90);
+  --hover-soft: rgba(255, 255, 255, 0.05);
+  --on-accent: #0c1a12;
+  --accent-tint: rgba(127, 185, 138, 0.14);
+  --accent-tint-2: rgba(127, 185, 138, 0.20);
+  --accent-tint-3: rgba(127, 185, 138, 0.28);
+  --danger-tint: rgba(224, 122, 106, 0.14);
+  --danger-tint-soft: rgba(224, 122, 106, 0.08);
+  --bg-gradient-edge: #1b3327;
+  --played-fg: #b6c8bb;
+  --shadow-mini: 0 6px 22px rgba(0, 10, 5, 0.55);
+  --shadow-drag: 0 14px 38px rgba(0, 10, 5, 0.6);
+  --shadow-tooltip: 0 6px 18px rgba(0, 10, 5, 0.6);
+  --hero-grad-start: #eafff0;
+  --spinner-ring: rgba(12, 26, 18, 0.4);
+  --danger-border: rgba(224, 122, 106, 0.35);
+  --accent-border-dashed: rgba(127, 185, 138, 0.4);
+  --long-sentence-tint: rgba(230, 190, 90, 0.14);
+  --working: #e0a850;
+  --working-strong: #c08828;
+  --working-tint: rgba(224, 168, 80, 0.18);
+  --working-tint-2: rgba(224, 168, 80, 0.28);
+  --progress: #7fb98a;
+  --progress-glow: rgba(127, 185, 138, 0.55);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1300,6 +1485,70 @@ body:not([data-ui-mode="author"]) .sentence-select-pending {
 .theme-picker > label input:focus-visible + span {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* v4.184: swatch variant of the theme picker. Wraps to a grid of color
+   chips so all the palettes fit (especially on phone). Each chip stacks a
+   color preview (the theme's page bg + an accent dot) over its name. The
+   chip DOM is input → .theme-swatch → name-span, so the generic
+   `input:checked + span` rule lands on the SWATCH; we override it back to
+   the preview color and drive the selected state via :has() on the label. */
+.theme-picker--swatches {
+  flex-wrap: wrap;
+}
+.theme-picker--swatches > label {
+  flex: 1 1 76px;
+  min-width: 70px;
+  display: flex;
+  flex-direction: column;
+}
+.theme-swatch {
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  background: var(--sw-bg, #0b1020);
+  position: relative;
+}
+.theme-swatch::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--sw-accent, #7c9cff);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+/* Auto: split dark/light to signal "follows the system setting". */
+.theme-swatch--auto {
+  background: linear-gradient(135deg, #0b1020 0 50%, #faf4e3 50%);
+}
+.theme-swatch--auto::after {
+  background: linear-gradient(135deg, #7c9cff 0 50%, #4858d9 50%);
+}
+.theme-picker--swatches > label > span:not(.theme-swatch) {
+  border-radius: 0 0 7px 7px;
+  padding: 6px 4px;
+  font-size: 12px;
+}
+/* Keep the swatch showing its preview color even when selected. */
+.theme-picker--swatches > label input:checked + .theme-swatch {
+  background: var(--sw-bg, #0b1020);
+}
+.theme-picker--swatches > label input:checked + .theme-swatch--auto {
+  background: linear-gradient(135deg, #0b1020 0 50%, #faf4e3 50%);
+}
+/* Selected: accent the name + ring the swatch. */
+.theme-picker--swatches > label:has(input:checked) > span:not(.theme-swatch) {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.theme-picker--swatches > label:has(input:checked) .theme-swatch {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* v150: "+ unlocks" hint below the Mode picker. Updates in JS based
@@ -4346,7 +4595,7 @@ body[data-offline="true"] .import-dropdown-item {
   font-weight: 500;
   line-height: 1.45;
 }
-:root[data-theme="light"] .maintenance-banner {
+:root[data-theme-base="light"] .maintenance-banner {
   background: rgba(200, 130, 0, 0.12);
   border-color: rgba(200, 130, 0, 0.36);
   color: #8a4d00;
@@ -7211,7 +7460,7 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   cursor: help;
 }
-:root[data-theme="light"] .clip-partial-synth-warn {
+:root[data-theme-base="light"] .clip-partial-synth-warn {
   background: rgba(200, 130, 0, 0.10);
   color: #a45f00;
   border-color: rgba(200, 130, 0, 0.36);
@@ -8805,12 +9054,12 @@ textarea#text.file-drop-active {
   color: #e0a83a;
   border: 1px solid rgba(210, 153, 34, 0.4);
 }
-[data-theme="light"] .catalog-voice-license.commercial {
+[data-theme-base="light"] .catalog-voice-license.commercial {
   background: rgba(46, 160, 67, 0.12);
   color: #1a7f37;
   border-color: rgba(46, 160, 67, 0.45);
 }
-[data-theme="light"] .catalog-voice-license.noncommercial {
+[data-theme-base="light"] .catalog-voice-license.noncommercial {
   background: rgba(210, 153, 34, 0.12);
   color: #9a6700;
   border-color: rgba(210, 153, 34, 0.45);
@@ -9019,7 +9268,7 @@ textarea#text.file-drop-active {
     radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0.35), transparent 60%),
     linear-gradient(180deg, rgba(20, 16, 12, 0.55), rgba(8, 6, 4, 0.85));
 }
-[data-theme="light"] .book-view {
+[data-theme-base="light"] .book-view {
   background:
     radial-gradient(ellipse at 50% 120%, rgba(120, 90, 60, 0.18), transparent 60%),
     linear-gradient(180deg, rgba(180, 150, 110, 0.18), rgba(120, 90, 60, 0.30));
@@ -10009,7 +10258,7 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   max-width: 96%;
   flex-wrap: wrap;
 }
-[data-theme="light"] .book-view-nav {
+[data-theme-base="light"] .book-view-nav {
   background: rgba(245, 235, 215, 0.85);
   border-color: rgba(120, 90, 60, 0.18);
 }
@@ -10836,7 +11085,7 @@ body:not(.reader-mode):not([data-ui-mode="simple"]) .book-view-spread.v3 .book-v
       linear-gradient(180deg, rgba(20, 16, 12, 0.85), rgba(8, 6, 4, 0.95));
     -webkit-overflow-scrolling: touch;
   }
-  [data-theme="light"] div#book-view:not([hidden]) {
+  [data-theme-base="light"] div#book-view:not([hidden]) {
     background:
       radial-gradient(ellipse at 50% 120%, rgba(120, 90, 60, 0.18), transparent 60%),
       linear-gradient(180deg, rgba(225, 210, 180, 0.95), rgba(200, 175, 140, 0.98));
@@ -15409,7 +15658,7 @@ body.reader-immersed #pub-chapter-nav {
       radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0.35), transparent 60%),
       linear-gradient(180deg, rgba(20, 16, 12, 0.85), rgba(8, 6, 4, 0.95));
   }
-  [data-theme="light"] body.reader-fullscreen div#book-view:not([hidden]) {
+  [data-theme-base="light"] body.reader-fullscreen div#book-view:not([hidden]) {
     background:
       radial-gradient(ellipse at 50% 120%, rgba(120, 90, 60, 0.18), transparent 60%),
       linear-gradient(180deg, rgba(225, 210, 180, 0.95), rgba(200, 175, 140, 0.98));

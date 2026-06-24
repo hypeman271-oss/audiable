@@ -42,23 +42,33 @@
       (function () {
         try {
           var pref = localStorage.getItem("narrative.theme") || "auto";
-          if (!["auto", "dark", "light"].includes(pref)) pref = "auto";
+          // v4.184: named themes. Keep this list in sync with VALID_THEMES
+          // in app.js. "dark" is the base palette (no attribute).
+          var VALID = ["auto", "dark", "light", "sepia", "midnight", "nord", "forest"];
+          if (VALID.indexOf(pref) < 0) pref = "auto";
+          var LIGHT_FAMILY = { light: 1, sepia: 1 };
+          var CHROME = {
+            light: "#faf4e3", sepia: "#f4ecd8", midnight: "#000000",
+            nord: "#2e3440", forest: "#12201a", dark: "#0b1020"
+          };
           var resolved =
             pref === "auto"
               ? (matchMedia("(prefers-color-scheme: light)").matches
                   ? "light"
                   : "dark")
               : pref;
-          if (resolved === "light") {
-            document.documentElement.setAttribute("data-theme", "light");
+          if (resolved !== "dark") {
+            document.documentElement.setAttribute("data-theme", resolved);
           }
-          // Pre-paint status-bar override for explicit Dark/Light picks.
+          document.documentElement.setAttribute(
+            "data-theme-base", LIGHT_FAMILY[resolved] ? "light" : "dark");
+          // Pre-paint status-bar override for an explicit pick.
           // (Auto rides on the two media-keyed theme-color tags above.)
           if (pref !== "auto") {
             var m = document.createElement("meta");
             m.setAttribute("name", "theme-color");
             m.setAttribute("data-narrative", "");
-            m.setAttribute("content", resolved === "light" ? "#faf4e3" : "#0b1020");
+            m.setAttribute("content", CHROME[resolved] || "#0b1020");
             document.head.insertBefore(m, document.head.firstChild);
           }
         } catch (_) {}
@@ -84,7 +94,7 @@
         font-family: Georgia, "Times New Roman", Times, serif;
         transition: opacity 320ms ease;
       }
-      [data-theme="light"] #app-splash {
+      [data-theme-base="light"] #app-splash {
         background: #faf4e3;
         color: #2a2418;
       }
@@ -1375,22 +1385,46 @@
                   <div class="settings-toggle-label">
                     <strong>Theme</strong>
                     <span class="settings-toggle-desc">
-                      Auto follows your device setting. Light mode uses a warm
-                      cream palette tuned for outdoor or daytime reading.
+                      Auto follows your device setting. Pick a palette for the
+                      whole app — Sepia &amp; Light suit daytime reading;
+                      Midnight, Nord &amp; Forest are darker moods for night.
                     </span>
                   </div>
-                  <div class="theme-picker" role="radiogroup" aria-label="Theme">
+                  <div class="theme-picker theme-picker--swatches" role="radiogroup" aria-label="Theme">
                     <label>
                       <input type="radio" name="theme" value="auto" />
+                      <span class="theme-swatch theme-swatch--auto"></span>
                       <span>Auto</span>
                     </label>
                     <label>
                       <input type="radio" name="theme" value="dark" />
+                      <span class="theme-swatch" style="--sw-bg:#0b1020;--sw-accent:#7c9cff"></span>
                       <span>Dark</span>
                     </label>
                     <label>
                       <input type="radio" name="theme" value="light" />
+                      <span class="theme-swatch" style="--sw-bg:#faf4e3;--sw-accent:#4858d9"></span>
                       <span>Light</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="theme" value="sepia" />
+                      <span class="theme-swatch" style="--sw-bg:#f4ecd8;--sw-accent:#a05a2c"></span>
+                      <span>Sepia</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="theme" value="midnight" />
+                      <span class="theme-swatch" style="--sw-bg:#000000;--sw-accent:#6aa9ff"></span>
+                      <span>Midnight</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="theme" value="nord" />
+                      <span class="theme-swatch" style="--sw-bg:#2e3440;--sw-accent:#88c0d0"></span>
+                      <span>Nord</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="theme" value="forest" />
+                      <span class="theme-swatch" style="--sw-bg:#12201a;--sw-accent:#7fb98a"></span>
+                      <span>Forest</span>
                     </label>
                   </div>
                   <!-- v225.tn59 (#542): Auto-resolution status line. Reports
