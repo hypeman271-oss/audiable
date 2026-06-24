@@ -8446,12 +8446,43 @@ textarea#text.file-drop-active {
 }
 .notes-dialog-head h3 {
   margin: 0;
+  margin-right: auto;
   font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* v4.187: discoverable "🧹 Clear marks…" entry buttons on the marks
+   surfaces (bookmarks drawer, Notes dialog, desktop "This clip" pane).
+   Subtle by default; danger-tinted on hover since the action is
+   destructive (the confirm dialog still gates it + offers export-first). */
+.clear-marks-entry-btn {
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.clear-marks-entry-btn:hover,
+.clear-marks-entry-btn:focus-visible {
+  color: var(--danger);
+  background: var(--danger-tint);
+}
+.dap-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dap-head h2 {
+  margin: 0;
+  margin-right: auto;
 }
 #notes-dialog-text {
   display: block;
@@ -13607,6 +13638,7 @@ body:not(.reader-mode):not([data-ui-mode="simple"]) .book-view-spread.v3 .book-v
   }
   #bookmarks-drawer-head h3 {
     margin: 0;
+    margin-right: auto;
     font-size: 14px;
     color: var(--fg);
   }

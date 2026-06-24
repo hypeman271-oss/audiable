@@ -31590,6 +31590,26 @@ if (_clipEditClearMarksBtn) {
   });
 }
 
+// v4.187: discoverable "Clear marks…" entry points on the surfaces where a
+// user actually sees their marks — the bookmarks drawer, the Notes dialog,
+// and the desktop "This clip" pane — not just the (buried) Edit dialog.
+// All target the currently-loaded clip and open the same confirm dialog,
+// which then lets the user pick bookmarks / flags / notes (or all) and
+// optionally export first. stopPropagation keeps the bookmark-drawer head's
+// click-to-close from firing when the button is tapped.
+for (const _id of ["bookmarks-drawer-clear", "notes-dialog-clear", "dap-clear-marks"]) {
+  const _btn = document.getElementById(_id);
+  if (!_btn) continue;
+  _btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!_currentClipId) {
+      setStatus("Load a clip first — nothing to clear.", true);
+      return;
+    }
+    _openClearMarksConfirm(_currentClipId);
+  });
+}
+
 // v225fz5 (#672): "Restore from backup…" button. Same scoping as the
 // Clear button — operates on _editingClipId. Opens the OS file picker;
 // the change handler does the parse + confirm-dialog flow.

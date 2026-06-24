@@ -434,6 +434,12 @@
         <hr class="dap-divider" />
         <div class="dap-head">
           <h2>This clip</h2>
+          <button
+            type="button"
+            id="dap-clear-marks"
+            class="clear-marks-entry-btn"
+            title="Clear this clip's flags, bookmarks, and notes"
+          >🧹 Clear marks…</button>
         </div>
         <div class="dap-body">
           <div class="dap-empty" hidden>Load a clip to see flags, bookmarks, and notes here.</div>
@@ -3541,6 +3547,16 @@
         >
           <div id="bookmarks-drawer-head">
             <h3>Bookmarks</h3>
+            <!-- v4.187: discoverable entry to the Clear-marks dialog. The
+                 dialog itself lets you pick bookmarks / flags / notes (or
+                 all) and offers export-first; this just makes it findable
+                 from a marks surface instead of only the Edit dialog. -->
+            <button
+              type="button"
+              id="bookmarks-drawer-clear"
+              class="clear-marks-entry-btn"
+              title="Clear this clip's flags, bookmarks, and notes"
+            >🧹 Clear marks…</button>
             <button
               type="button"
               id="bookmarks-drawer-close"
@@ -5383,6 +5399,12 @@
       <dialog id="notes-dialog" class="notes-dialog">
         <div class="notes-dialog-head">
           <h3 id="notes-dialog-title">Notes</h3>
+          <button
+            id="notes-dialog-clear"
+            type="button"
+            class="link-btn clear-marks-entry-btn"
+            title="Clear this clip's flags, bookmarks, and notes"
+          >🧹 Clear marks…</button>
           <button
             id="notes-dialog-close"
             type="button"
