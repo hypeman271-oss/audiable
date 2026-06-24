@@ -8774,6 +8774,33 @@ async function addBookmarkAtCurrentTime() {
         selectedIdx = _selectedSentenceIdx;
       }
     }
+    // v4.185: anchor the bookmark to the sentence being spoken at time t,
+    // using the SAME scheme annotations use (sentenceIndex + a 60-char
+    // sentenceFingerprint). Editors no longer have to estimate the sentence
+    // from audio timing. If a sentence is explicitly selected we use that;
+    // otherwise we resolve t against the per-sentence start times. The full
+    // verbatim quote is recovered at export time (live span + the numbered
+    // transcript), so the fingerprint here mirrors annotations exactly.
+    let _bmSentenceIdx = fromSelection ? selectedIdx : -1;
+    if (
+      _bmSentenceIdx < 0 &&
+      Array.isArray(sentenceOffsetsSec) &&
+      sentenceOffsetsSec.length
+    ) {
+      for (let i = 0; i < sentenceOffsetsSec.length; i++) {
+        if (sentenceOffsetsSec[i] <= t) _bmSentenceIdx = i;
+        else break;
+      }
+    }
+    let _bmSentenceText = "";
+    if (
+      _bmSentenceIdx >= 0 &&
+      Array.isArray(sentenceSpans) &&
+      sentenceSpans[_bmSentenceIdx]
+    ) {
+      const _sp = sentenceSpans[_bmSentenceIdx];
+      _bmSentenceText = (_sp.dataset && _sp.dataset.sentenceText) || _sp.textContent || "";
+    }
     // v223.tn19 (#488): atomic read-modify-write so a concurrent
     // _syncAbsorbServerClip can't slip between our read and write
     // and cause our save to wipe newly-absorbed content (annotations,
@@ -8787,6 +8814,8 @@ async function addBookmarkAtCurrentTime() {
         timeSec: t,
         note: "",
         createdAt: new Date().toISOString(),
+        sentenceIndex: _bmSentenceIdx >= 0 ? _bmSentenceIdx : null,
+        sentenceFingerprint: _annotateFingerprint(_bmSentenceText),
       });
       c.bookmarks.sort((a, b) => a.timeSec - b.timeSec);
     });
@@ -32284,6 +32313,40 @@ function _buildClipNotesMarkdown(clip) {
     ? _msToClockMd(clip.durationSec) + " audio"
     : "";
 
+  // v4.185: per-sentence start times for anchoring bookmarks (which store
+  // only timeSec on older rows). Prefer the times saved on the clip; fall
+  // back to the live array when this is the loaded clip.
+  const _offsets =
+    (Array.isArray(clip.sentenceOffsetsSec) && clip.sentenceOffsetsSec.length)
+      ? clip.sentenceOffsetsSec
+      : (clip.id === _currentClipId && Array.isArray(sentenceOffsetsSec)
+          ? sentenceOffsetsSec
+          : []);
+  // timeSec → 0-based sentence index (the sentence being spoken at t).
+  const _idxAtTime = (t) => {
+    if (!_offsets.length) return -1;
+    let idx = -1;
+    for (let i = 0; i < _offsets.length; i++) {
+      if (_offsets[i] <= (t || 0)) idx = i; else break;
+    }
+    return idx;
+  };
+  // Full verbatim sentence text for a 0-based index. Prefers the live span
+  // (exact text the listener heard) and falls back to a stored fingerprint.
+  const _quoteForIdx = (idx, fallback) => {
+    const span =
+      clip.id === _currentClipId &&
+      Array.isArray(sentenceSpans) &&
+      idx >= 0 &&
+      sentenceSpans[idx];
+    return (
+      (span && span.dataset && span.dataset.sentenceText) ||
+      (span && span.textContent) ||
+      fallback ||
+      ""
+    ).trim();
+  };
+
   const lines = [];
   lines.push(`# ${title}`);
   lines.push("");
@@ -32291,6 +32354,18 @@ function _buildClipNotesMarkdown(clip) {
     `*Exported from Narrative ${v} · ${dateStr}` +
     (durStr ? ` · ${durStr}` : "") +
     "*"
+  );
+  lines.push("");
+  // v4.185: state the numbering convention once, up top, so a sentence
+  // number means the same thing in every section. Displayed numbers are
+  // 1-based and match the "Sentence Index" transcript at the end; the
+  // machine-readable backup uses 0-based `sentenceIndex` (display = +1).
+  lines.push(
+    "*Sentence numbers are 1-based and refer to the numbered transcript " +
+    "(“Sentence Index”) at the end of this file. The quoted sentence " +
+    "under each note is the source of truth — it survives manuscript edits " +
+    "that would shift the numbers. (The data backup block uses 0-based " +
+    "`sentenceIndex`.)*"
   );
   lines.push("");
 
@@ -32319,11 +32394,21 @@ function _buildClipNotesMarkdown(clip) {
     for (const bm of bms) {
       const ts = _msToClockMd(bm.timeSec);
       const note = (bm.note || "").trim();
+      // v4.185: anchor the bookmark to its sentence. Prefer the stored
+      // sentenceIndex (captured at create time); for older bookmarks that
+      // only have a timeSec, resolve it here so the export is still exact.
+      let idx = (typeof bm.sentenceIndex === "number") ? bm.sentenceIndex : -1;
+      if (idx < 0) idx = _idxAtTime(bm.timeSec);
+      const sentLabel = idx >= 0 ? ` · Sentence ${idx + 1}` : "";
       lines.push(
         note
-          ? `- **${ts}** — ${_mdEscape(note)}`
-          : `- **${ts}**`
+          ? `- **${ts}${sentLabel}**: ${_mdEscape(note)}`
+          : `- **${ts}${sentLabel}**`
       );
+      // The verbatim sentence the bookmark falls on — the source of truth
+      // for an editor locating it after the manuscript has been edited.
+      const quote = _quoteForIdx(idx, bm.sentenceFingerprint);
+      if (quote) lines.push(`  > ${_mdEscape(quote)}`);
     }
     lines.push("");
   }
@@ -32418,6 +32503,26 @@ function _buildClipNotesMarkdown(clip) {
     lines.push("");
   }
 
+  // v4.185: numbered transcript. Lets any consumer resolve a sentence index
+  // directly ("go to sentence N"), and is the fallback when the source
+  // manuscript has been edited since the listen — the quoted text in each
+  // note can be matched against it. 1-based to match the displayed numbers.
+  let _transcript = [];
+  if (clip.id === _currentClipId && Array.isArray(sentenceSpans) && sentenceSpans.length) {
+    _transcript = sentenceSpans.map((sp) =>
+      ((sp.dataset && sp.dataset.sentenceText) || sp.textContent || "").trim());
+  } else if (typeof splitSentencesClient === "function" && clip.text) {
+    _transcript = splitSentencesClient(clip.text).map((s) => (s || "").trim());
+  }
+  if (_transcript.length) {
+    lines.push("## Sentence Index");
+    lines.push("");
+    for (let i = 0; i < _transcript.length; i++) {
+      if (_transcript[i]) lines.push(`${i + 1}. ${_mdEscape(_transcript[i])}`);
+    }
+    lines.push("");
+  }
+
   // v225fz5 (#672): append a hidden backup block so the .md can
   // round-trip — i.e. the same file the Clear-marks flow exports as
   // a safety net is also a valid restore source. The block is an
@@ -32432,7 +32537,21 @@ function _buildClipNotesMarkdown(clip) {
       title: clip.title || "",
       exportedAt: new Date().toISOString(),
       // Bookmarks have no tombstones — array contains live entries only.
-      bookmarks: Array.isArray(clip.bookmarks) ? clip.bookmarks : [],
+      // v4.185: ensure every bookmark carries the sentence anchor
+      // (sentenceIndex + sentenceFingerprint), the same fields annotations
+      // already have. New bookmarks store them at create time; older ones
+      // are backfilled here from timeSec so the backup is always complete.
+      bookmarks: (Array.isArray(clip.bookmarks) ? clip.bookmarks : []).map((bm) => {
+        let idx = (typeof bm.sentenceIndex === "number") ? bm.sentenceIndex : null;
+        if (idx == null) { const r = _idxAtTime(bm.timeSec); idx = r >= 0 ? r : null; }
+        return {
+          ...bm,
+          sentenceIndex: idx,
+          sentenceFingerprint:
+            bm.sentenceFingerprint ||
+            _annotateFingerprint(_quoteForIdx(idx == null ? -1 : idx, "")),
+        };
+      }),
       // Export LIVE annotations only. Tombstoned entries shouldn't
       // come back on restore — they'd just re-tombstone and silently
       // hide. Restoring them as live again would defeat the previous
