@@ -16228,7 +16228,11 @@ async function _bgRunWorker() {
     _updateChapterQueueUI();
     _renderBgQueuePanel();
     let success = await _bgTrySynth(_bgCurrent);
-    if (!success && _silentChapterQueue) {
+    // v4.183: a per-clip cancel (card ✕ / panel stop) aborts the in-flight
+    // synth, which surfaces here as success=false. Don't auto-retry or log
+    // a FAIL for a job the user deliberately stopped.
+    const _jobCancelled = () => !!(_bgCurrent && _bgCurrent._cancelled);
+    if (!success && _silentChapterQueue && !_jobCancelled()) {
       _dlog("bg-queue", `RETRY ${_bgCurrent.title} after 1.5s`, {
         chars: (_bgCurrent.text || "").length,
         priorCursor: _bgSynthSentence,
@@ -16315,7 +16319,7 @@ async function _bgRunWorker() {
         });
       }
       _bgOkCount += 1;
-    } else if (_silentChapterQueue) {
+    } else if (_silentChapterQueue && !_jobCancelled()) {
       const t = _bgLastSynth || {};
       _dlog("bg-queue", `FAIL ${_bgCurrent.title} (both attempts)`, {
         chars: (_bgCurrent.text || "").length,
@@ -16430,7 +16434,20 @@ function _renderBgQueuePanel() {
       parts.push(`~${_fmtMmSs(remaining)} left`);
     }
     meta.textContent = parts.join(" · ");
-    bgQueueCurrent.append(title, meta);
+    // v4.183: stop button for the in-flight job. The pending rows already
+    // have a × remove; the current row had none, so a running re-narrate
+    // could only be stopped from the (phone-occluded) hero Cancel button.
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.className = "bg-queue-stop";
+    stop.setAttribute("aria-label", "Cancel current re-narrate");
+    stop.title = "Cancel";
+    stop.textContent = "✕";
+    stop.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _bgCancelCurrent();
+    });
+    bgQueueCurrent.append(title, meta, stop);
   } else {
     bgQueueCurrent.hidden = true;
     bgQueueCurrent.innerHTML = "";
@@ -28618,9 +28635,17 @@ function makeClipCard(clip) {
     `Re-narrate ${clip.title} in this clip's voice (long-press for current voice picker)`
   );
   renarrateBtn.title = _renarrateInFlight
-    ? "Re-narrating in the background…"
+    ? "Cancel re-narrate"
     : "Re-narrate (in the background) — tap: same voice · long-press: current picker";
   renarrateBtn.textContent = "🔄";
+  // v4.183: while a re-narrate is in flight the chip becomes a cancel
+  // control — the only cancel that's reliably reachable on phone, where
+  // the hero rail's Generate→Cancel button is occluded by the reader.
+  if (_renarrateInFlight) {
+    renarrateBtn.classList.add("cancel");
+    renarrateBtn.textContent = "✕";
+    renarrateBtn.setAttribute("aria-label", `Cancel re-narrating ${clip.title}`);
+  }
 
   // Long-press detection via Pointer Events. ~500ms threshold matches
   // the platform convention (Android context-menu / iOS tap-and-hold).
@@ -28636,6 +28661,9 @@ function makeClipCard(clip) {
     }
   };
   renarrateBtn.addEventListener("pointerdown", (e) => {
+    // v4.183: while in-flight the chip is a cancel button — don't arm the
+    // long-press-to-re-narrate gesture (the click handler cancels instead).
+    if (_renarrateInFlight) return;
     _longPressed = false;
     _cancelLongPress();
     _lpTimer = setTimeout(() => {
@@ -28655,6 +28683,12 @@ function makeClipCard(clip) {
   renarrateBtn.addEventListener("pointerup", _cancelLongPress);
   renarrateBtn.addEventListener("click", (e) => {
     e.stopPropagation();
+    // v4.183: in-flight → the chip is a cancel button. Stop this clip's
+    // re-narrate instead of starting another.
+    if (_renarrateInFlight) {
+      _cancelClipRenarrate(clip.id);
+      return;
+    }
     // If the long-press timer already fired, swallow the click —
     // otherwise we'd re-narrate twice (once with picker, once with
     // clip voice).
@@ -28670,6 +28704,11 @@ function makeClipCard(clip) {
     e.preventDefault();
     e.stopPropagation();
     _cancelLongPress();
+    // v4.183: in-flight → cancel, mirroring the left-click contract.
+    if (_renarrateInFlight) {
+      _cancelClipRenarrate(clip.id);
+      return;
+    }
     _libraryRenarrate(clip.id, { usePickerVoice: true });
   });
 
@@ -28907,6 +28946,57 @@ function _bgSetSyncingActive(clipId) {
   // job's final fraction doesn't briefly flash on the new card.
   _bgSyncProgress = { clipId: null, fraction: 0 };
   if (typeof renderLibrary === "function") renderLibrary();
+}
+
+// v4.183: cancel an in-flight (or still-queued) re-narrate for ONE clip.
+// Wired to the per-card 🔄 chip — which flips to a ✕ stop button while a
+// clip is re-narrating — and to the bg-queue panel's current-job row. The
+// only existing cancel was the foreground Generate→Cancel button, which
+// lives in the hero icon rail; on phone that rail is occluded while the
+// reader/book view owns the screen, so a re-narrate kicked off from a
+// library card had no reachable cancel. The card is always reachable.
+//
+// Per-clip, not whole-queue: a pending job is just spliced out; cancelling
+// the CURRENT job flags the job object (so the worker skips its auto-retry +
+// FAIL accounting) and aborts the in-flight request, then the worker loop
+// proceeds to the next queued chapter. A lone re-narrate (the common case)
+// stops outright; a multi-chapter import keeps going. The flag lives on the
+// job object itself (discarded after the job ends) so nothing leaks.
+function _cancelClipRenarrate(clipId) {
+  if (!clipId) return false;
+  let acted = false;
+  // Pending (not yet started): drop it from the queue.
+  const idx = _chapterQueue.findIndex((j) => j && j.targetClipId === clipId);
+  if (idx >= 0) {
+    _chapterQueue.splice(idx, 1);
+    acted = true;
+  }
+  // Currently synthesizing: flag + abort the in-flight stream. The worker
+  // reads the flag, skips retry/FAIL, and moves on to the next job.
+  if (_bgCurrent && _bgCurrent.targetClipId === clipId) {
+    _bgCurrent._cancelled = true;
+    try { if (_preSynthController) _preSynthController.abort(); } catch {}
+    acted = true;
+  }
+  if (acted) {
+    _bgUnmarkSyncing(clipId); // instant card feedback; worker also unmarks
+    setStatus("Re-narrate cancelled.");
+    if (typeof _renderBgQueuePanel === "function") _renderBgQueuePanel();
+    if (typeof _updateChapterQueueUI === "function") _updateChapterQueueUI();
+  }
+  return acted;
+}
+
+// Generic "stop the current job" for the bg-queue panel's current row —
+// works even when the job has no target clip (a fresh import chapter, not a
+// re-narrate), where the per-clip path above can't match.
+function _bgCancelCurrent() {
+  if (!_bgCurrent) return;
+  _bgCurrent._cancelled = true;
+  try { if (_preSynthController) _preSynthController.abort(); } catch {}
+  if (_bgCurrent.targetClipId) _bgUnmarkSyncing(_bgCurrent.targetClipId);
+  setStatus("Re-narrate cancelled.");
+  if (typeof _renderBgQueuePanel === "function") _renderBgQueuePanel();
 }
 
 // v4.61 (#844): per-clip sync progress for the library card bar.
