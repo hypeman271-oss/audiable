@@ -44,7 +44,7 @@ SENTENCE_DIR = DATA_DIR / "sentences"
 ANIM_SHEET_DIR = DATA_DIR / "anim_sheets"
 
 # Schema version currently shipped. Bumped when a new migration is added.
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 # Per-tenant directory file. Lists every alpha-tester bearer the admin
 # has minted, keyed by sha256(bearer). The raw bearers are stored here
@@ -340,6 +340,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         _apply_v15(c)
         c.execute("UPDATE schema_version SET version = 15")
         current = 15
+
+    if current < 16:
+        _apply_v16(c)
+        c.execute("UPDATE schema_version SET version = 16")
+        current = 16
 
     if current != CURRENT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -925,6 +930,24 @@ def _apply_v15(c: sqlite3.Connection) -> None:
     )
     c.execute("ALTER TABLE books ADD COLUMN dedication TEXT")
     c.execute("ALTER TABLE books ADD COLUMN about_author TEXT")
+
+
+def _apply_v16(c: sqlite3.Connection) -> None:
+    """Portable narration profile. Two clip columns mirror the
+    animation_cues_json pattern (v10): prosody_hints_json carries the offline
+    emotion-detection hints (per-sentence beats), and sentence_assignments_json
+    carries per-sentence character-voice assignments. Both were client-only
+    (IndexedDB) before; persisting them lets a published book ship with the
+    author's chosen emotion + voice profile. Also books.narration_json holds the
+    author's per-book default (e.g. {"emotion": true}). See
+    book-packaging-design.md + emotion-detection-design.md."""
+    print(
+        "[library_db] migrating to schema v16 (portable narration profile)",
+        file=sys.stderr, flush=True,
+    )
+    c.execute("ALTER TABLE clips ADD COLUMN prosody_hints_json TEXT")
+    c.execute("ALTER TABLE clips ADD COLUMN sentence_assignments_json TEXT")
+    c.execute("ALTER TABLE books ADD COLUMN narration_json TEXT")
 
 
 # ──────────────────────────────────────────────────────────────────────

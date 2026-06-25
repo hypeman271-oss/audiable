@@ -305,6 +305,15 @@ def _row_to_clip_dict(row: sqlite3.Row) -> dict:
         "animationCues": library_db.jsload(
             row["animation_cues_json"] if "animation_cues_json" in row.keys() else None
         ) or [],
+        # v4.190 (portable narration): emotion hints + character-voice
+        # assignments. NULL columns (legacy rows) normalize to {} so the client
+        # always sees an object.
+        "prosodyHints": library_db.jsload(
+            row["prosody_hints_json"] if "prosody_hints_json" in row.keys() else None
+        ) or {},
+        "sentenceAssignments": library_db.jsload(
+            row["sentence_assignments_json"] if "sentence_assignments_json" in row.keys() else None
+        ) or {},
         # v225v4.0 (#810): per-sentence storage. lines is omitted from
         # the response when the column is NULL — clients use the
         # presence of `lines` to detect "this clip is opted in." We
@@ -488,6 +497,15 @@ class ClipUpsert(BaseModel):
     # image bytes are uploaded separately via POST /api/library/anim-sheet, so
     # this column stays small JSON. See docs/portable-books-design.md.
     animationCues: list[dict] | None = None
+    # v4.190 (portable narration): the author's narration profile, so a
+    # published book ships with their chosen emotion + voice. Both are maps
+    # keyed by sentence index (sparse). Same None-preserve, whole-object LWW as
+    # animationCues — None (downlevel/omitted) keeps the stored value; an
+    # explicit object (incl. {}) replaces it. prosodyHints = offline
+    # emotion-detection beats; sentenceAssignments = per-sentence character
+    # voice. See emotion-detection-design.md.
+    prosodyHints: dict | None = None
+    sentenceAssignments: dict | None = None
     # v225v4.0 (#810 / #586): Author-mode per-sentence storage. NULL on
     # legacy clips and on clips the user hasn't opted in; populated on
     # opt-in with [{id, text, hash, updatedAt, voiceOverride?}, ...].
@@ -612,6 +630,30 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
             else existing_cues_json
         )
 
+        # v4.190 (portable narration): prosodyHints + sentenceAssignments.
+        # Same None-preserve, whole-object LWW as cues — single-author maps,
+        # so a downlevel client (field omitted → None) keeps the stored value.
+        existing_prosody_json = (
+            existing["prosody_hints_json"]
+            if existing is not None and "prosody_hints_json" in existing.keys()
+            else None
+        )
+        merged_prosody_json = (
+            library_db.jsdump(payload.prosodyHints)
+            if payload.prosodyHints is not None
+            else existing_prosody_json
+        )
+        existing_assignments_json = (
+            existing["sentence_assignments_json"]
+            if existing is not None and "sentence_assignments_json" in existing.keys()
+            else None
+        )
+        merged_assignments_json = (
+            library_db.jsdump(payload.sentenceAssignments)
+            if payload.sentenceAssignments is not None
+            else existing_assignments_json
+        )
+
         # Decode + store audio if a blob came along, OR validate the
         # sha if the client only sent the reference.
         audio_sha = payload.audioSha256
@@ -660,6 +702,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               sentence_offsets_json, bookmarks_json, note, notes,
               tags_json, cover_json, git_ref_json, audio_sha256,
               images_json, annotations_json, animation_cues_json,
+              prosody_hints_json, sentence_assignments_json,
               lines_json, next_line_seq,
               synth_ok, synth_silent_sentence_count,
               created_at, updated_at, last_synced_at, deleted
@@ -670,6 +713,7 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               ?, ?, ?, ?,
               ?, ?, ?, ?,
               ?, ?, ?,
+              ?, ?,
               ?, ?,
               ?, ?,
               ?, ?, ?, ?
@@ -696,6 +740,8 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
               images_json=excluded.images_json,
               annotations_json=excluded.annotations_json,
               animation_cues_json=excluded.animation_cues_json,
+              prosody_hints_json=excluded.prosody_hints_json,
+              sentence_assignments_json=excluded.sentence_assignments_json,
               lines_json=excluded.lines_json,
               next_line_seq=excluded.next_line_seq,
               synth_ok=excluded.synth_ok,
@@ -729,6 +775,8 @@ def put_clip(clip_id: int, payload: ClipUpsert, request: Request):
                 library_db.jsdump(payload.images),
                 library_db.jsdump(merged_annotations),
                 merged_cues_json,
+                merged_prosody_json,
+                merged_assignments_json,
                 lines_json_value,
                 merged_next_line_seq,
                 int(payload.synthOk),
@@ -804,6 +852,9 @@ class BookUpsert(BaseModel):
     style: str | None = None
     dedication: str | None = None
     aboutAuthor: str | None = None
+    # v4.190 (portable narration): per-book default narration profile, e.g.
+    # {"emotion": true}. None = downlevel/omitted → server preserves stored.
+    narration: dict | None = None
     createdAt: str | None = None
     updatedAt: str = Field(..., min_length=1)
     deleted: bool = False
@@ -820,6 +871,10 @@ def _row_to_book_dict(row: sqlite3.Row) -> dict:
         "style": (row["style"] if "style" in row.keys() else None),
         "dedication": (row["dedication"] if "dedication" in row.keys() else None),
         "aboutAuthor": (row["about_author"] if "about_author" in row.keys() else None),
+        "narration": (
+            library_db.jsload(row["narration_json"])
+            if "narration_json" in row.keys() else None
+        ) or {},
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "deleted": bool(row["deleted"]),
@@ -877,8 +932,9 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
             INSERT INTO books (
               tenant_key, id, title, author, description, cover_sha,
               chapter_clip_ids_json, style, dedication, about_author,
+              narration_json,
               created_at, updated_at, deleted
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_key, id) DO UPDATE SET
               title=excluded.title,
               author=excluded.author,
@@ -888,6 +944,7 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
               style=excluded.style,
               dedication=excluded.dedication,
               about_author=excluded.about_author,
+              narration_json=COALESCE(excluded.narration_json, books.narration_json),
               created_at=excluded.created_at,
               updated_at=excluded.updated_at,
               deleted=excluded.deleted
@@ -903,6 +960,8 @@ def put_book(book_id: int, payload: BookUpsert, request: Request):
                 payload.style,
                 payload.dedication,
                 payload.aboutAuthor,
+                # None-preserve: downlevel client omits narration → keep stored.
+                library_db.jsdump(payload.narration) if payload.narration is not None else None,
                 payload.createdAt or payload.updatedAt,
                 payload.updatedAt,
                 int(payload.deleted),
@@ -1128,6 +1187,13 @@ def _build_bundle(row: sqlite3.Row, token: str, published_at: str) -> dict:
         "text": row["text"] or "",
         "kind": row["kind"],
         "voiceName": row["voice_name"],
+        # v4.190 (portable narration): the chosen voice profile. Audio is already
+        # baked with it, but carry the metadata so the reader can label/restore
+        # it and so a future re-narrate keeps the author's choice.
+        "voiceId": row["voice_id"],
+        "speakerId": row["speaker_id"],
+        "rate": row["rate"],
+        "volume": row["volume"],
         "durationSec": row["duration_sec"],
         "sentenceOffsetsSec": library_db.jsload(row["sentence_offsets_json"]) or [],
         "cover": library_db.jsload(row["cover_json"]),
@@ -1136,6 +1202,14 @@ def _build_bundle(row: sqlite3.Row, token: str, published_at: str) -> dict:
         "animationCues": library_db.jsload(
             row["animation_cues_json"] if "animation_cues_json" in row.keys() else None
         ) or [],
+        # v4.190 (portable narration): emotion hints + character-voice
+        # assignments, so the consumer reader narrates as the author intended.
+        "prosodyHints": library_db.jsload(
+            row["prosody_hints_json"] if "prosody_hints_json" in row.keys() else None
+        ) or {},
+        "sentenceAssignments": library_db.jsload(
+            row["sentence_assignments_json"] if "sentence_assignments_json" in row.keys() else None
+        ) or {},
         "publishedAt": published_at,
     }
 
@@ -1158,6 +1232,12 @@ def _build_book_bundle(
         "style": (book_row["style"] if "style" in book_row.keys() else None),
         "dedication": (book_row["dedication"] if "dedication" in book_row.keys() else None),
         "aboutAuthor": (book_row["about_author"] if "about_author" in book_row.keys() else None),
+        # v4.190 (portable narration): the author's per-book default, e.g.
+        # {"emotion": true}. The reader applies it as the default (and may toggle).
+        "narration": (
+            library_db.jsload(book_row["narration_json"])
+            if "narration_json" in book_row.keys() else None
+        ) or {},
         "publishedAt": published_at,
         "chapters": [
             _build_bundle(r, token, published_at) for r in chapter_rows

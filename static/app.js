@@ -13461,8 +13461,18 @@ const _PROSODY_EMOJI = {
   bright: "✨", tense: "😠", emphatic: "❗",
   questioning: "❓", trailing: "…",
 };
+// v4.190 (portable narration): reader's per-session override of a published
+// book's emotion default. null = follow the author's default; true/false = the
+// reader flipped it via the reader toggle.
+let _pubEmotionOverride = null;
 function _emotionEnabled() {
   try {
+    // In a published book, the author's narration default governs by default;
+    // the reader may still flip it (_pubEmotionOverride).
+    if (typeof _pubBook !== "undefined" && _pubBook) {
+      if (_pubEmotionOverride !== null) return _pubEmotionOverride;
+      return !!(_pubBook.narration && _pubBook.narration.emotion);
+    }
     const p = new URLSearchParams(location.search).get("emotion");
     if (p === "1") { localStorage.setItem("narrative.emotion", "1"); return true; }
     if (p === "0") { localStorage.setItem("narrative.emotion", "0"); return false; }
@@ -20842,6 +20852,13 @@ async function _loadPublishedChapter(idx) {
     cover: ch.cover || null,
     images: Array.isArray(ch.images) ? ch.images : [],
     animationCues: Array.isArray(ch.animationCues) ? ch.animationCues : [],
+    // v4.190 (portable narration): carry the author's emotion + character-voice
+    // profile onto the reader's transient clip so loadClip hydrates
+    // _currentProsodyHints and the emotion beats fire as the author intended.
+    prosodyHints: (ch.prosodyHints && typeof ch.prosodyHints === "object") ? ch.prosodyHints : {},
+    sentenceAssignments:
+      (ch.sentenceAssignments && typeof ch.sentenceAssignments === "object")
+        ? ch.sentenceAssignments : {},
     blob: blob || undefined,
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -20857,6 +20874,7 @@ async function _loadPublishedChapter(idx) {
   _readerImmerseInit();
   _showPubToc(false);
   _updatePubChapterNav();
+  if (typeof _updatePubEmotionToggle === "function") _updatePubEmotionToggle();
   setStatus(`Reading "${clip.title}" (${idx + 1}/${_pubBook.reading.length}).`);
 }
 
@@ -20889,6 +20907,9 @@ function _ensurePubReaderEls() {
     nav.innerHTML =
       '<button id="pub-prev-ch" type="button" title="Previous chapter">‹</button>' +
       '<button id="pub-toc-btn" type="button" title="Table of contents">Contents</button>' +
+      // v4.190 (portable narration): reader toggle for the author's emotion
+      // narration. Hidden unless the book ships emotion (something to toggle).
+      '<button id="pub-emotion-toggle" type="button" title="Emotion narration" hidden>🎭</button>' +
       '<button id="pub-next-ch" type="button" title="Next chapter">›</button>';
     document.body.appendChild(nav);
     document.getElementById("pub-prev-ch").addEventListener("click", (e) => {
@@ -20900,7 +20921,31 @@ function _ensurePubReaderEls() {
     document.getElementById("pub-toc-btn").addEventListener("click", (e) => {
       e.stopPropagation(); _renderPubToc(); _showPubToc(true);
     });
+    document.getElementById("pub-emotion-toggle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      _pubEmotionOverride = !_emotionEnabled();
+      _updatePubEmotionToggle();
+      try { if (typeof _repaintProsodyMarks === "function") _repaintProsodyMarks(); } catch {}
+      setStatus(_pubEmotionOverride ? "Emotion narration on." : "Emotion narration off.");
+    });
   }
+}
+
+// v4.190 (portable narration): reflect the emotion toggle's visibility + state
+// in the published reader. Shown only when there's emotion to toggle.
+function _updatePubEmotionToggle() {
+  const btn = document.getElementById("pub-emotion-toggle");
+  if (!btn) return;
+  const hasEmotion =
+    !!(_pubBook && _pubBook.narration && _pubBook.narration.emotion) ||
+    (_currentProsodyHints && Object.keys(_currentProsodyHints).length > 0);
+  btn.hidden = !hasEmotion;
+  const on = _emotionEnabled();
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.classList.toggle("on", on);
+  btn.title = on
+    ? "Emotion narration: on (tap to turn off)"
+    : "Emotion narration: off (tap to turn on)";
 }
 
 function _renderPubToc() {
@@ -21336,6 +21381,38 @@ async function _openBookEditor(id) {
   _bookEl("book-author-input").value = book.author || "";
   { const d = _bookEl("book-dedication-input"); if (d) d.value = book.dedication || ""; }
   { const a = _bookEl("book-about-input"); if (a) a.value = book.aboutAuthor || ""; }
+  // v4.190 (portable narration): default-narration toggle + baked-voice hint.
+  {
+    const em = _bookEl("book-narration-emotion");
+    if (em) {
+      let on;
+      if (book.narration && typeof book.narration.emotion === "boolean") {
+        on = book.narration.emotion;
+      } else {
+        // Default ON when any chapter actually carries emotion hints.
+        on = false;
+        for (const cid of (book.chapterClipIds || [])) {
+          const c = await getClip(cid);
+          if (c && c.prosodyHints && Object.keys(c.prosodyHints).length) { on = true; break; }
+        }
+      }
+      em.checked = on;
+    }
+    const vh = _bookEl("book-narration-voice");
+    if (vh) {
+      let label = "";
+      const firstId = (book.chapterClipIds || [])[0];
+      if (firstId != null) {
+        const c0 = await getClip(firstId);
+        const vn = c0 && (c0.voiceName || c0.voiceId);
+        if (vn) {
+          label = "Narrated by " +
+            (typeof _displayVoiceName === "function" ? _displayVoiceName(vn) : vn);
+        }
+      }
+      vh.textContent = label;
+    }
+  }
   const prev = _bookEl("book-cover-preview");
   prev.style.backgroundImage = "";
   if (book.coverSha) {
@@ -21388,6 +21465,9 @@ async function _bookEditorSave() {
   book.author = _bookEl("book-author-input").value.trim();
   { const d = _bookEl("book-dedication-input"); if (d) book.dedication = d.value.trim(); }
   { const a = _bookEl("book-about-input"); if (a) book.aboutAuthor = a.value.trim(); }
+  // v4.190 (portable narration): persist the author's per-book default.
+  { const em = _bookEl("book-narration-emotion");
+    if (em) book.narration = { ...(book.narration || {}), emotion: !!em.checked }; }
   await putBook(book);
   if (typeof _syncPushBook === "function") { try { await _syncPushBook(book); } catch {} }
 }
@@ -26821,6 +26901,18 @@ async function _syncPushClip(clip) {
     // null when the clip never had cues so a downlevel/empty push can't
     // wipe cues added on another device (server preserves on null).
     animationCues: Array.isArray(clip.animationCues) ? clip.animationCues : null,
+    // v4.190 (portable narration): emotion hints + character-voice
+    // assignments. Send the object when present (incl. {} = authoritative
+    // clear); null when absent so a downlevel push can't wipe values authored
+    // on another device (server preserves on null).
+    prosodyHints:
+      clip.prosodyHints && typeof clip.prosodyHints === "object"
+        ? clip.prosodyHints
+        : null,
+    sentenceAssignments:
+      clip.sentenceAssignments && typeof clip.sentenceAssignments === "object"
+        ? clip.sentenceAssignments
+        : null,
     // v225v4.0 (#810): Author-mode per-sentence storage. lines is null
     // for clips not opted in (server keeps lines_json NULL → blob path
     // runs unchanged). Sending null is critical: omitting the field
@@ -27011,6 +27103,14 @@ async function _syncPushBook(book) {
         description: book.description || "",
         coverSha: book.coverSha || null,
         chapterClipIds: Array.isArray(book.chapterClipIds) ? book.chapterClipIds : [],
+        // v4.190: these belong in the push so they reach the published bundle.
+        // style/dedication/aboutAuthor were previously omitted (front/back
+        // matter never published); narration is the new per-book default.
+        style: book.style || null,
+        dedication: book.dedication || "",
+        aboutAuthor: book.aboutAuthor || "",
+        narration: (book.narration && typeof book.narration === "object")
+          ? book.narration : null,
         createdAt: book.createdAt || book.updatedAt,
         updatedAt: book.updatedAt || new Date().toISOString(),
         deleted: !!book.deleted,
@@ -27093,6 +27193,15 @@ async function _syncAbsorbServerClip(sc) {
     // renders the same scenes/sprites/badges. The cue's image is fetched
     // on demand by `sheetSha` (see _animResolveSheetUrl fetch-on-miss).
     animationCues: Array.isArray(sc.animationCues) ? sc.animationCues : [],
+    // v4.190 (portable narration): emotion hints + character-voice assignments
+    // ride the clip JSON. Preserve on the local row so the receiving device
+    // (and a published-book reader) narrates with the author's profile.
+    prosodyHints:
+      sc.prosodyHints && typeof sc.prosodyHints === "object" ? sc.prosodyHints : {},
+    sentenceAssignments:
+      sc.sentenceAssignments && typeof sc.sentenceAssignments === "object"
+        ? sc.sentenceAssignments
+        : {},
     // v225v4.0 (#810): per-sentence storage. Server only emits these
     // fields when the clip is opted in; absent → undefined locally →
     // clip stays in the legacy blob model on the receiving device. A

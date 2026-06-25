@@ -15431,6 +15431,10 @@ body.anim-page-active #reading-view {
 .book-chapters { display: flex; flex-direction: column; gap: 6px; }
 .book-matter-fields { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 .book-matter-fields textarea { width: 100%; resize: vertical; }
+/* v4.190: per-book default-narration toggle + baked-voice hint. */
+.book-narration-row { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; flex-wrap: wrap; }
+.book-narration-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.book-narration-hint { font-size: 12px; opacity: 0.7; }
 .book-chapter-row {
   display: flex; align-items: center; gap: 8px; padding: 8px 10px;
   border: 1px solid var(--border-soft); border-radius: 8px;
@@ -15794,6 +15798,9 @@ body.reader-immersed #pub-chapter-nav {
   line-height: 1;
 }
 .pub-chapter-nav button:disabled { opacity: 0.32; cursor: default; }
+/* v4.190: emotion toggle pressed state. */
+#pub-emotion-toggle { opacity: 0.5; }
+#pub-emotion-toggle.on { opacity: 1; background: var(--accent-tint); }
 .pub-chapter-nav button:not(:disabled):hover {
   background: var(--bg, rgba(255, 255, 255, 0.08));
 }
