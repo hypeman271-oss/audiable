@@ -11037,6 +11037,16 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   padding: 0.05em 0.35em;
   border-radius: 4px;
 }
+/* v4.192: paragraph break after a block-ending sentence — the ::after block
+   forces the next sentence onto a new line with a gap, so dialogue lines and
+   paragraphs read separately (like a markdown viewer) while each .sentence
+   stays inline for karaoke highlight + tap-to-seek. */
+.reading-view .sentence.para-end::after,
+.book-view-spread.v3 .sentence.para-end::after {
+  content: "";
+  display: block;
+  height: 0.7em;
+}
 /* Classic — centered headings, asterism divider */
 .book-view-spread.v3[data-book-style="classic"] .sentence .bv-h { text-align: center; }
 .book-view-spread.v3[data-book-style="classic"] .bv-scenebreak::before {

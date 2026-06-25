@@ -18104,6 +18104,12 @@ function enterReadingView(text, images, highlights, lines) {
     span.innerHTML = (_rvFmt && !_hasHl)
       ? (_rvFmt[i] || "")
       : _buildSentenceContentHTML(s, i, _hl);
+    // v4.192: draw the paragraph break that _paragraphEndIndices already
+    // detected, so blank-line-separated blocks (dialogue lines, paragraphs)
+    // each stand on their own — matching how a markdown viewer renders them.
+    if (typeof _paragraphEndIndices !== "undefined" && _paragraphEndIndices.has(i)) {
+      span.classList.add("para-end");
+    }
     // v220-AI: stash raw text + the built HTML on the span so the
     // attribution repaint can switch between "single-color whole span"
     // (preserves highlights / drop caps) and "split into colored
@@ -24663,6 +24669,12 @@ function _bookViewV3Setup(source) {
     } else {
       span.className = "sentence";
       span.textContent = sentences[i] + " ";
+    }
+    // v4.192: paragraph break after a block-ending sentence (dialogue lines,
+    // paragraphs) so they don't run together — matches the reading view + a
+    // markdown viewer. Detected indices come from _paragraphEndIndices.
+    if (typeof _paragraphEndIndices !== "undefined" && _paragraphEndIndices.has(i)) {
+      span.classList.add("para-end");
     }
     cur.body.appendChild(span);
     hasContent = true;
