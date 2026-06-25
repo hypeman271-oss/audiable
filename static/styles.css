@@ -10990,6 +10990,53 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   content: "* * *";
   letter-spacing: 0.4em;
 }
+
+/* v4.191: same markdown block rendering in the SCROLLING reading view (the
+   book view already styles these via _readerFmtAll). Inline em/strong/code/s
+   are native tags and render without rules; these handle the block markers. */
+.reading-view .sentence .bv-h {
+  display: block;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0.5em 0 0.35em;
+}
+.reading-view .sentence .bv-h1 { font-size: 1.5em; }
+.reading-view .sentence .bv-h2 { font-size: 1.3em; }
+.reading-view .sentence .bv-h3 { font-size: 1.15em; }
+.reading-view .sentence .bv-h4,
+.reading-view .sentence .bv-h5,
+.reading-view .sentence .bv-h6 { font-size: 1.05em; }
+.reading-view .sentence .bv-quote {
+  display: block;
+  border-left: 3px solid var(--accent, #6c8cff);
+  padding-left: 0.8em;
+  font-style: italic;
+  opacity: 0.92;
+  margin: 0.35em 0;
+}
+.reading-view .sentence .bv-li {
+  display: block;
+  padding-left: 1.4em;
+  text-indent: -0.7em;
+}
+.reading-view .sentence .bv-scenebreak {
+  display: block;
+  text-align: center;
+  margin: 1.1em 0;
+  opacity: 0.55;
+  line-height: 1;
+}
+.reading-view .sentence .bv-scenebreak::before {
+  content: "* * *";
+  letter-spacing: 0.4em;
+}
+.reading-view .sentence code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--bg-card-2, rgba(127, 127, 127, 0.15));
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+}
 /* Classic — centered headings, asterism divider */
 .book-view-spread.v3[data-book-style="classic"] .sentence .bv-h { text-align: center; }
 .book-view-spread.v3[data-book-style="classic"] .bv-scenebreak::before {

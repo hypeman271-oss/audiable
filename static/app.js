@@ -18064,6 +18064,17 @@ function enterReadingView(text, images, highlights, lines) {
     }
   }
 
+  // v4.191: render markdown in the scrolling reader too (the book view already
+  // does — _readerFmtAll). Precompute once so numbered lists the splitter
+  // scrambled are reconstructed; XSS-safe (escape-first). Sentences that carry
+  // a highlight fall back to the highlight builder (markdown is skipped for
+  // those to keep the highlight offsets intact — highlights are author-only +
+  // rare). Default on; ?readerfmt=0 / narrative.readerFmt="0" disables.
+  const _rvFmt =
+    (typeof _readerFmtEnabled === "function" && _readerFmtEnabled() &&
+      typeof _readerFmtAll === "function")
+      ? _readerFmtAll(sentences)
+      : null;
   sentenceSpans = sentences.map((s, i) => {
     flushImagesAt(i);
     const span = document.createElement("span");
@@ -18088,7 +18099,11 @@ function enterReadingView(text, images, highlights, lines) {
     // sentences carry their highlights too. _readingViewHighlights
     // is populated by loadClip / generate when the clip's
     // highlights are read in.
-    span.innerHTML = _buildSentenceContentHTML(s, i, _readingViewHighlights || []);
+    const _hl = _readingViewHighlights || [];
+    const _hasHl = _rvFmt && _hl.some((h) => h && h.sentence_index === i);
+    span.innerHTML = (_rvFmt && !_hasHl)
+      ? (_rvFmt[i] || "")
+      : _buildSentenceContentHTML(s, i, _hl);
     // v220-AI: stash raw text + the built HTML on the span so the
     // attribution repaint can switch between "single-color whole span"
     // (preserves highlights / drop caps) and "split into colored
