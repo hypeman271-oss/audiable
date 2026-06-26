@@ -1681,6 +1681,11 @@ function _clearSelectedSentence() {
 // AbortController for the in-flight synthesis request (null when idle).
 let _synthController = null;
 
+// v4.203: when a generate finds speaker cues with no matching voiced
+// character, the hint to show at completion (synth progress would clobber a
+// status set at setup time). Empty = nothing to warn about.
+let _cueVoiceHint = "";
+
 // setTimeout handle for the 3-second pause between auto-advanced chapters.
 // Cleared by _cancelAutoAdvance() whenever the user takes any action that
 // would invalidate the queued next-clip load (manual play of another clip,
@@ -14038,24 +14043,28 @@ function _addCharacter() {
 // create a character for each new name, so the author just assigns voices
 // instead of typing each name. Skips names that already have a character
 // (case-insensitive). Voices start unset — the user picks them in the row.
-function _addCharactersFromScript() {
-  const text = (typeof textEl !== "undefined" && textEl && textEl.value) || "";
-  if (!text.trim()) {
-    setStatus("Load or paste a script first — no text to scan.", true);
-    return;
-  }
-  // Distinct cue names in first-seen order.
+// Distinct ALL-CAPS speaker-cue names in a script, first-seen order.
+function _scriptCueNames(text) {
   const seen = new Set();
-  const cueNames = [];
-  for (const ln of text.split(/\n/)) {
+  const names = [];
+  for (const ln of String(text || "").split(/\n/)) {
     const av = _avClassifyLine(ln);
     if (av.type !== "cue") continue;
     const name = av.cue.trim();
     const key = name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    cueNames.push(name);
+    names.push(name);
   }
+  return names;
+}
+function _addCharactersFromScript() {
+  const text = (typeof textEl !== "undefined" && textEl && textEl.value) || "";
+  if (!text.trim()) {
+    setStatus("Load or paste a script first — no text to scan.", true);
+    return;
+  }
+  const cueNames = _scriptCueNames(text);
   if (!cueNames.length) {
     setStatus("No speaker cues found. Cues look like “NARRATOR:” at the start of a line.", true);
     return;
@@ -14794,6 +14803,21 @@ async function generate() {
       speaker_id: fallbackSpeaker,
     });
   }
+  // v4.203: if the script HAS speaker cues but none mapped to a voiced
+  // character, the whole thing narrates in one voice — a silent surprise.
+  // Stash a hint to surface at completion (synth-progress would clobber a
+  // status set here). Only in Author mode, where cues/characters live.
+  _cueVoiceHint = "";
+  if (charactersUsed === 0 && isAuthorMode()) {
+    const cueNames = _scriptCueNames(text);
+    if (cueNames.length > 0) {
+      const shown = cueNames.slice(0, 3).join(", ") + (cueNames.length > 3 ? "…" : "");
+      _cueVoiceHint =
+        `⚠️ ${cueNames.length} speaker cue${cueNames.length === 1 ? "" : "s"} ` +
+        `(${shown}) but no matching character voice — narrated in one voice. ` +
+        `Tip: 🎤 Characters → ✨ From script, then pick a voice for each.`;
+    }
+  }
   if (charactersUsed > 0) {
     setStatus(
       `Synthesising with ${charactersUsed} character voice${charactersUsed === 1 ? "" : "s"}…`
@@ -15249,7 +15273,12 @@ async function generate() {
           playerEl.addEventListener("loadedmetadata", onLoaded, { once: true });
           playerEl.src = lastBlobUrl;
 
-          setStatus(`Ready · ${(combined.size / 1024).toFixed(0)} KB`);
+          if (_cueVoiceHint) {
+            setStatus(_cueVoiceHint, true);
+            _cueVoiceHint = "";
+          } else {
+            setStatus(`Ready · ${(combined.size / 1024).toFixed(0)} KB`);
+          }
 
         } else if (event.type === "error") {
           throw new Error(event.message || "synthesis error");
