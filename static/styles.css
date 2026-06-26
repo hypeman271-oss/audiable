@@ -11047,6 +11047,52 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   display: block;
   height: 0.7em;
 }
+
+/* v4.193: AV (voice-actor) script elements — speaker cues, technical
+   directions, beats, and header metadata, styled so a script scans like the
+   pro AV format. Applies in both the reading view and book view. */
+.reading-view .sentence .av-cue,
+.book-view-spread.v3 .sentence .av-cue { display: block; margin: 0.15em 0; }
+.reading-view .sentence .av-cue-name,
+.book-view-spread.v3 .sentence .av-cue-name {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+}
+.reading-view .sentence .av-direction,
+.book-view-spread.v3 .sentence .av-direction {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.reading-view .sentence .av-direction-block,
+.book-view-spread.v3 .sentence .av-direction-block {
+  display: block;
+  margin: 0.25em 0;
+  padding-left: 0.8em;
+  border-left: 2px dashed var(--border-strong);
+}
+.reading-view .sentence .av-beat,
+.book-view-spread.v3 .sentence .av-beat {
+  display: block;
+  text-align: center;
+  color: var(--fg-dim);
+  letter-spacing: 0.25em;
+  font-size: 0.8em;
+  margin: 0.6em 0;
+  opacity: 0.7;
+}
+.reading-view .sentence .av-meta,
+.book-view-spread.v3 .sentence .av-meta {
+  display: block;
+  font-size: 0.92em;
+  color: var(--fg-dim);
+  margin: 0.05em 0;
+}
+.reading-view .sentence .av-meta-label,
+.book-view-spread.v3 .sentence .av-meta-label {
+  font-weight: 700;
+  color: var(--fg);
+}
 /* Classic — centered headings, asterism divider */
 .book-view-spread.v3[data-book-style="classic"] .sentence .bv-h { text-align: center; }
 .book-view-spread.v3[data-book-style="classic"] .bv-scenebreak::before {

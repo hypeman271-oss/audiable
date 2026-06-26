@@ -24251,7 +24251,36 @@ function _readerInlineFmt(raw) {
   s = s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1<em>$2</em>");
   s = s.replace(/(^|[^\w_])_([^_\n]+?)_(?![\w_])/g, "$1<em>$2</em>");
   s = s.replace(/~~([^~]+?)~~/g, "<s>$1</s>"); // ~~strike~~
+  // v4.193 (AV scripts): inline technical directions in [brackets] — [SFX: …],
+  // [MUSIC], [BEAT] — render dimmed + set apart, the voice-actor convention.
+  s = s.replace(/\[([^\]\n]+)\]/g, '<span class="av-direction">[$1]</span>');
   return s;
+}
+
+// v4.193 (AV scripts): classify ONE script line into an AV element. Shared by
+// the reader formatter (display), the synth strip (spoken text), and the AV
+// PDF. Pure + cheap. Returns { type, cue?, rest?, label? } or { type:"text" }.
+//   beat       — a lone [BEAT] / (beat): a pause, not spoken
+//   direction  — a whole-line technical direction in [brackets] or (parens)
+//   cue        — an ALL-CAPS speaker cue "NARRATOR:" / "MA:" + the dialogue
+//   meta       — a header field (Client:, Voice Spec:, Tone/Pacing: …)
+//   text       — ordinary prose / dialogue
+const _AV_META_RE = /^(\*{0,2})\s*(Client\/Project|Client|Project|Target Demographic|Demographic|Audience|Voice Spec|Voice|Tone\/Pacing|Tone|Pacing|Length|System)\s*(\*{0,2})\s*:\s*(.*)$/i;
+const _AV_CUE_RE = /^([A-Z][A-Z0-9 .'’&/\-]{1,30}):\s*([\s\S]*)$/;
+function _avClassifyLine(line) {
+  const t = String(line == null ? "" : line).replace(/^[ \t]+/, "").replace(/[ \t]+$/, "");
+  if (!t) return { type: "text" };
+  if (/^[\[(]\s*beat\s*[\])]$/i.test(t)) return { type: "beat" };
+  if (/^\[[^\]]+\]$/.test(t) || /^\([^)]+\)$/.test(t)) return { type: "direction", rest: t };
+  let m = t.match(_AV_META_RE);
+  if (m) return { type: "meta", label: m[2], rest: m[4] };
+  m = t.match(_AV_CUE_RE);
+  // Require ≥2 letters in the cue so "I:" / a stray "A:" don't match, and the
+  // cue must be genuinely upper-case (the char class already enforces it).
+  if (m && (m[1].replace(/[^A-Z]/g, "").length >= 2)) {
+    return { type: "cue", cue: m[1], rest: m[2] };
+  }
+  return { type: "text" };
 }
 // Map a sentence to {html, cls}. A heading (#) or blockquote (>) marker at the
 // very start gets a style class + the marker stripped; everything else is
@@ -24267,6 +24296,24 @@ function _readerFmtLine(line) {
   const sbk = t.replace(/\s+/g, "");
   if ((sbk.length >= 3 && /^[*#·•⁂◆—–-]+$/.test(sbk)) || sbk === "⁂" || sbk === "◆") {
     return '<span class="bv-scenebreak" role="separator" aria-label="scene break"></span>';
+  }
+  // v4.193 (AV scripts): voice-actor script elements — a beat, a whole-line
+  // technical direction, a header metadata field, or an ALL-CAPS speaker cue.
+  const _av = _avClassifyLine(t);
+  if (_av.type === "beat") {
+    return '<span class="av-beat" role="separator" aria-label="beat">[BEAT]</span>';
+  }
+  if (_av.type === "direction") {
+    return '<span class="av-direction av-direction-block">' +
+      _readerEscapeHtml(_av.rest) + "</span>";
+  }
+  if (_av.type === "meta") {
+    return '<span class="av-meta"><span class="av-meta-label">' +
+      _readerEscapeHtml(_av.label) + ":</span> " + _readerInlineFmt(_av.rest) + "</span>";
+  }
+  if (_av.type === "cue") {
+    return '<span class="av-cue"><span class="av-cue-name">' +
+      _readerEscapeHtml(_av.cue) + ":</span> " + _readerInlineFmt(_av.rest) + "</span>";
   }
   let m = t.match(/^(#{1,6})[ \t]+(.*)$/);
   if (m) {
