@@ -15062,7 +15062,11 @@ async function generate() {
           // There may be a brief audible glitch at the swap; the tradeoff is
           // that the rest of the playback Just Works.
           const combined = new Blob([base64ToBytes(event.mp3_b64)], { type: "audio/mpeg" });
-          sentenceOffsetsSec = (event.sentence_offsets_ms || []).map((ms) => ms / 1000);
+          // v4.213: pad over silent [BEAT]/direction sentences so the saved
+          // offsets line up with the display spans (no-op without silent lines).
+          sentenceOffsetsSec = _alignOffsetsToDisplay(
+            (event.sentence_offsets_ms || []).map((ms) => ms / 1000)
+          );
           // v221.sync-4: server-side persisted sha. Cached on the
           // outer scope so the saveClip call below can carry it onto
           // the clip. The sync adapter (#429) then PUTs the clip by
@@ -18321,6 +18325,54 @@ function _detectAvBeatIndices(sentences) {
   return set;
 }
 
+// v4.213: a display sentence is "spoken" if it produces audio. [BEAT], a
+// standalone [direction]/(direction), or a header field strips to empty —
+// the engine yields no sentence for it, so the audio's per-sentence offsets
+// array is SHORTER than the reading view's sentence spans. Detect those.
+function _isSpokenSentence(sentenceText) {
+  try {
+    return _stripSynthChars(String(sentenceText || "")).trim().length > 0;
+  } catch {
+    return true; // never wrongly mark a real line silent
+  }
+}
+// Pad an audio-length offsets array back to display length: each silent
+// display sentence (no audio) inherits the START of the next spoken sentence,
+// so the karaoke highlight reaches it at the right time and the [BEAT] pause
+// fires, without every later sentence drifting. No-op when the offsets already
+// match the span count (no silent sentences) or the shape is unexpected.
+function _alignOffsetsToDisplay(offsetsSec) {
+  try {
+    const spans = sentenceSpans;
+    if (!Array.isArray(offsetsSec) || !Array.isArray(spans) || !spans.length) {
+      return offsetsSec;
+    }
+    const N = spans.length;
+    if (offsetsSec.length === N) return offsetsSec; // already display-aligned
+    const spoken = spans.map((sp) =>
+      _isSpokenSentence(
+        (sp.dataset && sp.dataset.sentenceText) || sp.textContent || ""
+      )
+    );
+    const spokenCount = spoken.reduce((n, b) => n + (b ? 1 : 0), 0);
+    if (offsetsSec.length !== spokenCount) return offsetsSec; // unknown — don't risk it
+    const out = new Array(N);
+    let ai = 0;
+    for (let i = 0; i < N; i++) {
+      if (spoken[i]) {
+        out[i] = offsetsSec[ai];
+        ai++;
+      } else {
+        // silent slot → start of the next spoken sentence (or hold the prior)
+        out[i] = ai < offsetsSec.length ? offsetsSec[ai] : (out[i - 1] ?? 0);
+      }
+    }
+    return out;
+  } catch {
+    return offsetsSec;
+  }
+}
+
 function _detectParagraphEndIndices(text, sentences) {
   const ends = new Set();
   if (!text || !Array.isArray(sentences) || sentences.length === 0) return ends;
@@ -18603,6 +18655,11 @@ function enterReadingView(text, images, highlights, lines) {
     readingView.appendChild(span);
     return span;
   });
+  // v4.213: spans are built — pad the audio offsets back to display length so
+  // [BEAT]/silent lines don't desync the karaoke. Idempotent + no-op when the
+  // counts already match. Covers loaded clips (offsets restored before this)
+  // and any reading-view entry.
+  sentenceOffsetsSec = _alignOffsetsToDisplay(sentenceOffsetsSec);
   // v220-AA: paint the current assignment markers (tag chip + dotted
   // underline) on any sentence with an existing override.
   for (let i = 0; i < sentenceSpans.length; i++) {
