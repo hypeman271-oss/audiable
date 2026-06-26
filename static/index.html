@@ -4246,11 +4246,22 @@
             picker.
           </p>
           <div id="characters-list" class="characters-list"></div>
-          <button
-            id="characters-add"
-            type="button"
-            class="characters-add-btn"
-          >+ Add character</button>
+          <div class="characters-actions">
+            <button
+              id="characters-add"
+              type="button"
+              class="characters-add-btn"
+            >+ Add character</button>
+            <!-- v4.200 (AV scripts): scan the loaded text for ALL-CAPS speaker
+                 cues and create a character for each new name — you just assign
+                 the voices. -->
+            <button
+              id="characters-from-script"
+              type="button"
+              class="characters-add-btn"
+              title="Create a character for each speaker cue (NAME:) in the current text"
+            >✨ From script</button>
+          </div>
         </div>
       </dialog>
 

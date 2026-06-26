@@ -3789,6 +3789,9 @@ dialog.manual-dialog:not([open]) {
   background: var(--accent-tint);
   border-style: solid;
 }
+/* v4.200: two-button row (Add character + ✨ From script). */
+.characters-actions { display: flex; gap: 8px; }
+.characters-actions .characters-add-btn { width: auto; flex: 1; }
 
 @media (max-width: 480px) {
   .characters-dialog {

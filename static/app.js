@@ -13950,6 +13950,51 @@ function _addCharacter() {
   renderCharacters();
 }
 
+// v4.200 (AV scripts): scan the loaded text for ALL-CAPS speaker cues and
+// create a character for each new name, so the author just assigns voices
+// instead of typing each name. Skips names that already have a character
+// (case-insensitive). Voices start unset — the user picks them in the row.
+function _addCharactersFromScript() {
+  const text = (typeof textEl !== "undefined" && textEl && textEl.value) || "";
+  if (!text.trim()) {
+    setStatus("Load or paste a script first — no text to scan.", true);
+    return;
+  }
+  // Distinct cue names in first-seen order.
+  const seen = new Set();
+  const cueNames = [];
+  for (const ln of text.split(/\n/)) {
+    const av = _avClassifyLine(ln);
+    if (av.type !== "cue") continue;
+    const name = av.cue.trim();
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cueNames.push(name);
+  }
+  if (!cueNames.length) {
+    setStatus("No speaker cues found. Cues look like “NARRATOR:” at the start of a line.", true);
+    return;
+  }
+  const list = _loadCharacters();
+  const have = new Set(list.map((c) => (c.name || "").trim().toLowerCase()));
+  let added = 0;
+  for (const name of cueNames) {
+    if (have.has(name.toLowerCase())) continue;
+    list.push({ id: Date.now() + added, name, gender: "", voiceId: null, speakerId: null });
+    have.add(name.toLowerCase());
+    added++;
+  }
+  if (!added) {
+    setStatus(`All ${cueNames.length} speaker(s) already have a character.`);
+    renderCharacters();
+    return;
+  }
+  _saveCharacters(list);
+  renderCharacters();
+  setStatus(`Added ${added} character${added === 1 ? "" : "s"} from the script — now pick a voice for each.`);
+}
+
 function _updateCharacter(id, patch) {
   const list = _loadCharacters();
   const i = list.findIndex((c) => c.id === id);
@@ -13970,6 +14015,10 @@ charactersBtn.addEventListener("click", () => {
 });
 charactersClose.addEventListener("click", () => charactersDialog.close());
 charactersAddBtn.addEventListener("click", _addCharacter);
+{
+  const _fromScriptBtn = document.getElementById("characters-from-script");
+  if (_fromScriptBtn) _fromScriptBtn.addEventListener("click", _addCharactersFromScript);
+}
 
 // Dialogue / attribution heuristic. Tier 3 (v220y): cross-paragraph
 // cursors + active-speaker carry-forward, on top of the existing
