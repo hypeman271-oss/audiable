@@ -13517,6 +13517,38 @@ function attributeSentencesForDisplay(text, characters, overrides) {
   return out;
 }
 
+// v4.198 (AV scripts): map ALL-CAPS speaker cues to saved character voices.
+// A paragraph whose first non-empty line is a cue ("MA:") assigns every
+// sentence in that paragraph to the character named MA — so the narrator uses
+// that character's saved voice for the whole turn. Returns { idx: charName },
+// keyed by the SAME flat sentence index attribution/segmentation use, so it
+// merges straight into their `overrides` map (manual overrides still win).
+function _avCueAssignments(text, characters) {
+  const out = {};
+  const named = (characters || []).filter((c) => c && c.name && c.name.trim() && c.voiceId);
+  if (!named.length) return out;
+  const byName = new Map(named.map((c) => [c.name.trim().toLowerCase(), c]));
+  const paragraphs = String(text || "")
+    .split(/\r?\n\s*\r?\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  let idx = -1;
+  for (const para of paragraphs) {
+    let cueChar = null;
+    for (const ln of para.split(/\n/)) {
+      if (!ln.trim()) continue;
+      const av = _avClassifyLine(ln);
+      if (av.type === "cue") cueChar = byName.get(av.cue.trim().toLowerCase()) || null;
+      break; // only the FIRST non-empty line decides the speaker
+    }
+    for (const _ of splitSentencesClient(para)) {
+      idx++;
+      if (cueChar) out[String(idx)] = cueChar.name;
+    }
+  }
+  return out;
+}
+
 // ── Offline emotion / prosody detection (no AI) ───────────────────────────
 // Reads what authors already encode — dialogue quotes + speech verbs ("she
 // whispered" → quiet) + punctuation → a per-sentence emotion label + a "beat"
@@ -13675,7 +13707,8 @@ function _repaintReadingViewAttribution() {
   const text = textEl.value || "";
   if (!text) return;
   const characters = _loadCharacters().filter((c) => c.name && c.voiceId);
-  const overrides = _currentClipAssignments || {};
+  // v4.198: AV cue → character voice, with manual overrides winning.
+  const overrides = { ..._avCueAssignments(text, characters), ...(_currentClipAssignments || {}) };
   const attrs = attributeSentencesForDisplay(text, characters, overrides);
   for (let i = 0; i < sentenceSpans.length; i++) {
     const span = sentenceSpans[i];
@@ -14581,7 +14614,12 @@ async function generate() {
     // v220-AA: even with zero characters defined, manual overrides
     // exist if the user previously tagged sentences. Pass them in so
     // a regen still respects the user's force-narrator assignments.
-    const overrides = (regenExistingMeta && regenExistingMeta.sentenceAssignments) || {};
+    // v4.198: AV speaker cues ("MA:") assign the turn to that character's
+    // saved voice; manual per-sentence overrides still win on top.
+    const overrides = {
+      ..._avCueAssignments(text, characters),
+      ...((regenExistingMeta && regenExistingMeta.sentenceAssignments) || {}),
+    };
     if (characters.length > 0 || Object.keys(overrides).length > 0) {
       const segs = segmentTextByCharacter(
         text, characters, fallbackVoice, fallbackSpeaker, { overrides }
