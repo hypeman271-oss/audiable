@@ -2290,9 +2290,11 @@ const _PRON_MAP_KEY = "narrativePronMap";
 const _PRON_MAP_DEFAULT = [
   "# One per line:  WORD => say-it-like-this   (audio only — your text is unchanged)",
   "# Helps the voice with little sounds it would otherwise spell out letter-by-letter.",
-  "mm => mmm",
-  "mmmm => mmm",
-  "mmmmm => mmm",
+  "# 'hmm' is the spelling the engine actually hums; plain m-runs get spelled out.",
+  "mm => hmm",
+  "mmm => hmm",
+  "mmmm => hmm",
+  "mmmmm => hmm",
   "mhm => hmm",
   "mm-hmm => hmm",
 ].join("\n");
