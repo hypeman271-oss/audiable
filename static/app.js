@@ -11147,6 +11147,27 @@ const _SAMPLE_TEXT =
   "and volume sliders below. Then come back and replace me with your " +
   "own chapter, article, or note — and hit Generate.";
 
+// v4.193 (AV scripts): a starter scaffold in the pro AV (Audio/Visual) format —
+// header metadata, ALL-CAPS speaker cues, [bracketed] technical directions, and
+// a [BEAT]. The reader styles each element; the spoken audio skips the cues +
+// inline directions (see _stripAVForSpeech).
+const _AV_TEMPLATE =
+  "Client/Project: \n" +
+  "Target Demographic: \n" +
+  "Voice Spec: Warm, 30s, Guy/Girl-Next-Door\n" +
+  "Tone/Pacing: Up-beat, conversational\n" +
+  "\n" +
+  "NARRATOR: Your opening line goes here — warm and unhurried.\n" +
+  "\n" +
+  "[SFX: a short, telling sound]\n" +
+  "\n" +
+  "[BEAT]\n" +
+  "\n" +
+  "NARRATOR: The next beat of the read. Add a pronunciation note inline like " +
+  "Medellín (meh-deh-YEEN) when a word might trip the read.\n" +
+  "\n" +
+  "(Music fades out)\n";
+
 document.querySelectorAll("[data-empty-action]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const action = btn.dataset.emptyAction;
@@ -11179,6 +11200,16 @@ document.querySelectorAll("[data-empty-action]").forEach((btn) => {
       const genBtn = document.getElementById("generate");
       if (genBtn) genBtn.scrollIntoView({ behavior: "smooth", block: "nearest" });
       setStatus("Sample text loaded — hit Generate to hear it.");
+    } else if (action === "av") {
+      // v4.193: seed the AV (voice-actor) script template + drop the cursor at
+      // the first header field so the author can fill in the project name.
+      textEl.value = _AV_TEMPLATE;
+      textEl.focus();
+      const _caret = "Client/Project: ".length;
+      try { textEl.setSelectionRange(_caret, _caret); } catch {}
+      updateCounts();
+      _updateEmptyState();
+      setStatus("AV script template loaded — fill the header, then write your read.");
     } else if (action === "ebook") {
       // v225g1 (#690): "📖 Read as ebook" tile — same upload flow as
       // the file tile, but stash _pendingEbookMode so the post-extract

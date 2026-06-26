@@ -2326,6 +2326,22 @@
                    landing page. -->
               <span class="empty-state-tutorial-link" data-tutorial="wt-first-listen" role="link" tabindex="0">↗ Watch tutorial</span>
             </button>
+            <!-- v4.193 (AV scripts): seed a pro voice-actor (AV) script
+                 template — header metadata, ALL-CAPS speaker cues, [bracketed]
+                 directions, a [BEAT]. The reader styles each element + the
+                 audio skips the cues/inline directions. -->
+            <button
+              class="empty-state-card"
+              type="button"
+              data-empty-action="av"
+            >
+              <span class="empty-state-emoji" aria-hidden="true">🎬</span>
+              <span class="empty-state-title">Start an AV script</span>
+              <span class="empty-state-desc">
+                A voice-actor script scaffold — header spec, speaker cues, and
+                [SFX]/[BEAT] directions, all formatted as you write.
+              </span>
+            </button>
             <!-- v225g1 (#690): ebook-mode entry point. Opens the file
                  picker exactly like the Upload tile, but stashes
                  `_pendingEbookMode = true` so the extract handler
