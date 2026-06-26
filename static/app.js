@@ -2276,22 +2276,48 @@ function _stripSymbolsChars() {
 // sentence split — and therefore the read-along/audio offsets — is unchanged.
 // Bracket directions that happen to contain terminal punctuation are left in
 // rather than risk shifting a sentence boundary.
-function _stripAVForSpeech(text) {
-  let out = String(text)
+// Always-safe: drop the cue prefix + inline no-terminal [brackets]. Never
+// removes . ! ? or newlines, so sentence boundaries can't shift.
+function _avStripCueAndInline(text) {
+  const out = String(text)
     .split(/\n/)
     .map((line) => {
       const av = _avClassifyLine(line);
-      // Drop the "NAME:" cue prefix but keep the dialogue after it.
-      if (av.type === "cue") {
-        const lead = line.match(/^[ \t]*/)[0];
-        return lead + av.rest;
+      if (av.type === "cue") return line.match(/^[ \t]*/)[0] + av.rest;
+      return line;
+    })
+    .join("\n");
+  return out.replace(/\[[^\].!?\n]*\]/g, " ");
+}
+// Fuller: ALSO blank whole-line directions / header-metadata / [BEAT] (keeping
+// any trailing terminal punctuation). This can shift a boundary in the rare
+// case of a trailing no-terminal direction, so the caller only uses it when
+// the sentence count is preserved.
+function _avStripFull(text) {
+  const out = String(text)
+    .split(/\n/)
+    .map((line) => {
+      const av = _avClassifyLine(line);
+      if (av.type === "cue") return line.match(/^[ \t]*/)[0] + av.rest;
+      if (av.type === "meta" || av.type === "direction" || av.type === "beat") {
+        return (line.match(/[.!?]+[ \t]*$/) || [""])[0];
       }
       return line;
     })
     .join("\n");
-  // Inline [bracket] directions with no terminal punctuation inside → remove.
-  out = out.replace(/\[[^\].!?\n]*\]/g, " ");
-  return out;
+  return out.replace(/\[[^\].!?\n]*\]/g, " ");
+}
+function _stripAVForSpeech(text) {
+  // Prefer the fuller strip (skips header/directions from the audio), but only
+  // when it leaves the sentence count unchanged — otherwise the audio offsets
+  // would drift from the displayed sentences. Fall back to the always-safe one.
+  const full = _avStripFull(text);
+  try {
+    if (splitSentencesClient(full).length === splitSentencesClient(text).length) {
+      return full;
+    }
+  } catch {}
+  return _avStripCueAndInline(text);
 }
 function _stripSynthChars(text) {
   if (typeof text !== "string" || !text) return text;
@@ -17958,6 +17984,22 @@ let _readingViewHighlights = [];
 var _paragraphEndIndices = new Set();
 var _paragraphPauseSec = 0;
 var _paragraphPauseTimer = null;
+// v4.197 (AV scripts): sentence indices whose first non-empty line is a [BEAT]
+// — playback inserts a pause before them (see highlightCurrentSentence).
+var _avBeatIndices = new Set();
+
+function _detectAvBeatIndices(sentences) {
+  const set = new Set();
+  if (!Array.isArray(sentences)) return set;
+  for (let i = 0; i < sentences.length; i++) {
+    for (const ln of String(sentences[i] || "").split(/\n/)) {
+      if (!ln.trim()) continue;
+      if (_avClassifyLine(ln).type === "beat") set.add(i);
+      break; // only the FIRST non-empty line of the sentence matters
+    }
+  }
+  return set;
+}
 
 function _detectParagraphEndIndices(text, sentences) {
   const ends = new Set();
@@ -18059,6 +18101,7 @@ function enterReadingView(text, images, highlights, lines) {
   // the next sentence for \n\n. Last sentence is intentionally not
   // marked — end-of-clip has its own auto-advance behavior.
   _paragraphEndIndices = _detectParagraphEndIndices(text, sentences);
+  _avBeatIndices = _detectAvBeatIndices(sentences); // v4.197: [BEAT] → pause
   readingView.innerHTML = "";
 
   // Bucket images by the sentence they should appear *before*. Each entry
@@ -18746,10 +18789,16 @@ function highlightCurrentSentence() {
       _paragraphEndIndices.has(previousIdx)
     ) {
       _triggerParagraphPause();
-    } else if (previousIdx >= 0 && idx > previousIdx && _emotionEnabled()) {
-      // Emotion beat: a short breath before a charged line (… / dialogue turn).
-      const h = _currentProsodyHints[String(idx)];
-      if (h && h.prePauseMs > 0) _triggerBeat(h.prePauseMs);
+    } else if (previousIdx >= 0 && idx > previousIdx) {
+      // v4.197 (AV scripts): a [BEAT] before this line → a real pause, no
+      // matter the emotion setting. Otherwise fall back to an emotion beat.
+      if (typeof _avBeatIndices !== "undefined" && _avBeatIndices.has(idx)) {
+        _triggerBeat(700);
+      } else if (_emotionEnabled()) {
+        // Emotion beat: a short breath before a charged line (… / dialogue turn).
+        const h = _currentProsodyHints[String(idx)];
+        if (h && h.prePauseMs > 0) _triggerBeat(h.prePauseMs);
+      }
     }
     // v223.tn12: rebuild word intervals for the newly-active sentence
     // and wrap its words on first activation. Previous sentence keeps
