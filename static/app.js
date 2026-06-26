@@ -2290,13 +2290,13 @@ const _PRON_MAP_KEY = "narrativePronMap";
 const _PRON_MAP_DEFAULT = [
   "# One per line:  WORD => say-it-like-this   (audio only — your text is unchanged)",
   "# Helps the voice with little sounds it would otherwise spell out letter-by-letter.",
-  "# 'hmm' is the spelling the engine actually hums; plain m-runs get spelled out.",
-  "mm => hmm",
-  "mmm => hmm",
-  "mmmm => hmm",
-  "mmmmm => hmm",
-  "mhm => hmm",
-  "mm-hmm => hmm",
+  "# 'hmmm' is the longest sustained hum the engine makes — 4+ m's get spelled out.",
+  "mm => hmmm",
+  "mmm => hmmm",
+  "mmmm => hmmm",
+  "mmmmm => hmmm",
+  "mhm => hmmm",
+  "mm-hmm => hmmm",
 ].join("\n");
 
 function _pronEnabled() {
@@ -3201,6 +3201,17 @@ document
   if (_pronMapEl) {
     _pronMapEl.addEventListener("input", () => {
       localStorage.setItem(_PRON_MAP_KEY, _pronMapEl.value);
+    });
+  }
+  // v4.205: one-click reset — drop the user's edits so the built-in default
+  // (which read fresh from _PRON_MAP_DEFAULT) takes over again. Clearing the
+  // saved key, not writing the default, keeps future default tweaks live.
+  const _pronResetEl = document.getElementById("settings-pron-reset");
+  if (_pronResetEl) {
+    _pronResetEl.addEventListener("click", () => {
+      localStorage.removeItem(_PRON_MAP_KEY);
+      if (_pronMapEl) _pronMapEl.value = _pronMapText();
+      setStatus("Pronunciation map reset to default — re-Generate to hear it.");
     });
   }
 }
