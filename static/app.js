@@ -11010,11 +11010,25 @@ function setStatus(msg, isError = false) {
 
 // v4.212: the Generate button overwrites the loaded clip in place (v4.211),
 // so when a clip is loaded the button reads "Re-narrate" to signal that — and
-// "Generate" otherwise (fresh text → new card). Skips while busy (the button
-// shows "Cancel" mid-synth).
+// "Generate" otherwise (fresh text → new card). Covers both the desktop button
+// and the phone generate bar. Skips while busy (the button shows "Cancel").
+function _setGenLabels(reNarrate) {
+  genLabel.textContent = reNarrate ? "Re-narrate" : "Generate";
+  const ph = document.querySelector(".phone-generate-label");
+  if (ph) ph.textContent = reNarrate ? "Re-narrate" : "Generate audio";
+}
+// v4.212: body[data-clip-loaded] drives phone CSS — the bottom tag/voice-note
+// row only makes sense once a clip is loaded, so it's hidden on the empty
+// compose screen. Toggled wherever _currentClipId changes (load / clear /
+// import / post-generate).
+function _reflectClipState() {
+  if (_currentClipId) document.body.dataset.clipLoaded = "1";
+  else delete document.body.dataset.clipLoaded;
+}
 function _updateGenerateLabel() {
+  _reflectClipState(); // keep the CSS signal current even while busy
   if (_synthController) return; // busy — leave "Cancel" alone
-  genLabel.textContent = _currentClipId ? "Re-narrate" : "Generate";
+  _setGenLabels(!!_currentClipId);
 }
 
 function enterBusyState() {
@@ -11029,7 +11043,8 @@ function enterBusyState() {
 
 function exitBusyState() {
   generateBtn.classList.replace("secondary", "primary");
-  genLabel.textContent = _currentClipId ? "Re-narrate" : "Generate";
+  _reflectClipState();
+  _setGenLabels(!!_currentClipId);
   genSpinner.hidden = true;
   synthProgress.hidden = true;
   if (lastBlob) downloadBtn.disabled = false;

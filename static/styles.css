@@ -11722,6 +11722,18 @@ body:not(.reader-mode):not([data-ui-mode="simple"]) .book-view-spread.v3 .book-v
     display: none;
   }
 
+  /* v4.212: declutter the empty compose screen (phone only). The bottom
+     tag/voice-note row is for annotating a loaded clip — hide it until one
+     is loaded. "Store this clip by sentence" configures the next Generate —
+     hide it until there's text to generate (data-phone-generate-bar tracks
+     that). Desktop is intentionally untouched. */
+  body:not([data-clip-loaded]) .phone-tag-row {
+    display: none !important;
+  }
+  body:not([data-phone-generate-bar]) .store-by-lines-row {
+    display: none !important;
+  }
+
   /* First-clip onboarding banner was a hero-resident strip; the
      new phone layout doesn't have horizontal hero real estate for
      it. It still shows on desktop. */
