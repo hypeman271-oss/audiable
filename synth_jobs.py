@@ -103,6 +103,13 @@ class JobParams:
     # without this a reattach can't rebind to the original card and
     # spawns a duplicate. Always sent when re-narrating an existing clip.
     clip_id: int | None = None
+    # v4.210: character-voice (multi-voice) background jobs. When set, the
+    # worker renders these [{text, voice_id, speaker_id}, …] segments via
+    # tts.synthesize_segments_iter instead of the single-voice path, so the
+    # bg-queue / whole-book synth honors per-character voices. `text`/`voice_id`
+    # above stay populated (the concatenated text + the fallback voice) for
+    # labeling, the save path, and the content hash.
+    segments: list[dict[str, Any]] | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> JobParams:
@@ -134,6 +141,29 @@ class JobParams:
         # that doesn't always set volume.)
         rate_raw = d.get("rate")
         volume_raw = d.get("volume")
+        # v4.210: optional character-voice segments. Each must carry text; voice
+        # /speaker are optional (a None voice falls back to the engine default).
+        raw_segments = d.get("segments")
+        segments: list[dict[str, Any]] | None = None
+        if raw_segments is not None:
+            if not isinstance(raw_segments, list):
+                raise ValueError("segments must be a list")
+            segments = []
+            for s in raw_segments:
+                if not isinstance(s, dict):
+                    raise ValueError("each segment must be an object")
+                seg_text = str(s.get("text", ""))
+                if not seg_text.strip():
+                    continue
+                segments.append({
+                    "text": seg_text,
+                    "voice_id": (str(s["voice_id"]) if s.get("voice_id") else None),
+                    "speaker_id": (
+                        int(s["speaker_id"]) if s.get("speaker_id") is not None else None
+                    ),
+                })
+            if not segments:
+                segments = None
         return cls(
             text=str(d.get("text", "")),
             voice_id=str(d.get("voice_id", "")),
@@ -146,6 +176,7 @@ class JobParams:
             target_line_ids=target_line_ids,
             title=(str(d["title"])[:300] if d.get("title") is not None else None),
             clip_id=(int(d["clip_id"]) if d.get("clip_id") is not None else None),
+            segments=segments,
         )
 
 
@@ -347,6 +378,17 @@ def _content_hash(params: "JobParams") -> str:
     h.update(str(params.speaker_id).encode("utf-8"))
     h.update(b"\x00")
     h.update(str(int(params.rate)).encode("utf-8"))
+    # v4.210: a multi-voice (segments) render of the same text differs from the
+    # single-voice one — fold the per-segment voice/speaker into the key so the
+    # resume cache never serves single-voice sentences to a segment job.
+    if params.segments:
+        for s in params.segments:
+            h.update(b"\x00seg\x00")
+            h.update((s.get("voice_id") or "").encode("utf-8"))
+            h.update(b"\x00")
+            h.update(str(s.get("speaker_id")).encode("utf-8"))
+            h.update(b"\x00")
+            h.update((s.get("text") or "").encode("utf-8"))
     return h.hexdigest()
 
 
@@ -567,32 +609,45 @@ async def _run_worker(job: SynthJob) -> None:
         # v4.111: try to resume from the per-sentence cache (best-effort).
         # _load_resume_prefix emits nothing + guards hard, so None here
         # cleanly means "do a normal full synth."
-        try:
-            _sentences = tts.split_sentences(job.params.text)
-            prefix = await loop.run_in_executor(
-                None, _load_resume_prefix, job.tenant_key, content_hash, _sentences
-            ) if (job.tenant_key and _sentences) else None
-        except Exception as exc:
-            print(f"[synth_jobs] {job.id} resume probe failed (ignored): {exc}",
-                  file=sys.stderr, flush=True)
-            prefix = None
-        if prefix:
-            await _synthesize_resume(job, content_hash, _sentences, prefix)
-            if job.status not in ("failed", "cancelled"):
-                job.status = "done"
-                job.completed_at = time.time()
-                async with job._condition:
-                    job._condition.notify_all()
-            return
+        # v4.210: skip resume for multi-voice (segments) jobs — the resume
+        # path re-synthesizes the remainder single-voice, which would mangle
+        # character voices. Correctness over the restart optimization.
+        if not job.params.segments:
+            try:
+                _sentences = tts.split_sentences(job.params.text)
+                prefix = await loop.run_in_executor(
+                    None, _load_resume_prefix, job.tenant_key, content_hash, _sentences
+                ) if (job.tenant_key and _sentences) else None
+            except Exception as exc:
+                print(f"[synth_jobs] {job.id} resume probe failed (ignored): {exc}",
+                      file=sys.stderr, flush=True)
+                prefix = None
+            if prefix:
+                await _synthesize_resume(job, content_hash, _sentences, prefix)
+                if job.status not in ("failed", "cancelled"):
+                    job.status = "done"
+                    job.completed_at = time.time()
+                    async with job._condition:
+                        job._condition.notify_all()
+                return
 
         try:
-            it = tts.synthesize_iter(
-                text=job.params.text,
-                voice_id=job.params.voice_id,
-                rate=job.params.rate,
-                volume=job.params.volume,
-                speaker_id=job.params.speaker_id,
-            )
+            if job.params.segments:
+                # v4.210: character-voice render. Same per-sentence event shape
+                # as synthesize_iter, so the loop below is unchanged.
+                it = tts.synthesize_segments_iter(
+                    segments=job.params.segments,
+                    rate=job.params.rate,
+                    volume=job.params.volume,
+                )
+            else:
+                it = tts.synthesize_iter(
+                    text=job.params.text,
+                    voice_id=job.params.voice_id,
+                    rate=job.params.rate,
+                    volume=job.params.volume,
+                    speaker_id=job.params.speaker_id,
+                )
         except ValueError as exc:
             await _fail(job, str(exc))
             return
@@ -701,7 +756,9 @@ async def _run_worker(job: SynthJob) -> None:
                 # a restart can resume THIS job mid-flight. Best-effort +
                 # off-thread; never fails the job (resume is just an
                 # optimization, unlike Phase B which gates restitch).
-                if job.tenant_key:
+                # v4.210: skipped for segment jobs — their resume path is
+                # disabled (above), so the writes would just be dead weight.
+                if job.tenant_key and not job.params.segments:
                     await loop.run_in_executor(
                         None, _persist_resume_sentence,
                         event.get("wav_b64", ""),

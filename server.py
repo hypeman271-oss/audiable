@@ -794,6 +794,12 @@ class SynthesizeRequest(BaseModel):
     speaker_id: int | None = Field(default=None, ge=0, le=10000)
 
 
+class SynthesisSegment(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500_000)
+    voice_id: str | None = None
+    speaker_id: int | None = Field(default=None, ge=0, le=10000)
+
+
 class SynthJobCreateRequest(SynthesizeRequest):
     """SynthesizeRequest + Phase B per-sentence cache targets (#811 B.2b).
 
@@ -815,12 +821,11 @@ class SynthJobCreateRequest(SynthesizeRequest):
     # from target_clip_id (Phase B cache opt-in) — carried so a reattach
     # rebinds to the original card instead of creating a duplicate.
     clip_id: int | None = Field(default=None, ge=1)
-
-
-class SynthesisSegment(BaseModel):
-    text: str = Field(..., min_length=1, max_length=500_000)
-    voice_id: str | None = None
-    speaker_id: int | None = Field(default=None, ge=0, le=10000)
+    # v4.210: character-voice segments. When present, the worker renders these
+    # per-voice instead of the single `text`/`voice_id`, so the bg-queue /
+    # whole-book synth honors per-character voices. `text`/`voice_id` stay set
+    # (concatenated text + fallback voice) for labeling, save, and content hash.
+    segments: list[SynthesisSegment] | None = Field(default=None, max_length=2000)
 
 
 class SynthesizeSegmentsRequest(BaseModel):
@@ -1726,6 +1731,10 @@ async def synth_jobs_create(req: SynthJobCreateRequest, request: Request):
         "target_line_ids": req.target_line_ids,
         "title": req.title,
         "clip_id": req.clip_id,
+        # v4.210: character-voice segments (multi-voice bg-queue / whole book).
+        "segments": (
+            [s.model_dump() for s in req.segments] if req.segments else None
+        ),
     })
     try:
         job = await synth_jobs.create_job(params, tenant_key)

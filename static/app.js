@@ -17591,12 +17591,48 @@ async function _preSynthesizeChapter(chapter, opts) {
     // on network drop using _bgSynthSentence as the resume cursor.
     // Caller code below is unchanged — it just gets a Response
     // whose body never quits mid-synth.
+    // v4.210: character voices in the BACKGROUND path. The foreground
+    // generate() builds multi-voice segments; the bg-queue / whole-book synth
+    // didn't, so a packed-with-cues chapter narrated entirely in the main
+    // voice. Build the same segments here (Author mode only) and let the
+    // server worker render them per-voice. Falls through to single voice when
+    // there's nothing to split.
+    let _segments = null;
+    try {
+      if (typeof isAuthorMode === "function" && isAuthorMode()) {
+        const _chars = _loadCharacters().filter((c) => c.name && c.voiceId);
+        const _ov = _avCueAssignments(chapter.text, _chars);
+        if (_chars.length > 0 || Object.keys(_ov).length > 0) {
+          const _segs = segmentTextByCharacter(
+            chapter.text, _chars, voiceId, speakerId, { overrides: _ov }
+          );
+          if (_segs.length > 1) {
+            _segments = _segs.map((s) => ({
+              text: _stripSynthChars(s.text),
+              voice_id: s.voiceId,
+              speaker_id: s.speakerId,
+            }));
+            _dlog("synth", "bg multi-voice segments built", {
+              title: chapter.title, segments: _segments.length,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      _dlog("synth", "bg segment build failed, falling back to single voice", {
+        errMsg: e && e.message,
+      });
+      _segments = null;
+    }
     const _payload = {
       text: chapter.text,
       voice_id: voiceId,
       rate,
       volume,
       speaker_id: speakerId,
+      // v4.210: per-character segments — when present the worker renders these
+      // instead of the single voice_id above.
+      ...(_segments ? { segments: _segments } : {}),
       // v4.110: carry the title so a boot-time reattach can label the
       // pill + save the clip without the original in-memory chapter.
       title: chapter.title || null,
