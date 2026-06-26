@@ -13632,12 +13632,17 @@ function attributeSentencesForDisplay(text, characters, overrides) {
   return out;
 }
 
-// v4.198 (AV scripts): map ALL-CAPS speaker cues to saved character voices.
-// A paragraph whose first non-empty line is a cue ("MA:") assigns every
-// sentence in that paragraph to the character named MA — so the narrator uses
-// that character's saved voice for the whole turn. Returns { idx: charName },
-// keyed by the SAME flat sentence index attribution/segmentation use, so it
-// merges straight into their `overrides` map (manual overrides still win).
+// v4.198 (AV scripts): map ALL-CAPS speaker cues to saved character voices, so
+// the narrator uses that character's saved voice for their turn. Returns
+// { idx: charName }, keyed by the SAME flat sentence index attribution/
+// segmentation use, so it merges straight into their `overrides` map (manual
+// overrides still win).
+// v4.208: the active speaker switches at EVERY cue line, not just the first in
+// a paragraph — two speakers can share a paragraph (no blank line between),
+// e.g. `MA: "Ask my son."` / `BACHATADONIS: I'm the password.`; without this
+// the second speaker's line was mis-narrated in the first speaker's voice. A
+// cue for an unknown character clears the speaker (→ main voice) rather than
+// inheriting the previous one.
 function _avCueAssignments(text, characters) {
   const out = {};
   const named = (characters || []).filter((c) => c && c.name && c.name.trim() && c.voiceId);
@@ -13650,14 +13655,13 @@ function _avCueAssignments(text, characters) {
   let idx = -1;
   for (const para of paragraphs) {
     let cueChar = null;
-    for (const ln of para.split(/\n/)) {
-      if (!ln.trim()) continue;
-      const av = _avClassifyLine(ln);
-      if (av.type === "cue") cueChar = byName.get(av.cue.trim().toLowerCase()) || null;
-      break; // only the FIRST non-empty line decides the speaker
-    }
-    for (const _ of splitSentencesClient(para)) {
+    // Iterate by sentence (keeps idx aligned with the global split), switching
+    // speaker whenever a sentence begins with a cue line.
+    for (const sent of splitSentencesClient(para)) {
       idx++;
+      const firstLine = (sent.split(/\n/).find((l) => l.trim()) || "").trim();
+      const av = _avClassifyLine(firstLine);
+      if (av.type === "cue") cueChar = byName.get(av.cue.trim().toLowerCase()) || null;
       if (cueChar) out[String(idx)] = cueChar.name;
     }
   }
@@ -18172,7 +18176,15 @@ chapterQueueCancel.addEventListener("click", _cancelChapterQueue);
 // glance. Mirrors the backend's split_sentences regex so the per-sentence
 // offsets emitted by /api/synthesize/stream line up with what we render.
 
-const SENTENCE_SPLIT = /(?<=[.!?])\s+/;
+// v4.208: also break before a speaker-cue line (a newline followed by an
+// ALL-CAPS "NAME:" cue). Without this, two speakers packed in one paragraph —
+// e.g. `MA: "Ask my son."` then `BACHATADONIS: I'm the password.` — stayed a
+// single "sentence" (the closing quote keeps the period from triggering the
+// whitespace split), so the second speaker's line was narrated in the first's
+// voice. Requires ≥2 leading capitals so it only fires on real cues, not prose.
+// MUST stay identical to _SENTENCE_SPLIT in tts/__init__.py so audio offsets
+// line up.
+const SENTENCE_SPLIT = /(?<=[.!?])\s+|\n(?=[A-Z][A-Z][A-Z0-9 .'’&/\-]{0,29}:)/;
 
 function splitSentencesClient(text) {
   return (text || "")

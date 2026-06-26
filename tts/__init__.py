@@ -53,7 +53,10 @@ class SynthesisResult:
 # (static/app.js makeSentences). Keep the regex in sync across both sides —
 # the frontend pairs each offset with the matching sentence text by re-running
 # this split on the original input.
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+# v4.208: also break before a speaker-cue line (newline + ALL-CAPS "NAME:")
+# so two speakers packed in one paragraph each get their own sentence/voice.
+# MUST stay identical to SENTENCE_SPLIT in static/app.js so offsets line up.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n(?=[A-Z][A-Z][A-Z0-9 .'’&/\-]{0,29}:)")
 
 # v225.tn34 (#510): max chars per "sentence" that we'll hand to Piper.
 # Above ~500 chars the espeak phonemizer starts running out of memory or
