@@ -2269,11 +2269,36 @@ function _stripSymbolsChars() {
   const v = localStorage.getItem(_STRIP_SYMBOLS_CHARS_KEY);
   return v === null ? _STRIP_SYMBOLS_DEFAULT : v;
 }
+// v4.193 (AV scripts): strip what a voice actor wouldn't read aloud — the
+// ALL-CAPS speaker-cue prefix ("NARRATOR:") and inline technical directions in
+// [brackets] — from the SPOKEN text only (display keeps everything). Kept
+// strictly boundary-safe: we never remove . ! ? (or newlines), so the server's
+// sentence split — and therefore the read-along/audio offsets — is unchanged.
+// Bracket directions that happen to contain terminal punctuation are left in
+// rather than risk shifting a sentence boundary.
+function _stripAVForSpeech(text) {
+  let out = String(text)
+    .split(/\n/)
+    .map((line) => {
+      const av = _avClassifyLine(line);
+      // Drop the "NAME:" cue prefix but keep the dialogue after it.
+      if (av.type === "cue") {
+        const lead = line.match(/^[ \t]*/)[0];
+        return lead + av.rest;
+      }
+      return line;
+    })
+    .join("\n");
+  // Inline [bracket] directions with no terminal punctuation inside → remove.
+  out = out.replace(/\[[^\].!?\n]*\]/g, " ");
+  return out;
+}
 function _stripSynthChars(text) {
   if (typeof text !== "string" || !text) return text;
   if (!_stripSymbolsEnabled()) return text;
+  text = _stripAVForSpeech(text);
   const chars = _stripSymbolsChars();
-  if (!chars) return text;
+  if (!chars) return text.replace(/[ \t]{2,}/g, " ");
   // Build a regex that matches any of the chars, escaping regex metachars.
   const esc = chars.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
   const re = new RegExp(`[${esc}]`, "g");
