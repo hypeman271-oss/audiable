@@ -11008,6 +11008,15 @@ function setStatus(msg, isError = false) {
   statusEl.classList.toggle("error", !!isError);
 }
 
+// v4.212: the Generate button overwrites the loaded clip in place (v4.211),
+// so when a clip is loaded the button reads "Re-narrate" to signal that — and
+// "Generate" otherwise (fresh text → new card). Skips while busy (the button
+// shows "Cancel" mid-synth).
+function _updateGenerateLabel() {
+  if (_synthController) return; // busy — leave "Cancel" alone
+  genLabel.textContent = _currentClipId ? "Re-narrate" : "Generate";
+}
+
 function enterBusyState() {
   // Switch button to "Cancel" mode — still clickable to abort.
   generateBtn.classList.replace("primary", "secondary");
@@ -11020,7 +11029,7 @@ function enterBusyState() {
 
 function exitBusyState() {
   generateBtn.classList.replace("secondary", "primary");
-  genLabel.textContent = "Generate";
+  genLabel.textContent = _currentClipId ? "Re-narrate" : "Generate";
   genSpinner.hidden = true;
   synthProgress.hidden = true;
   if (lastBlob) downloadBtn.disabled = false;
@@ -11040,6 +11049,9 @@ function _estimateReadSeconds(words, wpm) {
 }
 
 function updateCounts() {
+  // v4.212: keep the Generate/Re-narrate label in sync — updateCounts runs
+  // after load, clear, imports, and on edit, so it's the universal catch-all.
+  if (typeof _updateGenerateLabel === "function") _updateGenerateLabel();
   const text = textEl.value;
   const len = text.length;
   let label = `${len.toLocaleString()} / 500,000`;
@@ -14708,19 +14720,14 @@ async function generate() {
   // instead of falling back to auto-suggested defaults.
   let regenTargetId = _regenTargetClipId;
   _regenTargetClipId = null;
-  // v4.211: re-Generating the LOADED clip with unchanged text overwrites that
-  // card instead of spawning a duplicate — the #1 source of dupes (load a
-  // clip, tweak voices/characters, hit Generate). Deliberate revisions still
-  // route through the ↺ re-narrate button (which sets _regenTargetClipId).
-  // Skipped during a chapter-queue batch, where each chapter is its own clip,
-  // and only when the text matches so pasting new content still makes a card.
+  // v4.211/v4.212: Generate on a LOADED clip re-narrates that card in place
+  // instead of spawning a duplicate — the #1 source of dupes (load a clip,
+  // tweak voices/characters or revise the text, hit Generate). The button
+  // reads "Re-narrate" whenever a clip is loaded so this is signposted; to
+  // make a NEW card, Clear first (which drops _currentClipId → "Generate").
+  // Skipped during a chapter-queue batch, where each chapter is its own clip.
   if (!regenTargetId && _currentClipId && (_chapterTotalCount || 0) <= 0) {
-    try {
-      const _loaded = await getClip(_currentClipId);
-      if (_loaded && (_loaded.text || "").trim() === text) {
-        regenTargetId = _currentClipId;
-      }
-    } catch {}
+    regenTargetId = _currentClipId;
   }
   let regenExistingMeta = null;
   if (regenTargetId) {
@@ -18789,6 +18796,8 @@ function clearForNewClip() {
   // both look at _currentClipId, so leaving it pointed at the old clip
   // would mean "Save text" silently saves into the wrong row.
   _currentClipId = null;
+  // v4.212: no clip loaded → button is "Generate" again.
+  if (typeof _updateGenerateLabel === "function") _updateGenerateLabel();
   _currentPlayingVoiceId = null;
   _lastProgressSaveAt = 0;
   saveTextBtn.hidden = true;
@@ -34858,6 +34867,8 @@ async function loadClip(id, { autoPlay = true } = {}) {
   // Bind the player to this clip so the throttled progress-saver knows which
   // library row to update as playback advances.
   _currentClipId = id;
+  // v4.212: button now reads "Re-narrate" (overwrites this card).
+  if (typeof _updateGenerateLabel === "function") _updateGenerateLabel();
   // v225ep (#632): _currentClipId just changed, so the desktop
   // author pane's clip-loaded gate now flips on. _applyAuthorPaneLayout
   // both toggles the body data-attribute (CSS shows the pane) and
