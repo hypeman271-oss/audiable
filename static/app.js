@@ -14706,8 +14706,22 @@ async function generate() {
   // call doesn't double-claim it. If set, fetch the existing clip's
   // identity (title / note / createdAt) so the regen preserves them
   // instead of falling back to auto-suggested defaults.
-  const regenTargetId = _regenTargetClipId;
+  let regenTargetId = _regenTargetClipId;
   _regenTargetClipId = null;
+  // v4.211: re-Generating the LOADED clip with unchanged text overwrites that
+  // card instead of spawning a duplicate — the #1 source of dupes (load a
+  // clip, tweak voices/characters, hit Generate). Deliberate revisions still
+  // route through the ↺ re-narrate button (which sets _regenTargetClipId).
+  // Skipped during a chapter-queue batch, where each chapter is its own clip,
+  // and only when the text matches so pasting new content still makes a card.
+  if (!regenTargetId && _currentClipId && (_chapterTotalCount || 0) <= 0) {
+    try {
+      const _loaded = await getClip(_currentClipId);
+      if (_loaded && (_loaded.text || "").trim() === text) {
+        regenTargetId = _currentClipId;
+      }
+    } catch {}
+  }
   let regenExistingMeta = null;
   if (regenTargetId) {
     try {
