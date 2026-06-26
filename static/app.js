@@ -2269,6 +2269,68 @@ function _stripSymbolsChars() {
   const v = localStorage.getItem(_STRIP_SYMBOLS_CHARS_KEY);
   return v === null ? _STRIP_SYMBOLS_DEFAULT : v;
 }
+
+// v4.202: pronunciation map. The espeak-ng frontend (used by both Kokoro and
+// the Piper voices) spells out short non-lexical vocalizations it doesn't know
+// — "Mm." comes out as "em em" instead of a hum. This is an AUDIO-ONLY find/
+// replace applied just before synth: the displayed text is untouched, so the
+// script still reads "Mm." on screen. Boundary-safe by construction — matches
+// are whole tokens (\b…\b) and replacements are stripped of . ! ? and newlines,
+// so the sentence count (and therefore the read-along/audio offsets) can't
+// shift. Read fresh per synth call so edits apply with no reload.
+const _PRON_ON_KEY = "narrativePronOn";
+const _PRON_MAP_KEY = "narrativePronMap";
+// Lines are "token => say-it-like-this"; #/blank lines are ignored. Defaults
+// target the espeak hum so acknowledgement/thinking sounds aren't spelled out.
+const _PRON_MAP_DEFAULT = [
+  "# One per line:  WORD => say-it-like-this   (audio only — your text is unchanged)",
+  "# Helps the voice with little sounds it would otherwise spell out letter-by-letter.",
+  "mm => mmm",
+  "mmmm => mmm",
+  "mmmmm => mmm",
+  "mhm => hmm",
+  "mm-hmm => hmm",
+].join("\n");
+
+function _pronEnabled() {
+  const v = localStorage.getItem(_PRON_ON_KEY);
+  return v === null ? true : v === "1";
+}
+function _pronMapText() {
+  const v = localStorage.getItem(_PRON_MAP_KEY);
+  return v === null ? _PRON_MAP_DEFAULT : v;
+}
+let _pronRulesCacheKey = null;
+let _pronRulesCache = null;
+function _parsePronMap(text) {
+  if (_pronRulesCacheKey === text && _pronRulesCache) return _pronRulesCache;
+  const rules = [];
+  for (const raw of String(text || "").split(/\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = line.split(/\s*(?:=>|->|=|\|)\s*/);
+    if (m.length < 2) continue;
+    const from = (m[0] || "").trim();
+    // Replacement is sanitised so it can never introduce a sentence boundary.
+    const to = (m.slice(1).join(" ") || "").replace(/[.!?\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
+    if (!from) continue;
+    const esc = from.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+    rules.push({ re: new RegExp("\\b" + esc + "\\b", "gi"), to });
+  }
+  // Longest token first so "mm-hmm" wins over "mm".
+  rules.sort((a, b) => b.re.source.length - a.re.source.length);
+  _pronRulesCacheKey = text;
+  _pronRulesCache = rules;
+  return rules;
+}
+function _applyPronunciation(text) {
+  if (typeof text !== "string" || !text || !_pronEnabled()) return text;
+  const rules = _parsePronMap(_pronMapText());
+  if (!rules.length) return text;
+  let out = text;
+  for (const r of rules) out = out.replace(r.re, r.to);
+  return out;
+}
 // v4.193 (AV scripts): strip what a voice actor wouldn't read aloud — the
 // ALL-CAPS speaker-cue prefix ("NARRATOR:") and inline technical directions in
 // [brackets] — from the SPOKEN text only (display keeps everything). Kept
@@ -2321,8 +2383,12 @@ function _stripAVForSpeech(text) {
 }
 function _stripSynthChars(text) {
   if (typeof text !== "string" || !text) return text;
-  if (!_stripSymbolsEnabled()) return text;
-  text = _stripAVForSpeech(text);
+  // AV stripping (cue/direction) and the pronunciation map are audio-only and
+  // boundary-safe, so they apply regardless of the symbol-strip toggle — a
+  // script should still narrate correctly even if the user keeps literal
+  // markdown symbols.
+  text = _applyPronunciation(_stripAVForSpeech(text));
+  if (!_stripSymbolsEnabled()) return text.replace(/[ \t]{2,}/g, " ");
   const chars = _stripSymbolsChars();
   if (!chars) return text.replace(/[ \t]{2,}/g, " ");
   // Build a regex that matches any of the chars, escaping regex metachars.
@@ -3117,6 +3183,19 @@ document
       localStorage.setItem(_STRIP_SYMBOLS_CHARS_KEY, _stripCharsEl.value);
     });
   }
+  // v4.202: pronunciation map — same live-read pattern (no setter helper).
+  const _pronToggleEl = document.getElementById("settings-pron-on");
+  const _pronMapEl = document.getElementById("settings-pron-map");
+  if (_pronToggleEl) {
+    _pronToggleEl.addEventListener("change", () => {
+      localStorage.setItem(_PRON_ON_KEY, _pronToggleEl.checked ? "1" : "0");
+    });
+  }
+  if (_pronMapEl) {
+    _pronMapEl.addEventListener("input", () => {
+      localStorage.setItem(_PRON_MAP_KEY, _pronMapEl.value);
+    });
+  }
 }
 
 // v223.tn15 (#479): paragraph-pause radios. Off (0) is default —
@@ -3695,6 +3774,11 @@ settingsBtn.addEventListener("click", () => {
     const _stripCharsEl = document.getElementById("settings-strip-symbols-chars");
     if (_stripToggleEl) _stripToggleEl.checked = _stripSymbolsEnabled();
     if (_stripCharsEl) _stripCharsEl.value = _stripSymbolsChars();
+    // v4.202: pronunciation map state.
+    const _pronToggleEl = document.getElementById("settings-pron-on");
+    const _pronMapEl = document.getElementById("settings-pron-map");
+    if (_pronToggleEl) _pronToggleEl.checked = _pronEnabled();
+    if (_pronMapEl) _pronMapEl.value = _pronMapText();
   }
   // v225fz11.panes (#685): sync pane-visibility radios with the
   // current localStorage state so the dialog reflects whatever the ×

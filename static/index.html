@@ -1703,6 +1703,41 @@
                   </div>
                 </div>
 
+                <!-- v4.202: pronunciation map. espeak (Kokoro + Piper) spells
+                     out little sounds like "Mm" letter-by-letter; this rewrites
+                     them for the voice only, leaving your text on screen as-is. -->
+                <div
+                  class="settings-row"
+                  data-search="pronunciation pronounce say sound hum mm hmm interjection respell phonetic mispronounce voice engine audio synth"
+                >
+                  <div class="settings-toggle-label">
+                    <strong>Pronunciation map</strong>
+                    <span class="settings-toggle-desc">
+                      Fixes little sounds the voice would otherwise spell out
+                      letter-by-letter — like <code>Mm</code> coming out as
+                      "em em". Each line is <code>word =&gt; say-it-like-this</code>,
+                      applied to the <em>audio only</em> (your text still shows
+                      the original). Lines starting with <code>#</code> are notes.
+                      Tweak the right-hand side by ear for your chosen voice.
+                    </span>
+                  </div>
+                  <div class="settings-toggle-controls">
+                    <label class="switch">
+                      <input id="settings-pron-on" type="checkbox" />
+                      <span class="slider"></span>
+                    </label>
+                    <textarea
+                      id="settings-pron-map"
+                      class="settings-text-input"
+                      rows="5"
+                      spellcheck="false"
+                      aria-label="Pronunciation substitutions, one per line"
+                      placeholder="mm =&gt; mmm"
+                      style="margin-top:6px; width:100%; max-width:240px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; resize:vertical;"
+                    ></textarea>
+                  </div>
+                </div>
+
                 <div
                   class="settings-row"
                   data-search="skip interval seconds player playback rewind forward jump"
