@@ -24635,6 +24635,19 @@ function _avClassifyLine(line) {
   if (m && (m[1].replace(/[^A-Z]/g, "").length >= 2)) {
     return { type: "cue", cue: m[1], rest: m[2] };
   }
+  // v4.207: a speaker cue wrapped in markdown emphasis (**MA: …**, *MA: …*,
+  // _MA: …_) starts with a * / _, so _AV_CUE_RE misses it above — and then the
+  // line narrates in the wrong voice and the engine reads "MA" aloud. Retry on
+  // the de-emphasised core (strip a wrapping emphasis run, plus a stray leading
+  // one off the dialogue). Bold/italic on the line is dropped in favour of
+  // correct cue colouring + per-character voice.
+  const core = t.replace(/^[*_]{1,3}\s*/, "").replace(/\s*[*_]{1,3}$/, "");
+  if (core !== t) {
+    m = core.match(_AV_CUE_RE);
+    if (m && m[1].replace(/[^A-Z]/g, "").length >= 2) {
+      return { type: "cue", cue: m[1], rest: m[2].replace(/^\s*[*_]{1,3}\s*/, "") };
+    }
+  }
   return { type: "text" };
 }
 // Map a sentence to {html, cls}. A heading (#) or blockquote (>) marker at the
