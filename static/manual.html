@@ -2998,16 +2998,25 @@ title: Spaced
         respelling.
       </p>
       <p>
-        Each line is <code>word =&gt; say-it-like-this</code>; lines starting
-        with <code>#</code> are notes. It ships with sensible defaults for the
-        common hums (<code>mm =&gt; hmm</code> — <code>hmm</code> is the spelling
-        the voice actually hums; plain <code>mmm</code> just gets spelled out) — add
-        your own for any word the voice mangles (an unusual name, a place, an
-        interjection like <code>ugh</code> or <code>tsk</code>). Because the
-        best-sounding respelling depends on the voice, <strong>tune the
-        right-hand side by ear</strong> and re-Generate; edits apply with no
-        reload. Matches are whole words only (so <code>common</code> is never
-        touched), and they can't shift your read-along alignment.
+        <strong>Hums scale with how you spell them.</strong> A plain m-run
+        becomes a hum whose length tracks the number of m's you type —
+        <code>Mm</code> is a short hum, <code>Mmmm</code> longer,
+        <code>Mmmmmmmm</code> longer still, with no limit. (Under the hood the
+        engine can only sustain three m's, so Lyrith chains hum units to match
+        what you wrote — you don't have to think about it.) So an author
+        controls how a character expresses themselves just by spelling the sound.
+      </p>
+      <p>
+        For anything else, add a line: <code>word =&gt; say-it-like-this</code>;
+        lines starting with <code>#</code> are notes. Use it for any word the
+        voice mangles — an unusual name, a place, an interjection like
+        <code>ugh</code> or <code>tsk</code>. Because the best-sounding
+        respelling depends on the voice, <strong>tune the right-hand side by
+        ear</strong> and re-Generate; edits apply with no reload. A
+        <strong>Reset to default</strong> link restores the built-ins if an edit
+        goes sideways. Matches are whole words only (so <code>common</code> or
+        <code>summer</code> is never touched), and they can't shift your
+        read-along alignment.
       </p>
 
       <!-- ============================================================= -->

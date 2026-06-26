@@ -2289,12 +2289,9 @@ const _PRON_MAP_KEY = "narrativePronMap";
 // target the espeak hum so acknowledgement/thinking sounds aren't spelled out.
 const _PRON_MAP_DEFAULT = [
   "# One per line:  WORD => say-it-like-this   (audio only — your text is unchanged)",
-  "# Helps the voice with little sounds it would otherwise spell out letter-by-letter.",
-  "# 'hmmm' is the longest sustained hum the engine makes — 4+ m's get spelled out.",
-  "mm => hmmm",
-  "mmm => hmmm",
-  "mmmm => hmmm",
-  "mmmmm => hmmm",
+  "# Plain m-runs already hum automatically — type more m's for a longer hum",
+  "#   (Mm = short, Mmmmmmmm = long), no length limit.",
+  "# Add lines here for other little sounds the voice spells out letter-by-letter.",
   "mhm => hmmm",
   "mm-hmm => hmmm",
 ].join("\n");
@@ -2330,12 +2327,28 @@ function _parsePronMap(text) {
   _pronRulesCache = rules;
   return rules;
 }
+// v4.206: author-controlled hum length. The engine hums "hmm"/"hmmm" but
+// spells out any solid run of 4+ m's letter-by-letter. So a standalone m-run
+// interjection (Mm, Mmmm, hmmmmmm…) is rewritten to a *proportional* hum:
+// 3-m "hmmm" units chained with hyphens, one unit per ~3 m's the author typed.
+// More m's in the script → a longer hum, with no upper limit — the author
+// controls expression by how they spell it. Whole-token only (\b…\b), so real
+// words containing "mm" (summer, comment) are never touched.
+function _expandHumRuns(text) {
+  return String(text).replace(/\b[Hh]?(m{2,})\b/gi, (_whole, ms) => {
+    const n = ms.length;
+    if (n <= 3) return "h" + "m".repeat(n); // short hum; ensure a leading h
+    const units = Math.ceil(n / 3);
+    return Array(units).fill("hmmm").join("-");
+  });
+}
 function _applyPronunciation(text) {
   if (typeof text !== "string" || !text || !_pronEnabled()) return text;
-  const rules = _parsePronMap(_pronMapText());
-  if (!rules.length) return text;
   let out = text;
-  for (const r of rules) out = out.replace(r.re, r.to);
+  // Named substitutions first (mhm, mm-hmm, custom words)…
+  for (const r of _parsePronMap(_pronMapText())) out = out.replace(r.re, r.to);
+  // …then scale any plain m-run to a hum of matching length.
+  out = _expandHumRuns(out);
   return out;
 }
 // v4.193 (AV scripts): strip what a voice actor wouldn't read aloud — the
