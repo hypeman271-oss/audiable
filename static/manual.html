@@ -1797,6 +1797,7 @@
           <li><a href="#player">The player</a></li>
           <li><a href="#reading">Reading view</a>
             <ul>
+              <li><a href="#av-scripts">Formatting &amp; AV scripts</a></li>
               <li><a href="#animation">Animating sentences (preview)</a></li>
             </ul>
           </li>
@@ -3382,6 +3383,69 @@ title: Spaced
         both orderings produce the same annotation.
       </div>
 
+      <h3 id="av-scripts">Formatting &amp; AV scripts</h3>
+      <p>
+        Lyrith renders your text's structure as you read — in both the
+        scrolling reading view and book view. The source stays plain; only the
+        display is formatted (and the spoken audio is cleaned of the markup).
+      </p>
+      <p>
+        <strong>Markdown</strong> renders: <code>**bold**</code>,
+        <code>*italic*</code>, <code>`code`</code>, <code>~~strike~~</code>,
+        <code># headings</code>, <code>&gt; blockquotes</code>,
+        <code>- </code> / <code>1. </code> lists, and <code>***</code>
+        scene-break dividers. Blank lines become paragraph breaks, so dialogue
+        lines and stanzas read as separate blocks instead of running together.
+        (Add <code>?readerfmt=0</code> to the URL to see raw text instead.)
+      </p>
+      <p>
+        Write a script in the standard <strong>AV (Audio/Visual)</strong>
+        format and Lyrith styles every element, <strong>narrates only the
+        dialogue</strong>, and can export a two-column voice-actor PDF. Start
+        one from an empty library &rarr; <strong>🎬 Start an AV script</strong>.
+      </p>
+      <table>
+        <tr><th>Write…</th><th>On screen</th><th>In the audio</th></tr>
+        <tr>
+          <td>Header field — <code>Voice Spec:</code>, <code>Tone/Pacing:</code>, <code>Client/Project:</code> …</td>
+          <td>dimmed block, label bold</td>
+          <td>not read aloud</td>
+        </tr>
+        <tr>
+          <td>Speaker cue — <code>NARRATOR:</code>, <code>MA:</code> (ALL-CAPS, ≥2 letters, line start)</td>
+          <td>accent color</td>
+          <td>cue silent; the dialogue is read</td>
+        </tr>
+        <tr>
+          <td>Direction — <code>[SFX: door slams]</code>, <code>(Music fades in)</code></td>
+          <td>dimmed italic, set apart</td>
+          <td>not read aloud</td>
+        </tr>
+        <tr>
+          <td><code>[BEAT]</code> on its own line</td>
+          <td>centered marker</td>
+          <td>a real ~0.7&nbsp;s pause before the next line</td>
+        </tr>
+        <tr>
+          <td>Silent pronunciation note — <code>Medellín [meh-deh-YEEN]</code></td>
+          <td>dimmed note</td>
+          <td>the bracket is dropped; only the word is read</td>
+        </tr>
+      </table>
+      <div class="tip">
+        The audio only skips header/direction lines when it can do so without
+        shifting the read-along highlight — so put each element on its own
+        line, leave a blank line between speaker turns, and don't end the
+        script on a bare <code>(direction)</code> line (give it a period if you
+        must). Full spec for a script-writing tool or agent:
+        <code>docs/AV_SCRIPT_FORMAT.md</code> in the repo.
+      </div>
+      <p>
+        Add the clip to a 📕 Book, then use <strong>⬇ AV PDF</strong> in the
+        Books editor to export a directions-left / dialogue-right script you
+        can hand to a voice actor.
+      </p>
+
       <h3 id="animation">Animating sentences <span style="font-weight:400;opacity:0.7;">(preview)</span></h3>
       <div class="tip" style="margin-top:0;">
         <strong>Preview feature.</strong> Animation is still being built and
@@ -3584,6 +3648,7 @@ title: Spaced
         <li><strong>Ctrl+F / Cmd+F</strong> while in book view → opens a find bar. Case-insensitive substring search; ‹ / › cycle matches; Enter advances; Esc closes. Each match jumps to the page containing it.</li>
         <li><strong>📑 Contents</strong> button (visible only when chapters are detected) → opens a table of contents listing every chapter with its page number. Click a row to jump.</li>
         <li><strong>↩ Return to current</strong> button appears whenever you've manually paged away from the spread containing the currently-narrating sentence. One click brings you back; subsequent karaoke flips resume.</li>
+        <li><strong>Tap the centre of the page</strong> → goes fullscreen, hiding the chrome so the book fills the screen (tap centre again to bring the controls back). Tapping the left / right third still turns pages.</li>
       </ul>
 
       <h3>Chapter awareness</h3>
@@ -3898,19 +3963,19 @@ title: Spaced
         the edits you flagged during a listen-through to your source
         manuscript (Scrivener / GitHub / Obsidian / a local file),
         you want a clean slate on the clip before the next pass.
-        Two entry points:
+        The same <strong>Clear marks…</strong> dialog (tick which of
+        bookmarks / flags / notes to drop, optionally export a backup
+        first) is reachable from every surface where you see your marks:
       </p>
       <ul>
-        <li>
-          Open <strong>✎ Edit</strong> on the library card → bottom
-          of the dialog has a "Clear revision marks" section with a
-          <strong>Clear marks…</strong> button.
-        </li>
+        <li><strong>🧹 Clear marks</strong> in the player toolbar (next to Download notes / Bookmarks).</li>
+        <li>The <strong>🔖 Bookmarks</strong> drawer header and the <strong>📝 Notes</strong> dialog header.</li>
+        <li>The desktop <strong>"This clip"</strong> pane (which lists your flags, bookmarks, and notes).</li>
+        <li><strong>✎ Edit</strong> on the library card → "Clear revision marks" section.</li>
         <li>
           Command palette (<span class="kbd">⌘K</span> /
           <span class="kbd">Ctrl+K</span>) → <em>🧹 Clear revision
-          marks on this clip</em>. Only visible when a clip is
-          loaded.
+          marks on this clip</em>.
         </li>
       </ul>
       <p>
@@ -4171,8 +4236,9 @@ title: Spaced
           tester key management.
         </li>
         <li>
-          <strong>Appearance</strong> — theme (Auto / Dark / Light),
-          desktop side-pane visibility (Library / Notes), and the
+          <strong>Appearance</strong> — theme (Auto / Dark / Light /
+          Sepia / Midnight / Nord / Forest), desktop side-pane
+          visibility (Library / Notes), and the
           book view's text size + typography under Advanced.
         </li>
         <li>
@@ -4363,11 +4429,16 @@ title: Spaced
       <h4>Appearance</h4>
       <ul>
         <li>
-          <strong>Theme</strong> — Auto / Dark / Light. Auto follows
-          your device; Light uses a warm cream palette tuned for
-          daytime / outdoor reading. A small status line under the
-          radios reports what Auto is currently resolving to (handy
-          for diagnosing "why is it dark when my OS is light").
+          <strong>Theme</strong> — pick a palette from live color
+          swatches: <strong>Auto</strong> (follows your device),
+          <strong>Dark</strong>, <strong>Light</strong> (warm cream for
+          daytime reading), <strong>Sepia</strong> (parchment),
+          <strong>Midnight</strong> (near-black, easy on OLED at night),
+          <strong>Nord</strong> (cool slate-blue), and
+          <strong>Forest</strong> (green-tinted dark). A small status
+          line under the swatches reports what Auto is currently
+          resolving to (handy for diagnosing "why is it dark when my OS
+          is light").
         </li>
         <li>
           <strong>Library pane (desktop)</strong> + <strong>Notes pane
