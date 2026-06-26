@@ -18757,11 +18757,27 @@ function _wrapSentenceWordsOnce(sentenceSpan) {
       acceptNode: (node) => {
         let p = node.parentNode;
         while (p && p !== sentenceSpan) {
-          if (p.nodeType === 1 && (
-            p.tagName === "BUTTON" ||
-            (p.classList && p.classList.contains("annotate-voice-play"))
-          )) {
-            return NodeFilter.FILTER_REJECT;
+          if (p.nodeType === 1) {
+            if (
+              p.tagName === "BUTTON" ||
+              (p.classList && p.classList.contains("annotate-voice-play"))
+            ) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            // v4.201 (AV): these render on screen but are NOT narrated —
+            // the cue prefix ("MA:") and inline [bracket] directions are
+            // stripped from the audio (see _stripAVForSpeech). Leaving
+            // them out of the karaoke word list keeps the read-along
+            // highlight aligned with what's actually spoken. The bracket
+            // check mirrors _avStripCueAndInline: a [direction] with
+            // terminal .!? inside is kept in the audio, so keep it here too.
+            if (p.classList && (
+              p.classList.contains("av-cue-name") ||
+              (p.classList.contains("av-direction") &&
+                !/[.!?]/.test(p.textContent || ""))
+            )) {
+              return NodeFilter.FILTER_REJECT;
+            }
           }
           p = p.parentNode;
         }
