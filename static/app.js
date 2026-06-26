@@ -14833,19 +14833,29 @@ async function generate() {
       speaker_id: fallbackSpeaker,
     });
   }
-  // v4.203: if the script HAS speaker cues but none mapped to a voiced
-  // character, the whole thing narrates in one voice — a silent surprise.
-  // Stash a hint to surface at completion (synth-progress would clobber a
-  // status set here). Only in Author mode, where cues/characters live.
+  // v4.203/v4.209: if the script HAS speaker cues but the audio still came out
+  // single-voice, say why — stashed to surface at completion (synth-progress
+  // would clobber a status set here).
   _cueVoiceHint = "";
-  if (charactersUsed === 0 && isAuthorMode()) {
+  if (charactersUsed === 0) {
     const cueNames = _scriptCueNames(text);
     if (cueNames.length > 0) {
-      const shown = cueNames.slice(0, 3).join(", ") + (cueNames.length > 3 ? "…" : "");
-      _cueVoiceHint =
-        `⚠️ ${cueNames.length} speaker cue${cueNames.length === 1 ? "" : "s"} ` +
-        `(${shown}) but no matching character voice — narrated in one voice. ` +
-        `Tip: 🎤 Characters → ✨ From script, then pick a voice for each.`;
+      const voiced = (typeof _loadCharacters === "function" ? _loadCharacters() : [])
+        .filter((c) => c && c.name && c.voiceId);
+      if (!isAuthorMode() && voiced.length > 0) {
+        // v4.209: the most common silent failure — you set up character voices
+        // but you're in Simple/Standard mode, where multi-voice is off. Nudge
+        // to Author mode instead of leaving them guessing.
+        _cueVoiceHint =
+          "⚠️ Character voices only apply in Author mode — your script narrated " +
+          "in one voice. Switch to Author in ⚙ Settings → Mode, then Generate.";
+      } else if (isAuthorMode()) {
+        const shown = cueNames.slice(0, 3).join(", ") + (cueNames.length > 3 ? "…" : "");
+        _cueVoiceHint =
+          `⚠️ ${cueNames.length} speaker cue${cueNames.length === 1 ? "" : "s"} ` +
+          `(${shown}) but no matching character voice — narrated in one voice. ` +
+          `Tip: 🎤 Characters → ✨ From script, then pick a voice for each.`;
+      }
     }
   }
   if (charactersUsed > 0) {
