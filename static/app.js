@@ -21278,9 +21278,13 @@ async function _publishCurrentBook() {
 // Books / Kindle / Kobo). Built server-side from the synced copy; we push
 // chapters + book first so the file is current. Fetch-as-blob (carries the
 // app's auth) then trigger a download.
-async function _exportBookAs(fmt) {
+async function _exportBookAs(fmt, opts) {
+  const isAV = !!(opts && opts.layout === "av");
   const meta = fmt === "pdf"
-    ? { ext: "pdf", path: "export.pdf", building: "Building print PDF…", done: "Print PDF downloaded.", fail: "PDF export failed", feat: "Print-PDF export" }
+    ? { ext: "pdf", path: "export.pdf",
+        building: isAV ? "Building AV script PDF…" : "Building print PDF…",
+        done: isAV ? "AV script PDF downloaded." : "Print PDF downloaded.",
+        fail: "PDF export failed", feat: isAV ? "AV script PDF" : "Print-PDF export" }
     : { ext: "epub", path: "export.epub", building: "Building EPUB…", done: "EPUB downloaded.", fail: "EPUB export failed", feat: "EPUB export" };
   if (_bookEditingId == null) { setStatus("Open a book first.", true); return; }
   if (typeof _syncIsEnabled === "function" && !_syncIsEnabled()) {
@@ -21307,6 +21311,7 @@ async function _exportBookAs(fmt) {
       const sel = document.getElementById("book-pdf-trim");
       const trim = (sel && sel.value) || "6x9";
       q = "?trim=" + encodeURIComponent(trim);
+      if (isAV) q += "&layout=av";
     }
     const r = await fetch(
       "/api/library/books/" + encodeURIComponent(_bookEditingId) + "/" + meta.path + q
@@ -21322,7 +21327,7 @@ async function _exportBookAs(fmt) {
     a.href = url;
     a.download =
       ((book.title || "book").replace(/[^\w \-]+/g, "").trim().replace(/\s+/g, "_") || "book") +
-      "." + meta.ext;
+      (isAV ? "_AV" : "") + "." + meta.ext;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -21334,6 +21339,7 @@ async function _exportBookAs(fmt) {
   }
 }
 function _exportBookEpub() { return _exportBookAs("epub"); }
+function _exportBookAvPdf() { return _exportBookAs("pdf", { layout: "av" }); }
 function _exportBookPdf() { return _exportBookAs("pdf"); }
 
 // Author: set the book's Style preset (stored on the book; the reader resolves
@@ -21452,6 +21458,7 @@ async function _openBookEditor(id) {
   { const pb = _bookEl("book-publish-btn"); if (pb) pb.hidden = false; }
   { const eb = _bookEl("book-export-epub-btn"); if (eb) eb.hidden = false; }
   { const pb2 = _bookEl("book-export-pdf-btn"); if (pb2) pb2.hidden = false; }
+  { const av = _bookEl("book-export-av-pdf-btn"); if (av) av.hidden = false; }
   { const tr = _bookEl("book-pdf-trim"); if (tr) tr.hidden = false; }
   _bookSyncStyleButtons(book.style || "");
   _bookEl("book-title-input").value = book.title || "";
@@ -21671,6 +21678,7 @@ async function _bookPickerAdd() {
   on("book-publish-btn", () => _publishCurrentBook());
   on("book-export-epub-btn", () => _exportBookEpub());
   on("book-export-pdf-btn", () => _exportBookPdf());
+  on("book-export-av-pdf-btn", () => _exportBookAvPdf());
   on("book-delete-btn", () => _bookDelete());
   {
     const seg = document.getElementById("book-style-seg");

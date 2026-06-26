@@ -1596,6 +1596,124 @@ def _build_pdf(
     return doc.tobytes()
 
 
+# ── AV (voice-actor) two-column PDF (v4.196) ──────────────────────────────
+# The pro AV format: technical directions in a narrow left column, spoken
+# dialogue in a wide right column, header metadata up top. Mirrors the client
+# _avClassifyLine() so screen + print agree.
+import re as _re
+
+_AV_META_RE_PY = _re.compile(
+    r"^(?:\*{0,2})\s*(Client/Project|Client|Project|Target Demographic|Demographic|"
+    r"Audience|Voice Spec|Voice|Tone/Pacing|Tone|Pacing|Length|System)\s*(?:\*{0,2})\s*:\s*(.*)$",
+    _re.I,
+)
+_AV_CUE_RE_PY = _re.compile(r"^([A-Z][A-Z0-9 .'’&/\-]{1,30}):\s*(.*)$")
+
+
+def _av_classify_line(line: str):
+    """(kind, payload). kind ∈ beat|direction|meta|cue|text."""
+    t = (line or "").strip()
+    if not t:
+        return ("text", "")
+    if _re.match(r"^[\[(]\s*beat\s*[\])]$", t, _re.I):
+        return ("beat", "[BEAT]")
+    if _re.match(r"^\[[^\]]+\]$", t) or _re.match(r"^\([^)]+\)$", t):
+        return ("direction", t)
+    m = _AV_META_RE_PY.match(t)
+    if m:
+        return ("meta", (m.group(1), m.group(2)))
+    m = _AV_CUE_RE_PY.match(t)
+    if m and len(_re.sub(r"[^A-Z]", "", m.group(1))) >= 2:
+        return ("cue", (m.group(1), m.group(2)))
+    return ("text", t)
+
+
+def _build_av_pdf(title: str, chapters: list[dict], *, trim: str = "letter") -> bytes:
+    """Two-column AV script PDF: directions left, dialogue right, header meta on
+    top. One table per chapter (PyMuPDF Story flows it across pages)."""
+    import io
+    import fitz
+
+    W, H = _PDF_TRIMS.get(trim, _PDF_TRIMS["letter"])
+    et = lambda s: _html.escape(s or "", quote=False)
+
+    meta_rows: list[tuple] = []  # (label, value) — header metadata, hoisted to top
+    blocks: list[str] = []       # HTML fragments (chapter heading + its table)
+
+    for ci, ch in enumerate(chapters):
+        rows: list[str] = []
+        pending: list[str] = []  # directions awaiting their dialogue (left cell)
+
+        def _emit(left_dirs: list[str], right_html: str):
+            left = "<br/>".join(et(d) for d in left_dirs)
+            rows.append(
+                f"<tr><td class='dir'>{left}</td><td class='vox'>{right_html}</td></tr>"
+            )
+
+        for raw in (ch.get("text") or "").split("\n"):
+            kind, payload = _av_classify_line(raw)
+            if not (raw or "").strip():
+                continue
+            if kind == "meta":
+                meta_rows.append(payload)
+            elif kind in ("direction", "beat"):
+                pending.append(payload if kind == "direction" else "[BEAT]")
+            elif kind == "cue":
+                cue, dlg = payload
+                _emit(pending, f"<b>{et(cue)}</b><br/>{et(dlg)}")
+                pending = []
+            else:  # plain text / dialogue continuation
+                _emit(pending, et(payload))
+                pending = []
+        if pending:
+            _emit(pending, "")
+
+        ctitle = (ch.get("title") or "").strip()
+        head = f"<h2>{et(ctitle)}</h2>" if (len(chapters) > 1 and ctitle) else ""
+        table = (
+            "<table class='av'>"
+            "<tr><th class='dir'>Direction</th><th class='vox'>Voice</th></tr>"
+            + "".join(rows)
+            + "</table>"
+        )
+        blocks.append(head + table)
+
+    meta_html = ""
+    if meta_rows:
+        items = "".join(
+            f"<p class='m'><b>{et(l)}:</b> {et(v)}</p>" for (l, v) in meta_rows
+        )
+        meta_html = f"<div class='meta'>{items}</div>"
+
+    htm = f"<h1>{et(title or 'Script')}</h1>{meta_html}" + "".join(blocks)
+    css = (
+        "body{font-family:sans-serif;font-size:10.5pt;line-height:1.4}"
+        "h1{font-size:18pt;text-align:center;margin-bottom:8pt}"
+        "h2{font-size:13pt;margin:14pt 0 4pt}"
+        ".meta{font-size:9.5pt;margin:0 0 12pt}"
+        ".meta .m{margin:1pt 0}"
+        "table.av{width:100%}"
+        "th{font-size:8pt;text-align:left;border-bottom:1px solid #000;padding:3pt 6pt}"
+        "td{vertical-align:top;padding:5pt 6pt;border-bottom:1px solid #ccc}"
+        "td.dir{width:34%;color:#555;font-style:italic;font-size:9pt}"
+        "td.vox{width:66%}"
+    )
+
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    mediabox = fitz.Rect(0, 0, W, H)
+    M = 0.7 * 72
+    story = fitz.Story(html=htm, user_css=css)
+    more = 1
+    while more:
+        dev = writer.begin_page(mediabox)
+        more, _ = story.place(fitz.Rect(M, M, W - M, H - M))
+        story.draw(dev)
+        writer.end_page()
+    writer.close()
+    return buf.getvalue()
+
+
 def _pdf_response(data: bytes, title: str) -> Response:
     fname = _safe_filename(title) + ".pdf"
     return Response(
@@ -1665,8 +1783,9 @@ def _norm_trim(trim: str) -> str:
 
 
 @router.get("/clips/{clip_id}/export.pdf")
-def export_clip_pdf(clip_id: int, request: Request, trim: str = "6x9"):
-    """Download a single clip as a print-ready one-chapter PDF."""
+def export_clip_pdf(clip_id: int, request: Request, trim: str = "6x9", layout: str = ""):
+    """Download a single clip as a print-ready one-chapter PDF. layout=av →
+    the two-column voice-actor (AV) script layout instead of a paperback."""
     _require_enabled()
     require_entitlement(request, "pro")
     tk = _tenant(request)
@@ -1676,13 +1795,18 @@ def export_clip_pdf(clip_id: int, request: Request, trim: str = "6x9"):
     if row is None or row["deleted"]:
         raise HTTPException(status_code=404, detail="clip not found")
     title = row["title"] or "Untitled"
-    data = _build_pdf(title, "", [{"title": title, "text": row["text"] or ""}], trim=_norm_trim(trim))
+    chapters = [{"title": title, "text": row["text"] or ""}]
+    if layout == "av":
+        data = _build_av_pdf(title, chapters, trim=(trim if trim in _PDF_TRIMS else "letter"))
+    else:
+        data = _build_pdf(title, "", chapters, trim=_norm_trim(trim))
     return _pdf_response(data, title)
 
 
 @router.get("/books/{book_id}/export.pdf")
-def export_book_pdf(book_id: int, request: Request, trim: str = "6x9"):
-    """Download a whole book as a print-ready paperback PDF (interior)."""
+def export_book_pdf(book_id: int, request: Request, trim: str = "6x9", layout: str = ""):
+    """Download a whole book as a print-ready paperback PDF (interior).
+    layout=av → the two-column voice-actor (AV) script layout."""
     _require_enabled()
     require_entitlement(request, "pro")
     tk = _tenant(request)
@@ -1703,12 +1827,18 @@ def export_book_pdf(book_id: int, request: Request, trim: str = "6x9"):
             chapters.append({"title": r["title"], "text": r["text"]})
     if not chapters:
         raise HTTPException(status_code=400, detail="book has no readable chapters")
-    data = _build_pdf(
-        book["title"] or "Untitled", book["author"] or "", chapters,
-        dedication=(book["dedication"] if "dedication" in book.keys() else None),
-        about_author=(book["about_author"] if "about_author" in book.keys() else None),
-        trim=_norm_trim(trim),
-    )
+    if layout == "av":
+        data = _build_av_pdf(
+            book["title"] or "Script", chapters,
+            trim=(trim if trim in _PDF_TRIMS else "letter"),
+        )
+    else:
+        data = _build_pdf(
+            book["title"] or "Untitled", book["author"] or "", chapters,
+            dedication=(book["dedication"] if "dedication" in book.keys() else None),
+            about_author=(book["about_author"] if "about_author" in book.keys() else None),
+            trim=_norm_trim(trim),
+        )
     return _pdf_response(data, book["title"] or "book")
 
 
