@@ -140,15 +140,75 @@ def split_sentences(text: str) -> list[str]:
     return out
 
 
+_VS_URL = "http://localhost:7861"
+
+
+def _list_vs_voices() -> list[Voice]:
+    """Try to enumerate voices from local Adonis Voice Studio. Silent if offline."""
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{_VS_URL}/api/voices", timeout=0.8) as r:
+            data = json.loads(r.read())
+        return [
+            Voice(
+                id=f"voicestudio:{v}",
+                name=f"{v} (Voice Studio)",
+                languages=["en"],
+                gender=None,
+                engine="voicestudio",
+            )
+            for v in data.get("voices", [])
+        ]
+    except Exception:
+        return []
+
+
 def list_voices() -> list[Voice]:
     # Kokoro first so its higher-quality voices float to the top of the
     # picker by default. Piper voices follow (legacy + LibriTTS). SAPI
-    # last (OS fallback).
+    # last (OS fallback). Voice Studio voices prepend when the local app
+    # is running — they're trained/GPU voices only available locally.
     return (
-        kokoro_engine.list_voices()
+        _list_vs_voices()
+        + kokoro_engine.list_voices()
         + piper_engine.list_voices()
         + sapi.list_voices()
     )
+
+
+def _vs_synthesize_iter(text: str, voice_id: str):
+    """Proxy synthesis to local Adonis Voice Studio (http://localhost:7861).
+
+    voice_id format: "voicestudio:<voice_name>" — the prefix is stripped before
+    sending to VS so VS sees just the bare voice name from its own registry.
+
+    Raises RuntimeError if Voice Studio is not reachable (caller should catch and
+    degrade gracefully or surface to the user). Uses stdlib only; no extra deps.
+    """
+    import json
+    import urllib.request
+
+    voice_name = voice_id.split(":", 1)[1]
+    payload = json.dumps({"text": text, "voice": voice_name}).encode()
+    req = urllib.request.Request(
+        f"{_VS_URL}/api/synthesize/stream",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        # timeout applies per-read so a slow GPU sentence won't cut the stream;
+        # 120 s is generous even for StyleTTS2 on a cold GPU.
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8").strip()
+                if line.startswith("data: "):
+                    yield json.loads(line[6:])
+    except OSError as exc:
+        raise RuntimeError(
+            "Voice Studio is offline. Start Adonis Voice Studio and try again."
+        ) from exc
 
 
 def synthesize_iter(
@@ -164,7 +224,9 @@ def synthesize_iter(
     by Piper voices with num_speakers > 1 and silently ignored by Kokoro
     (single-speaker per voice) and SAPI (single-voice per id).
     """
-    if voice_id and voice_id.startswith("kokoro:"):
+    if voice_id and voice_id.startswith("voicestudio:"):
+        yield from _vs_synthesize_iter(text, voice_id)
+    elif voice_id and voice_id.startswith("kokoro:"):
         yield from kokoro_engine.synthesize_iter(
             text, voice_id, rate=rate, volume=volume, speaker_id=speaker_id
         )
