@@ -2329,10 +2329,47 @@ function _pronEnabled() {
   const v = localStorage.getItem(_PRON_ON_KEY);
   return v === null ? true : v === "1";
 }
+// v4.216 (#2 lexicon): a small built-in dictionary applied to ALL synth as the
+// lowest-priority tier — fixes interjections espeak spells out letter-by-letter
+// (verified by audio-size: Shh. 102k→shush 69k, Brr. 97k→burr 57k). Kept tiny
+// and SAFE: no homographs (lead/read/bass are context-dependent — a blanket
+// rule would break the common reading), only single-pronunciation tokens espeak
+// reliably gets wrong. The user's map AND Voice Studio override it (they parse
+// first), so anyone can change these. Not shown in the Settings editor — it's a
+// floor, not the user's list. m-runs (Mm/Mmm…) are handled by _expandHumRuns.
+const _PRON_BUILTIN_LEXICON = [
+  // #2 — interjections espeak spells out (verified by audio size).
+  "shh => shush",
+  "shhh => shush",
+  "shush => shush",
+  "brr => burr",
+  "brrr => burr",
+  "tsk => tisk",
+  "tsk tsk => tisk tisk",
+  // #3 — abbreviations espeak mangles (Dr. = 136k vs Doctor = 85k). We match
+  // the WORD and leave the trailing period in place, so "Dr. Smith" becomes
+  // "Doctor. Smith": pronunciation fixed, sentence count unchanged (no
+  // splitter change, no karaoke desync). Conservative set — only high-
+  // frequency, low-false-match titles/Latin (skipped Ms=ms, Gen/Col/etc. that
+  // collide with names/words). Anything else → the Fix-pronunciation tool.
+  "Dr => Doctor",
+  "Mr => Mister",
+  "Mrs => Missus",
+  "Mt => Mount",
+  "Prof => Professor",
+  "e.g => for example",
+  "i.e => that is",
+  "etc => et cetera",
+  "vs => versus",
+].join("\n");
 function _pronMapText() {
   const local = localStorage.getItem(_PRON_MAP_KEY) ?? _PRON_MAP_DEFAULT;
-  // Voice Studio rules come first — they win on any collision with local rules.
-  return _vsRulesText ? _vsRulesText + "\n" + local : local;
+  // Priority (first match wins): Voice Studio → user map → built-in lexicon.
+  const parts = [];
+  if (_vsRulesText) parts.push(_vsRulesText);
+  parts.push(local);
+  parts.push(_PRON_BUILTIN_LEXICON);
+  return parts.join("\n");
 }
 let _pronRulesCacheKey = null;
 let _pronRulesCache = null;
