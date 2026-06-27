@@ -2251,6 +2251,8 @@ document.addEventListener("DOMContentLoaded", () => {
       try { if (typeof _refreshUpgradeEntry === "function") _refreshUpgradeEntry(); } catch {}
     });
   }, 700);
+  // Fetch pronunciation rules from local Voice Studio (non-blocking, 2 s timeout).
+  _syncVoiceStudioPron();
 });
 
 // v4.90: pre-synth symbol stripper. Markdown source (`# Heading`, `*emphasis*`)
@@ -2296,13 +2298,41 @@ const _PRON_MAP_DEFAULT = [
   "mm-hmm => hmmm",
 ].join("\n");
 
+// Voice Studio sync — fetch pronunciation rules from local Adonis Voice Studio
+// (http://localhost:7861) on page load. VS rules prepend the local map so they
+// take precedence. Falls back silently to local rules if VS is offline.
+const _VS_PRON_URL = "http://localhost:7861/api/pronunciation/export";
+let _vsRulesText = "";
+let _vsConnected = false;
+async function _syncVoiceStudioPron() {
+  try {
+    const r = await fetch(_VS_PRON_URL, { signal: AbortSignal.timeout(2000) });
+    if (!r.ok) throw new Error("not ok");
+    _vsRulesText = await r.text();
+    _vsConnected = true;
+    _pronRulesCacheKey = null; // invalidate rule cache so next synth re-parses
+  } catch (_) {
+    _vsRulesText = "";
+    _vsConnected = false;
+  }
+  // Update settings status badge if the UI is already rendered
+  const el = document.getElementById("settings-pron-vs-status");
+  if (el) _updatePronVsStatus(el);
+}
+function _updatePronVsStatus(el) {
+  if (!el) return;
+  el.textContent = _vsConnected ? "✓ Syncing from Voice Studio" : "○ Voice Studio offline — using local rules";
+  el.style.color = _vsConnected ? "var(--clr-accent, #7c6aff)" : "var(--clr-fg-dim, #888)";
+}
+
 function _pronEnabled() {
   const v = localStorage.getItem(_PRON_ON_KEY);
   return v === null ? true : v === "1";
 }
 function _pronMapText() {
-  const v = localStorage.getItem(_PRON_MAP_KEY);
-  return v === null ? _PRON_MAP_DEFAULT : v;
+  const local = localStorage.getItem(_PRON_MAP_KEY) ?? _PRON_MAP_DEFAULT;
+  // Voice Studio rules come first — they win on any collision with local rules.
+  return _vsRulesText ? _vsRulesText + "\n" + local : local;
 }
 let _pronRulesCacheKey = null;
 let _pronRulesCache = null;
@@ -2327,6 +2357,128 @@ function _parsePronMap(text) {
   _pronRulesCache = rules;
   return rules;
 }
+// v4.215: in-context "Fix pronunciation". The 🗣 button on the reading-view
+// selection toolbar opens a dialog where the author gives a plain respelling
+// and/or exact espeak [[phonemes]], auditions it with the current voice, and
+// saves → the Pronunciation map (audio-only, applies everywhere the word
+// appears). Just sugar over the map the user could hand-edit in Settings.
+function _pronCleanWord(s) {
+  // Trim surrounding punctuation/space; keep internal apostrophes/hyphens.
+  return String(s || "").trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+// Local map only (NOT the Voice-Studio-merged view) — the Fix-pronunciation
+// dialog reads/writes the user's own map; folding in _vsRulesText and saving it
+// back would duplicate the remote rules into local storage on every save.
+function _pronLocalMapText() {
+  return localStorage.getItem(_PRON_MAP_KEY) ?? _PRON_MAP_DEFAULT;
+}
+function _pronMapLookup(word) {
+  const lc = _pronCleanWord(word).toLowerCase();
+  if (!lc) return "";
+  for (const raw of _pronLocalMapText().split(/\n/)) {
+    const ln = raw.trim();
+    if (!ln || ln.startsWith("#")) continue;
+    const parts = ln.split(/\s*(?:=>|->|=|\|)\s*/);
+    if (parts.length >= 2 && (parts[0] || "").trim().toLowerCase() === lc) {
+      return parts.slice(1).join(" ").trim();
+    }
+  }
+  return "";
+}
+function _pronMapUpsert(word, value) {
+  const key = _pronCleanWord(word);
+  const val = String(value || "").replace(/\n+/g, " ").trim();
+  if (!key || !val) return false;
+  const lines = _pronLocalMapText().split(/\n/);
+  const lc = key.toLowerCase();
+  let done = false;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i].trim();
+    if (!ln || ln.startsWith("#")) continue;
+    const parts = ln.split(/\s*(?:=>|->|=|\|)\s*/);
+    if (parts.length >= 2 && (parts[0] || "").trim().toLowerCase() === lc) {
+      lines[i] = `${key} => ${val}`;
+      done = true;
+      break;
+    }
+  }
+  if (!done) lines.push(`${key} => ${val}`);
+  localStorage.setItem(_PRON_MAP_KEY, lines.join("\n"));
+  return true;
+}
+let _pronFixWord = "";
+let _pronFixAudio = null;
+function _openPronFix(word) {
+  const dlg = document.getElementById("pron-fix-dialog");
+  const clean = _pronCleanWord(word);
+  if (!dlg || !clean) {
+    setStatus("Select a single word in the reading view first.", true);
+    return;
+  }
+  // Phrases are allowed but the matcher is whole-token; warn if multi-word.
+  _pronFixWord = clean;
+  const wEl = document.getElementById("pron-fix-word");
+  if (wEl) wEl.textContent = clean;
+  const respell = document.getElementById("pron-fix-respell");
+  const phon = document.getElementById("pron-fix-phonemes");
+  const existing = _pronMapLookup(clean);
+  const isPhon = /^\[\[[\s\S]*\]\]$/.test(existing);
+  if (respell) respell.value = isPhon ? "" : existing;
+  if (phon) phon.value = isPhon ? existing : "";
+  const adv = document.getElementById("pron-fix-adv");
+  if (adv) adv.open = isPhon;
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.setAttribute("open", "");
+  if (respell) respell.focus();
+}
+function _pronFixValue() {
+  const phon = (document.getElementById("pron-fix-phonemes")?.value || "").trim();
+  const respell = (document.getElementById("pron-fix-respell")?.value || "").trim();
+  return phon || respell || _pronFixWord;
+}
+async function _pronFixAuditionRun() {
+  const btn = document.getElementById("pron-fix-audition");
+  const raw = voiceEl.value || "";
+  if (!raw) { setStatus("Pick a voice first.", true); return; }
+  const voiceId = (raw.startsWith("piper:") || raw.startsWith("kokoro:"))
+    ? raw : `piper:${raw}`;
+  const text = _pronFixValue();
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    const res = await fetch("/api/synthesize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: text.slice(0, 200),
+        voice_id: voiceId,
+        rate: Number(rateEl.value),
+        volume: Number(volumeEl.value) / 100,
+        speaker_id: speakerRow.hidden ? null : Number(speakerEl.value || 0),
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    if (_pronFixAudio) { try { _pronFixAudio.pause(); } catch {} }
+    _pronFixAudio = new Audio(URL.createObjectURL(blob));
+    await _pronFixAudio.play();
+  } catch (e) {
+    setStatus(`Couldn't audition — ${(e && e.message) || e}`, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "🔊 Audition"; }
+  }
+}
+function _pronFixSaveRun() {
+  const phon = (document.getElementById("pron-fix-phonemes")?.value || "").trim();
+  const respell = (document.getElementById("pron-fix-respell")?.value || "").trim();
+  const value = phon || respell;
+  if (!value) { setStatus("Enter a respelling or phonemes first.", true); return; }
+  if (_pronMapUpsert(_pronFixWord, value)) {
+    const dlg = document.getElementById("pron-fix-dialog");
+    if (dlg && dlg.open) dlg.close();
+    setStatus(`Saved pronunciation for "${_pronFixWord}" — re-Generate to hear it.`);
+  }
+}
+
 // v4.206: author-controlled hum length. The engine hums "hmm"/"hmmm" but
 // spells out any solid run of 4+ m's letter-by-letter. So a standalone m-run
 // interjection (Mm, Mmmm, hmmmmmm…) is rewritten to a *proportional* hum:
@@ -23605,10 +23757,43 @@ if (highlightToolbar) {
     const action = btn.dataset.action;
     const color = btn.dataset.color;
     const info = _highlightActiveSelectionInfo;
+    // v4.215: "Fix pronunciation" — grab the selected text BEFORE we clear
+    // the range, then open the dialog instead of saving a highlight.
+    if (action === "pronounce") {
+      const sel = (window.getSelection()?.toString() || "").trim();
+      _hideHighlightToolbar();
+      window.getSelection()?.removeAllRanges();
+      if (typeof _openPronFix === "function") _openPronFix(sel);
+      return;
+    }
     _hideHighlightToolbar();
     window.getSelection()?.removeAllRanges();
     await _saveHighlight(info, action === "remove" ? null : color);
   });
+}
+
+// v4.215: Fix-pronunciation dialog buttons.
+{
+  const _aud = document.getElementById("pron-fix-audition");
+  if (_aud) _aud.addEventListener("click", _pronFixAuditionRun);
+  const _save = document.getElementById("pron-fix-save");
+  if (_save) _save.addEventListener("click", _pronFixSaveRun);
+  const _close = document.getElementById("pron-fix-close");
+  if (_close) {
+    _close.addEventListener("click", () => {
+      const d = document.getElementById("pron-fix-dialog");
+      if (d && d.open) d.close();
+    });
+  }
+  // Enter in either field = Save (textareas excepted; these are inputs).
+  for (const id of ["pron-fix-respell", "pron-fix-phonemes"]) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); _pronFixSaveRun(); }
+      });
+    }
+  }
 }
 
 // v206 (M4.1): detect chapter boundaries inside a clip's sentence

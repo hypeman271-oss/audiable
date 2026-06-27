@@ -312,7 +312,42 @@
       <button type="button" class="highlight-toolbar-btn" data-color="pink" aria-label="Highlight pink" title="Pink"></button>
       <button type="button" class="highlight-toolbar-btn" data-color="blue" aria-label="Highlight blue" title="Blue"></button>
       <button type="button" class="highlight-toolbar-btn highlight-toolbar-remove" data-action="remove" aria-label="Remove highlight" title="Remove">×</button>
+      <!-- v4.215: fix how the selected word is narrated (audio only). -->
+      <button type="button" class="highlight-toolbar-btn highlight-toolbar-say author-only" data-action="pronounce" aria-label="Fix pronunciation" title="Fix pronunciation">🗣</button>
     </div>
+
+    <!-- v4.215: Fix-pronunciation dialog. Author selects a word in the
+         reading view → 🗣 → respelling and/or espeak phonemes, audition with
+         the current voice, save to the Pronunciation map (audio-only). -->
+    <dialog id="pron-fix-dialog" class="pron-fix-dialog">
+      <div class="pron-fix-head">
+        <h2>Fix pronunciation</h2>
+        <button id="pron-fix-close" type="button" class="link-btn">Close</button>
+      </div>
+      <p class="pron-fix-sub">
+        Teach the voice how to say
+        <strong id="pron-fix-word">this word</strong>. Audio only — your text
+        stays as written, everywhere this word appears.
+      </p>
+      <label class="pron-fix-field">
+        <span>Say it like</span>
+        <input id="pron-fix-respell" type="text" autocomplete="off" spellcheck="false"
+               placeholder="e.g. meh-deh-YEEN" />
+      </label>
+      <details id="pron-fix-adv" class="pron-fix-adv">
+        <summary>Advanced: phonemes</summary>
+        <input id="pron-fix-phonemes" type="text" autocomplete="off" spellcheck="false"
+               placeholder="[[mEdE&#39;jin]]" />
+        <span class="pron-fix-hint">
+          espeak phonemes wrapped in <code>[[ ]]</code> — exact control when a
+          respelling won't do. Wins over "Say it like" when set.
+        </span>
+      </details>
+      <div class="pron-fix-actions">
+        <button id="pron-fix-audition" type="button" class="pron-fix-audition">🔊 Audition</button>
+        <button id="pron-fix-save" type="button" class="primary">Save</button>
+      </div>
+    </dialog>
 
     <!-- v223.annotate-1: revision-mark palette. Appears at the bottom
          of the screen when annotate mode is on and the user taps a
@@ -1744,6 +1779,10 @@
                       style="margin-top:4px; align-self:flex-start; font-size:12px;"
                       title="Discard your edits and restore the built-in defaults"
                     >Reset to default</button>
+                    <span
+                      id="settings-pron-vs-status"
+                      style="margin-top:6px; font-size:11px; color:var(--clr-fg-dim,#888); align-self:flex-start;"
+                    >○ Checking Voice Studio…</span>
                   </div>
                 </div>
 

@@ -9967,6 +9967,98 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   color: var(--fg);
   border-color: var(--fg-dim);
 }
+/* v4.215: "Fix pronunciation" button on the selection toolbar. */
+.highlight-toolbar-say {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* v4.215: Fix-pronunciation dialog. */
+.pron-fix-dialog {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--fg);
+  padding: 18px;
+  width: min(440px, 92vw);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+.pron-fix-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+.pron-fix-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pron-fix-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.pron-fix-sub {
+  color: var(--fg-dim);
+  font-size: 13px;
+  margin: 6px 0 14px;
+}
+.pron-fix-sub strong {
+  color: var(--accent);
+}
+.pron-fix-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.pron-fix-field input,
+.pron-fix-adv input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+}
+.pron-fix-adv {
+  margin-top: 12px;
+}
+.pron-fix-adv summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.pron-fix-adv input {
+  margin-top: 8px;
+}
+.pron-fix-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.pron-fix-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.pron-fix-actions button {
+  border-radius: 9px;
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+}
+.pron-fix-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 
 /* Highlighted text inside a .sentence. The shared content builder
    wraps character ranges; CSS picks the colour from data-color. */
