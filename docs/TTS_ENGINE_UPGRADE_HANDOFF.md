@@ -3,6 +3,31 @@
 **Audience:** an agent/project evaluating or integrating a higher-quality TTS engine into Lyrith (indie-author audiobook SaaS).
 **TL;DR:** the current engines are free and CPU-hosted and Kokoro is already good. An "upgrade" only earns its cost if you need **voice cloning** (narrate in the author's own voice) or markedly more **expressive** delivery — and that means a GPU. The cost is **compute, not software**. Don't ship XTTS (non-commercial).
 
+> **PRODUCT DECISION (owner): premium TTS is a USER-FUNDED opt-in.** Lyrith's
+> hosting cost stays flat — authors who want top-tier/cloned voices pay for it
+> themselves. Build #5 toward this, not toward the SaaS eating GPU/API cost.
+> Three patterns, all routing through the same `voice_id`-prefix dispatcher:
+>
+> 1. **Bring Your Own Voice Studio (BUILT).** User runs Adonis Voice Studio on
+>    their own GPU; `voicestudio:` prefix. $0 to the SaaS, $0 marginal to the
+>    user (their hardware). Limit: works only when Lyrith's *server* is on the
+>    same machine (local/desktop) — see docs/VOICE_STUDIO_INTEGRATION.md. The
+>    cloud version of this = deploy VS's API on an autostop Fly GPU and point
+>    `_VS_URL` at it (then it's pattern 3).
+> 2. **Bring Your Own API Key (BYOK) — recommended for the hosted app.** User
+>    pastes their own ElevenLabs/Cartesia/OpenAI key in Settings; a new
+>    `<provider>:` engine calls the provider with *their* key, so the provider
+>    bills *them* directly. $0 to the SaaS, pay-per-use to the user, works on
+>    the deployed site, top quality. Store the key with the existing sealed-
+>    secret pattern (see the 2FA/Drive token encryption work). Surface that the
+>    user is responsible for the provider's commercial/redistribution terms.
+> 3. **User-funded hosted GPU.** SaaS hosts + meters + bills the user. Most work
+>    (metering + Stripe/Lemon Squeezy — overlaps the parked Paywall Phase 4).
+>    Defer unless 1+2 prove insufficient.
+>
+> Net: the engine work is the same per-sentence-event integration; the
+> *monetization* is "user pays their provider/their GPU," not the SaaS.
+
 ---
 
 ## What runs today
