@@ -225,11 +225,35 @@ KOKORO_RECORD: dict = {
 }
 
 
+# Adonis Voice Studio voices (voicestudio:* prefix) are served from the
+# author's local GPU app and come in three flavours, all commercial-OK:
+#   - Kokoro base (Apache 2.0 — same as KOKORO_RECORD)
+#   - StyleTTS2 fine-tunes of the AUTHOR'S OWN recorded voice (MIT model +
+#     the author owns the recordings)
+#   - knn-vc zero-shot conversions (MIT) over the author's own audio
+# Commercial use is fine on the premise that the author owns the source
+# recordings — which holds for self-trained voices. Applied by PREFIX in
+# license_for() because Voice Studio creates voice names dynamically (there's
+# nothing to enumerate here). See docs/VOICE_STUDIO_INTEGRATION.md.
+VOICESTUDIO_RECORD: dict = {
+    "license": "Apache-2.0 / MIT (author-owned recordings)",
+    "dataset": "Adonis Voice Studio (Kokoro base / StyleTTS2 fine-tune / knn-vc)",
+    "dataset_url": "",
+    "attribution": "",
+    "commercial": True,
+    "notes": "Local Voice Studio voice. Commercial-OK assuming the author owns "
+             "the training/source recordings (true for self-trained voices). "
+             "Not for cloning a third party's voice without their permission.",
+}
+
+
 def license_for(voice_id: str) -> dict:
     """Return the license record for a voice id.
 
     - kokoro:* voices auto-apply the Apache-2.0 KOKORO_RECORD (no need
       to enumerate every voice in VOICE_LICENSES).
+    - voicestudio:* voices auto-apply VOICESTUDIO_RECORD (names are created
+      dynamically in Voice Studio, so they can't be enumerated).
     - Piper voices look up by suffix in VOICE_LICENSES.
     - Anything unknown falls back to DEFAULT_RECORD (commercial=False) —
       the safer default so we never accidentally promise commercial-OK
@@ -237,6 +261,8 @@ def license_for(voice_id: str) -> dict:
     """
     if voice_id.startswith("kokoro:"):
         return dict(KOKORO_RECORD)
+    if voice_id.startswith("voicestudio:"):
+        return dict(VOICESTUDIO_RECORD)
     # Piper IDs are passed in here as "en_US-libritts-high" (no prefix);
     # also strip the "piper:" prefix defensively in case a caller passes
     # the fully-qualified id.
