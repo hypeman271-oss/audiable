@@ -8585,6 +8585,10 @@ async function _repeatHandleEnded(justEndedId) {
       // Autoplay restrictions might block silent restart on some browsers.
       // No-op — user can tap Play.
     }
+    // v4.218: reconcile the play icon AFTER play() settles — if it succeeded
+    // the icon shows pause; if it was blocked/failed it shows play. Without
+    // this the "play" event could leave the icon stuck on pause after a stop.
+    if (typeof _cpRefreshPlayIcon === "function") _cpRefreshPlayIcon();
     setStatus("🔂 Looping this clip.");
     return true;
   }
@@ -37952,6 +37956,38 @@ function setupMediaSession() {
       }
       // Queue exhausted; the next sentence event (or the final swap to the
       // combined WAV) will resume playback.
+      return;
+    }
+    // v4.218: A↔B loop that reaches the clip's END. The timeupdate guard
+    // seeks back to A whenever the playhead crosses B, but when B sits at (or
+    // within a tick of) the very end, the clip fires "ended" before that guard
+    // runs — so the loop would silently stop. Restart it here, and refresh the
+    // play icon AFTER play() settles so it can't get stuck showing "pause".
+    if (_loopA != null && _loopB != null && _chapterTotalCount <= 0) {
+      navigator.mediaSession.playbackState = "playing";
+      try {
+        seekToTime(_loopA);
+        await playerEl.play();
+      } catch (err) { /* autoplay block → user taps play */ }
+      if (typeof _cpRefreshPlayIcon === "function") _cpRefreshPlayIcon();
+      return;
+    }
+    // v4.218: loop-this-clip (repeat "one", the library-card loop badge).
+    // Restart IMMEDIATELY — BEFORE the awaited markCurrentClipPlayed() (IDB
+    // write + renderLibrary). Doing the restart after that async work let the
+    // just-ended element settle so currentTime=0 + play() could stall (audio
+    // stops, paused=false so the icon sticks on pause). Refresh the icon after
+    // play() settles so it always matches reality. Skipped mid chapter-queue.
+    if (_repeatMode === "one" && _currentClipId && _chapterTotalCount <= 0) {
+      navigator.mediaSession.playbackState = "playing";
+      try {
+        playerEl.currentTime = 0;
+        await playerEl.play();
+      } catch (err) { /* autoplay block → user taps play */ }
+      if (typeof _cpRefreshPlayIcon === "function") _cpRefreshPlayIcon();
+      setStatus("🔂 Looping this clip.");
+      // Reset the resume position without disturbing the now-playing element.
+      _mutateClipAtomic(_currentClipId, (c) => { c.progressSec = 0; }).catch(() => {});
       return;
     }
     navigator.mediaSession.playbackState = "none";

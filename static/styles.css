@@ -4297,9 +4297,15 @@ body[data-ui-mode="author"]
    sits OUTSIDE the text rect rather than nudging surrounding
    sentences, which would shift the reading flow on tap. */
 .reading-view .sentence.selected {
+  /* v4.218: a thin dashed ring alone was easy to miss over the coloured cue
+     text — add a clear accent fill + rounded padding so a tap visibly
+     registers. Dashed ring (vs the solid-ring .editing state) stays the
+     distinguisher between "selected" and "now editable". */
   outline: 2px dashed var(--accent);
-  outline-offset: 3px;
-  border-radius: 4px;
+  outline-offset: 2px;
+  border-radius: 5px;
+  background: var(--accent-tint);
+  box-shadow: 0 0 0 4px var(--accent-tint);
 }
 
 /* v592: inline single-sentence edit. Solid accent ring (different
