@@ -10060,6 +10060,78 @@ body[data-animate-mode="on"] .reading-view .sentence:hover {
   color: #fff;
 }
 
+/* v4.217: playback-speed popover (slider + click-to-type number). */
+.speed-popover {
+  position: fixed;
+  z-index: 120;
+  width: 230px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.4);
+  padding: 12px 14px;
+}
+.speed-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.speed-pop-label {
+  font-size: 13px;
+  color: var(--fg-dim);
+  flex: 1;
+}
+.speed-pop-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: text;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px dashed transparent;
+  min-width: 44px;
+  text-align: right;
+}
+.speed-pop-value:hover {
+  border-color: var(--accent-border-dashed, var(--border));
+}
+.speed-pop-input {
+  width: 64px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.speed-slider {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.speed-pop-presets {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.speed-preset {
+  flex: 1;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.speed-preset:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Highlighted text inside a .sentence. The shared content builder
    wraps character ranges; CSS picks the colour from data-color. */
 .text-highlight {

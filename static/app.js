@@ -8315,17 +8315,28 @@ function _maybeStartRenarrateResume(totalSentences) {
 // src changes (which happens often during streaming).
 const SPEEDS = [1, 1.25, 1.5, 1.75, 2, 0.75];
 const SPEED_STORAGE_KEY = "narrative.playbackRate";
+// v4.217: the slider allows ANY value in this range (snapped to STEP), not
+// just the 6 legacy presets — so a saved 1.4 survives a reload.
+const SPEED_MIN = 0.5;
+const SPEED_MAX = 3;
+const SPEED_STEP = 0.05;
 
+function _clampSpeed(r) {
+  if (!isFinite(r)) return 1;
+  r = Math.min(SPEED_MAX, Math.max(SPEED_MIN, r));
+  return Math.round(r / SPEED_STEP) * SPEED_STEP; // snap to step
+}
 function _loadSavedSpeed() {
   const saved = parseFloat(localStorage.getItem(SPEED_STORAGE_KEY));
-  return SPEEDS.includes(saved) ? saved : 1;
+  return isFinite(saved) ? _clampSpeed(saved) : 1;
 }
 
 let _playbackRate = _loadSavedSpeed();
 
 function _fmtSpeed(r) {
-  // 1.0 → "1×", 1.25 → "1.25×"
-  return `${Number.isInteger(r) ? r : r}×`;
+  // Round to 2dp + strip float noise: 1 → "1×", 1.4 → "1.4×", 1.25 → "1.25×".
+  const s = Math.round(r * 100) / 100;
+  return `${s}×`;
 }
 
 function updateSpeedBtn() {
@@ -8372,19 +8383,114 @@ function _fireChipHint(key, message) {
   if (hint) setTimeout(() => setStatus(hint), 1200);
 }
 
-speedBtn.addEventListener("click", () => {
-  const i = SPEEDS.indexOf(_playbackRate);
-  _playbackRate = SPEEDS[(i + 1) % SPEEDS.length];
+// v4.217: single source of truth for changing speed from any control
+// (slider, typed value, preset). Clamps + snaps + persists + re-applies.
+function _setPlaybackRate(r) {
+  _playbackRate = _clampSpeed(r);
   try { localStorage.setItem(SPEED_STORAGE_KEY, String(_playbackRate)); } catch {}
   updateSpeedBtn();
   applyPlaybackRate();
-  // Cycle speed → recompute the wall-clock remaining annotation.
   if (typeof _cpRefreshTime === "function") _cpRefreshTime();
-  _fireChipHint(
-    "narrative.hintSeen.speed",
-    "💡 Tap again to cycle: 1× → 1.25× → 1.5× → 1.75× → 2× → 0.75×."
-  );
+  _syncSpeedPopover();
+}
+
+// ---- v4.217: playback-speed popover (slider + click-to-type number) -------
+const speedPopover = $("speed-popover");
+const speedSlider = $("speed-slider");
+const speedValue = $("speed-value");
+const speedValueInput = $("speed-value-input");
+let _speedPopoverOpen = false;
+
+function _syncSpeedPopover() {
+  if (speedSlider) speedSlider.value = String(_playbackRate);
+  if (speedValue) speedValue.textContent = _fmtSpeed(_playbackRate);
+}
+function _positionSpeedPopover() {
+  if (!speedPopover) return;
+  const r = speedBtn.getBoundingClientRect();
+  speedPopover.hidden = false; // reveal so we can measure
+  const pw = speedPopover.offsetWidth || 220;
+  const ph = speedPopover.offsetHeight || 96;
+  let left = r.left + r.width / 2 - pw / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+  let top = r.bottom + 8;
+  if (top + ph > window.innerHeight - 8) top = r.top - ph - 8; // flip above
+  speedPopover.style.left = `${Math.round(left)}px`;
+  speedPopover.style.top = `${Math.round(Math.max(8, top))}px`;
+}
+function _openSpeedPopover() {
+  if (!speedPopover) return;
+  _syncSpeedPopover();
+  _positionSpeedPopover();
+  speedPopover.hidden = false;
+  _speedPopoverOpen = true;
+}
+function _closeSpeedPopover() {
+  _speedFinishEdit(true); // discard any half-typed value
+  if (speedPopover) speedPopover.hidden = true;
+  _speedPopoverOpen = false;
+}
+
+// Click the number → type an exact value.
+function _speedBeginEdit() {
+  if (!speedValue || !speedValueInput) return;
+  speedValueInput.value = String(Math.round(_playbackRate * 100) / 100);
+  speedValue.hidden = true;
+  speedValueInput.hidden = false;
+  speedValueInput.focus();
+  speedValueInput.select();
+}
+function _speedFinishEdit(cancel) {
+  if (!speedValueInput || speedValueInput.hidden) return;
+  if (!cancel) {
+    const v = parseFloat(speedValueInput.value);
+    if (isFinite(v)) _setPlaybackRate(v);
+  }
+  speedValueInput.hidden = true;
+  if (speedValue) speedValue.hidden = false;
+}
+
+speedBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (_speedPopoverOpen) _closeSpeedPopover();
+  else {
+    _openSpeedPopover();
+    _fireChipHint(
+      "narrative.hintSeen.speed",
+      "💡 Drag the slider, tap a preset, or click the number to type an exact speed."
+    );
+  }
 });
+if (speedSlider) {
+  speedSlider.addEventListener("input", () => _setPlaybackRate(parseFloat(speedSlider.value)));
+}
+if (speedValue) {
+  speedValue.addEventListener("click", _speedBeginEdit);
+  speedValue.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _speedBeginEdit(); }
+  });
+}
+if (speedValueInput) {
+  speedValueInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); _speedFinishEdit(false); }
+    else if (e.key === "Escape") { e.preventDefault(); _speedFinishEdit(true); }
+  });
+  speedValueInput.addEventListener("blur", () => _speedFinishEdit(false));
+}
+if (speedPopover) {
+  speedPopover.querySelectorAll(".speed-preset").forEach((b) => {
+    b.addEventListener("click", () => _setPlaybackRate(parseFloat(b.dataset.speed)));
+  });
+}
+document.addEventListener("click", (e) => {
+  if (!_speedPopoverOpen) return;
+  if ((speedPopover && speedPopover.contains(e.target)) || speedBtn.contains(e.target)) return;
+  _closeSpeedPopover();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _speedPopoverOpen) _closeSpeedPopover();
+});
+_syncSpeedPopover();
 
 // ---- v225eu: 3-way repeat (Spotify model) --------------------------------
 // State:  "off"  → ended advances to next clip (current default)

@@ -349,6 +349,28 @@
       </div>
     </dialog>
 
+    <!-- v4.217: playback-speed popover. Opens from the speed chip; a slider
+         for quick scrubbing + a clickable number to type an exact speed.
+         Fixed-positioned via JS off the button rect (top-level so no
+         transformed ancestor breaks position:fixed). -->
+    <div id="speed-popover" class="speed-popover" hidden role="dialog" aria-label="Playback speed">
+      <div class="speed-pop-row">
+        <span class="speed-pop-label">Playback speed</span>
+        <span id="speed-value" class="speed-pop-value" role="button" tabindex="0"
+              title="Click to type an exact speed">1×</span>
+        <input id="speed-value-input" class="speed-pop-input" type="number"
+               min="0.5" max="3" step="0.05" hidden aria-label="Exact playback speed" />
+      </div>
+      <input id="speed-slider" class="speed-slider" type="range"
+             min="0.5" max="3" step="0.05" value="1" aria-label="Playback speed slider" />
+      <div class="speed-pop-presets">
+        <button type="button" class="speed-preset" data-speed="0.75">0.75×</button>
+        <button type="button" class="speed-preset" data-speed="1">1×</button>
+        <button type="button" class="speed-preset" data-speed="1.5">1.5×</button>
+        <button type="button" class="speed-preset" data-speed="2">2×</button>
+      </div>
+    </div>
+
     <!-- v223.annotate-1: revision-mark palette. Appears at the bottom
          of the screen when annotate mode is on and the user taps a
          sentence. Six default tags map to common proofreading-style
