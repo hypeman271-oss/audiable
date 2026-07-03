@@ -12777,10 +12777,15 @@ const speakerWizardStarredBtn = $("speaker-wizard-starred");
 const speakerWizardList = $("speaker-wizard-list");
 const speakerWizardPrev = $("speaker-wizard-prev");
 const speakerWizardNext = $("speaker-wizard-next");
+const speakerWizardSweepBtn = $("speaker-wizard-sweep");
+const speakerWizardJump = $("speaker-wizard-jump");
 const speakerAuditionBtn = $("speaker-audition-btn");
 
 const SPEAKER_FAVS_KEY = "narrative.speakerFavorites";
-const SPEAKER_WIZARD_PAGE_SIZE = 6;
+// v4.220: bumped 6→12. With 900+ speaker voices (LibriTTS-R) the old
+// 6-per-page meant 150 pages to sweep; 12 halves the paging without the
+// rows overflowing the dialog on a phone (they scroll).
+const SPEAKER_WIZARD_PAGE_SIZE = 12;
 
 function _loadAllSpeakerFavs() {
   try {
@@ -12902,9 +12907,130 @@ function _updateWizardStarredChip() {
   );
 }
 
+// v4.220: Batch audition "sweep". Press ▶ Sweep once and the wizard walks
+// speaker→speaker hands-free (auto-paging through all 900+), so you just
+// listen and ★ the keepers — instead of clicking play on each of 904 one
+// at a time. Built for the "find the African American voices among 904
+// anonymous LibriTTS speakers" job: there's no ethnicity metadata to filter
+// on, so the only path is auditioning, and this makes auditioning fast.
+let _wizardSweeping = false;
+let _wizardSweepList = []; // the id list being swept (respects starred-only)
+let _wizardSweepPos = 0; // absolute index into _wizardSweepList
+
+function _updateSweepBtn() {
+  if (!speakerWizardSweepBtn) return;
+  speakerWizardSweepBtn.textContent = _wizardSweeping ? "⏸ Stop sweep" : "▶ Sweep";
+  speakerWizardSweepBtn.classList.toggle("active", _wizardSweeping);
+  speakerWizardSweepBtn.setAttribute("aria-pressed", String(_wizardSweeping));
+}
+
+function _stopSweep() {
+  if (!_wizardSweeping) {
+    _updateSweepBtn();
+    return;
+  }
+  _wizardSweeping = false;
+  _stopWizardPreview();
+  if (speakerWizardList) {
+    speakerWizardList
+      .querySelectorAll(".speaker-wizard-row.sweeping")
+      .forEach((r) => r.classList.remove("sweeping"));
+  }
+  _updateSweepBtn();
+}
+
+function _highlightSweepRow(id) {
+  if (!speakerWizardList) return;
+  const rows = speakerWizardList.querySelectorAll(".speaker-wizard-row");
+  let active = null;
+  rows.forEach((r) => {
+    const on = Number(r.dataset.speakerId) === id;
+    r.classList.toggle("sweeping", on);
+    if (on) active = r;
+  });
+  if (active && active.scrollIntoView) {
+    active.scrollIntoView({ block: "nearest" });
+  }
+  const total = _wizardSweepList.length;
+  speakerWizardSubtitle.textContent =
+    `🔊 Speaker ${id} — ${_wizardSweepPos + 1}/${total} · ★ keepers as you hear them`;
+}
+
+// Play one speaker's sample; resolve when it ends, errors, or times out so
+// the sweep can chain to the next. The HuggingFace per-speaker sample is a
+// fixed sentence, so every speaker is auditioned on identical content (clean
+// A/B) and it streams fast (proxied + cached server-side).
+function _sweepPlayId(id) {
+  return new Promise((resolve) => {
+    const audio = _ensurePreviewAudio();
+    const voiceId = (_wizardVoiceId || "").replace(/^piper:/, "");
+    let done = false;
+    let timer = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      audio.removeEventListener("ended", finish);
+      audio.removeEventListener("error", finish);
+      if (timer) clearTimeout(timer);
+      resolve();
+    };
+    audio.addEventListener("ended", finish);
+    audio.addEventListener("error", finish);
+    // Safety valve: a missing/stalled sample shouldn't wedge the sweep.
+    timer = setTimeout(finish, 12000);
+    audio.src = `${API_ORIGIN}/api/voices/sample/${encodeURIComponent(voiceId)}?speaker=${id}`;
+    audio.play().catch(() => finish());
+  });
+}
+
+async function _sweepStep() {
+  if (!_wizardSweeping) return;
+  if (_wizardSweepPos >= _wizardSweepList.length) {
+    _stopSweep();
+    renderSpeakerWizard();
+    setStatus("✅ Reached the end of the speaker list.");
+    return;
+  }
+  const id = _wizardSweepList[_wizardSweepPos];
+  // Flip to the page that contains this speaker so the highlight is visible.
+  const pageOfPos = Math.floor(_wizardSweepPos / SPEAKER_WIZARD_PAGE_SIZE);
+  if (pageOfPos !== _wizardPage) {
+    _wizardPage = pageOfPos;
+    renderSpeakerWizard(); // stops preview audio only, not the sweep flag
+  }
+  _highlightSweepRow(id);
+  await _sweepPlayId(id);
+  if (!_wizardSweeping) return; // stopped mid-sample
+  _wizardSweepPos += 1;
+  _sweepStep();
+}
+
+function _startSweep() {
+  const all = _wizardCurrentIds();
+  if (!all.length) {
+    setStatus("No speakers to sweep.");
+    return;
+  }
+  _wizardSweepList = all;
+  // Begin at the first speaker of the page currently in view.
+  _wizardSweepPos = Math.min(
+    _wizardPage * SPEAKER_WIZARD_PAGE_SIZE,
+    all.length - 1
+  );
+  _wizardSweeping = true;
+  _updateSweepBtn();
+  _sweepStep();
+}
+
+function _toggleSweep() {
+  if (_wizardSweeping) _stopSweep();
+  else _startSweep();
+}
+
 function renderSpeakerWizard() {
   _stopWizardPreview();
   _updateWizardStarredChip();
+  _updateSweepBtn();
 
   const { all, page, start } = _wizardPageIds();
   const total = all.length;
@@ -12925,6 +13051,10 @@ function renderSpeakerWizard() {
   for (const speakerId of page) {
     const row = document.createElement("div");
     row.className = "speaker-wizard-row";
+    row.dataset.speakerId = String(speakerId);
+    if (_wizardSweeping && _wizardSweepList[_wizardSweepPos] === speakerId) {
+      row.classList.add("sweeping");
+    }
 
     const num = document.createElement("span");
     num.className = "speaker-wizard-num";
@@ -12981,6 +13111,8 @@ function openSpeakerWizard() {
   _wizardSpeakerCount = _voiceSpeakerCounts.get(_wizardVoiceId) || 0;
   _wizardPage = 0;
   _wizardStarredOnly = false;
+  _wizardSweeping = false;
+  _wizardSweepPos = 0;
   renderSpeakerWizard();
   speakerWizard.showModal();
 }
@@ -13030,7 +13162,37 @@ speakerChip.addEventListener("click", () => {
   openSpeakerWizard();
 });
 speakerWizardClose.addEventListener("click", () => speakerWizard.close());
-speakerWizard.addEventListener("close", _stopWizardPreview);
+speakerWizard.addEventListener("close", () => {
+  _stopSweep();
+  _stopWizardPreview();
+});
+
+if (speakerWizardSweepBtn) {
+  speakerWizardSweepBtn.addEventListener("click", _toggleSweep);
+}
+
+if (speakerWizardJump) {
+  const doJump = () => {
+    const n = parseInt(speakerWizardJump.value, 10);
+    if (!Number.isFinite(n)) return;
+    _stopSweep();
+    // Jump is by speaker id, which only maps 1:1 to a page in the full
+    // list — so leave "starred only" for a clean numeric jump.
+    _wizardStarredOnly = false;
+    const max = Math.max(0, _wizardSpeakerCount - 1);
+    const target = Math.min(Math.max(0, n), max);
+    _wizardPage = Math.floor(target / SPEAKER_WIZARD_PAGE_SIZE);
+    renderSpeakerWizard();
+    speakerWizardJump.value = "";
+  };
+  speakerWizardJump.addEventListener("change", doJump);
+  speakerWizardJump.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doJump();
+    }
+  });
+}
 
 // Keep the chip's label in sync when the underlying <select> changes —
 // covers wizard "Use" (which dispatches change), preset application,
@@ -13040,12 +13202,14 @@ speakerEl.addEventListener("change", () => {
 });
 
 speakerWizardStarredBtn.addEventListener("click", () => {
+  _stopSweep();
   _wizardStarredOnly = !_wizardStarredOnly;
   _wizardPage = 0;
   renderSpeakerWizard();
 });
 
 speakerWizardPrev.addEventListener("click", () => {
+  _stopSweep();
   if (_wizardPage > 0) {
     _wizardPage -= 1;
     renderSpeakerWizard();
@@ -13053,6 +13217,7 @@ speakerWizardPrev.addEventListener("click", () => {
 });
 
 speakerWizardNext.addEventListener("click", () => {
+  _stopSweep();
   const { all } = _wizardPageIds();
   if ((_wizardPage + 1) * SPEAKER_WIZARD_PAGE_SIZE < all.length) {
     _wizardPage += 1;

@@ -4560,6 +4560,13 @@
         </div>
         <div class="voice-browser-filters">
           <button
+            id="speaker-wizard-sweep"
+            type="button"
+            class="voice-filter-chip"
+            aria-pressed="false"
+            title="Auto-play every speaker in turn so you can just listen and ★ the keepers"
+          >▶ Sweep</button>
+          <button
             id="speaker-wizard-starred"
             type="button"
             class="voice-filter-chip"
@@ -4577,6 +4584,17 @@
             class="link-btn"
             aria-label="Previous page"
           >← Prev</button>
+          <label class="speaker-wizard-jump-label">
+            Jump to
+            <input
+              id="speaker-wizard-jump"
+              type="number"
+              min="0"
+              inputmode="numeric"
+              placeholder="#"
+              aria-label="Jump to speaker number"
+            />
+          </label>
           <button
             id="speaker-wizard-next"
             type="button"
