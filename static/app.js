@@ -8617,7 +8617,7 @@ async function _repeatHandleEnded(justEndedId) {
         _cancelAutoAdvance();
         _autoAdvanceTimer = setTimeout(() => {
           _autoAdvanceTimer = null;
-          loadClip(first.id);
+          loadClip(first.id, { autoPlay: true }); // repeat-all wrap: keep playing
         }, 3000);
         return true;
       }
@@ -17396,7 +17396,7 @@ function _advanceChapterQueue() {
     _preSynthChapter = null;
     _pendingChapterTitle = null;
     _queueSaveComplete = true;
-    setTimeout(() => loadClip(clipId), 50);
+    setTimeout(() => loadClip(clipId, { autoPlay: true }), 50); // queue: play the next chapter
     if (_chapterQueue.length > 0) {
       _preSynthesizeChapter(_chapterQueue[0]);
     }
@@ -29547,7 +29547,10 @@ function makeClipCard(clip) {
     // right there — user decides when to start. Desktop keeps the
     // tap-loads-and-plays behavior since the click is more deliberate.
     const _isPhone = window.matchMedia("(max-width: 767px)").matches;
-    loadClip(clip.id, { autoPlay: !_isPhone });
+    // v4.218: load quietly on every device (was desktop-only autoplay). Tapping
+    // a card opens it for reading/checking; the user presses play when ready —
+    // matching the phone, and avoiding an audio blast when you just want to look.
+    loadClip(clip.id, { autoPlay: false });
   });
 
   // Reset-to-start ↺ — shown only for clips that actually have a resume
@@ -29961,7 +29964,10 @@ function makeClipCard(clip) {
     } else {
       // v589: same gate as the card-body click. Phone loads silently.
       const _isPhone = window.matchMedia("(max-width: 767px)").matches;
-      loadClip(clip.id, { autoPlay: !_isPhone });
+      // v4.218: load quietly on every device (was desktop-only autoplay). Tapping
+    // a card opens it for reading/checking; the user presses play when ready —
+    // matching the phone, and avoiding an audio blast when you just want to look.
+    loadClip(clip.id, { autoPlay: false });
     }
   });
 
@@ -35157,7 +35163,10 @@ librarySelectDeleteBtn.addEventListener("click", async () => {
 // hits the bottom-bar play button when ready. Author feedback: card
 // taps were starting playback unexpectedly, especially when the
 // previous clip was mid-paragraph and the new clip jumped to it.
-async function loadClip(id, { autoPlay = true } = {}) {
+// v4.218: default to NOT auto-playing — opening/jumping to a clip loads it
+// quietly; the user presses play. Only the genuine "keep the audiobook going"
+// callers (auto-advance when a clip ends, repeat-loop wrap) pass autoPlay:true.
+async function loadClip(id, { autoPlay = false } = {}) {
   const clip = await getClip(id);
   if (!clip) return;
 
@@ -38050,7 +38059,7 @@ function setupMediaSession() {
         _cancelAutoAdvance();
         _autoAdvanceTimer = setTimeout(() => {
           _autoAdvanceTimer = null;
-          loadClip(nextId);
+          loadClip(nextId, { autoPlay: true }); // auto-advance: keep the audiobook going
         }, 3000);
       }
     }
