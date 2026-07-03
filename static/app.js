@@ -28073,6 +28073,21 @@ async function _syncPullBooks() {
 }
 
 async function _syncAbsorbServerClip(sc) {
+  // v4.219: capture the RAW text we currently have stored for this clip BEFORE
+  // we overwrite it, so the "did the text actually change?" check below can
+  // compare raw-vs-raw. The old check compared the reading view's RENDERED
+  // textContent (newlines + cue/markdown formatting stripped) against the raw
+  // incoming text — they almost always differ, so ANY sync absorb of the open
+  // clip falsely triggered a full loadClip, which rebuilds the reading view and
+  // scrolls to the top (losing the reader's place — e.g. right after an inline
+  // sentence edit syncs and pulls back).
+  let _absorbPrevText = null;
+  if (_currentClipId === sc.id) {
+    try {
+      const prev = await getClip(sc.id);
+      _absorbPrevText = prev ? (prev.text || "") : "";
+    } catch { _absorbPrevText = null; }
+  }
   // Convert the server clip dict back into the local IndexedDB shape.
   // Audio: if the server has a sha + we don't have the bytes locally,
   // fetch on demand and stash as a Blob. This is the "phone fetches
@@ -28171,19 +28186,19 @@ async function _syncAbsorbServerClip(sc) {
     // The bug v4.100 probed: GitHub Pull lands new text into IDB but
     // sentence spans never rebuild, so user sees old text forever.
     const newText = localShape.text || "";
-    const readingView = document.querySelector(".reading-view")
-      || document.getElementById("reading-view");
-    const rvText = readingView ? (readingView.textContent || "") : "";
+    // v4.219: RAW-vs-RAW. Only a genuine text change (another device edited the
+    // words) rebuilds the spans; a same-content sync round-trip no longer yanks
+    // the reader to the top. If we couldn't read the prior text, default to the
+    // light refresh (no scroll) rather than a spurious full reload.
     const textChanged =
-      rvText.trim().length > 0 && newText.trim() !== rvText.trim();
+      _absorbPrevText != null && newText.trim() !== (_absorbPrevText || "").trim();
     if (typeof _dlog === "function") {
       try {
         _dlog("sync-absorb", "current clip absorbed", {
           clipId: localShape.id,
           newTextLen: newText.length,
           newTextHead: newText.slice(0, 80),
-          renderedTextLen: rvText.length,
-          renderedTextHead: rvText.slice(0, 80),
+          prevTextLen: (_absorbPrevText || "").length,
           textChanged,
           action: textChanged ? "loadClip" : "light-refresh",
           kind: localShape.kind || "audio",
