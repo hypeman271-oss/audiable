@@ -19890,6 +19890,12 @@ function _enterInlineEdit(idx) {
       hasSpan: !!sentenceSpans[idx],
     });
   }
+  // v4.222: a structural (add-a-sentence) edit is mid-flight and about to
+  // rebuild the spans — don't let a new edit start against soon-stale spans.
+  if (_structuralEditInFlight) {
+    setStatus("Adding a sentence — one moment…");
+    return;
+  }
   const span = sentenceSpans[idx];
   if (!span) return;
   if (_inlineEditingIdx === idx) return; // already editing this one
@@ -20208,8 +20214,230 @@ async function _renarrateAudioJob(job) {
   });
 }
 
+// v4.222: "type-to-split" — adding a sentence during an inline edit. Unlike
+// a 1-in-1-out edit (which the background queue handles), adding a sentence
+// changes the count of EVERYTHING that indexes by sentence (spans, offsets,
+// lines, bookmarks), so it must update all of them together with no other
+// edit interleaving. This path therefore runs serially: it blocks new edits
+// (_structuralEditInFlight) and waits for the simple-edit queue to drain,
+// then does one N-out splice + a scroll-preserving reading-view rebuild.
+let _structuralEditInFlight = false;
+
+async function _commitStructuralEdit({ clipId, idx, originalText, newText, pieces }) {
+  _structuralEditInFlight = true;
+  const added = pieces.length - 1;
+  const startSpan = sentenceSpans[idx];
+  if (startSpan) startSpan.classList.add("renarrate-pending");
+  _exitInlineEdit();
+  setStatus(`Adding ${added} sentence${added === 1 ? "" : "s"} — re-narrating…`);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    // Let any in-flight 1-in-1-out edits finish first — their jobs index by
+    // sentence position, which this count change is about to shift.
+    let waited = 0;
+    while ((_renarrateBusy || _renarrateQueue.length) && waited < 30000) {
+      await sleep(150);
+      waited += 150;
+    }
+
+    const clip = await getClip(clipId);
+    if (!clip || !clip.blob) throw new Error("clip has no audio to splice");
+    const offsets = Array.isArray(clip.sentenceOffsetsSec) ? clip.sentenceOffsetsSec : [];
+    if (!offsets.length || idx >= offsets.length) {
+      throw new Error(`sentence index ${idx} out of range`);
+    }
+    const offsetsMs = offsets.map((s) => Math.round(s * 1000));
+    const voiceId = (clip && clip.voiceId) || voiceEl.value || null;
+    const speakerId = clip && typeof clip.speakerId === "number" ? clip.speakerId : null;
+    const rate = clip && typeof clip.rate === "number" ? clip.rate : null;
+
+    // N-out splice: send the FULL multi-sentence text; the server synths it
+    // as N sentences and returns an offset table grown by (pieces-1).
+    const params = {
+      voice_id: voiceId,
+      speaker_id: speakerId,
+      rate,
+      index: idx,
+      text: _stripSynthChars(newText),
+      sentence_offsets_ms: offsetsMs,
+    };
+    const fd = new FormData();
+    fd.append("audio", new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }));
+    fd.append("params", JSON.stringify(params));
+    const res = await fetch("/api/synthesize/splice", { method: "POST", body: fd });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const j = await res.json();
+        if (j && j.detail) detail = j.detail;
+      } catch {}
+      throw new Error(`splice failed (${res.status}): ${detail}`);
+    }
+    const newBlob = await res.blob();
+    if (!newBlob || newBlob.size === 0) throw new Error("splice returned empty audio");
+    const grown = JSON.parse(res.headers.get("X-Narrative-Sentences") || "null");
+    const newSha = res.headers.get("X-Narrative-Audio-Sha256") || null;
+    const expectedCount = offsets.length - 1 + pieces.length;
+    if (!Array.isArray(grown) || grown.length !== expectedCount) {
+      throw new Error(
+        `insert offsets mismatch (got ${grown && grown.length}, want ${expectedCount})`
+      );
+    }
+    const newOffsetsSec = grown.map((ms) => ms / 1000);
+
+    // Reconstruct clip.text: replace the original sentence's text with the
+    // full multi-sentence newText, preserving surrounding whitespace.
+    let newClipText = clip.text || "";
+    {
+      let cursor = 0;
+      for (let i = 0; i < idx; i++) {
+        const s = sentenceSpans[i] && sentenceSpans[i].dataset.sentenceText;
+        if (!s) continue;
+        const found = newClipText.indexOf(s, cursor);
+        if (found < 0) {
+          cursor = -1;
+          break;
+        }
+        cursor = found + s.length;
+      }
+      if (cursor >= 0) {
+        const oldStart = newClipText.indexOf(originalText, cursor);
+        if (oldStart >= 0) {
+          newClipText =
+            newClipText.slice(0, oldStart) +
+            newText +
+            newClipText.slice(oldStart + originalText.length);
+        }
+      }
+    }
+
+    const oldStartSec = offsets[idx];
+    const oldEndSec = idx + 1 < offsets.length ? offsets[idx + 1] : null;
+    const newEndSec =
+      idx + pieces.length < newOffsetsSec.length ? newOffsetsSec[idx + pieces.length] : null;
+    const deltaSec = oldEndSec != null && newEndSec != null ? newEndSec - oldEndSec : 0;
+
+    // Grow lines[] to match, if the clip stores by line. Piece 0 keeps the
+    // existing line id; the added sentences mint fresh ids off nextLineSeq.
+    let rebuiltLines = null;
+    let newNextSeq = null;
+    if (
+      Array.isArray(clip.lines) &&
+      clip.lines.length === offsets.length &&
+      clip.lines[idx] &&
+      window.NS_IDS &&
+      typeof window.NS_IDS.hashText === "function" &&
+      typeof window.NS_IDS.mintLineId === "function"
+    ) {
+      const hashes = await Promise.all(pieces.map((p) => window.NS_IDS.hashText(p)));
+      let seq = typeof clip.nextLineSeq === "number" ? clip.nextLineSeq : clip.lines.length + 1;
+      const now = new Date().toISOString();
+      const pieceLines = pieces.map((p, i) => ({
+        id: i === 0 ? clip.lines[idx].id : window.NS_IDS.mintLineId(clipId, seq++),
+        text: p,
+        hash: hashes[i],
+        updatedAt: now,
+      }));
+      rebuiltLines = clip.lines.slice(0, idx).concat(pieceLines, clip.lines.slice(idx + 1));
+      newNextSeq = seq;
+    }
+
+    // Capture scroll so the rebuild doesn't move the reader.
+    const scrollEl = document.scrollingElement || document.documentElement;
+    const pageScroll = scrollEl ? scrollEl.scrollTop : 0;
+    const rvScroll = readingView ? readingView.scrollTop : 0;
+
+    // Swap the player audio, preserving the playhead.
+    const wasPlaying = !playerEl.paused && !playerEl.ended;
+    const oldPlayhead = playerEl.currentTime || 0;
+    let newPlayhead = oldPlayhead;
+    if (oldEndSec != null && oldPlayhead >= oldEndSec) {
+      newPlayhead = Math.max(0, oldPlayhead + deltaSec);
+    } else if (oldPlayhead >= oldStartSec) {
+      newPlayhead = newOffsetsSec[idx];
+    }
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlob = newBlob;
+    lastBlobUrl = URL.createObjectURL(newBlob);
+    playerEl.src = lastBlobUrl;
+    await new Promise((resolve) => {
+      const onMeta = () => {
+        playerEl.removeEventListener("loadedmetadata", onMeta);
+        resolve();
+      };
+      playerEl.addEventListener("loadedmetadata", onMeta);
+      setTimeout(resolve, 1500);
+    });
+    try {
+      playerEl.currentTime = newPlayhead;
+    } catch {}
+
+    // Persist text + audio + offsets + lines + shifted bookmarks together.
+    await _mutateClipAtomic(clipId, (c) => {
+      c.text = newClipText;
+      c.blob = newBlob;
+      c.sentenceOffsetsSec = newOffsetsSec.slice();
+      c.durationSec = isFinite(playerEl.duration) ? playerEl.duration : c.durationSec || 0;
+      if (newSha) c.audioSha256 = newSha;
+      if (rebuiltLines) {
+        c.lines = rebuiltLines;
+        c.nextLineSeq = newNextSeq;
+      }
+      if (Array.isArray(c.bookmarks) && c.bookmarks.length) {
+        c.bookmarks = c.bookmarks.map((bm) => {
+          if (typeof bm.time !== "number") return bm;
+          if (oldEndSec != null && bm.time >= oldEndSec) {
+            return { ...bm, time: Math.max(0, bm.time + deltaSec) };
+          }
+          if (bm.time >= oldStartSec) {
+            return { ...bm, time: newOffsetsSec[idx] };
+          }
+          return bm;
+        });
+      }
+    });
+
+    // Rebuild the reading view from the new text + lines (canonical span
+    // builder — correct paragraph/line-id/attribution wiring), then restore
+    // scroll + offsets + resume so the reader doesn't get yanked.
+    const fresh = await getClip(clipId);
+    enterReadingView(
+      fresh.text || newClipText,
+      fresh.images || [],
+      Array.isArray(_readingViewHighlights) ? _readingViewHighlights : [],
+      fresh.lines
+    );
+    sentenceOffsetsSec = newOffsetsSec.slice();
+    if (scrollEl) scrollEl.scrollTop = pageScroll;
+    if (readingView) readingView.scrollTop = rvScroll;
+    if (wasPlaying) playerEl.play().catch(() => {});
+    setStatus(`✅ Added ${added} sentence${added === 1 ? "" : "s"}.`);
+  } catch (e) {
+    console.warn("[structural-edit] failed:", e);
+    if (typeof _dlog === "function") {
+      _dlog("inline-edit", "structural edit failed", {
+        clipId,
+        idx,
+        errMsg: e && e.message,
+      });
+    }
+    const s = sentenceSpans[idx];
+    if (s) {
+      s.classList.remove("renarrate-pending");
+      s.classList.add("renarrate-failed");
+    }
+    setStatus(_withOfflineHint(`Couldn't add the sentence — ${e.message || e}.`), true);
+  } finally {
+    _structuralEditInFlight = false;
+  }
+}
+
 async function _commitInlineEdit() {
   if (_inlineEditingIdx < 0) return;
+  if (_structuralEditInFlight) {
+    setStatus("Still adding a sentence — one moment…");
+    return;
+  }
   // Guard against a re-entrant Phase-1 commit (double ✎ tap / Enter). This
   // window is now tiny (no network — just a text mutate), so it no longer
   // blocks the user the way the old audio-inline gate did.
@@ -20235,16 +20463,24 @@ async function _commitInlineEdit() {
     _exitInlineEdit();
     return;
   }
-  // Single-sentence-per-edit still holds; the QUEUE is what lets the user
-  // edit many sentences back-to-back without waiting.
-  if (/[.!?]\s+[A-Z]/.test(newText)) {
-    setStatus("Inline edit handles one sentence at a time.", true);
-    span.focus();
-    return;
-  }
   if (!_currentClipId) {
     setStatus("No clip loaded — can't re-narrate.", true);
     _cancelInlineEdit();
+    return;
+  }
+  // v4.222: type-to-split (add a sentence). If the edited text now splits
+  // into more than one sentence, the user is ADDING sentence(s). That grows
+  // the sentence count (spans + offset table + lines), which the fast
+  // 1-in-1-out queue can't express — route to the serial structural path.
+  const _pieces = splitSentencesClient(newText);
+  if (_pieces.length > 1) {
+    _commitStructuralEdit({
+      clipId: _currentClipId,
+      idx,
+      originalText: _inlineEditOriginalText,
+      newText,
+      pieces: _pieces,
+    });
     return;
   }
 

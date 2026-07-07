@@ -59,6 +59,7 @@ def splice_sentence(
     new_sentence_wav_bytes: bytes,
     *,
     bitrate_kbps: int = 64,
+    new_internal_offsets_ms: list[int] | None = None,
 ) -> tuple[bytes, list[int]]:
     """Replace sentence `index` in `mp3_bytes` with `new_sentence_wav_bytes`.
 
@@ -73,9 +74,17 @@ def splice_sentence(
         bitrate_kbps: MP3 bitrate for the re-encode. 64 kbps matches
             tts.encode.wav_to_mp3 — keep them in lockstep so a spliced
             clip isn't audibly different from a fresh re-narrate.
+        new_internal_offsets_ms: v4.222 — when the replacement text is
+            MORE than one sentence (inline "type-to-split" / add-a-sentence),
+            these are the per-sentence start offsets *within* the new WAV
+            block (relative to its start, so the first is always 0). The
+            returned offset table then GROWS: the single slot at `index` is
+            replaced by len(new_internal_offsets_ms) slots. None or a
+            single-element list keeps the classic 1-in-1-out behaviour.
 
     Returns:
-        (new_mp3_bytes, new_sentence_offsets_ms)
+        (new_mp3_bytes, new_sentence_offsets_ms). The returned table may be
+        LONGER than the input when a sentence was added (see above).
 
     Raises:
         SpliceError on bad input or ffmpeg failure.
@@ -165,20 +174,33 @@ def splice_sentence(
             raise SpliceError("ffmpeg produced no output")
         new_mp3_bytes = out_mp3.read_bytes()
 
-    # Build new offset table. Sentences before `index` are unchanged;
-    # sentence `index` itself stays at the same start; sentences after
-    # `index` shift by (new_dur - old_dur). For the last-sentence case
-    # there are no following offsets so the shift is moot.
-    new_offsets = list(sentence_offsets_ms)
+    # Build new offset table.
+    #   • sentences before `index`         → unchanged.
+    #   • the replaced slot                → one OR MORE sentences: the new
+    #     block's internal boundaries, each offset by start_ms. The first is
+    #     always start_ms (internal[0] == 0), matching the old slot's start.
+    #   • sentences after `index`          → shift by (new_block_dur - old_dur).
+    # A single-sentence replacement (internal == [0]) reproduces the classic
+    # 1-in-1-out table exactly.
+    internal = new_internal_offsets_ms if new_internal_offsets_ms else [0]
+    if internal[0] != 0:
+        # Defensive: callers pass block-relative offsets starting at 0. If a
+        # bad list arrives, normalize so the seam still lands at start_ms.
+        internal = [o - internal[0] for o in internal]
+
+    new_offsets = list(sentence_offsets_ms[:index])
+    for o in internal:
+        new_offsets.append(start_ms + o)
     if not is_last:
         delta = new_dur_ms - old_dur_ms  # type: ignore[operator]
         for i in range(index + 1, n):
-            new_offsets[i] = max(0, new_offsets[i] + delta)
+            new_offsets.append(max(0, sentence_offsets_ms[i] + delta))
 
     print(
-        f"[splice] index={index}/{n} "
+        f"[splice] index={index}/{n} pieces={len(internal)} "
         f"start_ms={start_ms} old_dur={old_dur_ms} new_dur={new_dur_ms} "
-        f"mp3_in={len(mp3_bytes)} mp3_out={len(new_mp3_bytes)}",
+        f"mp3_in={len(mp3_bytes)} mp3_out={len(new_mp3_bytes)} "
+        f"offsets_in={n} offsets_out={len(new_offsets)}",
         file=sys.stderr, flush=True,
     )
 

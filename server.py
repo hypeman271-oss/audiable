@@ -1438,7 +1438,7 @@ async def synthesize_splice(
     if not text:
         raise HTTPException(status_code=400, detail="text is empty")
     if len(text) > 50_000:
-        raise HTTPException(status_code=400, detail="text too long for a single sentence")
+        raise HTTPException(status_code=400, detail="replacement text too long")
     voice_id = p.get("voice_id")
     speaker_id = p.get("speaker_id")
     rate = p.get("rate")
@@ -1484,14 +1484,26 @@ async def synthesize_splice(
     # the event loop stays responsive while a long MP3 re-encodes.
     import asyncio
     loop = asyncio.get_running_loop()
+    # v4.222: pass the replacement's INTERNAL per-sentence offsets so a
+    # multi-sentence replacement (inline add-a-sentence / type-to-split)
+    # grows the offset table by one slot per added sentence. For a normal
+    # single-sentence edit this is [0] and the table keeps its length.
+    internal_offsets = (
+        list(result.sentence_offsets_ms)
+        if isinstance(getattr(result, "sentence_offsets_ms", None), list)
+        and result.sentence_offsets_ms
+        else [0]
+    )
     try:
         new_mp3, new_offsets = await loop.run_in_executor(
             None,
-            _splice.splice_sentence,
-            audio_bytes,
-            offsets,
-            index,
-            result.wav,
+            lambda: _splice.splice_sentence(
+                audio_bytes,
+                offsets,
+                index,
+                result.wav,
+                new_internal_offsets_ms=internal_offsets,
+            ),
         )
     except _splice.SpliceError as e:
         raise HTTPException(status_code=422, detail=f"splice failed: {e}")
