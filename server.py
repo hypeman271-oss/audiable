@@ -2764,6 +2764,65 @@ async def gdrive_fetch_endpoint(req: GdriveFetchRequest, request: Request):
     return result
 
 
+class GdrivePushRequest(BaseModel):
+    """Write a clip's revised text back into the Drive file it came from.
+    file_id + mime_type identify the originally-picked file; the access
+    token is resolved server-side from the tenant's stored grant."""
+    file_id: str = Field(..., min_length=1, max_length=256)
+    mime_type: str | None = Field(default=None, max_length=256)
+    # Full new file content (UTF-8). 5 MB cap mirrors the GitHub push.
+    content: str = Field(..., min_length=0, max_length=5_000_000)
+
+
+@app.post("/api/gdrive/push-file")
+async def gdrive_push_file_endpoint(req: GdrivePushRequest, request: Request):
+    """Overwrite a Drive file's content with the clip's current text.
+
+    Round-trip companion to /api/gdrive/fetch: the author imported a Doc /
+    text file, edited it here, and pushes the result back into the same
+    Drive file. Google Docs are converted from text/plain; text files are
+    overwritten directly; other types are rejected (see update_file_media).
+    """
+    import asyncio
+    import functools
+    import urllib.error
+
+    tenant_key = getattr(request.state, "tenant_key", "")
+    loop = asyncio.get_running_loop()
+    access = await loop.run_in_executor(
+        None, get_valid_gdrive_access_token, tenant_key
+    )
+    try:
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                gdrive_oauth.update_file_media,
+                access,
+                req.file_id,
+                req.content,
+                req.mime_type,
+            ),
+        )
+    except ValueError as e:
+        # Unsupported file type — a clean 400 the client surfaces verbatim.
+        raise HTTPException(status_code=400, detail=str(e))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise HTTPException(
+                status_code=401,
+                detail="Drive access denied — reconnect Google Drive in Settings.",
+            )
+        if e.code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail="Drive file not found — it may have been moved or deleted.",
+            )
+        raise HTTPException(status_code=502, detail=f"Drive update failed ({e.code})")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Drive update failed: {e}")
+    return {"ok": True, "file": result}
+
+
 @app.post("/api/gdrive/oauth/disconnect")
 async def gdrive_oauth_disconnect_endpoint(request: Request):
     """Drop the tenant's stored Drive grant (Settings → Disconnect).

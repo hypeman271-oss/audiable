@@ -1065,6 +1065,11 @@ let _pendingGitRef = null;
 // threads its own per-chapter scrivenerRef directly through the
 // queue items instead of relying on this global.
 let _pendingScrivenerRef = null;
+// v4.223: same pattern for Google Drive. _onGdrivePicked stashes the
+// picked file's {fileId, name, mimeType} here; generate() copies it onto
+// the new clip as clip.driveRef so the Edit dialog's "⇡ Push to Drive"
+// button knows which Drive file to overwrite with the revised text.
+let _pendingDriveRef = null;
 // v225fz11.cover (#677): /api/extract returns a `cover` object when
 // image_detector.detect_images() finds one in the source file (EPUB
 // cover, etc.). We stash it here at upload time and pull it into
@@ -1449,6 +1454,7 @@ async function _openAsEbook() {
     images: dedupedImages,
     gitRef: _pendingGitRef || null,
     scrivenerRef: _pendingScrivenerRef || null,
+    driveRef: _pendingDriveRef || null,
     sentenceAssignments: {},
     assignmentsDirty: false,
     prosodyHints: {},
@@ -7338,6 +7344,9 @@ async function _onGdrivePicked(data) {
     }
     const fetched = await res.json();
     _applyImportedDocument(fetched);
+    // v4.223: remember which Drive file this came from so generate() can
+    // pin clip.driveRef and the Edit dialog can offer "⇡ Push to Drive".
+    _pendingDriveRef = { fileId, name, mimeType };
     const chars = (fetched.chars || 0).toLocaleString();
     setStatus(`Loaded ${fetched.filename} · ${chars} chars · ready to Generate`);
     try {
@@ -15705,6 +15714,13 @@ async function generate() {
                 : (regenExistingMeta && regenExistingMeta.scrivenerRef
                     ? regenExistingMeta.scrivenerRef
                     : null),
+              // v4.223: Drive source pin — same precedence as gitRef so
+              // "Push to Drive" survives a re-narrate.
+              driveRef: _pendingDriveRef
+                ? _pendingDriveRef
+                : (regenExistingMeta && regenExistingMeta.driveRef
+                    ? regenExistingMeta.driveRef
+                    : null),
               // v220-AA: preserve manual per-sentence voice overrides
               // across regen. New clips start with no overrides ({}),
               // which is the same as no field at all.
@@ -15789,6 +15805,7 @@ async function generate() {
                 _pendingImages = [];
                 _pendingGitRef = null;
                 _pendingScrivenerRef = null;
+                _pendingDriveRef = null;
                 // Chapter queue: mark "save side" complete and try to
                 // advance. The audio side is signaled separately by
                 // streaming exhaustion or the combined MP3's 'ended'.
@@ -19353,6 +19370,7 @@ function clearForNewClip() {
   _pendingImages = [];
   _pendingGitRef = null;
   _pendingScrivenerRef = null;
+  _pendingDriveRef = null;
   // v225fz11.cover (#677): drop the detected cover too — a clean
   // slate clip shouldn't inherit it from a previous import.
   _pendingDetectedCover = null;
@@ -31747,6 +31765,20 @@ async function openClipEdit(clipId) {
       scrivRefEl.hidden = true;
     }
   }
+  // v4.223: Drive source line + "⇡ Push to Drive". Shown only for
+  // Drive-imported clips (clip.driveRef.fileId present).
+  const driveRefEl = document.getElementById("clip-edit-driveref");
+  if (driveRefEl) {
+    if (clip.driveRef && clip.driveRef.fileId) {
+      const nameEl = document.getElementById("clip-edit-driveref-name");
+      if (nameEl) {
+        nameEl.textContent = clip.driveRef.name || "(Drive file)";
+      }
+      driveRefEl.hidden = false;
+    } else {
+      driveRefEl.hidden = true;
+    }
+  }
   // Cover staging. `_editPendingCover` represents the cover that will
   // be saved — initially mirrors the clip's current cover (or null if
   // none). User upload / remove mutates it; save persists it.
@@ -32778,6 +32810,76 @@ if (_clipEditPushGithubBtn) {
     } finally {
       _clipEditPushGithubBtn.disabled = false;
       _clipEditPushGithubBtn.textContent = _origLabel;
+    }
+  });
+}
+
+// v4.223: Push to Drive. Round-trip companion to the Drive import Picker.
+// Overwrites the original Drive file's content with the clip's current
+// text via /api/gdrive/push-file (Google Docs converted from text; text
+// files overwritten directly). Shown only for Drive-imported clips.
+const _clipEditPushDriveBtn = document.getElementById("clip-edit-push-drive-btn");
+if (_clipEditPushDriveBtn) {
+  _clipEditPushDriveBtn.addEventListener("click", async () => {
+    if (_clipEditPushDriveBtn.disabled) return;
+    if (!_editingClipId) return;
+    const clip = await getClip(_editingClipId);
+    if (!clip) {
+      setStatus("Couldn't read that clip.", true);
+      return;
+    }
+    if (!clip.driveRef || !clip.driveRef.fileId) {
+      setStatus("This clip isn't linked to a Google Drive file.", true);
+      return;
+    }
+    const text = (clip.text || "").trim();
+    if (!text) {
+      setStatus("Nothing to push — clip text is empty.", true);
+      return;
+    }
+    const name = clip.driveRef.name || "(Drive file)";
+    const ok = window.confirm(
+      `Push to Google Drive?\n\n` +
+      `  File: ${name}\n\n` +
+      `This OVERWRITES the file's content with this clip's current text.` +
+      (clip.driveRef.mimeType === "application/vnd.google-apps.document"
+        ? `\nThe Google Doc keeps being a Doc, but its existing formatting is replaced by plain text.`
+        : ``) +
+      `\n\nCancel keeps everything local.`
+    );
+    if (!ok) {
+      setStatus("Push cancelled.");
+      return;
+    }
+    _clipEditPushDriveBtn.disabled = true;
+    const _origLabel = _clipEditPushDriveBtn.textContent;
+    _clipEditPushDriveBtn.textContent = "Pushing…";
+    try {
+      const res = await fetch("/api/gdrive/push-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          file_id: clip.driveRef.fileId,
+          mime_type: clip.driveRef.mimeType || null,
+          content: clip.text || "",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      _dlog("gdrive-push", `result for ${name}`, {
+        httpStatus: res.status,
+        ok: data && data.ok,
+      });
+      if (!res.ok || !data || data.ok === false) {
+        const detail = (data && data.detail) || `HTTP ${res.status}`;
+        setStatus(_withOfflineHint(`Drive push failed — ${detail}`), true);
+        return;
+      }
+      setStatus(`⇡ Pushed to Drive: ${name}`);
+    } catch (err) {
+      setStatus(_withOfflineHint(`Drive push failed: ${err.message || err}`), true);
+    } finally {
+      _clipEditPushDriveBtn.disabled = false;
+      _clipEditPushDriveBtn.textContent = _origLabel;
     }
   });
 }
@@ -35694,6 +35796,7 @@ async function loadClip(id, { autoPlay = false } = {}) {
   _pendingChapterImages = [];
   _pendingGitRef = null;
   _pendingScrivenerRef = null;
+  _pendingDriveRef = null;
   _pendingChapterTitle = null;
   if (typeof _paintImportPreview === "function") {
     try { _paintImportPreview(); } catch {}

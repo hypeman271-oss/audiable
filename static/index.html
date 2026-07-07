@@ -4731,6 +4731,22 @@
               hidden
             />
           </p>
+          <!-- v4.223: Google Drive source line. Shown only for clips
+               imported from Drive. "⇡ Push to Drive" overwrites the
+               original Drive file's content with this clip's revised
+               text (Google Docs are converted from text; text/markdown
+               files are overwritten directly). Round-trip companion to
+               the Drive import Picker. -->
+          <p id="clip-edit-driveref" class="clip-edit-gitref" hidden>
+            <span class="clip-edit-gitref-label">From Drive:</span>
+            <span id="clip-edit-driveref-name" class="clip-edit-gitref-path"></span>
+            <button
+              id="clip-edit-push-drive-btn"
+              type="button"
+              class="clip-edit-gitref-push"
+              title="Overwrite this file's content on Google Drive with the clip's revised text"
+            >⇡ Push to Drive</button>
+          </p>
           <!-- v219: voice provenance. Shows which voice + license were
                in effect when this clip was generated. Read-only. Lets
                the user copy the exact attribution string for audiobook

@@ -263,3 +263,69 @@ def revoke_token(token: str) -> bool:
         # 400 = token already invalid (fine); network error = nothing we
         # can do here. Either way the local grant is being deleted.
         return False
+
+
+# ── Write-back (v4.223): push a clip's revised text into the Drive file ──
+DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+
+
+def update_file_media(
+    access_token: str,
+    file_id: str,
+    content: str,
+    source_mime: str | None,
+) -> dict:
+    """Overwrite a Drive file's content with `content` (UTF-8 text).
+
+    The `drive.file` scope permits updating files the user opened via the
+    Picker (which is exactly how these clips were imported), so no broader
+    grant is needed for the round-trip.
+
+    Two cases we support:
+      * **Google Doc** (`application/vnd.google-apps.document`) — upload the
+        text as `text/plain`; Drive converts it back INTO the existing Doc,
+        replacing its body (the file stays a Doc). Rich formatting in the
+        Doc is lost — text wins, decorations don't, same tradeoff as the
+        Scrivener push.
+      * **text/\\*** (a `.md`/`.txt` the user uploaded to Drive, or an
+        octet-stream we treat as text) — media-overwrite with the bytes.
+
+    Binary types we can't faithfully serialize from plain text (`.docx`,
+    `.pdf`, …) raise ValueError so the caller can tell the user to export a
+    text/markdown copy instead — silently writing text into a .docx wrapper
+    would corrupt it.
+
+    Returns the updated Drive file resource (id, name, mimeType,
+    modifiedTime). Raises ValueError (unsupported type) or
+    urllib.error.HTTPError (API failure).
+    """
+    mime = (source_mime or "").strip().lower()
+    is_doc = mime == GOOGLE_DOC_MIME
+    is_texty = (
+        mime.startswith("text/")
+        or mime in ("", "application/octet-stream", "application/json")
+    )
+    if not (is_doc or is_texty):
+        raise ValueError(
+            f"Drive file type {source_mime!r} can't be updated as text — "
+            f"export a Markdown or plain-text copy to push into instead"
+        )
+
+    params = urllib.parse.urlencode(
+        {"uploadType": "media", "fields": "id,name,mimeType,modifiedTime"}
+    )
+    url = f"{DRIVE_UPLOAD_URL}/{urllib.parse.quote(file_id)}?{params}"
+    data = content.encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="PATCH")
+    req.add_header("Authorization", f"Bearer {access_token}")
+    # text/plain is the convertible type that makes Drive replace a Google
+    # Doc's body; for a plain text file it's just the stored content-type.
+    req.add_header("Content-Type", "text/plain; charset=UTF-8")
+    req.add_header("User-Agent", "Narrative/0.1")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        raw = resp.read().decode("utf-8")
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"id": file_id}
