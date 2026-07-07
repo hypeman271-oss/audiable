@@ -4334,6 +4334,29 @@ body[data-ui-mode="author"]
   -webkit-user-select: none !important;
 }
 
+/* v4.221: re-narration queue markers. A sentence whose text was just
+   saved but whose audio is still being re-synthesized in the background
+   gets a soft pulsing underline — the user can keep editing while it
+   works. A job that failed gets a red dotted underline (select + ✎ to
+   retry). Underline (not a box) so it doesn't fight the .active /
+   .selected / .editing ring states a sentence may also carry. */
+.reading-view .sentence.renarrate-pending {
+  text-decoration: underline dotted var(--accent);
+  text-underline-offset: 3px;
+  animation: renarrate-pulse 1.2s ease-in-out infinite;
+}
+.reading-view .sentence.renarrate-failed {
+  text-decoration: underline wavy var(--danger, #e5484d);
+  text-underline-offset: 3px;
+}
+@keyframes renarrate-pulse {
+  0%, 100% { text-decoration-color: var(--accent); }
+  50% { text-decoration-color: var(--accent-tint); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reading-view .sentence.renarrate-pending { animation: none; }
+}
+
 .reading-view .sentence.played {
   color: var(--played-fg);
 }

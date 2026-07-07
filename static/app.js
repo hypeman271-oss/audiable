@@ -19968,278 +19968,331 @@ function _enterInlineEdit(idx) {
   );
 }
 
-async function _commitInlineEdit() {
-  if (_inlineEditingIdx < 0) return;
-  // v4.77 (#878 follow-up): single-flight guard. Belt-and-suspenders —
-  // _paintSelectedSentence and _onEditTextClick already gate on this,
-  // but any future call site gets the same protection for free here.
-  if (_inlineCommitInFlight) {
-    if (typeof _dlog === "function") {
-      _dlog("inline-edit", "_commitInlineEdit skipped — already in flight", {
-        editingIdx: _inlineEditingIdx,
-      });
-    }
-    return;
-  }
-  const idx = _inlineEditingIdx;
+// ---- Re-narration queue (v4.221) --------------------------------------
+// Inline sentence edits used to BLOCK: _commitInlineEdit ran the full
+// 10-20s splice/Phase-B audio round-trip inline, behind a single-flight
+// gate, before the user could touch the next sentence — and the sync
+// round-trip that followed could loadClip() the open clip, rebuilding the
+// reading view and yanking the reader to the top. The 06-08 phone logs
+// showed both: a wall of "still saving" rejections + scroll-to-top.
+//
+// New model: saving commits the TEXT instantly (span + clip.text + line),
+// drops the sentence into a background queue, and returns — so the user
+// keeps editing the next sentence immediately. A SERIAL worker drains the
+// queue, re-synthesizing + splicing each sentence's audio one at a time
+// (audio splices MUST be serial: each operates on the current combined
+// MP3 + offset table produced by the previous one). The reading view is
+// never rebuilt during this, so the reader's place is preserved.
+let _renarrateQueue = []; // [{clipId, idx, lineId, newText, voiceId, speakerId, rate, seq}]
+let _renarrateBusy = false;
+let _renarrateSeq = 0;
+
+// True while the user is mid-edit or audio jobs are still draining. The
+// sync-absorb path reads this to avoid a loadClip() (rebuild + scroll to
+// top) that would lose the reader's place; it defers to a light refresh.
+function _renarrateActive() {
+  return _inlineEditingIdx >= 0 || _renarrateBusy || _renarrateQueue.length > 0;
+}
+
+function _markRenarrateState(idx, state) {
+  // state: "pending" | "failed" | null (clear)
   const span = sentenceSpans[idx];
-  if (!span) { _exitInlineEdit(); return; }
+  if (!span) return;
+  span.classList.remove("renarrate-pending", "renarrate-failed");
+  if (state === "pending") span.classList.add("renarrate-pending");
+  else if (state === "failed") span.classList.add("renarrate-failed");
+}
 
-  const newText = (span.textContent || "").trim();
+function _enqueueRenarrate(job) {
+  job.seq = ++_renarrateSeq;
+  _renarrateQueue.push(job);
+  _markRenarrateState(job.idx, "pending");
+  _drainRenarrateQueue();
+}
 
-  if (!newText) {
-    // Empty after edit — treat as cancel rather than save-empty.
-    _cancelInlineEdit();
-    return;
-  }
-  if (newText === _inlineEditOriginalText) {
-    // No change — just exit silently.
-    _exitInlineEdit();
-    return;
-  }
-  // Multi-sentence guard: if the user typed a sentence-ending
-  // punct followed by whitespace + capital, we'd have to split
-  // and resynth N sentences. v1 enforces single-sentence edits;
-  // the user can re-narrate the whole clip for bigger changes.
-  if (/[.!?]\s+[A-Z]/.test(newText)) {
-    setStatus("Inline edit handles one sentence at a time.", true);
-    span.focus();
-    return;
-  }
-  if (!_currentClipId) {
-    setStatus("No clip loaded — can't splice audio.", true);
-    _cancelInlineEdit();
-    return;
-  }
-
-  // Mark the span as in-flight so the user sees something happening.
-  span.classList.add("editing-saving");
-  setStatus("Re-synthesizing edited sentence…");
-  // v4.77: set the single-flight gate AFTER all early-return guards but
-  // BEFORE the first await. Cleared in finally so we never strand it
-  // on an unexpected throw.
-  _inlineCommitInFlight = true;
-
+async function _drainRenarrateQueue() {
+  if (_renarrateBusy) return;
+  _renarrateBusy = true;
   try {
-    // v592 Phase 2 (#585): real splice via /api/synthesize/splice.
-    // POST a multipart form: the existing MP3 + a params JSON with
-    // voice config + the offset table + new sentence text + index.
-    // Server re-synths the one sentence in the matching voice, runs
-    // a ffmpeg PCM-domain splice, returns the new MP3 plus an
-    // updated offset table (sentences after idx shift by Δ where
-    // Δ = new sentence duration − old sentence duration).
-    //
-    // v225v4.22 (#811 B.7): when the clip has lines populated (Phase A
-    // opt-in) AND the per-sentence cache is complete, prefer the
-    // Phase B path — synth the one sentence into the cache, then call
-    // /restitch to rebuild the combined MP3 from cached FLACs. The
-    // re-stitch has no PCM cut seam (because there's no cut — we're
-    // re-concatenating clean per-sentence renderings). Falls through
-    // to splice.py automatically on any failure (cache miss → 409,
-    // missing line_id, etc.), so users without Phase B coverage still
-    // get an edit.
-    const clip = await getClip(_currentClipId);
-    if (!clip || !clip.blob) {
-      throw new Error("clip has no audio to splice");
-    }
-    const offsets = Array.isArray(clip.sentenceOffsetsSec)
-      ? clip.sentenceOffsetsSec
-      : sentenceOffsetsSec;
-    if (!offsets || !offsets.length || idx >= offsets.length) {
-      throw new Error(`sentence index ${idx} out of range`);
-    }
-    const offsetsMs = offsets.map((s) => Math.round(s * 1000));
-
-    const params = {
-      voice_id: clip.voiceId || voiceEl.value || null,
-      speaker_id:
-        typeof clip.speakerId === "number" ? clip.speakerId : null,
-      rate: typeof clip.rate === "number" ? clip.rate : null,
-      index: idx,
-      // v4.91 (#883 follow-up): strip configured symbols pre-synth.
-      // v4.90 covered generate() + bg-queue via _openSynthJobStream, but
-      // the splice path goes straight through multipart POST without
-      // that wrapper. Phase B path below uses _openSynthJobStream
-      // already so it strips automatically — only this fallback needs
-      // the explicit call. clip.text reconstruction below uses raw
-      // newText, so the saved sentence keeps its markdown chars and
-      // the reading view stays unchanged.
-      text: _stripSynthChars(newText),
-      sentence_offsets_ms: offsetsMs,
-    };
-
-    // v225v4.22 (#811 B.7): try Phase B first when the clip is
-    // opted-in. Either path produces newBlob + newOffsetsMs + (maybe)
-    // newSha so the rest of the function is identical.
-    let newBlob = null;
-    let newOffsetsMs = null;
-    let newSha = null;
-    let usedPhaseB = false;
-    const lineForIdx =
-      Array.isArray(clip.lines) &&
-      clip.lines.length > idx &&
-      clip.lines[idx] &&
-      typeof clip.lines[idx].id === "string"
-        ? clip.lines[idx].id
-        : null;
-    if (lineForIdx) {
+    while (_renarrateQueue.length) {
+      const job = _renarrateQueue.shift();
+      const remaining = _renarrateQueue.length;
+      setStatus(
+        remaining
+          ? `\u{1F399}️ Re-narrating edits… (${remaining} more queued)`
+          : "\u{1F399}️ Re-narrating edited sentence…"
+      );
       try {
-        const r = await _phaseBPartialRenarrate({
-          clipId: _currentClipId,
-          lineId: lineForIdx,
-          text: newText,
-          voiceId: params.voice_id,
-          speakerId: params.speaker_id,
-          rate: params.rate,
-          expectedOffsetCount: offsets.length,
-        });
-        if (r) {
-          newBlob = r.blob;
-          newOffsetsMs = r.offsetsMs;
-          newSha = r.sha256;
-          usedPhaseB = true;
-          _dlog("synth", "Phase B partial re-narrate succeeded", {
-            clipId: _currentClipId,
-            lineId: lineForIdx,
-            newDurMs: r.durationMs,
-          });
-        }
+        await _renarrateAudioJob(job);
+        _markRenarrateState(job.idx, null);
       } catch (e) {
-        // Falls through to splice.py path below. We log so the debug
-        // pipeline shows whether B.7 attempts are hitting a backfill
-        // gap, a sentence-split mismatch, or an unrelated error.
-        _dlog("synth", "Phase B partial re-narrate failed, falling back", {
-          clipId: _currentClipId,
-          lineId: lineForIdx,
+        console.warn("[renarrate] job failed:", e);
+        _dlog("renarrate", "audio job failed", {
+          clipId: job.clipId,
+          idx: job.idx,
           errMsg: e && e.message,
         });
+        _markRenarrateState(job.idx, "failed");
+        setStatus(
+          _withOfflineHint(
+            "A sentence couldn't re-narrate — select it + tap ✎ to retry."
+          ),
+          true
+        );
       }
     }
+    if (!_inlineEditingIdx || _inlineEditingIdx < 0) {
+      setStatus("✅ All edits re-narrated.");
+    }
+  } finally {
+    _renarrateBusy = false;
+  }
+}
 
-    if (!usedPhaseB) {
-      const fd = new FormData();
-      fd.append(
-        "audio",
-        new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }),
-      );
-      fd.append("params", JSON.stringify(params));
+// The audio half of an inline edit, run off the queue. Re-reads the clip
+// fresh each time (so serial jobs stack correctly), re-synths + splices
+// the one sentence's audio, swaps it into the player if this clip is
+// loaded, and persists the audio fields. Does NOT touch the sentence's
+// text (already committed by _commitInlineEdit) and NEVER rebuilds the
+// reading view or scrolls.
+async function _renarrateAudioJob(job) {
+  const { clipId, idx, lineId, newText, voiceId, speakerId, rate } = job;
 
-      const res = await fetch("/api/synthesize/splice", {
-        method: "POST",
-        body: fd,
+  const clip = await getClip(clipId);
+  if (!clip || !clip.blob) throw new Error("clip has no audio to splice");
+  const offsets = Array.isArray(clip.sentenceOffsetsSec)
+    ? clip.sentenceOffsetsSec
+    : [];
+  if (!offsets.length || idx >= offsets.length) {
+    throw new Error(`sentence index ${idx} out of range`);
+  }
+  const offsetsMs = offsets.map((s) => Math.round(s * 1000));
+
+  const params = {
+    voice_id: voiceId || clip.voiceId || null,
+    speaker_id:
+      typeof speakerId === "number"
+        ? speakerId
+        : typeof clip.speakerId === "number"
+        ? clip.speakerId
+        : null,
+    rate: typeof rate === "number" ? rate : typeof clip.rate === "number" ? clip.rate : null,
+    index: idx,
+    text: _stripSynthChars(newText),
+    sentence_offsets_ms: offsetsMs,
+  };
+
+  // Phase B (per-sentence cache re-stitch) first when the clip is opted
+  // in; falls through to the splice.py PCM cut on any failure.
+  let newBlob = null;
+  let newOffsetsMs = null;
+  let newSha = null;
+  let usedPhaseB = false;
+  const lf =
+    lineId ||
+    (Array.isArray(clip.lines) &&
+    clip.lines.length > idx &&
+    clip.lines[idx] &&
+    typeof clip.lines[idx].id === "string"
+      ? clip.lines[idx].id
+      : null);
+  if (lf) {
+    try {
+      const r = await _phaseBPartialRenarrate({
+        clipId,
+        lineId: lf,
+        text: newText,
+        voiceId: params.voice_id,
+        speakerId: params.speaker_id,
+        rate: params.rate,
+        expectedOffsetCount: offsets.length,
       });
-      if (!res.ok) {
-        let detail = res.statusText;
-        try {
-          const j = await res.json();
-          if (j && j.detail) detail = j.detail;
-        } catch {}
-        throw new Error(`splice failed (${res.status}): ${detail}`);
+      if (r) {
+        newBlob = r.blob;
+        newOffsetsMs = r.offsetsMs;
+        newSha = r.sha256;
+        usedPhaseB = true;
       }
-      newBlob = await res.blob();
-      if (!newBlob || newBlob.size === 0) {
-        throw new Error("splice returned empty audio");
-      }
-      const newOffsetsHeader = res.headers.get("X-Narrative-Sentences");
-      newOffsetsMs = newOffsetsHeader ? JSON.parse(newOffsetsHeader) : null;
-      newSha = res.headers.get("X-Narrative-Audio-Sha256") || null;
+    } catch (e) {
+      _dlog("synth", "Phase B job failed, splice fallback", {
+        clipId,
+        lineId: lf,
+        errMsg: e && e.message,
+      });
     }
+  }
 
-    if (!Array.isArray(newOffsetsMs) || newOffsetsMs.length !== offsets.length) {
-      throw new Error("splice returned malformed offsets");
+  if (!usedPhaseB) {
+    const fd = new FormData();
+    fd.append("audio", new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }));
+    fd.append("params", JSON.stringify(params));
+    const res = await fetch("/api/synthesize/splice", { method: "POST", body: fd });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const j = await res.json();
+        if (j && j.detail) detail = j.detail;
+      } catch {}
+      throw new Error(`splice failed (${res.status}): ${detail}`);
     }
-    const newOffsetsSec = newOffsetsMs.map((ms) => ms / 1000);
+    newBlob = await res.blob();
+    if (!newBlob || newBlob.size === 0) throw new Error("splice returned empty audio");
+    const newOffsetsHeader = res.headers.get("X-Narrative-Sentences");
+    newOffsetsMs = newOffsetsHeader ? JSON.parse(newOffsetsHeader) : null;
+    newSha = res.headers.get("X-Narrative-Audio-Sha256") || null;
+  }
 
-    // Compute the playhead/bookmark shift before mutating clip state.
-    // Δ is the duration change of the edited sentence; everything
-    // strictly after the old sentence end shifts by Δ.
-    const oldStartSec = offsets[idx];
-    const oldEndSec =
-      idx + 1 < offsets.length ? offsets[idx + 1] : null;
-    const newStartSec = newOffsetsSec[idx];
-    const newEndSec =
-      idx + 1 < newOffsetsSec.length ? newOffsetsSec[idx + 1] : null;
-    const deltaSec =
-      oldEndSec != null && newEndSec != null
-        ? (newEndSec - oldEndSec)
-        : 0;
+  if (!Array.isArray(newOffsetsMs) || newOffsetsMs.length !== offsets.length) {
+    throw new Error("splice returned malformed offsets");
+  }
+  const newOffsetsSec = newOffsetsMs.map((ms) => ms / 1000);
 
-    // Reconstruct clip.text. Walk the existing spans to find the
-    // char offset of sentence idx in the source text, then splice
-    // newText in place of _inlineEditOriginalText at that exact
-    // position. This preserves paragraph breaks + other whitespace
-    // around the edit, which a naive sentences.join(" ") would lose.
-    let newClipText = clip.text || "";
-    {
-      let cursor = 0;
-      for (let i = 0; i < idx; i++) {
-        const s = sentenceSpans[i] && sentenceSpans[i].dataset.sentenceText;
-        if (!s) continue;
-        const found = newClipText.indexOf(s, cursor);
-        if (found < 0) { cursor = -1; break; }
-        cursor = found + s.length;
-      }
-      if (cursor >= 0) {
-        const oldStart = newClipText.indexOf(_inlineEditOriginalText, cursor);
-        if (oldStart >= 0) {
-          newClipText =
-            newClipText.slice(0, oldStart) +
-            newText +
-            newClipText.slice(oldStart + _inlineEditOriginalText.length);
-        }
-      }
-    }
+  const oldStartSec = offsets[idx];
+  const oldEndSec = idx + 1 < offsets.length ? offsets[idx + 1] : null;
+  const newStartSec = newOffsetsSec[idx];
+  const newEndSec = idx + 1 < newOffsetsSec.length ? newOffsetsSec[idx + 1] : null;
+  const deltaSec =
+    oldEndSec != null && newEndSec != null ? newEndSec - oldEndSec : 0;
 
-    // Swap the audio in the player without disrupting the listening
-    // session. Capture playhead first so we can restore it after the
-    // src reload (which resets currentTime to 0).
+  // Swap the audio into the player only if this clip is the one loaded.
+  // Preserve the playhead across the src reload; never scroll.
+  const isCurrent = _currentClipId === clipId;
+  if (isCurrent) {
     const wasPlaying = !playerEl.paused && !playerEl.ended;
     const oldPlayhead = playerEl.currentTime || 0;
     let newPlayhead = oldPlayhead;
     if (oldEndSec != null && oldPlayhead >= oldEndSec) {
-      // After the edit: shift by Δ.
       newPlayhead = Math.max(0, oldPlayhead + deltaSec);
     } else if (oldPlayhead >= oldStartSec) {
-      // Inside the edited sentence: pin to the new sentence start
-      // so the user hears the replacement immediately.
       newPlayhead = newStartSec;
     }
-    // else: before the edit, unchanged.
-
     if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
     lastBlob = newBlob;
     lastBlobUrl = URL.createObjectURL(newBlob);
     sentenceOffsetsSec = newOffsetsSec.slice();
     playerEl.src = lastBlobUrl;
-    // Wait for the player to know its new duration before seeking +
-    // optionally resuming. loadedmetadata fires fast for MP3.
     await new Promise((resolve) => {
       const onMeta = () => {
         playerEl.removeEventListener("loadedmetadata", onMeta);
         resolve();
       };
       playerEl.addEventListener("loadedmetadata", onMeta);
-      // Safety net in case the event already fired or never does.
       setTimeout(resolve, 1500);
     });
-    try { playerEl.currentTime = newPlayhead; } catch {}
-    if (wasPlaying) {
-      playerEl.play().catch(() => {});
+    try {
+      playerEl.currentTime = newPlayhead;
+    } catch {}
+    if (wasPlaying) playerEl.play().catch(() => {});
+  }
+
+  // Persist audio fields (+ shift bookmarks). Text/lines were already
+  // committed by _commitInlineEdit, so this mutator leaves them alone.
+  await _mutateClipAtomic(clipId, (c) => {
+    c.blob = newBlob;
+    c.sentenceOffsetsSec = newOffsetsSec.slice();
+    c.durationSec =
+      isCurrent && isFinite(playerEl.duration) ? playerEl.duration : c.durationSec || 0;
+    if (newSha) c.audioSha256 = newSha;
+    if (Array.isArray(c.bookmarks) && c.bookmarks.length) {
+      c.bookmarks = c.bookmarks.map((bm) => {
+        if (typeof bm.time !== "number") return bm;
+        if (oldEndSec != null && bm.time >= oldEndSec) {
+          return { ...bm, time: Math.max(0, bm.time + deltaSec) };
+        }
+        if (bm.time >= oldStartSec) {
+          return { ...bm, time: newStartSec };
+        }
+        return bm;
+      });
+    }
+  });
+}
+
+async function _commitInlineEdit() {
+  if (_inlineEditingIdx < 0) return;
+  // Guard against a re-entrant Phase-1 commit (double ✎ tap / Enter). This
+  // window is now tiny (no network — just a text mutate), so it no longer
+  // blocks the user the way the old audio-inline gate did.
+  if (_inlineCommitInFlight) {
+    _dlog("inline-edit", "_commitInlineEdit skipped — already in flight", {
+      editingIdx: _inlineEditingIdx,
+    });
+    return;
+  }
+  const idx = _inlineEditingIdx;
+  const span = sentenceSpans[idx];
+  if (!span) {
+    _exitInlineEdit();
+    return;
+  }
+
+  const newText = (span.textContent || "").trim();
+  if (!newText) {
+    _cancelInlineEdit();
+    return;
+  }
+  if (newText === _inlineEditOriginalText) {
+    _exitInlineEdit();
+    return;
+  }
+  // Single-sentence-per-edit still holds; the QUEUE is what lets the user
+  // edit many sentences back-to-back without waiting.
+  if (/[.!?]\s+[A-Z]/.test(newText)) {
+    setStatus("Inline edit handles one sentence at a time.", true);
+    span.focus();
+    return;
+  }
+  if (!_currentClipId) {
+    setStatus("No clip loaded — can't re-narrate.", true);
+    _cancelInlineEdit();
+    return;
+  }
+
+  const clipId = _currentClipId;
+  const originalText = _inlineEditOriginalText;
+  _inlineCommitInFlight = true;
+  try {
+    const clip = await getClip(clipId);
+    const lineId =
+      clip &&
+      Array.isArray(clip.lines) &&
+      clip.lines.length > idx &&
+      clip.lines[idx] &&
+      typeof clip.lines[idx].id === "string"
+        ? clip.lines[idx].id
+        : null;
+    const voiceId = (clip && clip.voiceId) || voiceEl.value || null;
+    const speakerId = clip && typeof clip.speakerId === "number" ? clip.speakerId : null;
+    const rate = clip && typeof clip.rate === "number" ? clip.rate : null;
+
+    // Reconstruct clip.text with the edit spliced in at the exact char
+    // offset (preserve paragraph breaks + surrounding whitespace). Uses
+    // the pre-edit text of this sentence, which clip.text still holds
+    // because we haven't committed it yet.
+    let newClipText = (clip && clip.text) || "";
+    {
+      let cursor = 0;
+      for (let i = 0; i < idx; i++) {
+        const s = sentenceSpans[i] && sentenceSpans[i].dataset.sentenceText;
+        if (!s) continue;
+        const found = newClipText.indexOf(s, cursor);
+        if (found < 0) {
+          cursor = -1;
+          break;
+        }
+        cursor = found + s.length;
+      }
+      if (cursor >= 0) {
+        const oldStart = newClipText.indexOf(originalText, cursor);
+        if (oldStart >= 0) {
+          newClipText =
+            newClipText.slice(0, oldStart) +
+            newText +
+            newClipText.slice(oldStart + originalText.length);
+        }
+      }
     }
 
-    // v225v4.7 (#810 step 6): if the clip has per-sentence storage on,
-    // refresh the matching line in c.lines[] alongside the text/audio
-    // update. Splice is 1-sentence-in / 1-sentence-out so the line
-    // count and lineId stay stable — only the line's text, hash, and
-    // updatedAt change. The atomic-tx + sync layer's per-line LWW
-    // merge (#495 + Phase A backend) propagates this to other devices.
-    //
-    // Hash is computed before entering the mutator so a missing
-    // NS_IDS helper fails fast without half-writing. If the clip's
-    // line count somehow disagrees with the new sentence count (which
-    // shouldn't happen on a splice but a stale state could exist),
-    // skip the lines update and dlog it — leaves the lines array as
-    // it was rather than corrupting it.
     let _newLineHash = null;
     if (window.NS_IDS && typeof window.NS_IDS.hashText === "function") {
       try {
@@ -20251,78 +20304,56 @@ async function _commitInlineEdit() {
       }
     }
 
-    // Persist to IDB + push via sync pipeline. Bookmarks get shifted
-    // too so they keep pointing at the right spot in the new audio.
-    await _mutateClipAtomic(_currentClipId, (c) => {
-      c.blob = newBlob;
-      c.sentenceOffsetsSec = newOffsetsSec.slice();
-      c.text = newClipText;
-      c.durationSec = isFinite(playerEl.duration)
-        ? playerEl.duration
-        : (c.durationSec || 0);
-      if (newSha) c.audioSha256 = newSha;
-      if (Array.isArray(c.bookmarks) && c.bookmarks.length) {
-        c.bookmarks = c.bookmarks.map((bm) => {
-          if (typeof bm.time !== "number") return bm;
-          if (oldEndSec != null && bm.time >= oldEndSec) {
-            return { ...bm, time: Math.max(0, bm.time + deltaSec) };
-          }
-          if (bm.time >= oldStartSec) {
-            return { ...bm, time: newStartSec };
-          }
-          return bm;
-        });
-      }
-      // Phase A step 6: line storage update.
-      if (Array.isArray(c.lines) && c.lines.length > 0 && _newLineHash) {
-        if (idx >= 0 && idx < c.lines.length && c.lines[idx]) {
-          const now = new Date().toISOString();
-          c.lines[idx] = {
-            ...c.lines[idx],
-            text: newText,
-            hash: _newLineHash,
-            updatedAt: now,
-          };
-        } else {
-          _dlog("inline-edit", "lines index out of range", {
-            idx,
-            linesLen: c.lines.length,
-            sentencesLen: newOffsetsSec.length,
-          });
-        }
-      }
-    });
-
-    // Reflect the new text on the span itself so future reads (e.g.
-    // re-render of attribution, char count, save-text) see the
-    // edited content. sentenceText is the raw form; originalContent
-    // is the HTML scaffold the attribution paint restores to.
+    // Commit the TEXT immediately. The reading view is NOT rebuilt — we
+    // only rewrite this one span — so the user keeps their scroll place.
     span.dataset.sentenceText = newText;
     span.textContent = newText;
     span.dataset.originalContent = span.innerHTML;
 
+    await _mutateClipAtomic(clipId, (c) => {
+      c.text = newClipText;
+      if (
+        Array.isArray(c.lines) &&
+        c.lines.length > 0 &&
+        _newLineHash &&
+        idx >= 0 &&
+        idx < c.lines.length &&
+        c.lines[idx]
+      ) {
+        c.lines[idx] = {
+          ...c.lines[idx],
+          text: newText,
+          hash: _newLineHash,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    });
+
     _exitInlineEdit();
-    setStatus("Audio updated.");
+    setStatus("Saved — re-narrating in the background. Keep editing.");
+
+    // Hand the audio work to the serial queue and return immediately.
+    _enqueueRenarrate({
+      clipId,
+      idx,
+      lineId,
+      newText,
+      originalText,
+      voiceId,
+      speakerId,
+      rate,
+    });
   } catch (e) {
-    console.warn("[inline-edit] save failed:", e);
-    setStatus(_withOfflineHint(`Edit failed — ${e.message || e}. Tap ✎ to retry.`), true);
-    span.classList.remove("editing-saving");
-    // v225dh: also exit edit mode on failure so the user isn't
-    // stranded with a contenteditable sentence and no escape. The
-    // original text is restored so the reading view matches the
-    // (unchanged) audio. They can re-select the sentence and tap
-    // ✎ to try again. Without this, a failed splice left the
-    // user permanently stuck per the 2026-06-03 debug log.
+    console.warn("[inline-edit] text commit failed:", e);
+    setStatus(
+      _withOfflineHint(`Edit failed — ${e.message || e}. Tap ✎ to retry.`),
+      true
+    );
     _cancelInlineEdit();
   } finally {
-    // v4.77: release the single-flight gate so the next ✎ tap or
-    // sentence reselect can fire a fresh commit. Must clear on BOTH
-    // success and failure paths — a stuck gate would lock the user
-    // out of all future edits in this session.
     _inlineCommitInFlight = false;
   }
 }
-
 function _cancelInlineEdit() {
   if (typeof _dlog === "function") {
     _dlog("inline-edit", "_cancelInlineEdit called", {
@@ -28357,6 +28388,16 @@ async function _syncAbsorbServerClip(sc) {
     // light refresh (no scroll) rather than a spurious full reload.
     const textChanged =
       _absorbPrevText != null && newText.trim() !== (_absorbPrevText || "").trim();
+    // v4.221: never rebuild the reading view (loadClip → scroll to top)
+    // while the user is mid inline-edit or the re-narration queue is still
+    // draining — it would yank them to the top and lose their place. The
+    // IDB row is already updated above; defer the visual rebuild to a light
+    // refresh. (In the common case this device just made the edit, so the
+    // text already matches and textChanged is false anyway; this guard
+    // covers the race + the genuine cross-device edit landing mid-session.)
+    const busyEditing =
+      typeof _renarrateActive === "function" && _renarrateActive();
+    const doLoad = textChanged && !busyEditing;
     if (typeof _dlog === "function") {
       try {
         _dlog("sync-absorb", "current clip absorbed", {
@@ -28365,12 +28406,13 @@ async function _syncAbsorbServerClip(sc) {
           newTextHead: newText.slice(0, 80),
           prevTextLen: (_absorbPrevText || "").length,
           textChanged,
-          action: textChanged ? "loadClip" : "light-refresh",
+          busyEditing,
+          action: doLoad ? "loadClip" : "light-refresh",
           kind: localShape.kind || "audio",
         });
       } catch {}
     }
-    if (textChanged) {
+    if (doLoad) {
       // Full reload — rebuilds sentence spans, swaps audio source,
       // restores progressSec from IDB. autoPlay:false because the
       // user was reading silently; don't surprise them with playback.
