@@ -2105,58 +2105,90 @@ async def github_push_file_endpoint(req: GithubPushFileRequest):
             "Content-Type": "application/json",
         }
 
-        # v4.76 (#878): auto-resolve SHA when the client didn't supply
-        # one. Used by the notes-push path — first push has no cached
-        # SHA, subsequent pushes do. GET the path on the target branch:
-        # if it exists, use its SHA for the PUT; if 404, the file is
-        # new and we PUT without `sha` (GitHub creates it).
+        # v4.225: ALWAYS read the current file first, for two reasons:
+        #   1. PRESERVE its YAML frontmatter. The app edits PROSE only — the
+        #      frontmatter (summary / target_word_count / current_word_count)
+        #      is owned on the repo side (the book-side agent). Re-prepending
+        #      the repo's existing frontmatter means a push can NEVER delete
+        #      or clobber it, even for clips imported before the frontmatter
+        #      was cached client-side (extract.py stripped it to the body,
+        #      but never handed it back, so clip.gitRef.frontmatter was empty
+        #      and the old push wrote body-only — deleting the block).
+        #   2. Resolve the SHA when the client didn't cache one (notes path).
+        # Concurrency is unchanged: we still PUT with the client's
+        # expected_sha when it supplied one, so a stale prose push 409s
+        # ("pull first") instead of silently overwriting book-side edits.
+        # v4.76 (#878): the notes-push path relies on the SHA auto-resolve.
+        existing_frontmatter = ""
         resolved_sha = req.expected_sha
-        if not resolved_sha:
-            get_url = f"{url}?ref={urllib.parse.quote(req.branch)}"
-            get_req = urllib.request.Request(
-                get_url,
-                method="GET",
-                headers={
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                    "User-Agent": "Narrative/0.1",
-                    "Authorization": f"Bearer {req.github_token}",
-                },
-            )
-            try:
-                with urllib.request.urlopen(get_req, timeout=15) as gresp:
-                    gdata = json.load(gresp)
+        get_url = f"{url}?ref={urllib.parse.quote(req.branch)}"
+        get_req = urllib.request.Request(
+            get_url,
+            method="GET",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "Narrative/0.1",
+                "Authorization": f"Bearer {req.github_token}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(get_req, timeout=15) as gresp:
+                gdata = json.load(gresp)
+                if not resolved_sha:
                     resolved_sha = (gdata.get("sha") or "")
-            except urllib.error.HTTPError as e:
-                if e.code == 404:
-                    resolved_sha = ""  # file doesn't exist → create
-                else:
+                enc = gdata.get("content") or ""
+                if gdata.get("encoding") == "base64" and enc:
                     try:
-                        err_body = json.load(e)
-                        err_msg = err_body.get("message") or str(e)
+                        existing_text = base64.b64decode(enc).decode(
+                            "utf-8", "replace"
+                        )
+                        existing_frontmatter, _ = extract._split_yaml_frontmatter(
+                            existing_text
+                        )
                     except Exception:
-                        err_msg = str(e)
-                    reason = (
-                        "auth" if e.code in (401, 403)
-                        else "auto_resolve_failed"
-                    )
-                    return {
-                        "ok": False,
-                        "status": e.code,
-                        "reason": reason,
-                        "message": f"SHA auto-resolve failed: {err_msg}",
-                    }
-            except urllib.error.URLError as e:
+                        existing_frontmatter = ""
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                resolved_sha = ""  # file doesn't exist → create
+            else:
+                try:
+                    err_body = json.load(e)
+                    err_msg = err_body.get("message") or str(e)
+                except Exception:
+                    err_msg = str(e)
+                reason = (
+                    "auth" if e.code in (401, 403)
+                    else "read_before_write_failed"
+                )
                 return {
                     "ok": False,
-                    "status": 0,
-                    "reason": "network",
-                    "message": str(e.reason if hasattr(e, "reason") else e),
+                    "status": e.code,
+                    "reason": reason,
+                    "message": f"read-before-write failed: {err_msg}",
                 }
+        except urllib.error.URLError as e:
+            return {
+                "ok": False,
+                "status": 0,
+                "reason": "network",
+                "message": str(e.reason if hasattr(e, "reason") else e),
+            }
+
+        # Preserve the repo's frontmatter: strip any frontmatter the client
+        # sent (so we never double it or let the app rewrite it), then
+        # re-prepend the existing one. Files without frontmatter (e.g. the
+        # sibling .notes.md, a fresh file) push as-is.
+        _client_fm, client_body = extract._split_yaml_frontmatter(req.content)
+        final_content = (
+            (existing_frontmatter + client_body)
+            if existing_frontmatter
+            else req.content
+        )
 
         body = {
             "message": req.message,
-            "content": base64.b64encode(req.content.encode("utf-8")).decode("ascii"),
+            "content": base64.b64encode(final_content.encode("utf-8")).decode("ascii"),
             "branch": req.branch,
         }
         # Only include `sha` when we have one. GitHub's contract:
