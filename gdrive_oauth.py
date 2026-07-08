@@ -329,3 +329,52 @@ def update_file_media(
         return json.loads(raw)
     except Exception:
         return {"id": file_id}
+
+
+def create_drive_file(
+    access_token: str,
+    name: str,
+    content: str,
+    folder_id: str | None = None,
+    as_doc: bool = False,
+) -> dict:
+    """Create a NEW Drive file containing `content`.
+
+    Used by "push a GitHub-pulled chapter into Drive" when the user picks a
+    destination FOLDER rather than an existing file to overwrite.
+
+      * as_doc=True  → a Google Doc (metadata mimeType = Doc, media
+        text/plain; Drive converts the text into the Doc body).
+      * as_doc=False → a Markdown file (`text/markdown`) with the exact
+        text — best for round-tripping the manuscript.
+
+    `folder_id` (a Drive folder id from the Picker) sets the parent; None
+    drops it in My Drive root. Returns the created file resource
+    (id, name, mimeType, webViewLink). Raises urllib.error.HTTPError.
+    """
+    target_mime = GOOGLE_DOC_MIME if as_doc else "text/markdown"
+    media_mime = "text/plain" if as_doc else "text/markdown"
+    metadata: dict = {"name": name, "mimeType": target_mime}
+    if folder_id:
+        metadata["parents"] = [folder_id]
+
+    # multipart/related upload: JSON metadata part + media part in one POST.
+    boundary = "narrative-gdrive-" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
+    body = (
+        f"--{boundary}\r\n"
+        f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        f"{json.dumps(metadata)}\r\n"
+        f"--{boundary}\r\n"
+        f"Content-Type: {media_mime}; charset=UTF-8\r\n\r\n"
+    ).encode("utf-8") + content.encode("utf-8") + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    params = urllib.parse.urlencode(
+        {"uploadType": "multipart", "fields": "id,name,mimeType,webViewLink"}
+    )
+    url = f"{DRIVE_UPLOAD_URL}?{params}"
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Authorization", f"Bearer {access_token}")
+    req.add_header("Content-Type", f"multipart/related; boundary={boundary}")
+    req.add_header("User-Agent", "Narrative/0.1")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))

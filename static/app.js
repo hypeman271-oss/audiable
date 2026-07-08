@@ -31765,19 +31765,19 @@ async function openClipEdit(clipId) {
       scrivRefEl.hidden = true;
     }
   }
-  // v4.223: Drive source line + "⇡ Push to Drive". Shown only for
-  // Drive-imported clips (clip.driveRef.fileId present).
-  const driveRefEl = document.getElementById("clip-edit-driveref");
-  if (driveRefEl) {
-    if (clip.driveRef && clip.driveRef.fileId) {
-      const nameEl = document.getElementById("clip-edit-driveref-name");
-      if (nameEl) {
-        nameEl.textContent = clip.driveRef.name || "(Drive file)";
-      }
-      driveRefEl.hidden = false;
-    } else {
-      driveRefEl.hidden = true;
-    }
+  // v4.224: Drive row — "⇡ Save to Drive", shown whenever Drive is
+  // connected (any clip, so a GitHub-pulled chapter can be pushed to
+  // Drive). Uses the cached OAuth status; if it isn't loaded yet, fetch
+  // it in the background and repaint the row when it resolves.
+  _refreshDriveEditRow(clip);
+  if (!_gdriveOAuthStatus) {
+    _fetchGdriveOAuthStatus()
+      .then(async () => {
+        if (_editingClipId != null) {
+          try { _refreshDriveEditRow(await getClip(_editingClipId)); } catch {}
+        }
+      })
+      .catch(() => {});
   }
   // Cover staging. `_editPendingCover` represents the cover that will
   // be saved — initially mirrors the clip's current cover (or null if
@@ -32814,73 +32814,214 @@ if (_clipEditPushGithubBtn) {
   });
 }
 
-// v4.223: Push to Drive. Round-trip companion to the Drive import Picker.
-// Overwrites the original Drive file's content with the clip's current
-// text via /api/gdrive/push-file (Google Docs converted from text; text
-// files overwritten directly). Shown only for Drive-imported clips.
-const _clipEditPushDriveBtn = document.getElementById("clip-edit-push-drive-btn");
-if (_clipEditPushDriveBtn) {
-  _clipEditPushDriveBtn.addEventListener("click", async () => {
-    if (_clipEditPushDriveBtn.disabled) return;
-    if (!_editingClipId) return;
-    const clip = await getClip(_editingClipId);
-    if (!clip) {
-      setStatus("Couldn't read that clip.", true);
-      return;
+// v4.223 / v4.224: Save to Drive. Works on ANY clip (e.g. one pulled from
+// GitHub), not just Drive-imported ones — the destination is CHOSEN, not
+// inherited from the import. If the clip is already linked to a Drive file
+// (imported from Drive, or saved here before), it overwrites that file;
+// otherwise it opens the Picker to choose a file to overwrite or a folder
+// to drop a new file into. The chosen/created file is remembered as
+// clip.driveRef so the next Save is a one-tap overwrite.
+
+// Repaint the Drive row in the Edit dialog: visible whenever Drive is
+// connected (independent of import source); shows the linked file if any.
+function _refreshDriveEditRow(clip) {
+  const el = document.getElementById("clip-edit-driveref");
+  if (!el) return;
+  const connected = !!(_gdriveOAuthStatus && _gdriveOAuthStatus.connected);
+  if (!connected) {
+    el.hidden = true;
+    return;
+  }
+  const nameEl = document.getElementById("clip-edit-driveref-name");
+  const linked = clip && clip.driveRef && clip.driveRef.fileId;
+  if (nameEl) {
+    nameEl.textContent = linked
+      ? `linked · ${clip.driveRef.name || "file"}`
+      : "(choose where to save)";
+  }
+  el.hidden = false;
+}
+
+// Picker in destination mode: folder-select enabled so the user can pick a
+// FOLDER (→ create a new file there) or an existing FILE (→ overwrite it).
+async function _openGdriveDestinationPicker(onPick) {
+  const status = _gdriveOAuthStatus || (await _fetchGdriveOAuthStatus());
+  if (!status.api_key || !status.app_id) {
+    setStatus(
+      "Google Drive Picker isn't fully configured on the server " +
+        "(missing GOOGLE_API_KEY / GOOGLE_APP_ID).",
+      true
+    );
+    return;
+  }
+  setStatus("Opening Google Drive…");
+  let token;
+  try {
+    await _loadGooglePickerApi();
+    const res = await fetch("/api/gdrive/picker-token");
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+      throw new Error(detail);
     }
-    if (!clip.driveRef || !clip.driveRef.fileId) {
-      setStatus("This clip isn't linked to a Google Drive file.", true);
-      return;
-    }
-    const text = (clip.text || "").trim();
-    if (!text) {
-      setStatus("Nothing to push — clip text is empty.", true);
-      return;
-    }
+    token = (await res.json()).access_token;
+  } catch (err) {
+    setStatus(`Couldn't open Google Drive: ${err.message}`, true);
+    return;
+  }
+  try {
+    const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setMode(google.picker.DocsViewMode.LIST);
+    const picker = new google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(token)
+      .setDeveloperKey(status.api_key)
+      .setAppId(status.app_id)
+      .setTitle("Pick a file to overwrite, or a folder for a new file")
+      .setCallback((data) => {
+        const P = window.google && window.google.picker;
+        if (!P || !data || data[P.Response.ACTION] !== P.Action.PICKED) return;
+        const docs = data[P.Response.DOCUMENTS] || [];
+        if (!docs.length) return;
+        const doc = docs[0];
+        const mimeType = doc[P.Document.MIME_TYPE] || "";
+        onPick({
+          id: doc[P.Document.ID],
+          name: doc[P.Document.NAME] || "",
+          mimeType,
+          isFolder:
+            mimeType === "application/vnd.google-apps.folder" ||
+            doc[P.Document.TYPE] === "folder",
+        });
+      })
+      .build();
+    picker.setVisible(true);
+  } catch (err) {
+    setStatus(`Couldn't open Google Drive: ${err.message}`, true);
+  }
+}
+
+// Overwrite an existing Drive file with the clip's text, then remember it.
+async function _gdriveOverwrite(clipText, ref) {
+  setStatus("Saving to Drive…");
+  const res = await fetch("/api/gdrive/push-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      file_id: ref.fileId,
+      mime_type: ref.mimeType || null,
+      content: clipText || "",
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data || data.ok === false) {
+    const detail = (data && data.detail) || `HTTP ${res.status}`;
+    setStatus(_withOfflineHint(`Drive push failed — ${detail}`), true);
+    return false;
+  }
+  await _mutateClipAtomic(_editingClipId, (c) => {
+    c.driveRef = {
+      fileId: ref.fileId,
+      name: ref.name || (c.driveRef && c.driveRef.name) || "(Drive file)",
+      mimeType: ref.mimeType || (c.driveRef && c.driveRef.mimeType) || null,
+    };
+  });
+  setStatus(`⇡ Pushed to Drive: ${ref.name || "file"}`);
+  try { _refreshDriveEditRow(await getClip(_editingClipId)); } catch {}
+  return true;
+}
+
+async function _saveClipToDrive() {
+  if (!_editingClipId) return;
+  const clip = await getClip(_editingClipId);
+  if (!clip) {
+    setStatus("Couldn't read that clip.", true);
+    return;
+  }
+  const text = clip.text || "";
+  if (!text.trim()) {
+    setStatus("Nothing to push — clip text is empty.", true);
+    return;
+  }
+
+  // Already linked → overwrite that file (fast round-trip).
+  if (clip.driveRef && clip.driveRef.fileId) {
     const name = clip.driveRef.name || "(Drive file)";
     const ok = window.confirm(
-      `Push to Google Drive?\n\n` +
-      `  File: ${name}\n\n` +
-      `This OVERWRITES the file's content with this clip's current text.` +
-      (clip.driveRef.mimeType === "application/vnd.google-apps.document"
-        ? `\nThe Google Doc keeps being a Doc, but its existing formatting is replaced by plain text.`
-        : ``) +
-      `\n\nCancel keeps everything local.`
+      `Overwrite “${name}” on Google Drive with this clip's current text?` +
+        (clip.driveRef.mimeType === "application/vnd.google-apps.document"
+          ? `\n\nThe Doc stays a Doc; its formatting is replaced by plain text.`
+          : ``) +
+        `\n\nCancel, then use “change” to pick a different destination.`
     );
-    if (!ok) {
-      setStatus("Push cancelled.");
-      return;
-    }
-    _clipEditPushDriveBtn.disabled = true;
-    const _origLabel = _clipEditPushDriveBtn.textContent;
-    _clipEditPushDriveBtn.textContent = "Pushing…";
+    if (!ok) return;
+    try { await _gdriveOverwrite(text, clip.driveRef); }
+    catch (err) { setStatus(_withOfflineHint(`Drive push failed: ${err.message || err}`), true); }
+    return;
+  }
+
+  // Not linked yet → pick a destination.
+  _openGdriveDestinationPicker(async (picked) => {
     try {
-      const res = await fetch("/api/gdrive/push-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          file_id: clip.driveRef.fileId,
-          mime_type: clip.driveRef.mimeType || null,
-          content: clip.text || "",
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      _dlog("gdrive-push", `result for ${name}`, {
-        httpStatus: res.status,
-        ok: data && data.ok,
-      });
-      if (!res.ok || !data || data.ok === false) {
-        const detail = (data && data.detail) || `HTTP ${res.status}`;
-        setStatus(_withOfflineHint(`Drive push failed — ${detail}`), true);
-        return;
+      if (picked.isFolder) {
+        const asDoc = window.confirm(
+          `Create a new file in “${picked.name || "folder"}”.\n\n` +
+            `OK = Google Doc (editable in Drive)\n` +
+            `Cancel = Markdown .md (exact text)`
+        );
+        const base =
+          (clip.title || "Untitled").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Untitled";
+        const name = asDoc ? base : `${base}.md`;
+        setStatus("Saving to Drive…");
+        const res = await fetch("/api/gdrive/create-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            content: text,
+            folder_id: picked.id,
+            as_doc: asDoc,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data || data.ok === false) {
+          const detail = (data && data.detail) || `HTTP ${res.status}`;
+          setStatus(_withOfflineHint(`Drive save failed — ${detail}`), true);
+          return;
+        }
+        const f = data.file || {};
+        await _mutateClipAtomic(_editingClipId, (c) => {
+          c.driveRef = {
+            fileId: f.id,
+            name: f.name || name,
+            mimeType:
+              f.mimeType ||
+              (asDoc ? "application/vnd.google-apps.document" : "text/markdown"),
+          };
+        });
+        setStatus(`⇡ Saved to Drive: ${f.name || name}`);
+        try { _refreshDriveEditRow(await getClip(_editingClipId)); } catch {}
+      } else {
+        await _gdriveOverwrite(text, {
+          fileId: picked.id,
+          name: picked.name,
+          mimeType: picked.mimeType,
+        });
       }
-      setStatus(`⇡ Pushed to Drive: ${name}`);
     } catch (err) {
-      setStatus(_withOfflineHint(`Drive push failed: ${err.message || err}`), true);
-    } finally {
-      _clipEditPushDriveBtn.disabled = false;
-      _clipEditPushDriveBtn.textContent = _origLabel;
+      setStatus(_withOfflineHint(`Drive save failed: ${err.message || err}`), true);
     }
+  });
+}
+
+const _clipEditPushDriveBtn = document.getElementById("clip-edit-push-drive-btn");
+if (_clipEditPushDriveBtn) {
+  _clipEditPushDriveBtn.addEventListener("click", () => {
+    _saveClipToDrive().catch((err) =>
+      setStatus(_withOfflineHint(`Drive save failed: ${err.message || err}`), true)
+    );
   });
 }
 

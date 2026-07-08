@@ -4731,21 +4731,21 @@
               hidden
             />
           </p>
-          <!-- v4.223: Google Drive source line. Shown only for clips
-               imported from Drive. "⇡ Push to Drive" overwrites the
-               original Drive file's content with this clip's revised
-               text (Google Docs are converted from text; text/markdown
-               files are overwritten directly). Round-trip companion to
-               the Drive import Picker. -->
+          <!-- v4.224: Google Drive row. Shown whenever Drive is connected
+               (ANY clip, so a GitHub-pulled chapter can be pushed to
+               Drive). "⇡ Save to Drive" overwrites the linked file if the
+               clip already has one, otherwise opens the Picker to choose a
+               file to overwrite or a folder for a new Doc/.md. The chosen
+               file is remembered for one-tap re-saves. -->
           <p id="clip-edit-driveref" class="clip-edit-gitref" hidden>
-            <span class="clip-edit-gitref-label">From Drive:</span>
+            <span class="clip-edit-gitref-label">Google Drive:</span>
             <span id="clip-edit-driveref-name" class="clip-edit-gitref-path"></span>
             <button
               id="clip-edit-push-drive-btn"
               type="button"
               class="clip-edit-gitref-push"
-              title="Overwrite this file's content on Google Drive with the clip's revised text"
-            >⇡ Push to Drive</button>
+              title="Save this clip's text to Google Drive — overwrite the linked file, or pick a file/folder"
+            >⇡ Save to Drive</button>
           </p>
           <!-- v219: voice provenance. Shows which voice + license were
                in effect when this clip was generated. Read-only. Lets

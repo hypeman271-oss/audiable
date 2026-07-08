@@ -2823,6 +2823,56 @@ async def gdrive_push_file_endpoint(req: GdrivePushRequest, request: Request):
     return {"ok": True, "file": result}
 
 
+class GdriveCreateRequest(BaseModel):
+    """Create a NEW Drive file with the clip's text (used when the user
+    picks a destination folder rather than an existing file to overwrite)."""
+    name: str = Field(..., min_length=1, max_length=512)
+    content: str = Field(..., min_length=0, max_length=5_000_000)
+    folder_id: str | None = Field(default=None, max_length=256)
+    # True → Google Doc; False → Markdown (.md) text file.
+    as_doc: bool = Field(default=False)
+
+
+@app.post("/api/gdrive/create-file")
+async def gdrive_create_file_endpoint(req: GdriveCreateRequest, request: Request):
+    """Create a new Drive file (Google Doc or .md) with the clip's text.
+
+    Companion to /api/gdrive/push-file (overwrite): lets a chapter pulled
+    from GitHub land in Drive as a fresh file in the chosen folder.
+    """
+    import asyncio
+    import functools
+    import urllib.error
+
+    tenant_key = getattr(request.state, "tenant_key", "")
+    loop = asyncio.get_running_loop()
+    access = await loop.run_in_executor(
+        None, get_valid_gdrive_access_token, tenant_key
+    )
+    try:
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                gdrive_oauth.create_drive_file,
+                access,
+                req.name,
+                req.content,
+                req.folder_id,
+                req.as_doc,
+            ),
+        )
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise HTTPException(
+                status_code=401,
+                detail="Drive access denied — reconnect Google Drive in Settings.",
+            )
+        raise HTTPException(status_code=502, detail=f"Drive create failed ({e.code})")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Drive create failed: {e}")
+    return {"ok": True, "file": result}
+
+
 @app.post("/api/gdrive/oauth/disconnect")
 async def gdrive_oauth_disconnect_endpoint(request: Request):
     """Drop the tenant's stored Drive grant (Settings → Disconnect).
