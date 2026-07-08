@@ -19410,6 +19410,14 @@ clearBtn.addEventListener("click", clearForNewClip);
 // (audio reads forward until the active sentence is back in the
 // visible portion of the reading view).
 let _readingViewUserScrolled = false;
+// v4.225: suppress the karaoke auto-scroll until this timestamp. Set by the
+// inline-edit re-narration paths right before they swap playerEl.src +
+// reset currentTime — that `seeked` fires highlightCurrentSentence, which
+// would otherwise scroll the reading view to whatever sentence currentTime
+// lands on (0 when the reader hasn't played), yanking them to the TOP mid-
+// edit. Playback isn't running during an edit, so nothing legit needs the
+// scroll in this window; it re-enables itself right after.
+let _suppressReadingScrollUntil = 0;
 const readingViewReturnBtn = document.getElementById("reading-view-return");
 
 // Sentence-in-viewport check. Both rects use viewport coordinates so
@@ -19776,7 +19784,10 @@ function highlightCurrentSentence() {
       const sentenceTopInView = sRect.top - cRect.top;
       const upperThird = viewportH / 3;
       const lowerThird = viewportH * 2 / 3;
-      if (sentenceTopInView < 0 || sentenceTopInView > lowerThird) {
+      if (
+        (sentenceTopInView < 0 || sentenceTopInView > lowerThird) &&
+        Date.now() >= _suppressReadingScrollUntil
+      ) {
         const delta = sentenceTopInView - upperThird;
         readingView.scrollBy({ top: delta, behavior: "smooth" });
       }
@@ -20190,6 +20201,11 @@ async function _renarrateAudioJob(job) {
     } else if (oldPlayhead >= oldStartSec) {
       newPlayhead = newStartSec;
     }
+    // v4.225: mute the karaoke auto-scroll across the src swap + the
+    // currentTime reset below — its `seeked` fires highlightCurrentSentence,
+    // which would otherwise scroll the reader to sentence 0 (currentTime is
+    // 0 when they haven't played), i.e. jump to the top mid-edit.
+    _suppressReadingScrollUntil = Date.now() + 800;
     if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
     lastBlob = newBlob;
     lastBlobUrl = URL.createObjectURL(newBlob);
@@ -20374,6 +20390,11 @@ async function _commitStructuralEdit({ clipId, idx, originalText, newText, piece
     } else if (oldPlayhead >= oldStartSec) {
       newPlayhead = newOffsetsSec[idx];
     }
+    // v4.225: mute the karaoke auto-scroll across the src swap + the
+    // currentTime reset below — its `seeked` fires highlightCurrentSentence,
+    // which would otherwise scroll the reader to sentence 0 (currentTime is
+    // 0 when they haven't played), i.e. jump to the top mid-edit.
+    _suppressReadingScrollUntil = Date.now() + 800;
     if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
     lastBlob = newBlob;
     lastBlobUrl = URL.createObjectURL(newBlob);
