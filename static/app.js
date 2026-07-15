@@ -35932,15 +35932,52 @@ async function loadClip(id, { autoPlay = false } = {}) {
   // sentenceOffsetsSec (which is empty on ebooks anyway). The rest of
   // loadClip — text, images, highlights, voice picker hydration — is
   // safe to run; voiceId/rate/volume guards are conditional already.
-  // v4.226: a NARRATED ebook (clip.kind === "ebook" but WITH an audio blob)
-  // must still load its audio. The old `kind === "ebook" || !clip.blob`
-  // treated any ebook-kind clip as audio-less, so loadClip skipped the
-  // player + offsets and stamped _currentClipKind = "ebook" — which made
-  // exitBookView drop the reader to the empty state on phone instead of the
-  // audio/reading view ("Close doesn't return me to audio mode"). Gate on
-  // the actual audio presence: no blob → ebook (book-view only); has blob →
-  // audio (reading/audio view, book view still available via 📖).
-  const _isEbookClip = !clip.blob;
+  // v4.227: a synced clip may carry an audioSha256 pointer but no local
+  // Blob yet — its audio just hasn't been downloaded to THIS device. Fetch
+  // it on demand (same source _precacheClipAudio uses) so it plays as AUDIO
+  // instead of being misread as a no-audio ebook. Symptom this fixes:
+  // "loaded chapter 4 from its audio card but it shows ebook — no audio."
+  if (
+    (!clip.blob || !clip.blob.size) &&
+    clip.audioSha256 &&
+    (typeof _isOffline !== "function" || !_isOffline())
+  ) {
+    try {
+      const _res = await fetch(
+        `/api/library/audio/${encodeURIComponent(clip.audioSha256)}.mp3`
+      );
+      if (_res.ok) {
+        const _b = await _res.blob();
+        if (_b && _b.size) {
+          clip.blob = _b;
+          // Persist locally (direct write, no sync push) so the next load
+          // is instant and offline-safe.
+          try {
+            const _db = await openDB();
+            const _tx = _db.transaction(STORE, "readwrite");
+            const _cur = await idbReq(_tx.objectStore(STORE).get(id));
+            if (_cur) { _cur.blob = _b; await idbReq(_tx.objectStore(STORE).put(_cur)); }
+            await new Promise((rs, rj) => {
+              _tx.oncomplete = rs;
+              _tx.onerror = () => rj(_tx.error);
+            });
+          } catch {}
+        }
+      }
+    } catch (e) {
+      if (typeof _dlog === "function") {
+        _dlog("loadclip", "on-demand audio fetch failed", { id, err: e && e.message });
+      }
+    }
+  }
+  // v4.226: a NARRATED ebook (clip.kind === "ebook" but WITH audio) must
+  // still load its audio. The old `kind === "ebook" || !clip.blob` treated
+  // any ebook-kind clip as audio-less, so loadClip skipped the player +
+  // offsets and stamped _currentClipKind = "ebook" — which made exitBookView
+  // drop the reader to the empty state on phone. Gate on ACTUAL audio bytes
+  // (after the on-demand fetch above): no audio → ebook (book-view only);
+  // has audio → audio view (book view still available via 📖).
+  const _isEbookClip = !clip.blob || !clip.blob.size;
   // v225g3 (#692): stamp the kind so the phone Generate bar hides
   // and CSS gates can react. Setter also prods _syncPhoneGenerateBar.
   if (typeof _setCurrentClipKind === "function") {
