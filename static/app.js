@@ -35932,7 +35932,15 @@ async function loadClip(id, { autoPlay = false } = {}) {
   // sentenceOffsetsSec (which is empty on ebooks anyway). The rest of
   // loadClip — text, images, highlights, voice picker hydration — is
   // safe to run; voiceId/rate/volume guards are conditional already.
-  const _isEbookClip = clip.kind === "ebook" || !clip.blob;
+  // v4.226: a NARRATED ebook (clip.kind === "ebook" but WITH an audio blob)
+  // must still load its audio. The old `kind === "ebook" || !clip.blob`
+  // treated any ebook-kind clip as audio-less, so loadClip skipped the
+  // player + offsets and stamped _currentClipKind = "ebook" — which made
+  // exitBookView drop the reader to the empty state on phone instead of the
+  // audio/reading view ("Close doesn't return me to audio mode"). Gate on
+  // the actual audio presence: no blob → ebook (book-view only); has blob →
+  // audio (reading/audio view, book view still available via 📖).
+  const _isEbookClip = !clip.blob;
   // v225g3 (#692): stamp the kind so the phone Generate bar hides
   // and CSS gates can react. Setter also prods _syncPhoneGenerateBar.
   if (typeof _setCurrentClipKind === "function") {
