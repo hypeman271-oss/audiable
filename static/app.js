@@ -16721,6 +16721,15 @@ let _bgFailures = [];        // accumulate persistent failures for the banner
 // a live "elapsed 0:45 · ~0:12 left" line on the in-flight row.
 let _bgCurrentStartedAt = 0;
 let _bgCurrentTimerId = null;
+// v4.229: timestamp of the last observed forward progress on the
+// in-flight job — set when a job starts and bumped on every sentence
+// SSE event. _reconcileStuckSynth() uses it to tell a healthy (or
+// just-warming-up) stream from a wedged one: a phone that suspends
+// mid-synth can leave reader.read() hung forever, so the built-in
+// reconnect/self-heal loop never fires and the pill freezes. If this
+// clock hasn't moved for _SYNTH_STALL_MS AND the server reports no
+// active job, the job died and we recover it.
+let _bgLastProgressAtMs = 0;
 function _fmtMmSs(ms) {
   const total = Math.max(0, Math.round(ms / 1000));
   const m = Math.floor(total / 60);
@@ -17140,6 +17149,7 @@ async function _bgRunWorker() {
     // v169: record start time + run a 1s tick so the queue panel
     // shows live "elapsed 0:45" + ETA from sentence progress.
     _bgCurrentStartedAt = Date.now();
+    _bgLastProgressAtMs = Date.now();  // v4.229: arm the stall clock
     _startBgCurrentTimer();
     // v220as: promote this clip from "Queued" to the actively-syncing
     // slot so the library card pulses on the right row.
@@ -18020,6 +18030,109 @@ if (typeof window !== "undefined") {
   setTimeout(() => { try { _reattachActiveSynthJobs(); } catch {} }, 2500);
 }
 
+// v4.229: recover a FROZEN background-synth pill.
+//
+// _reattachActiveSynthJobs (above) covers "the worker isn't running but
+// the server still has a job" — i.e. a fresh page load mid-synth. This
+// handles the inverse and nastier case: the worker IS still "running"
+// client-side (pill showing "N/N sentences"), but the job died on the
+// server and the client never noticed. That happens when a phone/tab is
+// suspended: the JS event loop freezes, so the resumable stream's own
+// reconnect + 404 self-heal loop never gets to run, and reader.read()
+// can stay wedged indefinitely after resume. The pill then sits frozen
+// with its elapsed timer ticking — exactly the "are we stuck?" report.
+//
+// The fix is the missing "when I wake up, check the server" step: while
+// a bg synth is in flight, if the stall clock hasn't advanced for
+// _SYNTH_STALL_MS AND the server reports no active job for this tenant,
+// the job is gone — abort the wedged stream so _bgTrySynth returns false
+// and the worker's built-in retry-once POSTs a fresh job. That fresh job
+// resumes from the per-content sentence cache (Item 2), so recovery is
+// cheap, not a cold re-synth. No page reload, whole queue preserved.
+let _reconcilingStuckSynth = false;
+const _SYNTH_STALL_MS = 45000; // no progress this long ⇒ suspect a wedge
+
+async function _reconcileStuckSynth(reason) {
+  if (_reconcilingStuckSynth) return;
+  // Only meaningful while we believe a background synth is in flight.
+  if (!_bgRunning || !_bgCurrent) return;
+  // Don't fight a user-initiated per-clip / queue cancel.
+  if (_bgCurrent._cancelled) return;
+  // Give a just-started or actively-streaming job room to breathe —
+  // Piper's first-sentence warmup can be 10-20s, and a healthy stream
+  // bumps the clock every sentence. Only a genuinely stalled clock
+  // (suspended tab, dead socket) crosses the threshold.
+  const sinceProgress = _bgLastProgressAtMs > 0
+    ? Date.now() - _bgLastProgressAtMs
+    : (_bgCurrentStartedAt > 0 ? Date.now() - _bgCurrentStartedAt : 0);
+  if (sinceProgress < _SYNTH_STALL_MS) return;
+
+  _reconcilingStuckSynth = true;
+  try {
+    // Ask the server whether ANY job is still alive for this tenant.
+    let active = [];
+    try {
+      const res = await fetch("/api/synth/jobs?active=1");
+      if (!res.ok) return; // can't conclude anything; leave the stream be
+      const { jobs } = await res.json();
+      active = (jobs || []).filter(
+        (j) => j && (j.status === "running" || j.status === "pending"),
+      );
+    } catch {
+      // Network probe failed (device still offline?) — never abort a
+      // possibly-healthy job on a transient blip. Bail and retry later.
+      return;
+    }
+    if (active.length > 0) {
+      // Server still has a live job. The client stream is just slow or
+      // mid-reconnect — do NOT abort (that would DELETE a healthy job).
+      // Re-arm the clock so we don't thrash while it catches up.
+      _bgLastProgressAtMs = Date.now();
+      return;
+    }
+    // No active job server-side, but the pill says we're synthesizing:
+    // the job died (restart / eviction) and the stream wedged. Abort so
+    // _bgTrySynth returns false and the worker's retry-once re-POSTs a
+    // fresh job (resume-from-cache). The abort's best-effort DELETE just
+    // hits the already-gone job as a 404 no-op.
+    _dlog && _dlog("synth", "reconcile: frozen pill + no server job — recovering", {
+      reason,
+      title: _bgSynthCurrentTitle,
+      sinceProgressMs: sinceProgress,
+      cursor: _bgSynthSentence,
+    });
+    if (typeof setStatus === "function") {
+      setStatus("Reconnecting background synthesis…");
+    }
+    if (_bgCurrent) _bgCurrent.existingJobId = null; // force a brand-new job
+    _abortPreSynth();
+  } catch (err) {
+    _dlog && _dlog("synth", "reconcile: unexpected failure (ignored)", {
+      err: String((err && err.message) || err),
+    });
+  } finally {
+    // Hold the guard briefly so the aborted worker settles into its
+    // retry path before another tick can re-enter and double-fire.
+    setTimeout(() => { _reconcilingStuckSynth = false; }, 3000);
+  }
+}
+
+if (typeof document !== "undefined") {
+  // On tab-visible, give the built-in reconnect/self-heal a short grace
+  // to recover on its own, then reconcile if the stream is still wedged.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (!_bgRunning) return;
+    setTimeout(() => { _reconcileStuckSynth("visible").catch(() => {}); }, 6000);
+  });
+  // Slow backstop for the non-suspended case (a socket that dies while
+  // the tab stays foregrounded). The _SYNTH_STALL_MS gate means this is
+  // a no-op until a job has actually been silent for 45s+.
+  setInterval(() => {
+    if (_bgRunning) _reconcileStuckSynth("interval").catch(() => {});
+  }, 15000);
+}
+
 
 async function _preSynthesizeChapter(chapter, opts) {
   // v220t: bg-queue (silent batch import) shares this function with the
@@ -18325,6 +18438,7 @@ async function _preSynthesizeChapter(chapter, opts) {
           if (event.type === "sentence" && _silentChapterQueue) {
             _bgSynthSentence = (event.index || 0) + 1;
             _bgSynthTotal = event.total || 0;
+            _bgLastProgressAtMs = Date.now();  // v4.229: forward progress
             _updateChapterQueueUI();
             // v4.61 (#844): also paint the matching library card's
             // progress bar so it advances in lockstep with the
