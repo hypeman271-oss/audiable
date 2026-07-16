@@ -18506,15 +18506,46 @@ async function _preSynthesizeChapter(chapter, opts) {
 
     // Get duration via a throwaway <audio> element so the saved clip
     // has accurate metadata for the library card.
+    //
+    // v4.230 (frozen-pill root cause): this await MUST NOT be able to
+    // hang. A completed job (esp. the resume-from-cache stitched MP3)
+    // can produce a blob where the throwaway <audio> fires NEITHER
+    // loadedmetadata NOR error — the element just sits "loading"
+    // forever. That wedged finalization here indefinitely: the job was
+    // done server-side, the client had the MP3, but the pill froze at
+    // "N/N sentences" and the clip never saved, because _bgTrySynth
+    // never returned. (The v4.229 reconciler couldn't rescue it — the
+    // hang is a bare Promise, not tied to the abort signal.) Duration is
+    // non-critical card metadata; if it isn't known within 8s, resolve
+    // to 0 and proceed to SAVE. The clip's real duration gets filled in
+    // on first playback anyway.
     const tmpUrl = URL.createObjectURL(combinedMp3);
     const tmpAudio = new Audio();
     const duration = await new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => {
+        if (settled) return;
+        settled = true;
+        resolve(v);
+      };
       tmpAudio.addEventListener(
         "loadedmetadata",
-        () => resolve(isFinite(tmpAudio.duration) ? tmpAudio.duration : 0),
+        () => done(isFinite(tmpAudio.duration) ? tmpAudio.duration : 0),
         { once: true }
       );
-      tmpAudio.addEventListener("error", () => resolve(0), { once: true });
+      tmpAudio.addEventListener("error", () => done(0), { once: true });
+      // Hard ceiling — never let a stuck <audio> element freeze the
+      // whole background queue.
+      setTimeout(() => {
+        if (!settled) {
+          _dlog("synth", "duration probe timed out — saving with duration 0", {
+            title: chapter && chapter.title,
+            blobSize: combinedMp3 ? combinedMp3.size : 0,
+          });
+          done(0);
+        }
+      }, 8000);
+      tmpAudio.preload = "metadata";
       tmpAudio.src = tmpUrl;
     });
     URL.revokeObjectURL(tmpUrl);
