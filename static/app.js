@@ -15584,7 +15584,17 @@ async function generate() {
           // If we're regenerating, reuse the existing clip id so the row
           // updates in place. Otherwise mint a fresh id from the wall clock.
           const newClipId = regenTargetId || Date.now();
+          // v4.231: idempotency guard. onLoaded runs the foreground save +
+          // queue-advance. It normally fires on the player's loadedmetadata,
+          // but the same stuck-<audio> failure that froze the bg queue
+          // (v4.230) can leave loadedmetadata never firing — which here
+          // would SILENTLY skip the save and stall a foreground chapter
+          // queue (_queueSaveComplete never set). A timeout fallback (below)
+          // also calls onLoaded, so it must be safe to run at most once.
+          let _fgOnLoadedRan = false;
           const onLoaded = () => {
+            if (_fgOnLoadedRan) return;
+            _fgOnLoadedRan = true;
             if (isFinite(playerEl.duration)) {
               playerEl.currentTime = Math.min(targetTime, playerEl.duration);
             }
@@ -15832,6 +15842,22 @@ async function generate() {
               .catch((e) => console.warn("library save failed:", e));
           };
           playerEl.addEventListener("loadedmetadata", onLoaded, { once: true });
+          // v4.231: a decode error must also finalize (save + advance the
+          // queue) rather than silently strand the clip — onLoaded's
+          // isFinite(duration) guards degrade cleanly when metadata is
+          // absent. And a hard ceiling so a player that fires NEITHER event
+          // (the stuck-<audio> case) can't leave the save from ever running
+          // or a foreground chapter queue stalled forever.
+          playerEl.addEventListener("error", onLoaded, { once: true });
+          setTimeout(() => {
+            if (!_fgOnLoadedRan) {
+              _dlog("synth", "foreground finalize: metadata never loaded — saving anyway", {
+                clipId: newClipId,
+                blobSize: combined ? combined.size : 0,
+              });
+              try { onLoaded(); } catch (e) { console.warn("[gen] finalize timeout failed:", e); }
+            }
+          }, 8000);
           playerEl.src = lastBlobUrl;
 
           if (_cueVoiceHint) {
