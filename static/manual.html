@@ -4253,6 +4253,26 @@ title: Spaced
         you'll see <em>"Set a GitHub PAT in Settings before syncing"</em>
         — see § 8.
       </div>
+      <div class="warn">
+        <strong>Your GitHub token is per-device — it does not travel
+        across devices.</strong> The PAT (or OAuth token) is stored
+        only in this browser's <code>localStorage</code>, never on the
+        Lyrith server and never in the cross-device library sync. This
+        is deliberate: pushing a credential through the cloud would be
+        a security risk. So if GitHub works on your desktop but a
+        tablet or phone shows <em>"Set a GitHub PAT in Settings before
+        syncing,"</em> that device simply has no token yet — open
+        <strong>Settings (⚙) → Account → GitHub</strong> on the new
+        device and paste the same PAT (or click <em>Sign in with
+        GitHub</em>). Do this once per device.
+        <br><br>
+        Don't confuse this with <strong>Sync library across
+        devices</strong> (§ below): that syncs your <em>clips</em>
+        (text, audio, notes, bookmarks) through the Lyrith server and
+        is independent of GitHub. A clip can sync to another device
+        and still show the banner there, because the clip travels but
+        the GitHub token doesn't.
+      </div>
 
       <h3>Export / Import</h3>
       <p>
