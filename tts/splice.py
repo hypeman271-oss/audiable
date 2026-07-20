@@ -205,3 +205,117 @@ def splice_sentence(
     )
 
     return new_mp3_bytes, new_offsets
+
+
+def delete_sentence(
+    mp3_bytes: bytes,
+    sentence_offsets_ms: list[int],
+    index: int,
+    *,
+    bitrate_kbps: int = 64,
+) -> tuple[bytes, list[int]]:
+    """Remove sentence `index` from `mp3_bytes` entirely — no replacement
+    audio is inserted. Companion to splice_sentence() for the "cut this
+    sentence" annotation action: unlike a 1-in-1-out edit, this SHRINKS
+    the sentence count by one, so the offset table loses a slot and every
+    start after `index` shifts back by the cut sentence's duration.
+
+    Returns:
+        (new_mp3_bytes, new_sentence_offsets_ms). The returned table is
+        always len(sentence_offsets_ms) - 1.
+
+    Raises:
+        SpliceError on bad input, or if `index` is the ONLY sentence
+        (a clip can't be spliced down to zero audio — the caller should
+        delete the whole clip instead).
+    """
+    n = len(sentence_offsets_ms)
+    if n == 0:
+        raise SpliceError("sentence_offsets_ms is empty")
+    if index < 0 or index >= n:
+        raise SpliceError(f"index {index} out of range [0, {n})")
+    if n == 1:
+        raise SpliceError("cannot cut the only sentence in a clip")
+    if not mp3_bytes:
+        raise SpliceError("mp3_bytes is empty")
+
+    start_ms = sentence_offsets_ms[index]
+    end_ms = sentence_offsets_ms[index + 1] if index + 1 < n else None
+    is_first = index == 0
+    is_last = end_ms is None
+    cut_dur_ms = (end_ms - start_ms) if end_ms is not None else None
+
+    start_s = start_ms / 1000.0
+    parts: list[str] = []
+    head_label = ""
+    tail_label = ""
+    if not is_first:
+        parts.append(f"[0:a]atrim=0:{start_s:.6f},asetpts=PTS-STARTPTS[head]")
+        head_label = "[head]"
+    if not is_last:
+        end_s = end_ms / 1000.0  # type: ignore[operator]
+        parts.append(f"[0:a]atrim={end_s:.6f},asetpts=PTS-STARTPTS[tail]")
+        tail_label = "[tail]"
+
+    # Cutting the ONLY-non-empty side is just a trim, no concat needed —
+    # but a single-input filtergraph still needs a `concat=n=1` no-op so
+    # the rest of the pipeline (mapping `[out]`) stays uniform.
+    concat_inputs = f"{head_label}{tail_label}"
+    n_concat = (1 if head_label else 0) + (1 if tail_label else 0)
+    parts.append(f"{concat_inputs}concat=n={n_concat}:v=0:a=1[out]")
+    filtergraph = ";".join(parts)
+
+    with tempfile.TemporaryDirectory(prefix="narrative-splice-cut-") as tmpdir:
+        tmp = Path(tmpdir)
+        in_mp3 = tmp / "in.mp3"
+        out_mp3 = tmp / "out.mp3"
+        in_mp3.write_bytes(mp3_bytes)
+
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-y",
+            "-i", str(in_mp3),          # input 0
+            "-filter_complex", filtergraph,
+            "-map", "[out]",
+            "-c:a", "libmp3lame",
+            "-b:a", f"{bitrate_kbps}k",
+            "-ar", "22050",
+            "-ac", "1",
+            str(out_mp3),
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, timeout=60, check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise SpliceError(f"ffmpeg timeout: {e}") from e
+        if result.returncode != 0:
+            stderr = (result.stderr or b"").decode("utf-8", errors="replace")
+            raise SpliceError(f"ffmpeg failed ({result.returncode}): {stderr.strip()[:500]}")
+        if not out_mp3.exists():
+            raise SpliceError("ffmpeg produced no output")
+        new_mp3_bytes = out_mp3.read_bytes()
+
+    # Build the shrunk offset table: drop the slot at `index`; every
+    # ORIGINAL index after it shifts back by the cut duration (0 if the
+    # cut sentence was last — nothing follows it to shift).
+    kept = [o for i, o in enumerate(sentence_offsets_ms) if i != index]
+    if cut_dur_ms is not None:
+        new_offsets = [
+            (o - cut_dur_ms) if i2 >= index else o
+            for i2, o in enumerate(kept)
+        ]
+    else:
+        new_offsets = kept
+
+    print(
+        f"[splice-cut] index={index}/{n} start_ms={start_ms} "
+        f"cut_dur={cut_dur_ms} mp3_in={len(mp3_bytes)} "
+        f"mp3_out={len(new_mp3_bytes)} offsets_in={n} "
+        f"offsets_out={len(new_offsets)}",
+        file=sys.stderr, flush=True,
+    )
+
+    return new_mp3_bytes, new_offsets

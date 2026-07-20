@@ -20642,6 +20642,248 @@ async function _commitStructuralEdit({ clipId, idx, originalText, newText, piece
   }
 }
 
+// v4.232: "Cut sentence" — turns a Cut-tagged sentence's annotation into
+// an actual edit. Removes the sentence's audio (server-side PCM cut, no
+// re-synth needed) and its text, then shifts everything anchored to
+// sentence position — lines[], bookmarks (time-based), and OTHER
+// annotations (index-based) — to match the new, shorter sentence count.
+// Shares _structuralEditInFlight with _commitStructuralEdit (type-to-
+// split): both resize the sentence count and rebuild the reading view,
+// so they must not run concurrently.
+async function _cutAnnotatedSentence(clipId, idx) {
+  if (_structuralEditInFlight) {
+    setStatus("Still editing this chapter — one moment…");
+    return;
+  }
+  _structuralEditInFlight = true;
+  const startSpan = sentenceSpans[idx];
+  if (startSpan) startSpan.classList.add("renarrate-pending");
+  setStatus("Cutting sentence…");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    // Let any in-flight 1-in-1-out edits finish first — same rationale
+    // as _commitStructuralEdit: their jobs index by sentence position,
+    // which this count change is about to shift.
+    let waited = 0;
+    while ((_renarrateBusy || _renarrateQueue.length) && waited < 30000) {
+      await sleep(150);
+      waited += 150;
+    }
+
+    const clip = await getClip(clipId);
+    if (!clip || !clip.blob) throw new Error("clip has no audio to cut");
+    const offsets = Array.isArray(clip.sentenceOffsetsSec) ? clip.sentenceOffsetsSec : [];
+    if (!offsets.length || idx >= offsets.length) {
+      throw new Error(`sentence index ${idx} out of range`);
+    }
+    if (offsets.length === 1) {
+      throw new Error("can't cut the only sentence — delete the whole chapter instead");
+    }
+    const cutText =
+      (sentenceSpans[idx] && sentenceSpans[idx].dataset.sentenceText) || "";
+    if (!cutText) throw new Error("couldn't read the sentence's text");
+
+    const offsetsMs = offsets.map((s) => Math.round(s * 1000));
+    const params = { index: idx, sentence_offsets_ms: offsetsMs };
+    const fd = new FormData();
+    fd.append("audio", new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }));
+    fd.append("params", JSON.stringify(params));
+    const res = await fetch("/api/synthesize/splice/cut", { method: "POST", body: fd });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const j = await res.json();
+        if (j && j.detail) detail = j.detail;
+      } catch {}
+      throw new Error(`cut failed (${res.status}): ${detail}`);
+    }
+    const newBlob = await res.blob();
+    if (!newBlob || newBlob.size === 0) throw new Error("cut returned empty audio");
+    const shrunk = JSON.parse(res.headers.get("X-Narrative-Sentences") || "null");
+    const newSha = res.headers.get("X-Narrative-Audio-Sha256") || null;
+    if (!Array.isArray(shrunk) || shrunk.length !== offsets.length - 1) {
+      throw new Error(
+        `cut offsets mismatch (got ${shrunk && shrunk.length}, want ${offsets.length - 1})`
+      );
+    }
+    const newOffsetsSec = shrunk.map((ms) => ms / 1000);
+
+    // Remove cutText from clip.text. Locate the exact occurrence via the
+    // same cursor-walk _commitStructuralEdit uses (skip past every prior
+    // sentence's text first) so a repeated phrase earlier in the chapter
+    // can't be matched instead of the real target.
+    let newClipText = clip.text || "";
+    {
+      let cursor = 0;
+      for (let i = 0; i < idx; i++) {
+        const s = sentenceSpans[i] && sentenceSpans[i].dataset.sentenceText;
+        if (!s) continue;
+        const found = newClipText.indexOf(s, cursor);
+        if (found < 0) { cursor = -1; break; }
+        cursor = found + s.length;
+      }
+      if (cursor >= 0) {
+        const cutStart = newClipText.indexOf(cutText, cursor);
+        if (cutStart >= 0) {
+          let before = newClipText.slice(0, cutStart);
+          let after = newClipText.slice(cutStart + cutText.length);
+          // Collapse the space seam left behind. Three cases, matching
+          // where the cut sentence sat:
+          //   - first in the whole text  → strip AFTER's leading run of
+          //     spaces/tabs (no "before" to seam against).
+          //   - last in the whole text   → strip BEFORE's trailing run.
+          //   - interior ("one.  three.")→ drop exactly one of the two
+          //     spaces that now sit back-to-back.
+          // Newlines are never touched either side — a paragraph break
+          // stays a paragraph break so cutting a whole paragraph's only
+          // sentence doesn't fuse it into its neighbor.
+          if (before === "") {
+            after = after.replace(/^[ \t]+/, "");
+          } else if (after === "") {
+            before = before.replace(/[ \t]+$/, "");
+          } else if (before.endsWith(" ") && after.startsWith(" ")) {
+            after = after.slice(1);
+          }
+          newClipText = before + after;
+        }
+      }
+    }
+
+    // Drop the corresponding line, if the clip stores by line.
+    let rebuiltLines = null;
+    if (Array.isArray(clip.lines) && clip.lines.length === offsets.length) {
+      rebuiltLines = clip.lines.slice(0, idx).concat(clip.lines.slice(idx + 1));
+    }
+
+    const oldStartSec = offsets[idx];
+    const oldEndSec = idx + 1 < offsets.length ? offsets[idx + 1] : null;
+    const newDurationSec = newOffsetsSec.length
+      ? undefined // filled in from the player after the swap, below
+      : 0;
+    // Everything after the cut sentence shifts back by its duration;
+    // nothing to shift when the cut sentence was last (oldEndSec null).
+    const deltaSec = oldEndSec != null ? -(oldEndSec - oldStartSec) : 0;
+    // Where a time/position INSIDE the cut sentence's old range should
+    // land now — the start of whatever now occupies that slot, or the
+    // clip's new end if the cut sentence was last.
+    const landingSec = idx < newOffsetsSec.length ? newOffsetsSec[idx] : null;
+
+    // Capture scroll so the rebuild doesn't move the reader.
+    const scrollEl = document.scrollingElement || document.documentElement;
+    const pageScroll = scrollEl ? scrollEl.scrollTop : 0;
+    const rvScroll = readingView ? readingView.scrollTop : 0;
+
+    // Swap the player audio, preserving the playhead.
+    const wasPlaying = !playerEl.paused && !playerEl.ended;
+    const oldPlayhead = playerEl.currentTime || 0;
+    let newPlayhead = oldPlayhead;
+    if (oldEndSec != null && oldPlayhead >= oldEndSec) {
+      newPlayhead = Math.max(0, oldPlayhead + deltaSec);
+    } else if (oldPlayhead >= oldStartSec) {
+      newPlayhead = landingSec != null ? landingSec : Math.max(0, oldStartSec + deltaSec);
+    }
+    _suppressReadingScrollUntil = Date.now() + 800;
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlob = newBlob;
+    lastBlobUrl = URL.createObjectURL(newBlob);
+    playerEl.src = lastBlobUrl;
+    await new Promise((resolve) => {
+      const onMeta = () => {
+        playerEl.removeEventListener("loadedmetadata", onMeta);
+        resolve();
+      };
+      playerEl.addEventListener("loadedmetadata", onMeta);
+      setTimeout(resolve, 1500);
+    });
+    try {
+      playerEl.currentTime = newPlayhead;
+    } catch {}
+
+    // Persist text + audio + offsets + lines + shifted bookmarks +
+    // shifted annotations together.
+    await _mutateClipAtomic(clipId, (c) => {
+      c.text = newClipText;
+      c.blob = newBlob;
+      c.sentenceOffsetsSec = newOffsetsSec.slice();
+      c.durationSec = isFinite(playerEl.duration)
+        ? playerEl.duration
+        : (newDurationSec !== undefined ? newDurationSec : c.durationSec || 0);
+      if (newSha) c.audioSha256 = newSha;
+      if (rebuiltLines) c.lines = rebuiltLines;
+      if (Array.isArray(c.bookmarks) && c.bookmarks.length) {
+        c.bookmarks = c.bookmarks.map((bm) => {
+          if (typeof bm.time !== "number") return bm;
+          if (oldEndSec != null && bm.time >= oldEndSec) {
+            return { ...bm, time: Math.max(0, bm.time + deltaSec) };
+          }
+          if (bm.time >= oldStartSec) {
+            return { ...bm, time: landingSec != null ? landingSec : Math.max(0, oldStartSec + deltaSec) };
+          }
+          return bm;
+        });
+      }
+      if (Array.isArray(c.annotations) && c.annotations.length) {
+        // The cut sentence's OWN annotations (the Cut flag that
+        // triggered this, plus any other tag/voice-note on the same
+        // sentence) have nothing left to attach to — tombstone them.
+        // Everything after shifts its index down by one; everything
+        // before is untouched.
+        const now = new Date().toISOString();
+        c.annotations = c.annotations.map((a) => {
+          if (!a || typeof a.sentenceIndex !== "number") return a;
+          if (a.sentenceIndex === idx && !a.deletedAt) {
+            return { ...a, deletedAt: now, updatedAt: now };
+          }
+          if (a.sentenceIndex > idx) {
+            return { ...a, sentenceIndex: a.sentenceIndex - 1 };
+          }
+          return a;
+        });
+      }
+    });
+
+    // Rebuild the reading view from the new text + lines (canonical span
+    // builder), then restore scroll + offsets + resume.
+    const fresh = await getClip(clipId);
+    enterReadingView(
+      fresh.text || newClipText,
+      fresh.images || [],
+      Array.isArray(_readingViewHighlights) ? _readingViewHighlights : [],
+      fresh.lines
+    );
+    sentenceOffsetsSec = newOffsetsSec.slice();
+    if (scrollEl) scrollEl.scrollTop = pageScroll;
+    if (readingView) readingView.scrollTop = rvScroll;
+    if (wasPlaying) playerEl.play().catch(() => {});
+    if (
+      _currentClipId === clipId &&
+      typeof _applyAnnotationMarkers === "function"
+    ) {
+      try { _applyAnnotationMarkers(fresh); } catch (e) {
+        console.warn("[cut] post-cut annotation repaint failed:", e);
+      }
+    }
+    setStatus(`✂ Sentence cut — ${newOffsetsSec.length} left.`);
+  } catch (e) {
+    console.warn("[cut-sentence] failed:", e);
+    if (typeof _dlog === "function") {
+      _dlog("inline-edit", "cut sentence failed", {
+        clipId,
+        idx,
+        errMsg: e && e.message,
+      });
+    }
+    const s = sentenceSpans[idx];
+    if (s) {
+      s.classList.remove("renarrate-pending");
+      s.classList.add("renarrate-failed");
+    }
+    setStatus(_withOfflineHint(`Couldn't cut the sentence — ${e.message || e}.`), true);
+  } finally {
+    _structuralEditInFlight = false;
+  }
+}
+
 async function _commitInlineEdit() {
   if (_inlineEditingIdx < 0) return;
   if (_structuralEditInFlight) {
@@ -21724,6 +21966,105 @@ function _showAnnoActionSheet(anchor, label, onConfirm) {
   });
   // Defer the outside-click listener so the click that opened the
   // sheet doesn't immediately close it.
+  setTimeout(() => {
+    document.addEventListener("click", dismissOnOutside, true);
+    document.addEventListener("keydown", dismissOnEsc);
+  }, 0);
+}
+
+// v4.232: N-action variant of _showAnnoActionSheet, for the "Cut" tag
+// chip — offer both "Cut sentence" and "Remove flag" from the same
+// long-press instead of forcing a second interaction. Deliberately a
+// SEPARATE function rather than generalizing _showAnnoActionSheet in
+// place: that function's pointerdown/pointerup/click dance was hard-won
+// (v225.tn80-83, "have to tap Remove twice") against real Android touch
+// bugs, and its two existing call sites (voice-note remove, plain
+// remove-flag) don't need to risk a regression for this. Mirrors the
+// same activation pattern per button instead.
+//
+// actions: [{ label, onConfirm, danger? }]. A Cancel button is always
+// appended.
+function _showAnnoActionSheetMulti(anchor, actions) {
+  const prior = document.querySelector(".anno-action-sheet");
+  if (prior) prior.remove();
+
+  const sheet = document.createElement("div");
+  sheet.className = "anno-action-sheet";
+  const actionBtns = actions.map((a) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    if (a.danger) btn.className = "anno-action-remove";
+    btn.textContent = a.label;
+    sheet.appendChild(btn);
+    return btn;
+  });
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "anno-action-cancel";
+  cancelBtn.textContent = "Cancel";
+  sheet.appendChild(cancelBtn);
+  document.body.appendChild(sheet);
+
+  const rect = anchor.getBoundingClientRect();
+  const sheetRect = sheet.getBoundingClientRect();
+  let top = rect.bottom + window.scrollY + 4;
+  let left = rect.left + window.scrollX;
+  const maxLeft = window.scrollX + window.innerWidth - sheetRect.width - 8;
+  if (left > maxLeft) left = maxLeft;
+  if (left < window.scrollX + 8) left = window.scrollX + 8;
+  sheet.style.top = `${top}px`;
+  sheet.style.left = `${left}px`;
+  _dlog("action-sheet", "opened (multi)", {
+    labels: actions.map((a) => a.label),
+    anchorRect: { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right },
+    sheetPos: { top, left, w: sheetRect.width, h: sheetRect.height },
+  });
+
+  const cleanup = () => {
+    sheet.remove();
+    document.removeEventListener("click", dismissOnOutside, true);
+    document.removeEventListener("keydown", dismissOnEsc);
+  };
+  const dismissOnOutside = (e) => {
+    if (sheet.contains(e.target)) return;
+    if (anchor && (anchor === e.target || (anchor.contains && anchor.contains(e.target)))) {
+      return;
+    }
+    e.stopPropagation();
+    cleanup();
+  };
+  const dismissOnEsc = (e) => {
+    if (e.key === "Escape") { e.stopPropagation(); cleanup(); }
+  };
+
+  // Same pointerup-primary / click-fallback latch pattern as the
+  // single-action sheet, per button.
+  const firedFlags = actions.map(() => false);
+  let cancelFired = false;
+  const runAction = (i, via) => {
+    if (firedFlags[i]) return;
+    firedFlags[i] = true;
+    _dlog("action-sheet", `action[${i}] via ${via}`, { label: actions[i].label });
+    cleanup();
+    Promise.resolve(actions[i].onConfirm()).catch((err) =>
+      console.warn("[annotate] multi action-sheet confirm failed:", err),
+    );
+  };
+  const runCancel = (via) => {
+    if (cancelFired) return;
+    cancelFired = true;
+    _dlog("action-sheet", `cancel via ${via}`);
+    cleanup();
+  };
+  actionBtns.forEach((btn, i) => {
+    btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    btn.addEventListener("pointerup", (e) => { e.stopPropagation(); runAction(i, "pointerup"); });
+    btn.addEventListener("click", (e) => { e.stopPropagation(); runAction(i, "click"); });
+  });
+  cancelBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+  cancelBtn.addEventListener("pointerup", (e) => { e.stopPropagation(); runCancel("pointerup"); });
+  cancelBtn.addEventListener("click", (e) => { e.stopPropagation(); runCancel("click"); });
+
   setTimeout(() => {
     document.addEventListener("click", dismissOnOutside, true);
     document.addEventListener("keydown", dismissOnEsc);
@@ -23737,8 +24078,35 @@ function _applyAnnotationMarkers(clip) {
           _chipPressTimer = null;
           _chipPressFired = true;
           const aid = chip.dataset.annoId;
-          _dlog("flag-chip", "long-press fired", { aid });
+          _dlog("flag-chip", "long-press fired", { aid, tag: tagKey });
           if (!aid) return;
+          // v4.232: the "Cut" tag is an annotation ABOUT wanting to cut
+          // the sentence, not the cut itself — offer to actually perform
+          // it here, alongside the normal untag action.
+          if (tagKey === "cut") {
+            _showAnnoActionSheetMulti(chip, [
+              {
+                label: "✂ Cut sentence",
+                danger: true,
+                onConfirm: async () => {
+                  const sIdx = _findSentenceIdx();
+                  if (sIdx < 0) {
+                    setStatus("Couldn't locate the sentence — try again.", true);
+                    return;
+                  }
+                  await _cutAnnotatedSentence(_currentClipId, sIdx);
+                },
+              },
+              {
+                label: "Remove flag",
+                onConfirm: async () => {
+                  const ok = await _tombstoneAnnotation(_currentClipId, aid);
+                  if (ok) setStatus("Flag removed.");
+                },
+              },
+            ]);
+            return;
+          }
           _showAnnoActionSheet(chip, "Remove flag", async () => {
             const ok = await _tombstoneAnnotation(_currentClipId, aid);
             if (ok) setStatus("Flag removed.");

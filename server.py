@@ -1541,6 +1541,99 @@ async def synthesize_splice(
     return Response(content=new_mp3, media_type="audio/mpeg", headers=headers)
 
 
+# multipart/form-data body (same shape as /api/synthesize/splice, minus
+# the synth-only fields — cutting doesn't call tts at all):
+#   audio:  file (MP3 bytes of the existing clip)
+#   params: JSON string —
+#     {
+#       "index": int,                 # which sentence to remove
+#       "sentence_offsets_ms": [int]  # current offset table
+#     }
+@app.post("/api/synthesize/splice/cut")
+async def synthesize_splice_cut(
+    audio: UploadFile = File(...),
+    params: str = Form(...),
+):
+    import json as _json
+    from tts import splice as _splice
+
+    if not audio.filename:
+        raise HTTPException(status_code=400, detail="no audio file")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="empty audio file")
+    if len(audio_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"audio too large ({len(audio_bytes)} bytes, max {MAX_UPLOAD_BYTES})",
+        )
+
+    try:
+        p = _json.loads(params)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"params not valid JSON: {e}")
+    if not isinstance(p, dict):
+        raise HTTPException(status_code=400, detail="params must be a JSON object")
+
+    index = p.get("index")
+    if not isinstance(index, int):
+        raise HTTPException(status_code=400, detail="index must be an integer")
+    offsets = p.get("sentence_offsets_ms")
+    if (not isinstance(offsets, list)
+            or not offsets
+            or not all(isinstance(o, int) for o in offsets)):
+        raise HTTPException(
+            status_code=400,
+            detail="sentence_offsets_ms must be a non-empty list of ints",
+        )
+    if index < 0 or index >= len(offsets):
+        raise HTTPException(
+            status_code=400,
+            detail=f"index {index} out of range [0, {len(offsets)})",
+        )
+    if len(offsets) == 1:
+        raise HTTPException(
+            status_code=400,
+            detail="cannot cut the only sentence in a clip",
+        )
+
+    import asyncio
+    loop = asyncio.get_running_loop()
+    try:
+        new_mp3, new_offsets = await loop.run_in_executor(
+            None,
+            lambda: _splice.delete_sentence(audio_bytes, offsets, index),
+        )
+    except _splice.SpliceError as e:
+        raise HTTPException(status_code=422, detail=f"cut failed: {e}")
+    except Exception as e:
+        import traceback as _tb
+        print("[synthesize/splice/cut] unexpected failure:", file=sys.stderr, flush=True)
+        _tb.print_exc()
+        raise HTTPException(status_code=500, detail=f"cut failed: {e}")
+
+    audio_sha = None
+    try:
+        if library_db.is_enabled():
+            audio_sha = library_db.store_audio(new_mp3)
+    except Exception as e:
+        print(
+            f"[synthesize/splice/cut] audio persist failed: {e}",
+            file=sys.stderr, flush=True,
+        )
+
+    offsets_json = _json.dumps(new_offsets, separators=(",", ":"))
+    headers = {
+        "Content-Disposition": 'attachment; filename="narrative-cut.mp3"',
+        "X-Narrative-Sentences": offsets_json,
+        "Access-Control-Expose-Headers":
+            "X-Narrative-Sentences,X-Narrative-Audio-Sha256",
+    }
+    if audio_sha:
+        headers["X-Narrative-Audio-Sha256"] = audio_sha
+    return Response(content=new_mp3, media_type="audio/mpeg", headers=headers)
+
+
 @app.post("/api/synthesize/stream")
 async def synthesize_stream(req: SynthesizeRequest):
     """SSE endpoint: streams one sentence event per sentence, then a result event.
