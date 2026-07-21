@@ -13969,6 +13969,19 @@ let _suppressNextSentenceClick = false;
 // up the pointerdown that seeds the drag state.
 function _attachSentenceAssignHandlers(span, idx) {
   span.addEventListener("pointerdown", (e) => {
+    // v4.232: the annotate tag chip (✂ Cut, etc.) already stops this
+    // event from bubbling out of ITS OWN pointerdown handler — a press
+    // starting on the chip never reaches this listener. This check is
+    // a second, explicit line: even if that stopPropagation were ever
+    // lost in a refactor, a press on the chip (or the inline × / ▶
+    // voice-note controls beside it) must NEVER arm character-voice
+    // drag-select. Keeps "long-press the sentence = assign a voice"
+    // and "long-press the ✂ chip = cut this sentence" as two gestures
+    // that can't bleed into each other.
+    if (e.target && e.target.closest &&
+        e.target.closest(".annotate-tag-chip, .annotate-tag-delete, .annotate-voice-play, .annotate-voice-retry, .annotate-voice-delete")) {
+      return;
+    }
     // v225.tn76 (#558): character voice assignment is an Author-tier
     // writing-craft tool — it should not arm in Simple or Standard
     // mode. Gate the drag handler at the entry. Tap-to-seek still
