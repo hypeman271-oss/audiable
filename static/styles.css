@@ -9931,6 +9931,35 @@ textarea#text.file-drop-active {
   user-select: none;
 }
 
+/* v4.234: touch hit-slop for the Cut chip specifically. The chip's
+   painted circle is 22px — below the ~44px min touch target — so on a
+   real finger a press aimed at the icon often lands a few px into the
+   sentence's first word instead. Without this, that near-miss is a
+   pointerdown on the SENTENCE, which arms the (unrelated, pre-existing)
+   character-voice drag-select gesture instead of the chip's long-press-
+   to-cut. `position: relative` anchors an invisible `::after` that
+   extends the chip's actual hit-test box well past its visible edges —
+   generous to the right, since that's where the first word sits. Any
+   press landing in that extended box resolves e.target to the CHIP
+   (pseudo-elements paint above sibling in-flow text in the same
+   stacking context, per normal CSS painting order), so it's handled by
+   the chip's own pointerdown/click logic — including a plain tap, which
+   still seeks to the sentence exactly like touching the text would.
+   Only the Cut tag gets this: it's the one tag with a destructive
+   action behind the long-press, so it's the one where a near-miss
+   landing on "assign a character voice" instead is actually costly. */
+.annotate-tag-chip[data-tag="cut"] {
+  position: relative;
+}
+.annotate-tag-chip[data-tag="cut"]::after {
+  content: "";
+  position: absolute;
+  top: -10px;
+  bottom: -10px;
+  left: -8px;
+  right: -28px;
+}
+
 /* v223.annotate-4: inline play button injected at the head of any
    sentence that has a voice note. Click plays the memo without
    triggering the sentence's seek-on-tap handler. .playing class

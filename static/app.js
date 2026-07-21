@@ -13982,6 +13982,41 @@ function _attachSentenceAssignHandlers(span, idx) {
         e.target.closest(".annotate-tag-chip, .annotate-tag-delete, .annotate-voice-play, .annotate-voice-retry, .annotate-voice-delete")) {
       return;
     }
+    // v4.234: coordinate-based backstop for the SAME "cut chip vs.
+    // voice-assign" boundary, independent of the target-based check
+    // above and the CSS hit-slop on the chip itself (.annotate-tag-chip
+    // [data-tag="cut"]::after). A real finger on a 22px icon still
+    // sometimes lands a touch outside BOTH the chip's actual box and
+    // its CSS-extended one — reported on a real phone even after the
+    // target check + hit-slop landed. Rather than trust DOM hit-testing
+    // alone, also measure: if this sentence has a live Cut chip and the
+    // press's raw coordinates fall within a generous buffer around it
+    // (covering roughly the first couple letters of the sentence's
+    // first word, where a near-miss on the leading icon naturally
+    // lands), don't arm voice-assign — this zone belongs to the chip.
+    // Deliberately does NOT re-route the press to the chip's own
+    // long-press-to-cut (that needs a real pointerdown ON the chip
+    // element to track its timer/cleanup correctly); it only makes
+    // sure a near-miss can't arm the OTHER gesture. Scoped to the Cut
+    // chip specifically — it's the one tag with a destructive action
+    // behind the long-press.
+    const _cutChip = span.querySelector('.annotate-tag-chip[data-tag="cut"]');
+    if (_cutChip) {
+      const cr = _cutChip.getBoundingClientRect();
+      const BUFFER_X = 32; // px past the chip's right edge, into the first word
+      const BUFFER_Y = 12; // px of vertical slop for a wobbly touch
+      if (
+        e.clientX >= cr.left - 8 &&
+        e.clientX <= cr.right + BUFFER_X &&
+        e.clientY >= cr.top - BUFFER_Y &&
+        e.clientY <= cr.bottom + BUFFER_Y
+      ) {
+        _dlog("char-voice", "drag pointerdown — gated (near cut chip)", {
+          idx, clientX: e.clientX, clientY: e.clientY,
+        });
+        return;
+      }
+    }
     // v225.tn76 (#558): character voice assignment is an Author-tier
     // writing-craft tool — it should not arm in Simple or Standard
     // mode. Gate the drag handler at the entry. Tap-to-seek still
