@@ -14003,10 +14003,17 @@ function _attachSentenceAssignHandlers(span, idx) {
     const _cutChip = span.querySelector('.annotate-tag-chip[data-tag="cut"]');
     if (_cutChip) {
       const cr = _cutChip.getBoundingClientRect();
-      const BUFFER_X = 32; // px past the chip's right edge, into the first word
-      const BUFFER_Y = 12; // px of vertical slop for a wobbly touch
+      // v4.235: widened from 32/12/8 — still reported reaching
+      // voice-assign on a real phone at the tighter buffer. A press
+      // landing in this zone still falls through to a normal seek (the
+      // chip's own click handler seeks to the same sentence a tap
+      // anywhere else on it would), so being generous here costs
+      // nothing functionally — it only removes the ability to arm
+      // voice-assign from the leading edge of THIS ONE sentence.
+      const BUFFER_X = 60; // px past the chip's right edge — comfortably a full word
+      const BUFFER_Y = 20; // px of vertical slop for a wobbly touch
       if (
-        e.clientX >= cr.left - 8 &&
+        e.clientX >= cr.left - 16 &&
         e.clientX <= cr.right + BUFFER_X &&
         e.clientY >= cr.top - BUFFER_Y &&
         e.clientY <= cr.bottom + BUFFER_Y

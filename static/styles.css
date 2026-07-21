@@ -9954,10 +9954,13 @@ textarea#text.file-drop-active {
 .annotate-tag-chip[data-tag="cut"]::after {
   content: "";
   position: absolute;
-  top: -10px;
-  bottom: -10px;
-  left: -8px;
-  right: -28px;
+  /* v4.235: widened to match the JS coordinate backstop's buffer
+     (app.js, _attachSentenceAssignHandlers) — still reached voice-
+     assign on a real phone at the tighter size. */
+  top: -16px;
+  bottom: -16px;
+  left: -16px;
+  right: -56px;
 }
 
 /* v223.annotate-4: inline play button injected at the head of any
