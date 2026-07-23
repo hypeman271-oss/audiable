@@ -1819,6 +1819,34 @@ function _clearPendingSynth(id) {
   _writePendingSynths(list);
   _updateOfflinePendingCount();
 }
+
+// v4.237: "resume where you left off." _currentClipId is in-memory
+// only — reset to null on every fresh boot, including an overnight
+// tab kill/relaunch. Nothing previously restored it, so the app always
+// opened to the bare compose screen no matter what you'd been
+// listening to. This is the one thing that survives a full reload: set
+// whenever a clip becomes the active one (loadClip), read once at boot
+// (_resumeLastActiveClipOnBoot, near _reattachActiveSynthJobs below)
+// to restore the reading/audio view. Cleared when that clip is
+// deleted, so a stale pointer can't resume into nothing.
+const _LAST_ACTIVE_CLIP_KEY = "narrative.lastActiveClipId";
+function _setLastActiveClip(id) {
+  try {
+    if (id == null) localStorage.removeItem(_LAST_ACTIVE_CLIP_KEY);
+    else localStorage.setItem(_LAST_ACTIVE_CLIP_KEY, String(id));
+  } catch {}
+}
+function _getLastActiveClip() {
+  try {
+    const raw = localStorage.getItem(_LAST_ACTIVE_CLIP_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 function _updateOfflinePendingCount() {
   const el = document.getElementById("offline-pending-count");
   if (!el) return;
@@ -1860,13 +1888,26 @@ async function _drainPendingSynths() {
       if (typeof entry.volume === "number" && volumeEl) {
         volumeEl.value = String(Math.round(entry.volume * 100));
       }
-      if (entry.text && textEl) textEl.value = entry.text;
+      // v4.237: this was the one textEl.value assignment site in the
+      // whole file with no paired updateCounts() call — every other
+      // one (loadClip, GitHub refetch, etc.) updates the char/word
+      // counter right after. Left stale, a failed replay below (network
+      // hiccup, generate() throwing) leaves the compose box populated
+      // with a real draft but a frozen "0 / 500,000 · 0 words" — which
+      // reads as "the box is empty" even though it visibly isn't.
+      if (entry.text && textEl) {
+        textEl.value = entry.text;
+        if (typeof updateCounts === "function") updateCounts();
+      }
       if (typeof generate === "function") {
         await generate();
       }
       _clearPendingSynth(entry.id);
     } catch (err) {
       console.warn("[offline] pending synth replay failed:", err);
+      _dlog("offline", "pending synth replay failed — left in queue", {
+        id: entry.id, errMsg: err && err.message,
+      });
       // Leave in queue for next online tick.
     }
   }
@@ -18086,6 +18127,76 @@ if (typeof window !== "undefined") {
   setTimeout(() => { try { _reattachActiveSynthJobs(); } catch {} }, 2500);
 }
 
+// v4.237: "resume where you left off" — companion to
+// _reattachActiveSynthJobs above (which resumes an in-progress SYNTH),
+// this resumes the READING/AUDIO VIEW for whatever clip was last
+// active. Nothing previously restored _currentClipId (in-memory only,
+// reset on every fresh boot) — the app always opened to the bare
+// compose screen no matter what you'd been listening to. Reported as:
+// "opened the app this morning, the chapter I was reading in audio
+// mode was just raw text sitting in the compose box" — that raw text
+// was the browser's OWN form-restore of the killed tab's textarea
+// (loadClip always mirrors clip.text into it, hidden behind the
+// reading view), not anything app code put there; nothing then
+// restored the view ON TOP of it, and the char/word counter never
+// updates on that path either (no `input` event fires), hence the
+// frozen "0 / 500,000 · 0 words" despite visible text.
+async function _resumeLastActiveClipOnBoot() {
+  try {
+    if (_currentClipId != null) return; // something else already loaded a clip
+    // Let an explicit destination win — a shared-book link or the
+    // manual's demo-URL link is a deliberate entry point, not a
+    // "just reopening the app" boot.
+    const params = new URLSearchParams(location.search);
+    if (params.get("book") || params.get("prefillUrl")) {
+      _dlog("boot-resume", "skipped — explicit deep link present");
+      return;
+    }
+    // Don't fight the offline-draft-replay path over the compose box —
+    // if a draft is queued waiting to synth, let that own the textarea
+    // (it drains on the next 'online' event).
+    if (typeof _readPendingSynths === "function" && _readPendingSynths().length > 0) {
+      _dlog("boot-resume", "skipped — pending offline draft owns the compose box");
+      return;
+    }
+    const id = _getLastActiveClip();
+    if (id == null) return;
+    const clip = await getClip(id);
+    if (!clip) {
+      // Gone (deleted on another device, etc.) — drop the stale
+      // pointer so we don't keep trying every boot.
+      _setLastActiveClip(null);
+      _dlog("boot-resume", "stale pointer, clip no longer exists", { id });
+      return;
+    }
+    // Never clobber text the user may be actively drafting. Empty box,
+    // or content that already matches this clip (e.g. the browser's
+    // own form-restore already put the same text back), are both safe
+    // to proceed over — loadClip would set the identical value either
+    // way.
+    const boxText = (textEl.value || "").trim();
+    const clipText = (clip.text || "").trim();
+    if (boxText && boxText !== clipText) {
+      _dlog("boot-resume", "skipped — compose box has unrelated text", {
+        id, boxLen: boxText.length, clipLen: clipText.length,
+      });
+      return;
+    }
+    _dlog("boot-resume", "restoring last active clip", {
+      id, title: (clip.title || "").slice(0, 60),
+    });
+    await loadClip(id, { autoPlay: false });
+  } catch (e) {
+    _dlog("boot-resume", "failed", { err: String(e && e.message || e) });
+  }
+}
+// Same defer as _reattachActiveSynthJobs — loadClip needs the voice
+// list populated (voiceEl.value = clip.voiceId only sticks if a
+// matching <option> already exists) and the library/IDB ready.
+if (typeof window !== "undefined") {
+  setTimeout(() => { _resumeLastActiveClipOnBoot(); }, 2500);
+}
+
 // v4.229: recover a FROZEN background-synth pill.
 //
 // _reattachActiveSynthJobs (above) covers "the worker isn't running but
@@ -28525,6 +28636,11 @@ async function getClip(id) {
 async function deleteClipById(id) {
   const db = await openDB();
   await idbReq(db.transaction(STORE, "readwrite").objectStore(STORE).delete(id));
+  // v4.237: drop the stale "resume on boot" pointer if this was it —
+  // otherwise a future boot would try to resume a clip that's gone.
+  if (typeof _getLastActiveClip === "function" && _getLastActiveClip() === Number(id)) {
+    _setLastActiveClip(null);
+  }
   // v221.sync-5: mirror the delete server-side via soft-delete + LWW
   // stamp. Same fire-and-forget pattern.
   if (typeof _syncDeleteClip === "function") {
@@ -36617,6 +36733,9 @@ async function loadClip(id, { autoPlay = false } = {}) {
   // Bind the player to this clip so the throttled progress-saver knows which
   // library row to update as playback advances.
   _currentClipId = id;
+  // v4.237: persist so a fresh boot can resume into this clip's
+  // reading/audio view instead of the bare compose screen.
+  _setLastActiveClip(id);
   // v4.212: button now reads "Re-narrate" (overwrites this card).
   if (typeof _updateGenerateLabel === "function") _updateGenerateLabel();
   // v225ep (#632): _currentClipId just changed, so the desktop
