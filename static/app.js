@@ -13982,47 +13982,22 @@ function _attachSentenceAssignHandlers(span, idx) {
         e.target.closest(".annotate-tag-chip, .annotate-tag-delete, .annotate-voice-play, .annotate-voice-retry, .annotate-voice-delete")) {
       return;
     }
-    // v4.234: coordinate-based backstop for the SAME "cut chip vs.
-    // voice-assign" boundary, independent of the target-based check
-    // above and the CSS hit-slop on the chip itself (.annotate-tag-chip
-    // [data-tag="cut"]::after). A real finger on a 22px icon still
-    // sometimes lands a touch outside BOTH the chip's actual box and
-    // its CSS-extended one — reported on a real phone even after the
-    // target check + hit-slop landed. Rather than trust DOM hit-testing
-    // alone, also measure: if this sentence has a live Cut chip and the
-    // press's raw coordinates fall within a generous buffer around it
-    // (covering roughly the first couple letters of the sentence's
-    // first word, where a near-miss on the leading icon naturally
-    // lands), don't arm voice-assign — this zone belongs to the chip.
-    // Deliberately does NOT re-route the press to the chip's own
-    // long-press-to-cut (that needs a real pointerdown ON the chip
-    // element to track its timer/cleanup correctly); it only makes
-    // sure a near-miss can't arm the OTHER gesture. Scoped to the Cut
-    // chip specifically — it's the one tag with a destructive action
-    // behind the long-press.
-    const _cutChip = span.querySelector('.annotate-tag-chip[data-tag="cut"]');
-    if (_cutChip) {
-      const cr = _cutChip.getBoundingClientRect();
-      // v4.235: widened from 32/12/8 — still reported reaching
-      // voice-assign on a real phone at the tighter buffer. A press
-      // landing in this zone still falls through to a normal seek (the
-      // chip's own click handler seeks to the same sentence a tap
-      // anywhere else on it would), so being generous here costs
-      // nothing functionally — it only removes the ability to arm
-      // voice-assign from the leading edge of THIS ONE sentence.
-      const BUFFER_X = 60; // px past the chip's right edge — comfortably a full word
-      const BUFFER_Y = 20; // px of vertical slop for a wobbly touch
-      if (
-        e.clientX >= cr.left - 16 &&
-        e.clientX <= cr.right + BUFFER_X &&
-        e.clientY >= cr.top - BUFFER_Y &&
-        e.clientY <= cr.bottom + BUFFER_Y
-      ) {
-        _dlog("char-voice", "drag pointerdown — gated (near cut chip)", {
-          idx, clientX: e.clientX, clientY: e.clientY,
-        });
-        return;
-      }
+    // v4.236: v4.234/v4.235 tried a coordinate buffer around the chip
+    // (widened once already) — a real device STILL reached voice-assign
+    // through it (reported: the Cut sheet opened correctly AND "1
+    // sentence selected" armed at the same time). Pixel-distance math
+    // against the chip's rect is fragile in ways hard to fully pin down
+    // from here — wrapped lines, per-device touch coalescing, finger
+    // drift during the 500ms hold all move the goalposts. Dropping the
+    // guesswork: if this SENTENCE has a live Cut chip anywhere on it,
+    // voice-assign is exempt for the ENTIRE sentence, not just a zone
+    // near the icon. No coordinates to get wrong. This is also a
+    // reasonable rule on its own merits — a sentence already marked for
+    // deletion isn't a sentence you're trying to assign a character
+    // voice to; if that's wrong, remove the Cut flag first.
+    if (span.querySelector('.annotate-tag-chip[data-tag="cut"]')) {
+      _dlog("char-voice", "drag pointerdown — gated (sentence has cut flag)", { idx });
+      return;
     }
     // v225.tn76 (#558): character voice assignment is an Author-tier
     // writing-craft tool — it should not arm in Simple or Standard
