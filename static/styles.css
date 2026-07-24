@@ -13,12 +13,12 @@
   --bg-card: #141a30;
   --bg-card-2: #1b2240;
   --fg: #e7ecff;
-  --fg-dim: #97a0c9;
+  --fg-dim: #9096ad;
   --accent: #7c9cff;
   --accent-strong: #5b7dff;
   --danger: #ff7c7c;
   --radius: 14px;
-  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 10px 30px rgba(0, 0, 0, 0.28);
 
   /* Semantic tokens. Tuned per-theme so the dark UI's white-alpha borders
      become black-alpha in light mode (otherwise everything looks washed
@@ -36,10 +36,10 @@
      here because the dark surfaces (--bg #0b1020, --bg-card #141a30)
      are dark enough that low-alpha-white reads as a subtle, neutral
      border without competing with the accent color. */
-  --border-soft:     rgba(255, 255, 255, 0.05);
-  --border:          rgba(255, 255, 255, 0.08);
-  --border-strong:   rgba(255, 255, 255, 0.12);
-  --border-emph:     rgba(255, 255, 255, 0.18);
+  --border-soft:     rgba(255, 255, 255, 0.04);
+  --border:          rgba(255, 255, 255, 0.06);
+  --border-strong:   rgba(255, 255, 255, 0.10);
+  --border-emph:     rgba(255, 255, 255, 0.15);
   /* Scrim for dialog/sheet/pull-up backdrops. Pure black at 55% reads
      as "the rest of the app is dimmed but not gone." Higher alpha than
      light mode (0.35) because dark surfaces have lower contrast with
@@ -71,9 +71,9 @@
   --danger-tint-soft: rgba(255, 124, 124, 0.08);
   --bg-gradient-edge: #1c2550;
   --played-fg: #b9c3eb;
-  --shadow-mini: 0 6px 22px rgba(0, 0, 0, 0.4);
-  --shadow-drag: 0 14px 38px rgba(0, 0, 0, 0.45);
-  --shadow-tooltip: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --shadow-mini: 0 2px 6px rgba(0, 0, 0, 0.26), 0 10px 30px rgba(0, 0, 0, 0.32);
+  --shadow-drag: 0 4px 10px rgba(0, 0, 0, 0.30), 0 20px 46px rgba(0, 0, 0, 0.40);
+  --shadow-tooltip: 0 2px 6px rgba(0, 0, 0, 0.30), 0 8px 22px rgba(0, 0, 0, 0.38);
   /* Bright endpoint of the hero H1 text gradient. Pure white reads on
      the dark bg; light mode needs the accent-strong here instead. */
   --hero-grad-start: #fff;
@@ -229,12 +229,12 @@
   --accent: #6aa9ff;
   --accent-strong: #3f8cff;
   --danger: #ff6b6b;
-  --shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.5);
 
-  --border-soft: rgba(255, 255, 255, 0.07);
-  --border: rgba(255, 255, 255, 0.11);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-emph: rgba(255, 255, 255, 0.22);
+  --border-soft: rgba(255, 255, 255, 0.055);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --border-emph: rgba(255, 255, 255, 0.18);
   --scrim: rgba(0, 0, 0, 0.70);
   --glass: rgba(10, 10, 14, 0.90);
   --hover-soft: rgba(255, 255, 255, 0.05);
@@ -273,12 +273,12 @@
   --accent: #88c0d0;
   --accent-strong: #81a1c1;
   --danger: #bf616a;
-  --shadow: 0 6px 24px rgba(20, 24, 33, 0.5);
+  --shadow: 0 1px 2px rgba(20, 24, 33, 0.32), 0 10px 30px rgba(20, 24, 33, 0.42);
 
-  --border-soft: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.10);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-emph: rgba(255, 255, 255, 0.20);
+  --border-soft: rgba(255, 255, 255, 0.045);
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.11);
+  --border-emph: rgba(255, 255, 255, 0.16);
   --scrim: rgba(20, 24, 33, 0.60);
   --glass: rgba(46, 52, 64, 0.90);
   --hover-soft: rgba(255, 255, 255, 0.05);
@@ -313,16 +313,16 @@
   --bg-card: #1b2e25;
   --bg-card-2: #243c30;
   --fg: #e3efe6;
-  --fg-dim: #93ab9c;
+  --fg-dim: #8ea89a;
   --accent: #7fb98a;
   --accent-strong: #5fa06d;
   --danger: #e07a6a;
-  --shadow: 0 6px 24px rgba(0, 10, 5, 0.5);
+  --shadow: 0 1px 2px rgba(0, 10, 5, 0.30), 0 10px 30px rgba(0, 10, 5, 0.40);
 
-  --border-soft: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.10);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-emph: rgba(255, 255, 255, 0.20);
+  --border-soft: rgba(255, 255, 255, 0.045);
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.11);
+  --border-emph: rgba(255, 255, 255, 0.16);
   --scrim: rgba(5, 15, 10, 0.60);
   --glass: rgba(18, 32, 26, 0.90);
   --hover-soft: rgba(255, 255, 255, 0.05);
@@ -334,9 +334,9 @@
   --danger-tint-soft: rgba(224, 122, 106, 0.08);
   --bg-gradient-edge: #1b3327;
   --played-fg: #b6c8bb;
-  --shadow-mini: 0 6px 22px rgba(0, 10, 5, 0.55);
-  --shadow-drag: 0 14px 38px rgba(0, 10, 5, 0.6);
-  --shadow-tooltip: 0 6px 18px rgba(0, 10, 5, 0.6);
+  --shadow-mini: 0 2px 6px rgba(0, 10, 5, 0.34), 0 10px 30px rgba(0, 10, 5, 0.44);
+  --shadow-drag: 0 4px 10px rgba(0, 10, 5, 0.4), 0 20px 46px rgba(0, 10, 5, 0.52);
+  --shadow-tooltip: 0 2px 6px rgba(0, 10, 5, 0.4), 0 8px 22px rgba(0, 10, 5, 0.5);
   --hero-grad-start: #eafff0;
   --spinner-ring: rgba(12, 26, 18, 0.4);
   --danger-border: rgba(224, 122, 106, 0.35);
