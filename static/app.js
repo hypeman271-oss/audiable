@@ -21025,6 +21025,322 @@ async function _cutAnnotatedSentence(clipId, idx) {
   }
 }
 
+// v4.238: locate a sentence's exact [start,end] range within fullText by
+// walking every prior sentence's text first (so a repeated phrase earlier
+// in the chapter can't be matched instead of the real target). Returns
+// null if the walk can't line up. Shared by the combine path.
+function _locateSentenceRange(fullText, spans, idx) {
+  let cursor = 0;
+  for (let i = 0; i < idx; i++) {
+    const s = spans[i] && spans[i].dataset && spans[i].dataset.sentenceText;
+    if (!s) continue;
+    const found = fullText.indexOf(s, cursor);
+    if (found < 0) return null;
+    cursor = found + s.length;
+  }
+  const target = spans[idx] && spans[idx].dataset && spans[idx].dataset.sentenceText;
+  if (!target) return null;
+  const start = fullText.indexOf(target, cursor);
+  if (start < 0) return null;
+  return [start, start + target.length];
+}
+
+// v4.238: merge two Combine-flagged sentences into one. The merged
+// sentence reads combine-1's text then combine-2's, and lands at the
+// caller's chosen location (targetIdx); the other sentence is removed.
+// Reuses the two existing splice endpoints — no re-synth of the whole
+// clip: splice combinedText into targetIdx (1-in-1-out), then cut the
+// other index. Shares _structuralEditInFlight with the cut / type-to-
+// split paths so the sentence-count-changing edits can't race.
+async function _combineAnnotatedSentences(clipId, targetIdx, otherIdx, combinedText, combineAnnoIds) {
+  if (_structuralEditInFlight) {
+    setStatus("Still editing this chapter — one moment…");
+    return;
+  }
+  if (targetIdx === otherIdx) return;
+  _structuralEditInFlight = true;
+  const startSpan = sentenceSpans[targetIdx];
+  if (startSpan) startSpan.classList.add("renarrate-pending");
+  setStatus("Combining sentences…");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    // Let any in-flight 1-in-1-out edits finish — their jobs index by
+    // sentence position, which this count change is about to shift.
+    let waited = 0;
+    while ((_renarrateBusy || _renarrateQueue.length) && waited < 30000) {
+      await sleep(150);
+      waited += 150;
+    }
+
+    const clip = await getClip(clipId);
+    if (!clip || !clip.blob) throw new Error("clip has no audio to combine");
+    const offsets = Array.isArray(clip.sentenceOffsetsSec) ? clip.sentenceOffsetsSec : [];
+    const n = offsets.length;
+    if (!n || targetIdx >= n || otherIdx >= n) {
+      throw new Error("sentence index out of range");
+    }
+    const offsetsMs = offsets.map((s) => Math.round(s * 1000));
+    const voiceId = (clip && clip.voiceId) || voiceEl.value || null;
+    const speakerId = clip && typeof clip.speakerId === "number" ? clip.speakerId : null;
+    const rate = clip && typeof clip.rate === "number" ? clip.rate : null;
+
+    // Reconstruct clip.text FIRST (from the current spans) so a splice
+    // failure leaves nothing half-applied. Higher-start edit first so
+    // the lower range stays valid.
+    const rTarget = _locateSentenceRange(clip.text || "", sentenceSpans, targetIdx);
+    const rOther = _locateSentenceRange(clip.text || "", sentenceSpans, otherIdx);
+    if (!rTarget || !rOther) throw new Error("couldn't locate the sentences in the text");
+    let newClipText = clip.text || "";
+    {
+      const edits = [
+        { start: rTarget[0], end: rTarget[1], kind: "replace" },
+        { start: rOther[0], end: rOther[1], kind: "remove" },
+      ].sort((a, b) => b.start - a.start);
+      for (const ed of edits) {
+        let before = newClipText.slice(0, ed.start);
+        let after = newClipText.slice(ed.end);
+        if (ed.kind === "replace") {
+          newClipText = before + combinedText + after;
+        } else {
+          // Collapse the space seam, leaving paragraph newlines intact
+          // (same rule as the cut path).
+          if (before === "") after = after.replace(/^[ \t]+/, "");
+          else if (after === "") before = before.replace(/[ \t]+$/, "");
+          else if (before.endsWith(" ") && after.startsWith(" ")) after = after.slice(1);
+          newClipText = before + after;
+        }
+      }
+    }
+
+    // Step 1: splice the combined text into the target slot (1-in-1-out).
+    const spliceParams = {
+      voice_id: voiceId,
+      speaker_id: speakerId,
+      rate,
+      index: targetIdx,
+      text: _stripSynthChars(combinedText),
+      sentence_offsets_ms: offsetsMs,
+    };
+    const fd1 = new FormData();
+    fd1.append("audio", new File([clip.blob], "clip.mp3", { type: "audio/mpeg" }));
+    fd1.append("params", JSON.stringify(spliceParams));
+    const res1 = await fetch("/api/synthesize/splice", { method: "POST", body: fd1 });
+    if (!res1.ok) {
+      let detail = res1.statusText;
+      try { const j = await res1.json(); if (j && j.detail) detail = j.detail; } catch {}
+      throw new Error(`merge synth failed (${res1.status}): ${detail}`);
+    }
+    const blob1 = await res1.blob();
+    const offsets1 = JSON.parse(res1.headers.get("X-Narrative-Sentences") || "null");
+    if (!Array.isArray(offsets1) || offsets1.length !== n) {
+      // The merged text synthesized to >1 sentence — punctuation slipped
+      // through. Abort rather than corrupt the offset table.
+      throw new Error("merged text became more than one sentence — check punctuation");
+    }
+
+    // Step 2: cut the other slot from the freshly-spliced audio.
+    const cutParams = { index: otherIdx, sentence_offsets_ms: offsets1 };
+    const fd2 = new FormData();
+    fd2.append("audio", new File([blob1], "clip.mp3", { type: "audio/mpeg" }));
+    fd2.append("params", JSON.stringify(cutParams));
+    const res2 = await fetch("/api/synthesize/splice/cut", { method: "POST", body: fd2 });
+    if (!res2.ok) {
+      let detail = res2.statusText;
+      try { const j = await res2.json(); if (j && j.detail) detail = j.detail; } catch {}
+      throw new Error(`merge cut failed (${res2.status}): ${detail}`);
+    }
+    const newBlob = await res2.blob();
+    if (!newBlob || newBlob.size === 0) throw new Error("combine returned empty audio");
+    const offsets2 = JSON.parse(res2.headers.get("X-Narrative-Sentences") || "null");
+    const newSha = res2.headers.get("X-Narrative-Audio-Sha256") || null;
+    if (!Array.isArray(offsets2) || offsets2.length !== n - 1) {
+      throw new Error(`combine offsets mismatch (got ${offsets2 && offsets2.length}, want ${n - 1})`);
+    }
+    const newOffsetsSec = offsets2.map((ms) => ms / 1000);
+
+    // Index bookkeeping: the merged sentence's final index, and how old
+    // indices map after removing `otherIdx`.
+    const mergedFinalIdx = targetIdx < otherIdx ? targetIdx : targetIdx - 1;
+    const now = new Date().toISOString();
+
+    // Rebuild lines (drop other, replace target text), if line-stored.
+    let rebuiltLines = null;
+    if (Array.isArray(clip.lines) && clip.lines.length === n) {
+      let combinedHash = null;
+      if (window.NS_IDS && typeof window.NS_IDS.hashText === "function") {
+        try { combinedHash = await window.NS_IDS.hashText(combinedText); } catch {}
+      }
+      rebuiltLines = [];
+      for (let i = 0; i < clip.lines.length; i++) {
+        if (i === otherIdx) continue;
+        if (i === targetIdx) {
+          rebuiltLines.push({
+            ...clip.lines[i],
+            text: combinedText,
+            hash: combinedHash != null ? combinedHash : clip.lines[i].hash,
+            updatedAt: now,
+          });
+        } else {
+          rebuiltLines.push(clip.lines[i]);
+        }
+      }
+    }
+
+    // Capture scroll so the rebuild doesn't move the reader.
+    const scrollEl = document.scrollingElement || document.documentElement;
+    const pageScroll = scrollEl ? scrollEl.scrollTop : 0;
+    const rvScroll = readingView ? readingView.scrollTop : 0;
+
+    // Swap the player audio, landing the playhead at the merged sentence.
+    const wasPlaying = !playerEl.paused && !playerEl.ended;
+    const landingSec = mergedFinalIdx < newOffsetsSec.length ? newOffsetsSec[mergedFinalIdx] : 0;
+    _suppressReadingScrollUntil = Date.now() + 800;
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlob = newBlob;
+    lastBlobUrl = URL.createObjectURL(newBlob);
+    playerEl.src = lastBlobUrl;
+    await new Promise((resolve) => {
+      const onMeta = () => { playerEl.removeEventListener("loadedmetadata", onMeta); resolve(); };
+      playerEl.addEventListener("loadedmetadata", onMeta);
+      setTimeout(resolve, 1500);
+    });
+    try { playerEl.currentTime = landingSec; } catch {}
+
+    await _mutateClipAtomic(clipId, (c) => {
+      c.text = newClipText;
+      c.blob = newBlob;
+      c.sentenceOffsetsSec = newOffsetsSec.slice();
+      c.durationSec = isFinite(playerEl.duration) ? playerEl.duration : c.durationSec || 0;
+      if (newSha) c.audioSha256 = newSha;
+      if (rebuiltLines) c.lines = rebuiltLines;
+      // Annotations: consume the two combine flags; the removed sentence's
+      // other annotations lose their anchor (tombstone, same as cut);
+      // everything after the removed slot shifts down one.
+      if (Array.isArray(c.annotations) && c.annotations.length) {
+        c.annotations = c.annotations.map((a) => {
+          if (!a || typeof a.sentenceIndex !== "number") return a;
+          if (combineAnnoIds.includes(a.id) && !a.deletedAt) {
+            return { ...a, deletedAt: now, updatedAt: now };
+          }
+          if (a.sentenceIndex === otherIdx && !a.deletedAt) {
+            return { ...a, deletedAt: now, updatedAt: now };
+          }
+          if (a.sentenceIndex > otherIdx) {
+            return { ...a, sentenceIndex: a.sentenceIndex - 1 };
+          }
+          return a;
+        });
+      }
+      // Bookmarks: leave those before the edit region untouched; re-anchor
+      // affected ones to their mapped sentence's new start (safe — never
+      // lands past the clip; loses intra-sentence position in the rare
+      // case of a bookmark inside an edited sentence).
+      if (Array.isArray(c.bookmarks) && c.bookmarks.length) {
+        const editFloor = Math.min(targetIdx, otherIdx);
+        c.bookmarks = c.bookmarks.map((bm) => {
+          if (typeof bm.sentenceIndex !== "number") return bm;
+          if (bm.sentenceIndex < editFloor) return bm;
+          let ni;
+          if (bm.sentenceIndex === otherIdx) ni = mergedFinalIdx;
+          else if (bm.sentenceIndex > otherIdx) ni = bm.sentenceIndex - 1;
+          else ni = bm.sentenceIndex;
+          const t = ni < newOffsetsSec.length
+            ? newOffsetsSec[ni]
+            : (newOffsetsSec[newOffsetsSec.length - 1] || 0);
+          return { ...bm, sentenceIndex: ni, time: t };
+        });
+      }
+    });
+
+    const fresh = await getClip(clipId);
+    enterReadingView(
+      fresh.text || newClipText,
+      fresh.images || [],
+      Array.isArray(_readingViewHighlights) ? _readingViewHighlights : [],
+      fresh.lines
+    );
+    sentenceOffsetsSec = newOffsetsSec.slice();
+    if (scrollEl) scrollEl.scrollTop = pageScroll;
+    if (readingView) readingView.scrollTop = rvScroll;
+    if (wasPlaying) playerEl.play().catch(() => {});
+    if (_currentClipId === clipId && typeof _applyAnnotationMarkers === "function") {
+      try { _applyAnnotationMarkers(fresh); } catch (e) {
+        console.warn("[combine] post-combine annotation repaint failed:", e);
+      }
+    }
+    setStatus(`🔗 Sentences combined — ${newOffsetsSec.length} left.`);
+  } catch (e) {
+    console.warn("[combine-sentence] failed:", e);
+    if (typeof _dlog === "function") {
+      _dlog("inline-edit", "combine sentences failed", {
+        clipId, targetIdx, otherIdx, errMsg: e && e.message,
+      });
+    }
+    const s = sentenceSpans[targetIdx];
+    if (s) { s.classList.remove("renarrate-pending"); s.classList.add("renarrate-failed"); }
+    setStatus(_withOfflineHint(`Couldn't combine — ${e.message || e}.`), true);
+  } finally {
+    _structuralEditInFlight = false;
+  }
+}
+
+// v4.238: called after any Combine flag is added (from _addAnnotation, so
+// every entry path — desktop palette, phone tag-row — is covered). With
+// one Combine flag: nudge the user to flag a second. With two: prompt for
+// which location the merged sentence should occupy, then run the merge.
+async function _maybePromptCombine(clipId) {
+  try {
+    if (clipId !== _currentClipId) return;
+    const clip = await getClip(clipId);
+    if (!clip) return;
+    const combines = (Array.isArray(clip.annotations) ? clip.annotations : [])
+      .filter((a) => a && !a.deletedAt && Array.isArray(a.tags) && a.tags.includes("combine") && Number.isInteger(a.sentenceIndex))
+      .sort((a, b) => String(a.flaggedAt || a.createdAt || "").localeCompare(String(b.flaggedAt || b.createdAt || "")));
+    if (combines.length < 2) {
+      if (combines.length === 1) {
+        setStatus("Combine 1 set — flag another sentence as Combine to merge them.");
+      }
+      return;
+    }
+    // Exactly the first two (by flag order) are combine 1 and combine 2.
+    const c1 = combines[0];
+    const c2 = combines[1];
+    const idx1 = c1.sentenceIndex;
+    const idx2 = c2.sentenceIndex;
+    const textOf = (a, idx) =>
+      (sentenceSpans[idx] && sentenceSpans[idx].dataset && sentenceSpans[idx].dataset.sentenceText) ||
+      a.sentenceText || a.sentenceFingerprint || "";
+    const text1 = textOf(c1, idx1);
+    const text2 = textOf(c2, idx2);
+    if (!text1 || !text2) {
+      setStatus("Couldn't read the flagged sentences — try re-flagging.", true);
+      return;
+    }
+    // Comma join: replace combine 1's trailing sentence punctuation with a
+    // comma, then append combine 2 verbatim. Yields ONE sentence (no
+    // internal . ! ?), combine 1 first.
+    const combinedText = `${text1.trim().replace(/[.!?]+$/, "")}, ${text2.trim()}`;
+    const combineAnnoIds = [c1.id, c2.id];
+    const anchor =
+      document.querySelector('.annotate-tag-chip[data-tag="combine"][data-combine-ord="2"]') ||
+      document.querySelector('.annotate-tag-chip[data-tag="combine"]') ||
+      sentenceSpans[idx2] || sentenceSpans[idx1];
+    if (!anchor) return;
+    _showAnnoActionSheetMulti(anchor, [
+      {
+        label: `Merge into sentence ${idx1 + 1}`,
+        onConfirm: () => _combineAnnotatedSentences(clipId, idx1, idx2, combinedText, combineAnnoIds),
+      },
+      {
+        label: `Merge into sentence ${idx2 + 1}`,
+        onConfirm: () => _combineAnnotatedSentences(clipId, idx2, idx1, combinedText, combineAnnoIds),
+      },
+    ]);
+  } catch (e) {
+    console.warn("[combine] prompt failed:", e);
+  }
+}
+
 async function _commitInlineEdit() {
   if (_inlineEditingIdx < 0) return;
   if (_structuralEditInFlight) {
@@ -21689,12 +22005,17 @@ let _annotateWasPlayingBeforePalette = false;
 // render inline tag chips on annotated sentences — answers "what was
 // the annotation?" without requiring annotate mode or a refresh.
 const ANNOTATE_TAGS = {
-  cut:    { label: "Cut",    color: "#e57373", icon: "✂" },
-  fact:   { label: "Fact",   color: "#64b5f6", icon: "✓" },
-  weak:   { label: "Weak",   color: "#ffb74d", icon: "⚠" },
-  pov:    { label: "POV",    color: "#ba68c8", icon: "👁" },
-  expand: { label: "Expand", color: "#81c784", icon: "➕" },
-  love:   { label: "Love",   color: "#f06292", icon: "❤" },
+  cut:     { label: "Cut",     color: "#e57373", icon: "✂" },
+  fact:    { label: "Fact",    color: "#64b5f6", icon: "✓" },
+  weak:    { label: "Weak",    color: "#ffb74d", icon: "⚠" },
+  pov:     { label: "POV",     color: "#ba68c8", icon: "👁" },
+  expand:  { label: "Expand",  color: "#81c784", icon: "➕" },
+  love:    { label: "Love",    color: "#f06292", icon: "❤" },
+  // v4.238: combine two sentences into one. Unlike the others this is a
+  // PAIRED action — flag two sentences, then a prompt merges them. The
+  // first flagged is combine 1, the second is combine 2; the merged
+  // sentence reads combine 1 then combine 2.
+  combine: { label: "Combine", color: "#4dd0e1", icon: "🔗" },
 };
 
 // Lightweight UUIDv4-ish — doesn't need to be cryptographically random,
@@ -21809,6 +22130,17 @@ async function _addAnnotation(clipId, anno) {
       try { _applyAnnotationMarkers(clip); } catch (e) {
         console.warn("[annotate] post-add repaint failed:", e);
       }
+    }
+    // v4.238: combine is a paired action — after a combine flag lands,
+    // check whether two now exist and prompt to merge. Deferred so the
+    // repaint above has created the chip the prompt anchors to. Fires
+    // for every add path (palette, phone tag-row) since all funnel here.
+    if (
+      _currentClipId === clipId &&
+      anno && Array.isArray(anno.tags) && anno.tags.includes("combine") &&
+      typeof _maybePromptCombine === "function"
+    ) {
+      setTimeout(() => { _maybePromptCombine(clipId); }, 60);
     }
     return anno;
   } catch (e) {
@@ -23968,6 +24300,14 @@ function _applyAnnotationMarkers(clip) {
   // map (annotatedSentences, voiceBySentence, tagsBySentence) is
   // automatically tombstone-aware.
   const liveAnnos = annos.filter((a) => a && !a.deletedAt);
+  // v4.238: combine is a paired action — the first flagged sentence is
+  // combine 1, the second combine 2. Number them by flag order so the
+  // chips can show a 1/2 badge. Keyed by annotation id.
+  const _combineOrdinalByAnnoId = new Map();
+  liveAnnos
+    .filter((a) => Array.isArray(a.tags) && a.tags.includes("combine") && Number.isInteger(a.sentenceIndex))
+    .sort((a, b) => String(a.flaggedAt || a.createdAt || "").localeCompare(String(b.flaggedAt || b.createdAt || "")))
+    .forEach((a, i) => _combineOrdinalByAnnoId.set(a.id, i + 1));
   for (const a of liveAnnos) {
     if (!Number.isInteger(a.sentenceIndex)) continue;
     annotatedSentences.add(a.sentenceIndex);
@@ -24157,7 +24497,10 @@ function _applyAnnotationMarkers(clip) {
     for (const chip of existingChips) {
       const k = chip.dataset.tag;
       const wantedAnnoId = wantTagsMap.get(k);
-      if (wantedAnnoId !== undefined) {
+      // v4.238: always rebuild combine chips so their 1/2 badge stays
+      // correct when the ordinal shifts (e.g. combine 1 removed →
+      // combine 2 becomes 1). Cheap: at most two per clip.
+      if (wantedAnnoId !== undefined && k !== "combine") {
         existingTagKeys.add(k);
         // Refresh the annoId binding in case the chip survived from
         // a prior render where a different annotation owned this tag
@@ -24183,6 +24526,19 @@ function _applyAnnotationMarkers(clip) {
       chip.textContent = meta.icon;
       chip.title = `${meta.label} — tap to seek; tap × that appears to remove`;
       chip.style.background = meta.color;
+      // v4.238: combine chips carry a 1/2 badge showing flag order.
+      if (tagKey === "combine") {
+        const ord = _combineOrdinalByAnnoId.get(annoIdForChip);
+        if (ord) {
+          chip.dataset.combineOrd = String(ord);
+          const badge = document.createElement("span");
+          badge.className = "annotate-combine-ord";
+          badge.textContent = String(ord);
+          badge.setAttribute("aria-hidden", "true");
+          chip.appendChild(badge);
+          chip.title = `Combine ${ord} — flag two sentences, then pick where they merge`;
+        }
+      }
       // v225.tn60 (#543): chip tap was opening the delete action
       // sheet (v223.tn26 #498), which annoyed users mid-listen who
       // expected tap-to-seek like the rest of the sentence. New

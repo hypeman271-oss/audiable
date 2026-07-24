@@ -9931,6 +9931,35 @@ textarea#text.file-drop-active {
   user-select: none;
 }
 
+/* v4.238: order badge on a Combine chip (1 or 2). The first sentence
+   flagged is combine 1, the second combine 2; the merged sentence reads
+   1 then 2. Positioned as a tiny corner pip so the 🔗 icon stays
+   legible. position:relative on the chip anchors it. */
+.annotate-tag-chip[data-tag="combine"] {
+  position: relative;
+  overflow: visible;
+}
+.annotate-combine-ord {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: #00363a;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
 /* v4.234: touch hit-slop for the Cut chip specifically. The chip's
    painted circle is 22px — below the ~44px min touch target — so on a
    real finger a press aimed at the icon often lands a few px into the
