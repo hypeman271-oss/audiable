@@ -21025,6 +21025,23 @@ async function _cutAnnotatedSentence(clipId, idx) {
   }
 }
 
+// v4.239: lowercase the first word of a sentence that's being folded into
+// the middle of another (combine). Finds the first letter (skipping any
+// leading quotes/parens/space) and lowercases it — EXCEPT the pronoun "I"
+// and its contractions (I'm, I'll, I've, I'd), where lowercasing is always
+// wrong. Proper nouns can't be detected reliably here, so a name at the
+// start ("Sarah smiled") does get lowercased; the author can fix that one
+// case with an inline edit.
+function _decapitalizeFirstWord(s) {
+  return String(s || "").replace(/[A-Za-z]/, (ch, offset, full) => {
+    if (ch < "A" || ch > "Z") return ch; // first letter already lowercase
+    const next = full[offset + 1] || "";
+    // Standalone "I" / "I'…" — capital I NOT followed by another letter.
+    if (ch === "I" && !/[A-Za-z]/.test(next)) return ch;
+    return ch.toLowerCase();
+  });
+}
+
 // v4.238: locate a sentence's exact [start,end] range within fullText by
 // walking every prior sentence's text first (so a repeated phrase earlier
 // in the chapter can't be matched instead of the real target). Returns
@@ -21317,9 +21334,10 @@ async function _maybePromptCombine(clipId) {
       return;
     }
     // Comma join: replace combine 1's trailing sentence punctuation with a
-    // comma, then append combine 2 verbatim. Yields ONE sentence (no
-    // internal . ! ?), combine 1 first.
-    const combinedText = `${text1.trim().replace(/[.!?]+$/, "")}, ${text2.trim()}`;
+    // comma, then append combine 2 with its first word decapitalized (it's
+    // no longer sentence-initial). Yields ONE sentence (no internal
+    // . ! ?), combine 1 first.
+    const combinedText = `${text1.trim().replace(/[.!?]+$/, "")}, ${_decapitalizeFirstWord(text2.trim())}`;
     const combineAnnoIds = [c1.id, c2.id];
     const anchor =
       document.querySelector('.annotate-tag-chip[data-tag="combine"][data-combine-ord="2"]') ||
