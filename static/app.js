@@ -30837,15 +30837,19 @@ function makeClipCard(clip) {
   // Libby-style per-card accent (v125). Derived from the uploaded
   // cover's dominant color, or the title-hash if no cover. Two CSS
   // custom properties: --clip-accent (solid for borders if needed)
-  // and --clip-accent-tint (10% alpha for the soft background wash).
+  // and --clip-accent-tint (soft background wash).
   const accent = _clipAccentColor(clip);
   item.style.setProperty(
     "--clip-accent",
     `hsl(${accent.h} ${accent.s}% ${accent.l}%)`
   );
+  // v4.241: 0.12 → 0.085. Paired with the CSS gradient reach cut
+  // (55% → 34%), softens the per-card cover tint so the library list
+  // reads calm — noticeably so on the cream light/sepia themes where a
+  // 12% saturated hue over near-white was reading as visual noise.
   item.style.setProperty(
     "--clip-accent-tint",
-    `hsl(${accent.h} ${accent.s}% ${accent.l}% / 0.12)`
+    `hsl(${accent.h} ${accent.s}% ${accent.l}% / 0.085)`
   );
 
   // In select mode the drag-handle slot is repurposed for a checkbox.

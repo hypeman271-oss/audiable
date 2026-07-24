@@ -4246,7 +4246,14 @@ textarea#text {
 }
 
 .reading-view .sentence {
-  color: var(--fg-dim);
+  /* v4.241: idle/paused reading text used --fg-dim (a caption tone) —
+     legible on the dark themes, but too washed-out on cream in
+     light/sepia to comfortably READ. Blend toward full --fg so idle
+     text is readable in every theme, while .active (the playing
+     sentence) still brightens to 100% --fg + accent-tint bg below —
+     the karaoke read-along contrast is preserved, just from a higher
+     floor. */
+  color: color-mix(in srgb, var(--fg) 70%, var(--fg-dim));
   transition: color 0.15s ease, background-color 0.15s ease;
   padding: 1px 2px;
   border-radius: 3px;
@@ -4377,14 +4384,18 @@ body[data-ui-mode="author"]
    — important for annotate mode, where the user flags played
    sentences and previews upcoming ones. */
 body[data-ui-mode="author"] .reading-view .sentence {
-  opacity: 0.55;
+  /* v4.241: lifted from 0.55 → 0.72 so Author-mode idle text is
+     readable (it compounds with the dimmed base color above); .active
+     stays 1.0 so the playing sentence still stands out clearly. */
+  opacity: 0.72;
   transition: opacity 0.15s ease;
 }
 body[data-ui-mode="author"] .reading-view .sentence.active {
   opacity: 1;
 }
 body[data-ui-mode="author"] .reading-view .sentence.played {
-  opacity: 0.35;
+  /* 0.35 → 0.5: already-read text still recedes, but stays legible. */
+  opacity: 0.5;
 }
 
 /* v223.tn12 (#477): word-level highlight inside the active sentence.
@@ -5790,6 +5801,20 @@ input[type="range"]::-moz-range-thumb {
 button {
   appearance: none;
   border: none;
+  /* v4.241: themed default fill + text. Previously the base rule set
+     NO background, so any bare <button> (or one whose class — e.g. the
+     undefined .ghost-btn, .notes-btn, .annotate-mode-btn — never sets
+     a fill) fell back to the browser's UA-white. That's why "Pull now",
+     "Force-push", and the reading toolbar (Annotate / Animate /
+     Download notes / Bookmarks / Clear marks) rendered as bright white
+     pills clashing on the dark themes. A subtle elevated fill unifies
+     them into the theme. Safe by specificity: the 117 buttons that
+     explicitly declare `background: transparent` (icon rail, × closes,
+     link buttons) and every .primary/.secondary/tag chip set their own
+     fill and win over this element-level default. Border stays none so
+     no transparent icon button gains an outline. */
+  background: var(--bg-card-2);
+  color: var(--fg);
   border-radius: 12px;
   padding: 14px 16px;
   font-size: 16px;
@@ -6902,10 +6927,16 @@ button:disabled {
      visually "owns" the chrome around it. Defaults to no tint when
      the var is missing. */
   background-color: var(--bg-card-2);
+  /* v4.241: confined the per-card cover-color tint from a 55%
+     card-spanning wash to a left-edge accent (34%) that hugs the cover
+     swatch. On the cream light/sepia themes the broad wash read noisy
+     card-to-card; the tight accent keeps the cover-color identity while
+     the list reads calm. Alpha also softened in makeClipCard (0.12 →
+     0.085). */
   background-image: linear-gradient(
     100deg,
     var(--clip-accent-tint, transparent) 0%,
-    transparent 55%
+    transparent 34%
   );
   border: 1px solid var(--border-soft);
   border-radius: 10px;
@@ -7086,7 +7117,7 @@ button:disabled {
     linear-gradient(
       100deg,
       var(--clip-accent-tint, transparent) 0%,
-      transparent 55%
+      transparent 34%
     );
 }
 .clip.outdated .clip-title-top-text::after {
