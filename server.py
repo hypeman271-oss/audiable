@@ -345,10 +345,36 @@ async def _schedule_wedge_heartbeat():
                     active_jobs = len(_sj.list_active_jobs())
                 except Exception:
                     active_jobs = -1
+                # v4.238: disk-space check on the data volume. Incident:
+                # the Fly volume silently filled to 100% (2.9G/2.9G) —
+                # every clip PUT started 500ing with sqlite3.OperationalError
+                # ("database or disk is full"), discovered only because a
+                # user's library sync reported "13 failed". Nothing
+                # surfaced this until then. Piggyback on the existing
+                # heartbeat tick (already grep-able, already running every
+                # 30s) instead of a separate task — one more field, same
+                # log line. LOW DISK / CRITICAL markers make `grep
+                # heartbeat` alone enough to catch a slow fill before it
+                # becomes an outage; a disk_usage() failure (path
+                # missing, permissions) degrades to disk=? rather than
+                # taking the whole heartbeat down.
+                try:
+                    import shutil as _shutil
+                    _du = _shutil.disk_usage(str(library_db.DATA_DIR))
+                    _free_mb = _du.free // (1024 * 1024)
+                    _pct_free = (_du.free / _du.total * 100) if _du.total else 0
+                    if _pct_free < 5:
+                        _disk_str = f"disk={_free_mb}MB free ({_pct_free:.1f}%) CRITICAL"
+                    elif _pct_free < 15:
+                        _disk_str = f"disk={_free_mb}MB free ({_pct_free:.1f}%) LOW"
+                    else:
+                        _disk_str = f"disk={_free_mb}MB free ({_pct_free:.1f}%)"
+                except Exception:
+                    _disk_str = "disk=?"
                 print(
                     f"[heartbeat] tick={_WEDGE_HEARTBEAT_COUNT} "
                     f"uptime={uptime}s jobs={active_jobs} "
-                    f"sse={_WEDGE_SSE_ACTIVE} rss={rss_mb}MB",
+                    f"sse={_WEDGE_SSE_ACTIVE} rss={rss_mb}MB {_disk_str}",
                     file=_sys.stderr, flush=True,
                 )
             except Exception as e:
