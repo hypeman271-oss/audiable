@@ -20940,22 +20940,29 @@ async function _cutAnnotatedSentence(clipId, idx) {
         if (cutStart >= 0) {
           let before = newClipText.slice(0, cutStart);
           let after = newClipText.slice(cutStart + cutText.length);
-          // Collapse the space seam left behind. Three cases, matching
-          // where the cut sentence sat:
-          //   - first in the whole text  → strip AFTER's leading run of
-          //     spaces/tabs (no "before" to seam against).
-          //   - last in the whole text   → strip BEFORE's trailing run.
-          //   - interior ("one.  three.")→ drop exactly one of the two
-          //     spaces that now sit back-to-back.
-          // Newlines are never touched either side — a paragraph break
-          // stays a paragraph break so cutting a whole paragraph's only
-          // sentence doesn't fuse it into its neighbor.
+          // Collapse the whitespace seam left behind. The removed sentence
+          // had horizontal whitespace on BOTH sides (e.g. "one.  two.
+          // three." with the author's spacing); naively joining leaves a
+          // double space. Strip the horizontal run on each side, then:
+          //   - first in the whole text → nothing before, just drop the
+          //     now-leading spaces.
+          //   - last in the whole text  → nothing after, drop trailing.
+          //   - interior               → rejoin with exactly ONE space,
+          //     regardless of whether the source used one space, two
+          //     spaces, or a tab between sentences.
+          // [^\S\r\n] is "horizontal whitespace" — spaces/tabs/NBSP but
+          // NOT newlines, so a paragraph or line break bordering the seam
+          // stands and we insert no space (cutting a paragraph's only
+          // sentence doesn't fuse it into its neighbor).
           if (before === "") {
-            after = after.replace(/^[ \t]+/, "");
+            after = after.replace(/^[^\S\r\n]+/, "");
           } else if (after === "") {
-            before = before.replace(/[ \t]+$/, "");
-          } else if (before.endsWith(" ") && after.startsWith(" ")) {
-            after = after.slice(1);
+            before = before.replace(/[^\S\r\n]+$/, "");
+          } else {
+            before = before.replace(/[^\S\r\n]+$/, "");
+            after = after.replace(/^[^\S\r\n]+/, "");
+            const newlineSeam = /[\r\n]$/.test(before) || /^[\r\n]/.test(after);
+            after = (newlineSeam ? "" : " ") + after;
           }
           newClipText = before + after;
         }
@@ -21193,11 +21200,20 @@ async function _combineAnnotatedSentences(clipId, targetIdx, otherIdx, combinedT
         if (ed.kind === "replace") {
           newClipText = before + combinedText + after;
         } else {
-          // Collapse the space seam, leaving paragraph newlines intact
-          // (same rule as the cut path).
-          if (before === "") after = after.replace(/^[ \t]+/, "");
-          else if (after === "") before = before.replace(/[ \t]+$/, "");
-          else if (before.endsWith(" ") && after.startsWith(" ")) after = after.slice(1);
+          // Collapse the whitespace seam, leaving paragraph newlines
+          // intact (same robust rule as the cut path — strip the
+          // horizontal run on both sides, rejoin with one space so a
+          // two-space or tab separator can't leave a gap).
+          if (before === "") {
+            after = after.replace(/^[^\S\r\n]+/, "");
+          } else if (after === "") {
+            before = before.replace(/[^\S\r\n]+$/, "");
+          } else {
+            before = before.replace(/[^\S\r\n]+$/, "");
+            after = after.replace(/^[^\S\r\n]+/, "");
+            const newlineSeam = /[\r\n]$/.test(before) || /^[\r\n]/.test(after);
+            after = (newlineSeam ? "" : " ") + after;
+          }
           newClipText = before + after;
         }
       }
