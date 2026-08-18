@@ -20241,6 +20241,39 @@ function _onEditTextClick() {
   setStatus("Select a sentence first, then tap ✎ to edit it.", true);
 }
 
+// v4.246: keyboard-aware auto-scroll for inline editing. On phone the
+// soft keyboard — plus the floating annotate-chip row and the mini
+// player that hover just above it — cover the lower part of the reading
+// view, so the sentence being edited can end up hidden behind them.
+// Nudge the reading-view's OWN scrollbar (never the document — see the
+// karaoke note at _tick) so the editing sentence parks near the top of
+// whatever band is still visible above the keyboard.
+function _scrollInlineEditIntoView(span) {
+  if (!span || !readingView) return;
+  try {
+    const cRect = readingView.getBoundingClientRect();
+    const sRect = span.getBoundingClientRect();
+    // Effective visible bottom of the reading area: the higher of the
+    // container's own bottom and the top of the on-screen keyboard.
+    // visualViewport.height shrinks when the keyboard is up; offsetTop
+    // covers any browser chrome pushed down above it. Reserve room for
+    // the annotate chips + mini player that float above the keyboard.
+    const vv = window.visualViewport;
+    const kbTop = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const OVERLAY_RESERVE = 150; // annotate chip row + mini player
+    const visibleTop = cRect.top;
+    const visibleBottom = Math.min(cRect.bottom, kbTop - OVERLAY_RESERVE);
+    // Already comfortably inside the visible band → leave it alone so we
+    // don't fight the user's own scrolling.
+    if (sRect.top >= visibleTop && sRect.bottom <= visibleBottom - 8) return;
+    // Park the sentence's top just below the container top, keeping a
+    // sliver of the preceding sentence for context.
+    const parkTop = visibleTop + 16;
+    const delta = sRect.top - parkTop;
+    readingView.scrollBy({ top: delta, behavior: "smooth" });
+  } catch {}
+}
+
 function _enterInlineEdit(idx) {
   if (typeof _dlog === "function") {
     _dlog("inline-edit", "_enterInlineEdit called", {
@@ -20300,6 +20333,25 @@ function _enterInlineEdit(idx) {
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
+  } catch {}
+
+  // v4.246: keep the editing sentence above the keyboard. The soft
+  // keyboard animates in AFTER focus, so scroll once now and again on the
+  // next visualViewport resize (when we finally know the keyboard's
+  // height), plus a deferred pass for Android WebViews that fire resize
+  // before layout settles.
+  try {
+    _scrollInlineEditIntoView(span);
+    if (window.visualViewport) {
+      const onVV = () => {
+        if (_inlineEditingIdx === idx) _scrollInlineEditIntoView(span);
+      };
+      window.visualViewport.addEventListener("resize", onVV);
+      span._editVVHandler = onVV;
+    }
+    setTimeout(() => {
+      if (_inlineEditingIdx === idx) _scrollInlineEditIntoView(span);
+    }, 300);
   } catch {}
 
   const onKey = (e) => {
@@ -21581,6 +21633,14 @@ function _exitInlineEdit() {
         "click", span._editOutsideHandler, true,
       );
       delete span._editOutsideHandler;
+    }
+    if (span._editVVHandler) {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener(
+          "resize", span._editVVHandler,
+        );
+      }
+      delete span._editVVHandler;
     }
   }
   _inlineEditingIdx = -1;
