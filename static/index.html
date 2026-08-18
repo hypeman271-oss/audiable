@@ -2343,6 +2343,20 @@
               aria-label="Publish a shareable link to this book"
               title="Publish a link anyone can open to read this book"
             >🔗 Share</button>
+            <!-- v4.245: surfaced GitHub push. Hidden unless the loaded
+                 clip is GitHub-linked; gains a .has-unpushed dot when it
+                 has local edits not yet pushed. Opens the in-app commit
+                 sheet (no more native window.prompt), so you can push
+                 straight from the reading view instead of digging into
+                 the library Edit dialog. -->
+            <button
+              id="clip-push-github-btn"
+              type="button"
+              class="link-btn"
+              hidden
+              aria-label="Push this chapter's text to GitHub"
+              title="Push this chapter's text to its GitHub source"
+            >⇡ Push</button>
           </div>
         </div>
         <!-- v220d: empty-state cards relocated to TOP of the text card.
@@ -3244,6 +3258,16 @@
             aria-label="Re-fetch and re-synthesize every outdated GitHub clip"
             hidden
           >Re-narrate outdated</button>
+          <!-- v4.245: batch push. Revealed by JS only when ≥1 GitHub-
+               linked clip has unpushed local edits; label carries the
+               count. -->
+          <button
+            id="library-push-all-github"
+            type="button"
+            class="link-btn"
+            aria-label="Push every chapter with unpushed local edits to GitHub"
+            hidden
+          >⇡ Push all edited</button>
         </div>
         <!-- Select-mode tools (visible only while choosing clips) -->
         <div class="library-tools library-tools-select" id="library-tools-select" hidden>

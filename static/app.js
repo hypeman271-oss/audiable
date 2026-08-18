@@ -19588,6 +19588,7 @@ async function saveCurrentClipText() {
       const newSentenceCount = splitSentencesClient(newText).length;
       needsRegen = oldSentenceCount !== newSentenceCount;
       c.text = newText;
+      if (c.gitRef) c.gitRef.dirty = true; // v4.245: local edit -> unpushed
       if (needsRegen) {
         // Old resume position likely doesn't map cleanly to the new audio,
         // so reset it before we save and kick off the regen.
@@ -19628,6 +19629,7 @@ async function saveCurrentClipText() {
   } finally {
     saveTextBtn.disabled = false;
     saveTextBtn.textContent = oldLabel;
+    try { if (typeof _updatePushAffordance === "function") { _updatePushAffordance(); _updatePushAllAffordance(); } } catch {} // v4.245
   }
 }
 
@@ -20742,6 +20744,7 @@ async function _commitStructuralEdit({ clipId, idx, originalText, newText, piece
     // Persist text + audio + offsets + lines + shifted bookmarks together.
     await _mutateClipAtomic(clipId, (c) => {
       c.text = newClipText;
+      if (c.gitRef) c.gitRef.dirty = true; // v4.245: local edit -> unpushed
       c.blob = newBlob;
       c.sentenceOffsetsSec = newOffsetsSec.slice();
       c.durationSec = isFinite(playerEl.duration) ? playerEl.duration : c.durationSec || 0;
@@ -20796,6 +20799,7 @@ async function _commitStructuralEdit({ clipId, idx, originalText, newText, piece
     setStatus(_withOfflineHint(`Couldn't add the sentence — ${e.message || e}.`), true);
   } finally {
     _structuralEditInFlight = false;
+    try { if (typeof _updatePushAffordance === "function") { _updatePushAffordance(); _updatePushAllAffordance(); } } catch {} // v4.245
   }
 }
 
@@ -20960,6 +20964,7 @@ async function _cutAnnotatedSentence(clipId, idx) {
     // shifted annotations together.
     await _mutateClipAtomic(clipId, (c) => {
       c.text = newClipText;
+      if (c.gitRef) c.gitRef.dirty = true; // v4.245: local edit -> unpushed
       c.blob = newBlob;
       c.sentenceOffsetsSec = newOffsetsSec.slice();
       c.durationSec = isFinite(playerEl.duration)
@@ -21038,6 +21043,7 @@ async function _cutAnnotatedSentence(clipId, idx) {
     setStatus(_withOfflineHint(`Couldn't cut the sentence — ${e.message || e}.`), true);
   } finally {
     _structuralEditInFlight = false;
+    try { if (typeof _updatePushAffordance === "function") { _updatePushAffordance(); _updatePushAllAffordance(); } } catch {} // v4.245
   }
 }
 
@@ -21241,6 +21247,7 @@ async function _combineAnnotatedSentences(clipId, targetIdx, otherIdx, combinedT
 
     await _mutateClipAtomic(clipId, (c) => {
       c.text = newClipText;
+      if (c.gitRef) c.gitRef.dirty = true; // v4.245: local edit -> unpushed
       c.blob = newBlob;
       c.sentenceOffsetsSec = newOffsetsSec.slice();
       c.durationSec = isFinite(playerEl.duration) ? playerEl.duration : c.durationSec || 0;
@@ -21314,6 +21321,7 @@ async function _combineAnnotatedSentences(clipId, targetIdx, otherIdx, combinedT
     setStatus(_withOfflineHint(`Couldn't combine — ${e.message || e}.`), true);
   } finally {
     _structuralEditInFlight = false;
+    try { if (typeof _updatePushAffordance === "function") { _updatePushAffordance(); _updatePushAllAffordance(); } } catch {} // v4.245
   }
 }
 
@@ -21491,6 +21499,7 @@ async function _commitInlineEdit() {
 
     await _mutateClipAtomic(clipId, (c) => {
       c.text = newClipText;
+      if (c.gitRef) c.gitRef.dirty = true; // v4.245: local edit -> unpushed
       if (
         Array.isArray(c.lines) &&
         c.lines.length > 0 &&
@@ -21531,6 +21540,7 @@ async function _commitInlineEdit() {
     _cancelInlineEdit();
   } finally {
     _inlineCommitInFlight = false;
+    try { if (typeof _updatePushAffordance === "function") { _updatePushAffordance(); _updatePushAllAffordance(); } } catch {} // v4.245
   }
 }
 function _cancelInlineEdit() {
@@ -31504,6 +31514,15 @@ function makeClipCard(clip) {
   titleText.className = "clip-title-top-text";
   titleText.textContent = clip.title || "(untitled)";
   titleTop.appendChild(titleText);
+  // v4.245: unpushed-edits pip. GitHub-linked clip with local edits not
+  // yet pushed gets a small amber dot so you can spot at a glance which
+  // chapters still need a push.
+  if (_clipHasUnpushedEdits(clip)) {
+    const dot = document.createElement("span");
+    dot.className = "clip-unpushed-dot";
+    dot.title = "Local edits not yet pushed to GitHub";
+    titleTop.appendChild(dot);
+  }
   // v220u: duration in the title row, just left of the voice. The
   // bottom meta line used to carry word count · duration · date, but
   // the action strip squeezed it to one-character clipping ("2.").
@@ -32642,6 +32661,11 @@ async function renderLibrary() {
   // search/tag filtering would have been applied — that matches the
   // "Library · X of N" header convention.
   _libraryUpdateTabCounts(audioClips.length, ebookClips.length);
+
+  // v4.245: reveal/count the batch "Push all edited" button.
+  if (typeof _updatePushAllAffordance === "function") {
+    _updatePushAllAffordance();
+  }
 }
 
 // ---- Edit clip (title + note + tags) ------------------------------------
@@ -33805,152 +33829,296 @@ if (clipEditShareMockupBtn) {
 // before v4.80) have no frontmatter field — push them as before.
 // Files without a frontmatter block get an empty string and the
 // prepend is a no-op.
+// ── v4.245: streamlined GitHub round-trip ────────────────────────────
+// "I edit a lot on my phone and push back to GitHub." Three parts share
+// this foundation:
+//   1. A dirty flag so the app knows a chapter has local edits not yet
+//      pushed — set at every text-edit site, cleared on push / refetch.
+//   2. A reusable _gitPushClip() (the fetch + error mapping + gitRef
+//      bookkeeping), used by the reading-view Push button, the Edit
+//      dialog's button, and the batch "Push all edited" action.
+//   3. A proper in-app commit sheet (_openGitCommitSheet) replacing the
+//      clunky native window.prompt.
+//
+// Dirty is a flag, not a text-hash baseline: it works immediately for
+// edits made from now on (the active workflow), with no per-render
+// hashing and no need to know each legacy clip's pristine GitHub text.
+async function _markGitDirty(clipId) {
+  // Flag a GitHub-linked clip as having unpushed local edits. No-op (no
+  // write) for non-GitHub clips or ones already flagged, so calling it
+  // from every edit site is cheap.
+  try {
+    if (clipId == null) return;
+    const clip = await getClip(clipId);
+    if (!clip || !_clipIsGitLinked(clip) || clip.gitRef.dirty) return;
+    await _mutateClipAtomic(clipId, (c) => { if (c.gitRef) c.gitRef.dirty = true; });
+    if (clipId === _currentClipId && typeof _updatePushAffordance === "function") _updatePushAffordance();
+    if (typeof renderLibrary === "function") { try { renderLibrary(); } catch {} }
+  } catch {}
+}
+function _clipHasUnpushedEdits(clip) {
+  return !!(clip && clip.gitRef && clip.gitRef.repoUrl && clip.gitRef.path && clip.gitRef.dirty);
+}
+function _clipIsGitLinked(clip) {
+  return !!(clip && clip.gitRef && clip.gitRef.repoUrl && clip.gitRef.path && clip.gitRef.sha);
+}
+
+// Shared push. Returns { ok, reason?, commitSha?, statusMsg }. Never
+// throws — callers read .ok. Handles token/empty/stale/auth uniformly
+// and, on success, refreshes gitRef.sha + clears the dirty flag.
+async function _gitPushClip(clip, message) {
+  if (!_clipIsGitLinked(clip)) {
+    return { ok: false, reason: "no_gitref", statusMsg: "Not linked to a GitHub source." };
+  }
+  const token = getGithubToken();
+  if (!token) return { ok: false, reason: "no_token", statusMsg: "Set a GitHub token in Settings before pushing." };
+  if (!(clip.text || "").trim()) return { ok: false, reason: "empty", statusMsg: "Nothing to push — clip text is empty." };
+  const branch = clip.gitRef.branch || "main";
+  const frontmatter = (clip.gitRef && clip.gitRef.frontmatter) || "";
+  const pushContent = frontmatter + (clip.text || "");
+  let res, data;
+  try {
+    res = await fetch("/api/github/push-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        github_token: token,
+        repo_url: clip.gitRef.repoUrl,
+        branch,
+        path: clip.gitRef.path,
+        content: pushContent,
+        message,
+        expected_sha: clip.gitRef.sha,
+        host: clip.gitRef.host || null,
+      }),
+    });
+    data = await res.json().catch(() => ({}));
+  } catch (e) {
+    return { ok: false, reason: "network", statusMsg: _withOfflineHint(`Push failed: ${e.message}`) };
+  }
+  _dlog("github-push", `result for ${clip.gitRef.path}`, {
+    httpStatus: res.status, ok: data && data.ok, reason: data && data.reason,
+  });
+  if (!res.ok || !data || data.ok === false) {
+    const reason = (data && data.reason) || "http_error";
+    let statusMsg;
+    if (reason === "stale_sha") {
+      statusMsg = `"${clip.title || "clip"}": GitHub moved since import — Pull first (Sync GitHub), then Push again.`;
+    } else if (reason === "not_found") {
+      statusMsg = `File not found on GitHub: ${clip.gitRef.path} @ ${branch}.`;
+    } else if (reason === "auth") {
+      statusMsg = "GitHub rejected the push — the token may lack write access to this repo.";
+    } else if (reason === "network") {
+      statusMsg = _withOfflineHint("Network error pushing to GitHub.");
+    } else {
+      statusMsg = `Push failed: ${(data && data.message) || `HTTP ${res.status}`}`;
+    }
+    return { ok: false, reason, statusMsg };
+  }
+  const newSha = data.blob_sha || "";
+  try {
+    await _mutateClipAtomic(clip.id, (c) => {
+      if (c.gitRef) {
+        if (newSha) c.gitRef.sha = newSha;
+        c.gitRef.dirty = false; // just pushed — local matches remote again
+      }
+    });
+  } catch (e) { console.warn("[github-push] post-push gitRef update failed:", e); }
+  const commitShort = data.commit_sha ? String(data.commit_sha).slice(0, 7) : "(no SHA)";
+  return { ok: true, commitSha: commitShort, newSha, statusMsg: `Pushed "${clip.title || "clip"}" — commit ${commitShort}.` };
+}
+
+// In-app commit sheet. Returns a Promise<string|null> — the message, or
+// null if cancelled. `count` > 1 labels it as a batch push.
+let _lastGitCommitMessage = "";
+function _openGitCommitSheet({ title, path, branch, count, defaultMessage }) {
+  return new Promise((resolve) => {
+    let dlg = document.getElementById("git-commit-sheet");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "git-commit-sheet";
+      dlg.className = "git-commit-sheet";
+      document.body.appendChild(dlg);
+    }
+    const isBatch = count && count > 1;
+    const esc = (s) => _escapeHtmlForSentence(String(s == null ? "" : s));
+    const targetLine = isBatch
+      ? `${count} chapters with local edits`
+      : `${esc(path)} <span class="git-commit-branch">@ ${esc(branch || "main")}</span>`;
+    dlg.innerHTML =
+      `<div class="git-commit-inner">` +
+        `<div class="git-commit-head">` +
+          `<h2>⇡ Push to GitHub</h2>` +
+          `<button type="button" class="git-commit-x" aria-label="Cancel">×</button>` +
+        `</div>` +
+        `<p class="git-commit-target">${targetLine}</p>` +
+        `<label class="git-commit-label" for="git-commit-msg">Commit message</label>` +
+        `<input id="git-commit-msg" class="git-commit-msg" type="text" autocomplete="off" spellcheck="false" />` +
+        `<div class="git-commit-actions">` +
+          `<button type="button" class="git-commit-cancel">Cancel</button>` +
+          `<button type="button" class="git-commit-push primary">⇡ Push</button>` +
+        `</div>` +
+      `</div>`;
+    const input = dlg.querySelector("#git-commit-msg");
+    input.value = _lastGitCommitMessage || defaultMessage || "";
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      if (val) _lastGitCommitMessage = val;
+      try { dlg.close(); } catch {}
+      resolve(val);
+    };
+    dlg.querySelector(".git-commit-cancel").onclick = () => done(null);
+    dlg.querySelector(".git-commit-x").onclick = () => done(null);
+    dlg.querySelector(".git-commit-push").onclick = () => done(input.value.trim() || defaultMessage);
+    input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); done(input.value.trim() || defaultMessage); } };
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(null); }, { once: true });
+    if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+    setTimeout(() => { try { input.focus(); input.select(); } catch {} }, 60);
+  });
+}
+
+// Reading-view Push button (#clip-push-github-btn) — reflect whether the
+// current clip is GitHub-linked and whether it has unpushed edits.
+function _updatePushAffordance() {
+  const btn = document.getElementById("clip-push-github-btn");
+  if (!btn) return;
+  (async () => {
+    let clip = null;
+    try { clip = _currentClipId != null ? await getClip(_currentClipId) : null; } catch {}
+    if (!clip || !_clipIsGitLinked(clip)) {
+      btn.hidden = true;
+      return;
+    }
+    btn.hidden = false;
+    const dirty = _clipHasUnpushedEdits(clip);
+    btn.classList.toggle("has-unpushed", dirty);
+    btn.textContent = dirty ? "⇡ Push•" : "⇡ Push";
+    btn.title = dirty
+      ? "You have local edits not yet on GitHub — tap to push"
+      : "Push this chapter's text to its GitHub source";
+  })();
+}
+
+// Push the CURRENT clip (reading-view button + Edit-dialog button both
+// route here).
+async function _pushCurrentClipToGithub(clipId) {
+  const clip = await getClip(clipId);
+  if (!clip) { setStatus("Couldn't read that clip.", true); return; }
+  if (!_clipIsGitLinked(clip)) { setStatus("This clip isn't linked to a GitHub source.", true); return; }
+  if (!getGithubToken()) { setStatus("Set a GitHub token in Settings before pushing.", true); return; }
+  const msg = await _openGitCommitSheet({
+    title: clip.title, path: clip.gitRef.path, branch: clip.gitRef.branch || "main",
+    defaultMessage: `Revised in ${APP_NAME}: ${clip.title || "(untitled)"}`,
+  });
+  if (msg === null) { setStatus("Push cancelled."); return; }
+  setStatus("Pushing to GitHub…");
+  const result = await _gitPushClip(clip, msg);
+  setStatus(result.statusMsg, !result.ok);
+  if (result.ok) {
+    _updatePushAffordance();
+    if (typeof renderLibrary === "function") { try { renderLibrary(); } catch {} }
+    const shaEl = document.getElementById("clip-edit-gitref-sha");
+    if (shaEl && result.newSha) { shaEl.textContent = result.newSha.slice(0, 7); shaEl.title = `Full commit SHA: ${result.newSha}`; }
+  }
+}
+
+// Batch: push every GitHub-linked clip that has unpushed local edits.
+async function _pushAllEditedToGithub() {
+  const all = await listClips();
+  const dirty = all.filter((c) => _clipHasUnpushedEdits(c));
+  if (!dirty.length) {
+    alert("No chapters have unpushed edits. Everything's already on GitHub.");
+    return;
+  }
+  if (!getGithubToken()) {
+    alert("Set a GitHub token in Settings before pushing.");
+    return;
+  }
+  const msg = await _openGitCommitSheet({
+    count: dirty.length,
+    defaultMessage: `Revised in ${APP_NAME}: ${dirty.length} chapters`,
+  });
+  if (msg === null) { setStatus("Push cancelled."); return; }
+  let ok = 0; const failed = [];
+  for (let i = 0; i < dirty.length; i++) {
+    setStatus(`Pushing ${i + 1}/${dirty.length} to GitHub…`);
+    const fresh = await getClip(dirty[i].id); // re-read in case it changed
+    const result = await _gitPushClip(fresh || dirty[i], msg);
+    if (result.ok) ok++; else failed.push(`${(dirty[i].title || "clip")}: ${result.reason}`);
+  }
+  _updatePushAffordance();
+  if (typeof renderLibrary === "function") { try { renderLibrary(); } catch {} }
+  const summary = failed.length
+    ? `Pushed ${ok}/${dirty.length}. ${failed.length} failed — see console.`
+    : `Pushed all ${ok} edited chapter${ok === 1 ? "" : "s"} to GitHub.`;
+  if (failed.length) console.warn("[github-push-all] failures:", failed);
+  alert(summary);
+  setStatus(summary, failed.length > 0);
+}
+
 const _clipEditPushGithubBtn = document.getElementById("clip-edit-push-github-btn");
 if (_clipEditPushGithubBtn) {
   _clipEditPushGithubBtn.addEventListener("click", async () => {
     if (_clipEditPushGithubBtn.disabled) return;
     if (!_editingClipId) return;
-    const clip = await getClip(_editingClipId);
-    if (!clip) {
-      setStatus("Couldn't read that clip.", true);
-      return;
-    }
-    if (!clip.gitRef || !clip.gitRef.repoUrl || !clip.gitRef.path || !clip.gitRef.sha) {
-      setStatus("This clip isn't linked to a GitHub source.", true);
-      return;
-    }
-    const token = getGithubToken();
-    if (!token) {
-      setStatus(
-        "Set a GitHub token in Settings before pushing.",
-        true,
-      );
-      return;
-    }
-    const text = (clip.text || "").trim();
-    if (!text) {
-      setStatus("Nothing to push — clip text is empty.", true);
-      return;
-    }
-
-    // Build the default commit message + show confirm with the
-    // target path/branch so the user can't get confused about which
-    // file they're about to overwrite.
-    const branch = clip.gitRef.branch || "main";
-    const defaultMessage = `Revised in ${APP_NAME}: ${clip.title || "(untitled)"}`;
-    const previewMessage = window.prompt(
-      `Push to GitHub?\n\n` +
-      `  Repo:   ${clip.gitRef.repoUrl}\n` +
-      `  Branch: ${branch}\n` +
-      `  File:   ${clip.gitRef.path}\n` +
-      `  SHA:    ${clip.gitRef.sha.slice(0, 7)} (your imported version)\n\n` +
-      `Edit the commit message below, then OK to push.\n` +
-      `Cancel keeps everything local.`,
-      defaultMessage,
-    );
-    if (previewMessage === null) {
-      setStatus("Push cancelled.");
-      return;
-    }
-    const message = previewMessage.trim() || defaultMessage;
-
+    // v4.245: delegate to the shared push (commit sheet + _gitPushClip)
+    // so the Edit dialog, the reading-view Push button, and the batch
+    // action all behave identically.
     _clipEditPushGithubBtn.disabled = true;
     const _origLabel = _clipEditPushGithubBtn.textContent;
     _clipEditPushGithubBtn.textContent = "Pushing…";
-    // v4.80 (#849): prepend YAML frontmatter so the file round-trips
-    // intact. clip.gitRef.frontmatter is populated by extract.py's
-    // URL-fetch path for .md / .markdown sources; empty string for
-    // formats that don't have a frontmatter, missing entirely on
-    // old clips imported before v4.80 (treat as empty).
-    const frontmatter = (clip.gitRef && clip.gitRef.frontmatter) || "";
-    const pushContent = frontmatter + (clip.text || "");
     try {
-      const res = await fetch("/api/github/push-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          github_token: token,
-          repo_url: clip.gitRef.repoUrl,
-          branch,
-          path: clip.gitRef.path,
-          content: pushContent,
-          message,
-          expected_sha: clip.gitRef.sha,
-          host: clip.gitRef.host || null,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      _dlog("github-push", `result for ${clip.gitRef.path}`, {
-        httpStatus: res.status,
-        ok: data && data.ok,
-        reason: data && data.reason,
-        blobSha: data && data.blob_sha ? String(data.blob_sha).slice(0, 7) : null,
-        commitSha: data && data.commit_sha ? String(data.commit_sha).slice(0, 7) : null,
-      });
-      if (!res.ok || !data || data.ok === false) {
-        const reason = (data && data.reason) || "http_error";
-        if (reason === "stale_sha") {
-          setStatus(
-            `GitHub source has moved since you imported. Pull first ` +
-            `(per-card ↻ Sync chip or Settings → Pull now), then re-open ` +
-            `Edit and try Push again.`,
-            true,
-          );
-        } else if (reason === "not_found") {
-          setStatus(
-            `File not found on GitHub: ${clip.gitRef.path} @ ${branch}. ` +
-            `Check the branch in Edit.`,
-            true,
-          );
-        } else if (reason === "auth") {
-          setStatus(
-            "GitHub rejected the push — token may not have write access. " +
-            "Settings → GitHub → Test token to diagnose.",
-            true,
-          );
-        } else if (reason === "network") {
-          setStatus(_withOfflineHint("Network error pushing to GitHub."), true);
-        } else {
-          const msg = (data && data.message) || `HTTP ${res.status}`;
-          setStatus(`Push failed: ${msg}`, true);
-        }
-        return;
-      }
-
-      // Success: stash the new blob SHA into clip.gitRef.sha so the
-      // outdated detector (#234) sees parity again, and the next time
-      // the user opens Edit it shows the new short SHA in the chip.
-      const newSha = data.blob_sha || "";
-      if (newSha) {
-        try {
-          await _mutateClipAtomic(clip.id, (c) => {
-            if (c.gitRef) c.gitRef.sha = newSha;
-          });
-        } catch (e) {
-          console.warn("[github-push] post-push SHA update failed:", e);
-        }
-        // Repaint the SHA chip in the open Edit dialog so the user
-        // sees the new short SHA without having to close + re-open.
-        const shaEl = document.getElementById("clip-edit-gitref-sha");
-        if (shaEl) {
-          shaEl.textContent = newSha.slice(0, 7);
-          shaEl.title = `Full commit SHA: ${newSha}`;
-        }
-      }
-      const commitShort = data.commit_sha
-        ? String(data.commit_sha).slice(0, 7)
-        : "(no SHA returned)";
-      setStatus(
-        `Pushed "${clip.title || "clip"}" to GitHub — commit ${commitShort}.`
-      );
-    } catch (e) {
-      console.warn("[github-push] threw:", e);
-      setStatus(_withOfflineHint(`Push failed: ${e.message}`), true);
+      await _pushCurrentClipToGithub(_editingClipId);
     } finally {
       _clipEditPushGithubBtn.disabled = false;
       _clipEditPushGithubBtn.textContent = _origLabel;
     }
   });
+}
+
+// v4.245: reading-view "⇡ Push" button — push the current clip straight
+// from where you're editing, via the shared commit sheet + _gitPushClip.
+const _clipPushGithubBtn = document.getElementById("clip-push-github-btn");
+if (_clipPushGithubBtn) {
+  _clipPushGithubBtn.addEventListener("click", async () => {
+    if (_clipPushGithubBtn.disabled || _currentClipId == null) return;
+    _clipPushGithubBtn.disabled = true;
+    const orig = _clipPushGithubBtn.textContent;
+    _clipPushGithubBtn.textContent = "Pushing…";
+    try { await _pushCurrentClipToGithub(_currentClipId); }
+    finally { _clipPushGithubBtn.disabled = false; _clipPushGithubBtn.textContent = orig; _updatePushAffordance(); }
+  });
+}
+
+// v4.245: batch "⇡ Push all edited" — push every GitHub-linked clip with
+// unpushed local edits in one go.
+const _libraryPushAllBtn = document.getElementById("library-push-all-github");
+if (_libraryPushAllBtn) {
+  _libraryPushAllBtn.addEventListener("click", async () => {
+    if (_libraryPushAllBtn.disabled) return;
+    _libraryPushAllBtn.disabled = true;
+    try { await _pushAllEditedToGithub(); }
+    finally { _libraryPushAllBtn.disabled = false; }
+  });
+}
+
+// v4.245: reveal + count the batch button whenever the library renders.
+// Cheap: reads the already-loaded clip list; hides when nothing's dirty.
+async function _updatePushAllAffordance() {
+  const btn = document.getElementById("library-push-all-github");
+  if (!btn) return;
+  try {
+    const all = await listClips();
+    const n = all.filter((c) => _clipHasUnpushedEdits(c)).length;
+    if (n > 0) {
+      btn.hidden = false;
+      btn.textContent = `⇡ Push all edited (${n})`;
+    } else {
+      btn.hidden = true;
+    }
+  } catch { btn.hidden = true; }
 }
 
 // v4.223 / v4.224: Save to Drive. Works on ANY clip (e.g. one pulled from
@@ -37169,6 +37337,9 @@ async function loadClip(id, { autoPlay = false } = {}) {
   // v4.237: persist so a fresh boot can resume into this clip's
   // reading/audio view instead of the bare compose screen.
   _setLastActiveClip(id);
+  // v4.245: reflect the reading-view Push button (shown for GitHub
+  // clips; dot when there are unpushed edits).
+  if (typeof _updatePushAffordance === "function") _updatePushAffordance();
   // v4.212: button now reads "Re-narrate" (overwrites this card).
   if (typeof _updateGenerateLabel === "function") _updateGenerateLabel();
   // v225ep (#632): _currentClipId just changed, so the desktop
