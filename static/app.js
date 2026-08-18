@@ -30438,9 +30438,23 @@ async function syncAllFromGithub() {
     // Walk results and flag outdated clip ids.
     const newOutdated = new Set();
     let errors = 0;
+    // v4.243: track how many CLIPS couldn't be checked (their repo's
+    // request errored), plus the actual error strings. Previously a
+    // failed repo was only counted — its clips silently fell through as
+    // "not outdated," and with a single repo (the common case: one
+    // manuscript repo) a total failure rendered as the contradictory
+    // "All N up to date. (1 repo failed)". That reads as reassurance
+    // when nothing was actually checked. Now we distinguish "checked +
+    // matches" from "couldn't check", and surface the real cause.
+    let uncheckedClips = 0;
+    const errorDetails = [];
     for (const result of data.results || []) {
       if (result.error) {
         errors++;
+        const ekey = `${result.repoUrl}::${result.branch || ""}`;
+        const egroup = groups.get(ekey) || groups.get(`${result.repoUrl}::`);
+        if (egroup) uncheckedClips += egroup.clips.length;
+        errorDetails.push({ repoUrl: result.repoUrl, error: String(result.error).slice(0, 200) });
         continue;
       }
       const key = `${result.repoUrl}::${result.branch || ""}`;
@@ -30456,13 +30470,26 @@ async function syncAllFromGithub() {
     _outdatedClipIds = newOutdated;
     renderLibrary();
     const outdatedCount = newOutdated.size;
-    const errTail = errors ? ` (${errors} repo${errors === 1 ? "" : "s"} failed)` : "";
     _slog("sync-check complete", {
       gitClips: gitClips.length, outdated: outdatedCount, errors,
+      uncheckedClips, errorDetails,
     });
     if (outdatedCount === 0) {
-      const msg = `All ${gitClips.length} GitHub-sourced clip${gitClips.length === 1 ? "" : "s"} ` +
-                  `up to date.${errTail}`;
+      let msg;
+      if (uncheckedClips >= gitClips.length && errors > 0) {
+        // Nothing could be checked — don't claim "up to date."
+        msg = `Couldn't check GitHub — the repository request failed, so none ` +
+              `of your ${gitClips.length} clip${gitClips.length === 1 ? "" : "s"} ` +
+              `could be compared. This is usually a missing or expired GitHub ` +
+              `token: open Settings → set your GitHub PAT (it's per-device), then Sync again.`;
+      } else if (errors > 0) {
+        const checked = gitClips.length - uncheckedClips;
+        msg = `${checked} clip${checked === 1 ? "" : "s"} up to date; ` +
+              `${uncheckedClips} couldn't be checked (a repo request failed — ` +
+              `check your GitHub token in Settings).`;
+      } else {
+        msg = `All ${gitClips.length} GitHub-sourced clip${gitClips.length === 1 ? "" : "s"} up to date.`;
+      }
       alert(msg);
       setStatus(msg);
     } else {
