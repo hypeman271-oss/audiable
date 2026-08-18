@@ -30493,6 +30493,12 @@ async function syncAllFromGithub() {
       alert(msg);
       setStatus(msg);
     } else {
+      // v4.243: errTail was removed with the old flat "up to date"
+      // message; rebuild it here (the only remaining consumer) so a
+      // partial failure alongside real outdated clips is still surfaced.
+      const errTail = uncheckedClips
+        ? ` (${uncheckedClips} couldn't be checked — check your GitHub token)`
+        : "";
       const summary = `${outdatedCount} of ${gitClips.length} clip${gitClips.length === 1 ? "" : "s"} ` +
                       `have newer commits on GitHub.${errTail}`;
       setStatus(summary);
