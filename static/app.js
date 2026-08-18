@@ -14112,6 +14112,22 @@ function _attachSentenceAssignHandlers(span, idx) {
   // sentences." Gating here AND fixing the CSS rule together.
   span.addEventListener("contextmenu", (e) => {
     e.preventDefault();
+    // v4.242: THE actual fix for "long-pressing the Cut chip still arms
+    // voice-assign." v4.233–v4.236 guarded the pointerdown/drag path,
+    // but on Android a long-press fires `contextmenu` (see v225.tn79
+    // note above) — a SEPARATE path that also calls _addToDragSelection.
+    // That's the one the user's press was hitting. Mirror the
+    // pointerdown cut-chip exemption here: a press on the chip (or its
+    // inline controls), OR anywhere on a sentence that carries a live
+    // Cut chip, must NOT arm voice-assign — that sentence is cut-only.
+    if (e.target && e.target.closest &&
+        e.target.closest(".annotate-tag-chip, .annotate-tag-delete, .annotate-voice-play, .annotate-voice-retry, .annotate-voice-delete")) {
+      return;
+    }
+    if (span.querySelector('.annotate-tag-chip[data-tag="cut"]')) {
+      _dlog("char-voice", "contextmenu — gated (sentence has cut flag)", { idx });
+      return;
+    }
     if (typeof isAuthorMode === "function" && !isAuthorMode()) {
       _dlog("char-voice", "contextmenu — gated (not Author mode)", { idx });
       return;
@@ -24668,8 +24684,14 @@ function _applyAnnotationMarkers(clip) {
         _revealChipDelete(chip);
       });
       // Suppress the OS long-press context menu (same family of
-      // fixes as v225.tn56/57 for the tag-row chips).
-      chip.addEventListener("contextmenu", (e) => e.preventDefault());
+      // fixes as v225.tn56/57 for the tag-row chips). v4.242: also
+      // stopPropagation so the contextmenu can't bubble to the span's
+      // handler and arm voice-assign — belt-and-suspenders alongside
+      // the span-level cut-chip exemption.
+      chip.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
       _dlog("flag-chip", "rendered + wired", {
         tag: tagKey,
         annoId: annoIdForChip,
