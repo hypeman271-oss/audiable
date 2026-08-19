@@ -31002,7 +31002,10 @@ librarySyncGithubBtn.addEventListener("click", syncAllFromGithub);
 // false on any failure (no gitRef, network error, non-OK response).
 // Used by both the bulk "Re-narrate outdated" button (full library
 // sweep) AND the per-card sync chip on outdated cards.
-async function _refetchAndQueueClipFromGithub(id, token) {
+// opts.allowDirty (v4.249): callers must resolve the dirty-conflict sheet
+// before overwriting a clip that has unpushed local edits. Without it,
+// a dirty clip returns the sentinel "dirty" instead of being refetched.
+async function _refetchAndQueueClipFromGithub(id, token, opts) {
   // v225v4.102: instrument every silent-return path so the next debug
   // log pins down exactly where the Sync GitHub flow bails. The user
   // reported "the button clicks but nothing happens" — no bg-queue
@@ -31021,6 +31024,10 @@ async function _refetchAndQueueClipFromGithub(id, token) {
   if (!clip.gitRef) {
     _slog("bail: clip has no gitRef", { id, title: clip.title });
     return false;
+  }
+  if (clip.gitRef.dirty && !(opts && opts.allowDirty)) {
+    _slog("bail: clip has unpushed local edits (dirty)", { id, title: clip.title });
+    return "dirty";
   }
   if (!clip.gitRef.repoUrl) {
     _slog("bail: gitRef.repoUrl missing", { id, gitRef: clip.gitRef });
@@ -31116,7 +31123,46 @@ async function renarrateAllOutdated() {
   }
   // Snapshot so the iteration is stable even if the worker drops
   // entries from the set as each re-narrate lands.
-  const ids = Array.from(_outdatedClipIds);
+  let ids = Array.from(_outdatedClipIds);
+  // v4.249: dirty-conflict guard. Partition out clips with unpushed local
+  // edits and resolve them via ONE sheet before any overwrite happens.
+  let skippedDirty = 0;
+  try {
+    const dirtyClips = [];
+    for (const id of ids) {
+      const c = await getClip(id);
+      if (c && c.gitRef && c.gitRef.dirty) dirtyClips.push(c);
+    }
+    if (dirtyClips.length) {
+      const choice = await _openDirtyConflictSheet({
+        count: dirtyClips.length,
+        titles: dirtyClips.map((c) => c.title || c.gitRef.path || "untitled"),
+      });
+      if (choice === "push") {
+        // Keep the edits: force-push them up. Pushed clips are current
+        // again — drop them from the re-narrate list entirely.
+        const pushedIds = await _pushDirtyClipsKeepingEdits(dirtyClips);
+        const pushed = new Set(pushedIds);
+        const unpushed = new Set(dirtyClips.map((c) => c.id));
+        for (const pid of pushedIds) unpushed.delete(pid);
+        skippedDirty = unpushed.size; // push failures stay skipped
+        ids = ids.filter((id) => !pushed.has(id) && !unpushed.has(id));
+      } else if (choice === "overwrite") {
+        // Explicitly chosen — fall through with allowDirty below.
+      } else {
+        // Cancel: leave dirty clips untouched, still refresh the clean ones.
+        const dirtySet = new Set(dirtyClips.map((c) => c.id));
+        skippedDirty = dirtySet.size;
+        ids = ids.filter((id) => !dirtySet.has(id));
+      }
+    }
+  } catch (e) {
+    console.warn("[renarrate] dirty-guard check failed:", e);
+  }
+  if (!ids.length && skippedDirty) {
+    setStatus(`Skipped ${skippedDirty} chapter${skippedDirty === 1 ? "" : "s"} with unpushed edits — push them first (⇡), then re-run Sync.`);
+    return;
+  }
   libraryRenarrateOutdatedBtn.disabled = true;
   const originalLabel = libraryRenarrateOutdatedBtn.textContent;
   libraryRenarrateOutdatedBtn.textContent = "Refetching…";
@@ -31126,8 +31172,8 @@ async function renarrateAllOutdated() {
     const id = ids[i];
     setStatus(`Refetching ${i + 1}/${ids.length} outdated clips…`);
     try {
-      const ok = await _refetchAndQueueClipFromGithub(id, token);
-      if (ok) enqueued++; else failed++;
+      const ok = await _refetchAndQueueClipFromGithub(id, token, { allowDirty: true });
+      if (ok === true) enqueued++; else failed++;
     } catch (err) {
       console.warn("[renarrate] failed for clip", id, err);
       failed++;
@@ -31135,9 +31181,9 @@ async function renarrateAllOutdated() {
   }
   libraryRenarrateOutdatedBtn.disabled = false;
   libraryRenarrateOutdatedBtn.textContent = originalLabel;
-  const tail = failed
-    ? ` (${failed} couldn't be refetched)`
-    : "";
+  const tail =
+    (failed ? ` (${failed} couldn't be refetched)` : "") +
+    (skippedDirty ? ` (${skippedDirty} skipped — unpushed edits)` : "");
   if (enqueued === 0) {
     setStatus(`No clips could be refetched.${tail}`, true);
   } else {
@@ -31728,10 +31774,36 @@ function makeClipCard(clip) {
         setStatus("Pick a voice before syncing.", true);
         return;
       }
+      // v4.249: dirty-conflict guard. The rendered `clip` may be stale —
+      // read fresh state before deciding.
+      let allowDirty = false;
+      try {
+        const freshClip = await getClip(clip.id);
+        if (freshClip && freshClip.gitRef && freshClip.gitRef.dirty) {
+          const choice = await _openDirtyConflictSheet({
+            count: 1,
+            titles: [freshClip.title || freshClip.gitRef.path || "untitled"],
+          });
+          if (choice === "push") {
+            const pushedIds = await _pushDirtyClipsKeepingEdits([freshClip]);
+            if (pushedIds.length) {
+              _slog("dirty-guard: pushed local edits instead of refetching", { clipId: clip.id });
+            }
+            return; // pushed (or push failed with its own status) — no refetch
+          }
+          if (choice !== "overwrite") {
+            _slog("dirty-guard: user cancelled refetch", { clipId: clip.id });
+            return;
+          }
+          allowDirty = true;
+        }
+      } catch (e) {
+        console.warn("[refetch] dirty-guard check failed:", e);
+      }
       refetchBtn.disabled = true;
       try {
-        const ok = await _refetchAndQueueClipFromGithub(clip.id, token);
-        if (ok) {
+        const ok = await _refetchAndQueueClipFromGithub(clip.id, token, { allowDirty });
+        if (ok === true) {
           // v225v3.24: mirror the in-view banner's instant-hide on
           // confirm (line 24420). Once the user has queued the
           // refetch, both the card footer AND any main-view banner
@@ -34311,7 +34383,11 @@ function _clipIsGitLinked(clip) {
 // Shared push. Returns { ok, reason?, commitSha?, statusMsg }. Never
 // throws — callers read .ok. Handles token/empty/stale/auth uniformly
 // and, on success, refreshes gitRef.sha + clears the dirty flag.
-async function _gitPushClip(clip, message) {
+// opts.force (v4.249): omit expected_sha so the push overwrites whatever
+// is currently on GitHub (last-write-wins). Used by the dirty-conflict
+// guard's "keep my edits" path — the displaced GitHub version stays
+// recoverable in the repo's git history.
+async function _gitPushClip(clip, message, opts) {
   if (!_clipIsGitLinked(clip)) {
     return { ok: false, reason: "no_gitref", statusMsg: "Not linked to a GitHub source." };
   }
@@ -34333,7 +34409,7 @@ async function _gitPushClip(clip, message) {
         path: clip.gitRef.path,
         content: pushContent,
         message,
-        expected_sha: clip.gitRef.sha,
+        expected_sha: opts && opts.force ? null : clip.gitRef.sha,
         host: clip.gitRef.host || null,
       }),
     });
@@ -34371,6 +34447,100 @@ async function _gitPushClip(clip, message) {
   } catch (e) { console.warn("[github-push] post-push gitRef update failed:", e); }
   const commitShort = data.commit_sha ? String(data.commit_sha).slice(0, 7) : "(no SHA)";
   return { ok: true, commitSha: commitShort, newSha, statusMsg: `Pushed "${clip.title || "clip"}" — commit ${commitShort}.` };
+}
+
+// ── v4.249: dirty-conflict guard for the re-narrate paths ───────────────
+// A chapter that is BOTH outdated (GitHub moved ahead) AND dirty (local
+// edits never pushed) is a fork. Every re-narrate path used to silently
+// take GitHub's side, wiping the local edits. Now they all stop at this
+// sheet first. Resolves "push" (keep my edits — force-push local over
+// GitHub; the displaced version stays in git history), "overwrite"
+// (take GitHub's copy — local edits are lost), or null (cancel).
+function _openDirtyConflictSheet({ count, titles }) {
+  return new Promise((resolve) => {
+    let dlg = document.getElementById("dirty-conflict-sheet");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "dirty-conflict-sheet";
+      dlg.className = "conflict-sheet";
+      document.body.appendChild(dlg);
+    }
+    const esc = (s) => _escapeHtmlForSentence(String(s == null ? "" : s));
+    const shown = (titles || []).slice(0, 4);
+    const more = count - shown.length;
+    const listHtml = shown.length
+      ? `<ul class="conflict-sheet-list">` +
+        shown.map((t) => `<li>${esc(t)}</li>`).join("") +
+        (more > 0 ? `<li>…and ${more} more</li>` : "") +
+        `</ul>`
+      : "";
+    const bodyLine =
+      count === 1
+        ? "This chapter has local edits that were never pushed to GitHub. Re-narrating replaces them with GitHub's copy."
+        : `${count} chapters have local edits that were never pushed to GitHub. Re-narrating replaces them with GitHub's copy.`;
+    dlg.innerHTML =
+      `<div class="conflict-sheet-inner">` +
+        `<div class="conflict-sheet-head">` +
+          `<h2>⚠ Unpushed edits</h2>` +
+          `<button type="button" class="conflict-sheet-x" aria-label="Cancel">×</button>` +
+        `</div>` +
+        `<p class="conflict-sheet-body">${bodyLine}</p>` +
+        listHtml +
+        `<p class="conflict-sheet-hint">Pushing keeps your edits — GitHub's newer copy stays in the repo's history either way.</p>` +
+        `<div class="conflict-sheet-actions">` +
+          `<button type="button" class="conflict-sheet-cancel">Cancel</button>` +
+          `<button type="button" class="conflict-sheet-overwrite">Re-narrate anyway</button>` +
+          `<button type="button" class="conflict-sheet-push primary">⇡ Push mine first</button>` +
+        `</div>` +
+      `</div>`;
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      try { dlg.close(); } catch {}
+      resolve(val);
+    };
+    dlg.querySelector(".conflict-sheet-cancel").onclick = () => done(null);
+    dlg.querySelector(".conflict-sheet-x").onclick = () => done(null);
+    dlg.querySelector(".conflict-sheet-overwrite").onclick = () => done("overwrite");
+    dlg.querySelector(".conflict-sheet-push").onclick = () => done("push");
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(null); }, { once: true });
+    if (typeof dlg.showModal === "function") dlg.showModal();
+    else dlg.setAttribute("open", "");
+  });
+}
+
+// Shared "keep my edits" resolution: commit-sheet for the message, then
+// force-push each dirty clip's local text over GitHub. On success the
+// clip's gitRef.sha advances to the new blob — it is no longer outdated,
+// so the caller should NOT re-narrate it. Returns the ids that pushed.
+async function _pushDirtyClipsKeepingEdits(clips) {
+  const first = clips[0];
+  const msg = await _openGitCommitSheet({
+    path: first && first.gitRef ? first.gitRef.path : "",
+    branch: first && first.gitRef ? (first.gitRef.branch || "main") : "main",
+    count: clips.length,
+    defaultMessage: "Revised in Lyrith (kept over newer GitHub copy)",
+  });
+  if (!msg) return [];
+  const pushedIds = [];
+  for (const clip of clips) {
+    setStatus(`⇡ Pushing "${clip.title || "chapter"}"…`);
+    const r = await _gitPushClip(clip, msg, { force: true });
+    if (r.ok) {
+      pushedIds.push(clip.id);
+      _markClipFresh(clip.id);
+    } else {
+      setStatus(r.statusMsg, true);
+    }
+  }
+  try { _updatePushAffordance(); _updatePushAllAffordance(); } catch {}
+  if (pushedIds.length) {
+    setStatus(
+      `⇡ Pushed ${pushedIds.length} chapter${pushedIds.length === 1 ? "" : "s"} — your edits are on GitHub; no re-narrate needed.`
+    );
+  }
+  return pushedIds;
 }
 
 // In-app commit sheet. Returns a Promise<string|null> — the message, or
@@ -38295,9 +38465,22 @@ _gitOutdatedDismiss.addEventListener("click", () => {
 _gitOutdatedConfirm.addEventListener("click", async () => {
   if (!_gitOutdatedClipId) return;
   const clipId = _gitOutdatedClipId;
-  _gitOutdatedBanner.hidden = true;
   const clip = await getClip(clipId);
-  if (!clip || !clip.gitRef) return;
+  if (!clip || !clip.gitRef) { _gitOutdatedBanner.hidden = true; return; }
+  // v4.249: dirty-conflict guard — same sheet as the library paths.
+  if (clip.gitRef.dirty) {
+    const choice = await _openDirtyConflictSheet({
+      count: 1,
+      titles: [clip.title || clip.gitRef.path || "untitled"],
+    });
+    if (choice === "push") {
+      const pushedIds = await _pushDirtyClipsKeepingEdits([clip]);
+      if (pushedIds.length) _gitOutdatedBanner.hidden = true;
+      return; // pushed — chapter is current, no refetch needed
+    }
+    if (choice !== "overwrite") return; // cancel: banner stays for later
+  }
+  _gitOutdatedBanner.hidden = true;
   const { repoUrl, branch, path } = clip.gitRef;
   const m = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
   if (!m) {

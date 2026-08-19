@@ -16561,3 +16561,79 @@ body.reader-mode .card.card-text {
 }
 .paste-sheet-after { background: var(--accent); color: var(--on-accent); border: none; }
 .paste-sheet-after:hover { background: var(--accent-strong); }
+
+/* ── v4.249: dirty-conflict sheet (unpushed edits vs GitHub re-narrate) ── */
+.conflict-sheet {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--fg);
+  box-shadow: var(--shadow-drag);
+  padding: 0;
+  width: min(460px, 92vw);
+  max-width: 92vw;
+}
+.conflict-sheet::backdrop { background: var(--scrim); }
+.conflict-sheet-inner { padding: 18px 18px 16px; }
+.conflict-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.conflict-sheet-head h2 { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--working); }
+.conflict-sheet-x {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.conflict-sheet-x:hover { color: var(--fg); background: var(--hover-soft); }
+.conflict-sheet-body {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+.conflict-sheet-list {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+}
+.conflict-sheet-list li { margin: 2px 0; }
+.conflict-sheet-hint {
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+}
+.conflict-sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.conflict-sheet-actions button {
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+  min-height: 44px;
+}
+.conflict-sheet-cancel {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+.conflict-sheet-overwrite {
+  background: var(--bg-card-2);
+  color: var(--working);
+  border: 1px solid var(--working);
+}
+.conflict-sheet-push { background: var(--accent); color: var(--on-accent); border: none; }
+.conflict-sheet-push:hover { background: var(--accent-strong); }
