@@ -16443,3 +16443,121 @@ body.reader-mode .card.card-text {
   vertical-align: middle;
   flex: 0 0 auto;
 }
+
+/* ── v4.248: copy / paste a selection of sentences ─────────────────────
+   ⧉ / 📋 chips (phone tag row + annotate palette), the pick-mode marks
+   in the reading view, and the paste sheet dialog. */
+
+/* Utility chips: neutral slate so they read as tools, not tag colors.
+   Scoped inside the same phone media block styles via specificity —
+   the base .phone-tag-row-chip rules live in a max-width:767px block,
+   but background is set inline per-tag there; utils set it here. */
+.phone-tag-row-util {
+  background: #56657a;
+}
+
+/* Palette variants (tablet/desktop): match the tag buttons but mark
+   them armed with the accent ring when a pick is in progress. */
+.annotate-util-btn.armed {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* First-sentence mark while picking the end of a copy range. Dashed —
+   same grammar as the selection ring, accent-colored. */
+.reading-view .sentence.copy-range-start {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Brief confirmation wash over the copied sentences. */
+.reading-view .sentence.copy-flash {
+  background: var(--accent-tint, rgba(100, 149, 237, 0.25));
+  border-radius: 6px;
+  transition: background 0.5s ease;
+}
+
+/* Paste sheet — mirrors the git-commit-sheet dialog. */
+.paste-sheet {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--fg);
+  box-shadow: var(--shadow-drag);
+  padding: 0;
+  width: min(480px, 92vw);
+  max-width: 92vw;
+}
+.paste-sheet::backdrop { background: var(--scrim); }
+.paste-sheet-inner { padding: 18px 18px 16px; }
+.paste-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.paste-sheet-head h2 { margin: 0; font-size: 1.1rem; font-weight: 700; }
+.paste-sheet-x {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.paste-sheet-x:hover { color: var(--fg); background: var(--hover-soft); }
+.paste-sheet-anchor {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+  word-break: break-word;
+}
+.paste-sheet-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 130px;
+  max-height: 40vh;
+  resize: vertical;
+  padding: 11px 12px;
+  font-size: 16px; /* ≥16px so iOS doesn't zoom on focus */
+  font-family: inherit;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.paste-sheet-text:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+.paste-sheet-count {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+}
+.paste-sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.paste-sheet-actions button {
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  min-height: 44px;
+}
+.paste-sheet-cancel,
+.paste-sheet-before {
+  background: var(--bg-card-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+.paste-sheet-after { background: var(--accent); color: var(--on-accent); border: none; }
+.paste-sheet-after:hover { background: var(--accent-strong); }

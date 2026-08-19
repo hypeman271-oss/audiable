@@ -21393,6 +21393,336 @@ async function _combineAnnotatedSentences(clipId, targetIdx, otherIdx, combinedT
   }
 }
 
+// ── v4.248: copy / paste a selection of sentences ──────────────────────
+// ⧉ Copy: arm → tap first sentence → tap last sentence → the exact text
+// (paragraph breaks included) is copied to the clipboard. Tapping the
+// same sentence twice copies just it; a pre-selected sentence becomes
+// the start automatically (mirrors the tag-row's sentence→chip path).
+// 📋 Paste: arm → tap the anchor sentence → a sheet opens prefilled from
+// the clipboard → Insert before/after routes through the type-to-split
+// structural edit (_commitStructuralEdit), which synthesizes + splices
+// the new sentences' audio and updates text/lines/bookmarks atomically.
+// Both chips live in the phone tag row AND the annotate palette (shared
+// tablet/desktop surface); sentence picks are intercepted capture-phase
+// ahead of the annotate/animate/seek handlers.
+let _copyModeArmed = false;   // ⧉ armed, waiting for the FIRST sentence tap
+let _copyRangeStartIdx = -1;  // first sentence picked, waiting for the LAST
+let _pasteModeArmed = false;  // 📋 armed, waiting for the anchor tap
+let _cpWasPlaying = false;    // resume playback after cancel/copy-complete
+let _cpCancelTimer = null;    // auto-cancel so the mode can't get stuck
+
+function _copyPasteActive() {
+  return _copyModeArmed || _copyRangeStartIdx >= 0 || _pasteModeArmed;
+}
+
+function _copyPasteChipPaint() {
+  const copyOn = _copyModeArmed || _copyRangeStartIdx >= 0;
+  document
+    .querySelectorAll('.phone-tag-row-chip[data-tag="copy"], .annotate-util-btn[data-util="copy"]')
+    .forEach((c) => c.classList.toggle("armed", copyOn));
+  document
+    .querySelectorAll('.phone-tag-row-chip[data-tag="paste"], .annotate-util-btn[data-util="paste"]')
+    .forEach((c) => c.classList.toggle("armed", _pasteModeArmed));
+}
+
+function _copyPasteResetTimer() {
+  if (_cpCancelTimer) clearTimeout(_cpCancelTimer);
+  _cpCancelTimer = setTimeout(() => {
+    if (_copyPasteActive()) _copyPasteCancel("Copy/paste cancelled (timed out).");
+  }, 25000);
+}
+
+function _copyPasteCancel(msg) {
+  const wasActive = _copyPasteActive();
+  _copyModeArmed = false;
+  _pasteModeArmed = false;
+  if (_copyRangeStartIdx >= 0 && sentenceSpans[_copyRangeStartIdx]) {
+    sentenceSpans[_copyRangeStartIdx].classList.remove("copy-range-start");
+  }
+  _copyRangeStartIdx = -1;
+  if (_cpCancelTimer) { clearTimeout(_cpCancelTimer); _cpCancelTimer = null; }
+  _copyPasteChipPaint();
+  if (wasActive && _cpWasPlaying && playerEl && playerEl.paused) {
+    try { playerEl.play().catch(() => {}); } catch {}
+  }
+  _cpWasPlaying = false;
+  if (msg) setStatus(msg);
+}
+
+// opts.inheritWasPlaying: the annotate palette already paused playback on
+// open — its "was playing" snapshot transfers here so completion/cancel
+// resumes correctly instead of reading the (already-paused) player.
+function _armCopyMode(opts) {
+  if (!_currentClipId || !Array.isArray(sentenceSpans) || !sentenceSpans.length) {
+    setStatus("Load a chapter first to copy sentences.", true);
+    return;
+  }
+  if (_copyModeArmed || _copyRangeStartIdx >= 0) {
+    _copyPasteCancel("Copy cancelled.");
+    return;
+  }
+  if (_pasteModeArmed) _copyPasteCancel();
+  _copyModeArmed = true;
+  _cpWasPlaying = (opts && opts.inheritWasPlaying) || !!(playerEl && !playerEl.paused);
+  if (playerEl && !playerEl.paused) {
+    try { _pauseAsUser(); } catch { try { playerEl.pause(); } catch {} }
+  }
+  // A pre-selected sentence is the start (sentence → chip ordering).
+  if (typeof _selectedSentenceIdx === "number" && _selectedSentenceIdx >= 0) {
+    const sel = _selectedSentenceIdx;
+    _clearSelectedSentence();
+    _copyPasteChipPaint();
+    _copyPickSentence(sel);
+    return;
+  }
+  _copyPasteChipPaint();
+  _copyPasteResetTimer();
+  setStatus("⧉ Copy — tap the first sentence.");
+}
+
+function _armPasteMode(opts) {
+  if (!_currentClipId || !Array.isArray(sentenceSpans) || !sentenceSpans.length) {
+    setStatus("Load a chapter first to paste sentences.", true);
+    return;
+  }
+  if (_structuralEditInFlight) {
+    setStatus("Still editing this chapter — one moment…");
+    return;
+  }
+  if (_pasteModeArmed) {
+    _copyPasteCancel("Paste cancelled.");
+    return;
+  }
+  if (_copyModeArmed || _copyRangeStartIdx >= 0) _copyPasteCancel();
+  _pasteModeArmed = true;
+  _cpWasPlaying = (opts && opts.inheritWasPlaying) || !!(playerEl && !playerEl.paused);
+  if (playerEl && !playerEl.paused) {
+    try { _pauseAsUser(); } catch { try { playerEl.pause(); } catch {} }
+  }
+  if (typeof _selectedSentenceIdx === "number" && _selectedSentenceIdx >= 0) {
+    const sel = _selectedSentenceIdx;
+    _clearSelectedSentence();
+    _copyPasteChipPaint();
+    _pastePickAnchor(sel);
+    return;
+  }
+  _copyPasteChipPaint();
+  _copyPasteResetTimer();
+  setStatus("📋 Paste — tap the sentence to paste next to.");
+}
+
+function _copyPickSentence(idx) {
+  if (!sentenceSpans[idx]) return;
+  _copyPasteResetTimer();
+  if (_copyRangeStartIdx < 0) {
+    _copyModeArmed = false;
+    _copyRangeStartIdx = idx;
+    sentenceSpans[idx].classList.add("copy-range-start");
+    _copyPasteChipPaint();
+    setStatus("⧉ First sentence set — tap the last one (same sentence = just it).");
+    return;
+  }
+  const a = Math.min(_copyRangeStartIdx, idx);
+  const b = Math.max(_copyRangeStartIdx, idx);
+  _copySentenceRangeToClipboard(a, b);
+}
+
+async function _copySentenceRangeToClipboard(a, b) {
+  // Prefer the exact substring of clip.text (keeps paragraph breaks and
+  // the author's own spacing); fall back to joining the span texts.
+  let text = "";
+  try {
+    const clip = _currentClipId != null ? await getClip(_currentClipId) : null;
+    if (clip && clip.text) {
+      const r1 = _locateSentenceRange(clip.text, sentenceSpans, a);
+      const r2 = a === b ? r1 : _locateSentenceRange(clip.text, sentenceSpans, b);
+      if (r1 && r2) text = clip.text.slice(r1[0], r2[1]);
+    }
+  } catch {}
+  if (!text) {
+    const parts = [];
+    for (let i = a; i <= b; i++) {
+      const s =
+        sentenceSpans[i] &&
+        (sentenceSpans[i].dataset.sentenceText || sentenceSpans[i].textContent);
+      if (s) parts.push(s.trim());
+    }
+    text = parts.join(" ");
+  }
+  const n = b - a + 1;
+  if (!text) {
+    _copyPasteCancel();
+    setStatus("Couldn't read those sentences — try again.", true);
+    return;
+  }
+  const ok = await _writeClipboardText(text);
+  for (let i = a; i <= b; i++) {
+    const sp = sentenceSpans[i];
+    if (sp) {
+      sp.classList.add("copy-flash");
+      setTimeout(() => { try { sp.classList.remove("copy-flash"); } catch {} }, 900);
+    }
+  }
+  _copyPasteCancel();
+  setStatus(
+    ok
+      ? `⧉ Copied ${n} sentence${n === 1 ? "" : "s"} to the clipboard.`
+      : "Couldn't reach the clipboard — long-press the text to copy manually.",
+    !ok
+  );
+}
+
+async function _writeClipboardText(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  // execCommand fallback (older WebViews, permission denials).
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return !!ok;
+  } catch {
+    return false;
+  }
+}
+
+async function _pastePickAnchor(idx) {
+  if (!sentenceSpans[idx]) return;
+  // The sheet takes over — leave pick mode so the intercept releases taps.
+  _pasteModeArmed = false;
+  if (_cpCancelTimer) { clearTimeout(_cpCancelTimer); _cpCancelTimer = null; }
+  _copyPasteChipPaint();
+  // Read the clipboard inside this tap's user-gesture window. Browsers
+  // that block readText (Firefox, some WebViews) just get an empty
+  // sheet with a paste-here placeholder.
+  let prefill = "";
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      prefill = (await navigator.clipboard.readText()) || "";
+    }
+  } catch {}
+  const res = await _openPasteSheet({ anchorIdx: idx, prefill });
+  if (!res) {
+    _copyPasteCancel("Paste cancelled.");
+    return;
+  }
+  _cpWasPlaying = false; // inserting: stay paused, the edit takes over
+  await _insertSentencesViaPaste(idx, res.text, res.where);
+}
+
+// Paste sheet: editable text (prefilled from the clipboard), live
+// sentence count, Insert before/after. Resolves {text, where} or null.
+function _openPasteSheet({ anchorIdx, prefill }) {
+  return new Promise((resolve) => {
+    let dlg = document.getElementById("paste-sentences-sheet");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "paste-sentences-sheet";
+      dlg.className = "paste-sheet";
+      document.body.appendChild(dlg);
+    }
+    const esc = (s) => _escapeHtmlForSentence(String(s == null ? "" : s));
+    const anchorSpan = sentenceSpans[anchorIdx];
+    const anchorText =
+      (anchorSpan && (anchorSpan.dataset.sentenceText || anchorSpan.textContent)) || "";
+    const snippet = anchorText.trim().slice(0, 70);
+    dlg.innerHTML =
+      `<div class="paste-sheet-inner">` +
+        `<div class="paste-sheet-head">` +
+          `<h2>📋 Paste sentences</h2>` +
+          `<button type="button" class="paste-sheet-x" aria-label="Cancel">×</button>` +
+        `</div>` +
+        `<p class="paste-sheet-anchor">Next to: “${esc(snippet)}${anchorText.length > 70 ? "…" : ""}”</p>` +
+        `<textarea class="paste-sheet-text" spellcheck="false" placeholder="Paste your text here"></textarea>` +
+        `<p class="paste-sheet-count"></p>` +
+        `<div class="paste-sheet-actions">` +
+          `<button type="button" class="paste-sheet-cancel">Cancel</button>` +
+          `<button type="button" class="paste-sheet-before">⤒ Before</button>` +
+          `<button type="button" class="paste-sheet-after primary">⤓ After</button>` +
+        `</div>` +
+      `</div>`;
+    const ta = dlg.querySelector(".paste-sheet-text");
+    const countEl = dlg.querySelector(".paste-sheet-count");
+    ta.value = String(prefill || "");
+    const updateCount = () => {
+      const t = ta.value.replace(/\s+/g, " ").trim();
+      const n = t ? splitSentencesClient(t).length : 0;
+      countEl.textContent = n
+        ? `${n} sentence${n === 1 ? "" : "s"} will be added and narrated.`
+        : "Nothing to insert yet.";
+    };
+    ta.addEventListener("input", updateCount);
+    updateCount();
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      try { dlg.close(); } catch {}
+      resolve(val);
+    };
+    const submit = (where) => {
+      const t = ta.value.trim();
+      if (!t) { try { ta.focus(); } catch {} return; }
+      done({ text: t, where });
+    };
+    dlg.querySelector(".paste-sheet-cancel").onclick = () => done(null);
+    dlg.querySelector(".paste-sheet-x").onclick = () => done(null);
+    dlg.querySelector(".paste-sheet-before").onclick = () => submit("before");
+    dlg.querySelector(".paste-sheet-after").onclick = () => submit("after");
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(null); }, { once: true });
+    if (typeof dlg.showModal === "function") dlg.showModal();
+    else dlg.setAttribute("open", "");
+    setTimeout(() => { try { ta.focus(); } catch {} }, 60);
+  });
+}
+
+// Insert pasted text next to the anchor sentence via the type-to-split
+// structural edit: newText = anchor + pasted (or pasted + anchor), which
+// re-narrates the anchor's slot as N sentences and splices the audio in.
+// Whitespace is flattened to single spaces so the client's sentence
+// split matches the server's during the splice.
+async function _insertSentencesViaPaste(anchorIdx, rawText, where) {
+  if (_structuralEditInFlight) {
+    setStatus("Still editing this chapter — one moment…");
+    return;
+  }
+  const span = sentenceSpans[anchorIdx];
+  const anchorText =
+    (span && (span.dataset.sentenceText || span.textContent)) || "";
+  if (!anchorText) {
+    setStatus("Couldn't read the anchor sentence — try again.", true);
+    return;
+  }
+  const pasted = String(rawText || "").replace(/\s+/g, " ").trim();
+  if (!pasted) {
+    setStatus("Nothing to paste.", true);
+    return;
+  }
+  const newText =
+    where === "before" ? `${pasted} ${anchorText}` : `${anchorText} ${pasted}`;
+  const pieces = splitSentencesClient(newText);
+  await _commitStructuralEdit({
+    clipId: _currentClipId,
+    idx: anchorIdx,
+    originalText: anchorText,
+    newText,
+    pieces,
+  });
+}
+
+// Esc bails out of a pick in progress (the paste sheet handles its own).
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _copyPasteActive()) _copyPasteCancel("Cancelled.");
+});
+
 // v4.238: called after any Combine flag is added (from _addAnnotation, so
 // every entry path — desktop palette, phone tag-row — is covered). With
 // one Combine flag: nudge the user to flag a second. With two: prompt for
@@ -22788,6 +23118,31 @@ if (annotatePalette) {
     const closeBtn = event.target.closest("#annotate-palette-close");
     if (closeBtn) {
       _hideAnnotatePalette();
+      return;
+    }
+    // v4.248: ⧉ Copy / 📋 Paste utility buttons. The palette paused
+    // playback on open — transfer its "was playing" snapshot to the
+    // copy/paste state (and blank it so _hideAnnotatePalette doesn't
+    // resume mid-pick), then treat the palette's sentence as the
+    // start/anchor.
+    const utilBtn = event.target.closest(".annotate-util-btn");
+    if (utilBtn) {
+      const which = utilBtn.dataset.util;
+      const pendIdx = _annotatePendingSentenceIndex;
+      const inheritWasPlaying = !!_annotateWasPlayingBeforePalette;
+      _annotateWasPlayingBeforePalette = false;
+      _hideAnnotatePalette();
+      if (which === "copy") {
+        _armCopyMode({ inheritWasPlaying });
+        if (_copyModeArmed && pendIdx != null && pendIdx >= 0) {
+          _copyPickSentence(pendIdx);
+        }
+      } else if (which === "paste") {
+        _armPasteMode({ inheritWasPlaying });
+        if (_pasteModeArmed && pendIdx != null && pendIdx >= 0) {
+          _pastePickAnchor(pendIdx);
+        }
+      }
       return;
     }
     const tagBtn = event.target.closest(".annotate-tag-btn");
@@ -24297,6 +24652,20 @@ if (readingViewEl) {
   readingViewEl.addEventListener(
     "click",
     (event) => {
+      // v4.248: copy/paste sentence-pick mode intercepts every sentence
+      // tap first — it's independent of annotate/animate modes and must
+      // win over the palette-open and seek handlers below.
+      if (typeof _copyPasteActive === "function" && _copyPasteActive()) {
+        const cpSpan = event.target.closest(".sentence");
+        if (!cpSpan) return;
+        const cpIdx = Number(cpSpan.dataset.index);
+        if (!isFinite(cpIdx)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (_pasteModeArmed) _pastePickAnchor(cpIdx);
+        else _copyPickSentence(cpIdx);
+        return;
+      }
       // Standalone animate mode: a sentence tap opens the animate palette
       // (no audio pause — cues preview live). Independent of annotate mode.
       if (typeof _animMode !== "undefined" && _animMode) {
@@ -41629,6 +41998,30 @@ function _phoneTagRowBoot() {
       // suppression without breaking click. contextmenu +
       // selectstart preventDefault stays — those don't affect
       // click firing.
+      chip.addEventListener("contextmenu", (e) => e.preventDefault());
+      chip.addEventListener("selectstart", (e) => e.preventDefault());
+      chipsContainer.appendChild(chip);
+    }
+    // v4.248: utility chips — not annotations. ⧉ copies a tapped range of
+    // sentences to the clipboard; 📋 pastes clipboard text next to a
+    // tapped sentence (via the structural-edit splice).
+    const utilChips = [
+      { key: "copy", icon: "⧉", label: "Copy sentences — tap a first and last sentence", fire: () => _armCopyMode() },
+      { key: "paste", icon: "📋", label: "Paste sentences next to a tapped sentence", fire: () => _armPasteMode() },
+    ];
+    for (const u of utilChips) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "phone-tag-row-chip phone-tag-row-util";
+      chip.dataset.tag = u.key;
+      chip.title = u.label;
+      chip.setAttribute("aria-label", u.label);
+      chip.textContent = u.icon;
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        _dlog("tag-row-chip", "click", { tag: u.key });
+        u.fire();
+      });
       chip.addEventListener("contextmenu", (e) => e.preventDefault());
       chip.addEventListener("selectstart", (e) => e.preventDefault());
       chipsContainer.appendChild(chip);
