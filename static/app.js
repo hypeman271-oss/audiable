@@ -20209,7 +20209,13 @@ function _onEditTextClick() {
     if (changed) {
       _commitInlineEdit();
     } else {
+      // v4.250: an unchanged save on a FAILED sentence is the retry
+      // gesture — re-queue its audio job instead of just closing.
+      const wasFailed =
+        editingSpan && editingSpan.classList.contains("renarrate-failed");
+      const failedIdx = _inlineEditingIdx;
       _cancelInlineEdit();
+      if (wasFailed) _retryFailedRenarrate(failedIdx);
     }
     return;
   }
@@ -20378,11 +20384,21 @@ function _enterInlineEdit(idx) {
   // without needing two separate sentences.
   const _isPhone = window.matchMedia &&
     window.matchMedia("(max-width: 767px)").matches;
-  setStatus(
-    _isPhone
-      ? "Editing sentence — tap ✎ when done."
-      : "Editing sentence — Enter to save, Esc to cancel."
-  );
+  // v4.250: a failed (red-squiggle) sentence advertises the retry — an
+  // unchanged save re-queues its audio job.
+  if (span.classList.contains("renarrate-failed")) {
+    setStatus(
+      _isPhone
+        ? "Editing — tap ✎ to retry the narration (no changes needed)."
+        : "Editing — Enter to retry the narration (no changes needed)."
+    );
+  } else {
+    setStatus(
+      _isPhone
+        ? "Editing sentence — tap ✎ when done."
+        : "Editing sentence — Enter to save, Esc to cancel."
+    );
+  }
 }
 
 // ---- Re-narration queue (v4.221) --------------------------------------
@@ -20427,6 +20443,49 @@ function _enqueueRenarrate(job) {
   _drainRenarrateQueue();
 }
 
+// v4.250: retry the audio job for a sentence whose background re-narrate
+// FAILED (red wavy underline). The text half of the edit is already
+// committed — text and audio only diverge after a failure — so a retry
+// is just re-queueing the audio job with the sentence's current text.
+// Reached from both unchanged-save paths (✎ toggle + Enter): saving a
+// failed sentence without changing it IS the retry gesture.
+let _retryRenarrateInFlight = false;
+async function _retryFailedRenarrate(idx) {
+  if (_retryRenarrateInFlight) return;
+  const span = sentenceSpans[idx];
+  const clipId = _currentClipId;
+  if (!span || !clipId) return;
+  const text = (span.dataset.sentenceText || span.textContent || "").trim();
+  if (!text) return;
+  _retryRenarrateInFlight = true;
+  try {
+    const clip = await getClip(clipId);
+    const lineId =
+      clip &&
+      Array.isArray(clip.lines) &&
+      clip.lines.length > idx &&
+      clip.lines[idx] &&
+      typeof clip.lines[idx].id === "string"
+        ? clip.lines[idx].id
+        : null;
+    _enqueueRenarrate({
+      clipId,
+      idx,
+      lineId,
+      newText: text,
+      originalText: text,
+      voiceId: (clip && clip.voiceId) || voiceEl.value || null,
+      speakerId: clip && typeof clip.speakerId === "number" ? clip.speakerId : null,
+      rate: clip && typeof clip.rate === "number" ? clip.rate : null,
+    });
+    setStatus("🎙️ Retrying that sentence's narration…");
+  } catch (e) {
+    setStatus(_withOfflineHint(`Couldn't queue the retry — ${e.message || e}.`), true);
+  } finally {
+    _retryRenarrateInFlight = false;
+  }
+}
+
 async function _drainRenarrateQueue() {
   if (_renarrateBusy) return;
   _renarrateBusy = true;
@@ -20452,7 +20511,7 @@ async function _drainRenarrateQueue() {
         _markRenarrateState(job.idx, "failed");
         setStatus(
           _withOfflineHint(
-            "A sentence couldn't re-narrate — select it + tap ✎ to retry."
+            "A sentence couldn't re-narrate — tap it, then tap ✎ twice to retry."
           ),
           true
         );
@@ -21809,7 +21868,12 @@ async function _commitInlineEdit() {
     return;
   }
   if (newText === _inlineEditOriginalText) {
+    // v4.250: unchanged save on a FAILED sentence = retry its audio job.
+    // Before this, the bail exited silently and the status hint's
+    // promised retry never actually ran.
+    const wasFailed = span.classList.contains("renarrate-failed");
     _exitInlineEdit();
+    if (wasFailed) _retryFailedRenarrate(idx);
     return;
   }
   if (!_currentClipId) {
