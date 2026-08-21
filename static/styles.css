@@ -16637,3 +16637,93 @@ body.reader-mode .card.card-text {
 }
 .conflict-sheet-push { background: var(--accent); color: var(--on-accent); border: none; }
 .conflict-sheet-push:hover { background: var(--accent-strong); }
+
+/* ── v4.251: desktop hero + compose polish ─────────────────────────────
+   Scope: tablet/desktop only (min-width: 768px) — phone chrome is a
+   separate parked pass. Direction per the v4.240 polish series:
+   warmer/premium depth cues, cleaner/minimal chrome. */
+@media (min-width: 768px) {
+  /* Primary CTA (Generate + every button.primary): flat accent fill →
+     soft top-light gradient with an accent-tinted resting shadow and a
+     gentle hover lift. The gradient is subtle (8% white cap) so themes
+     keep their accent identity. */
+  button.primary {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 92%, #fff) 0%,
+      var(--accent) 100%
+    );
+    box-shadow:
+      0 1px 2px color-mix(in srgb, var(--accent) 30%, transparent),
+      0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent);
+    letter-spacing: 0.01em;
+    /* NOTE: never transition the `background` shorthand here — gradients
+       don't interpolate, and Chromium leaves the shorthand stuck at the
+       old value when a theme flip swaps the underlying tokens. */
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  button.primary:hover:not(:disabled) {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent-strong) 90%, #fff) 0%,
+      var(--accent-strong) 100%
+    );
+    transform: translateY(-1px);
+    box-shadow:
+      0 2px 4px color-mix(in srgb, var(--accent) 32%, transparent),
+      0 8px 22px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  button.primary:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  button.primary:disabled { box-shadow: none; }
+
+  /* Secondary buttons sat bg-card-on-bg-card — only a 6%-alpha border
+     separated them from the card they live on. Elevated fill (matches
+     the textarea's surface) + a hover brighten makes them read as
+     pressable without shouting. */
+  button.secondary {
+    background: var(--bg-card-2);
+    /* background-color longhand only — see the shorthand note above. */
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  button.secondary:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: color-mix(in srgb, var(--bg-card-2) 88%, var(--accent));
+  }
+
+  /* Compose box: the resting border was a near-invisible 4% white.
+     A quiet but present border + a faint inset well gives the input
+     the depth of a place where writing happens. Focus ring unchanged
+     (the shared textarea:focus rule already draws it). */
+  textarea#text {
+    border-color: var(--border);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  textarea#text:focus {
+    box-shadow:
+      inset 0 1px 3px rgba(0, 0, 0, 0.12),
+      0 0 0 3px var(--accent-tint-3);
+  }
+
+  /* Icon rail + settings gear: state changes were instant flips —
+     ease them. Hover colors themselves are unchanged. */
+  .hero-icon-btn,
+  .settings-btn {
+    transition: color 0.15s ease, background-color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  /* Version pill: accent-tinted fill but fg-dim text sent mixed
+     signals. Tone the text toward the accent so the pill reads as one
+     deliberate object. */
+  .brand-version {
+    color: color-mix(in srgb, var(--accent) 62%, var(--fg-dim));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button.primary,
+  button.primary:hover:not(:disabled) { transform: none; transition: none; }
+}
