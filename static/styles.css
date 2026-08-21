@@ -16727,3 +16727,33 @@ body.reader-mode .card.card-text {
   button.primary,
   button.primary:hover:not(:disabled) { transform: none; transition: none; }
 }
+
+/* ── v4.252: unpushed-edits indicators on the main screen ──────────────
+   body[data-any-unpushed="1"] is set by _updatePushAllAffordance()
+   whenever ANY library clip has local edits not yet pushed to GitHub.
+   It drives amber pips on the always-visible chrome: the phone ☰
+   button and the desktop/tablet Library trigger — same amber as the
+   library-card pips, so the signal reads as one system. */
+/* (no position override: .phone-menu-btn is position:fixed and
+   #library-trigger is already position:relative — both anchor ::after) */
+body[data-any-unpushed="1"] .phone-menu-btn::after,
+body[data-any-unpushed="1"] #library-trigger::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--working);
+  /* ring of page background so the dot stays legible over any fill */
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
+}
+
+/* ☰ menu Push entry: amber icon + label while the loaded chapter has
+   unpushed edits, mirroring the reading-view ⇡ Push• button. */
+.phone-menu-item.has-unpushed,
+.phone-menu-item.has-unpushed .phone-menu-icon {
+  color: var(--working);
+}

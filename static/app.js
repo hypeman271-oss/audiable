@@ -34668,6 +34668,8 @@ function _updatePushAffordance() {
     try { clip = _currentClipId != null ? await getClip(_currentClipId) : null; } catch {}
     if (!clip || !_clipIsGitLinked(clip)) {
       btn.hidden = true;
+      const mi = document.getElementById("phone-menu-push-github");
+      if (mi) { mi.hidden = true; mi.classList.remove("has-unpushed"); }
       return;
     }
     btn.hidden = false;
@@ -34677,6 +34679,16 @@ function _updatePushAffordance() {
     btn.title = dirty
       ? "You have local edits not yet on GitHub — tap to push"
       : "Push this chapter's text to its GitHub source";
+    // v4.252: phone surface. The label-row this button lives in is
+    // height:0 on phone (its controls dispatch from the ☰ menu), so
+    // mirror the state onto the ☰ menu's Push entry.
+    const menuItem = document.getElementById("phone-menu-push-github");
+    if (menuItem) {
+      menuItem.hidden = false;
+      menuItem.classList.toggle("has-unpushed", dirty);
+      const lbl = menuItem.querySelector(".phone-menu-push-label");
+      if (lbl) lbl.textContent = dirty ? "Push to GitHub — unpushed edits" : "Push to GitHub";
+    }
   })();
 }
 
@@ -34787,17 +34799,27 @@ if (_libraryPushAllBtn) {
 // Cheap: reads the already-loaded clip list; hides when nothing's dirty.
 async function _updatePushAllAffordance() {
   const btn = document.getElementById("library-push-all-github");
-  if (!btn) return;
   try {
     const all = await listClips();
     const n = all.filter((c) => _clipHasUnpushedEdits(c)).length;
-    if (n > 0) {
-      btn.hidden = false;
-      btn.textContent = `⇡ Push all edited (${n})`;
-    } else {
-      btn.hidden = true;
+    if (btn) {
+      if (n > 0) {
+        btn.hidden = false;
+        btn.textContent = `⇡ Push all edited (${n})`;
+      } else {
+        btn.hidden = true;
+      }
     }
-  } catch { btn.hidden = true; }
+    // v4.252: library-wide "anything unpushed?" signal. One body attr
+    // drives the amber pips on the phone ☰ button and the desktop
+    // Library trigger (CSS ::after dots), so the main screen shows
+    // "you have edits not on GitHub" on every tier without new chrome.
+    if (n > 0) document.body.dataset.anyUnpushed = "1";
+    else delete document.body.dataset.anyUnpushed;
+  } catch {
+    if (btn) btn.hidden = true;
+    delete document.body.dataset.anyUnpushed;
+  }
 }
 
 // v4.223 / v4.224: Save to Drive. Works on ANY clip (e.g. one pulled from
@@ -42991,6 +43013,9 @@ function _phoneMenuBoot() {
       "open-as-ebook": "open-as-ebook",
       // v225dr: export notes dispatch — same id as the new chip.
       "export-notes": "export-notes-btn",
+      // v4.252: GitHub push — dispatches to the hidden label-row
+      // original, whose handler opens the commit sheet.
+      "push-github": "clip-push-github-btn",
       settings: "settings-btn",
       help: "help-btn",
     };

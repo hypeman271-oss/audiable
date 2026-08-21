@@ -3807,6 +3807,22 @@
             <span class="phone-menu-icon" aria-hidden="true">📤</span>
             <span>Download notes (.md)</span>
           </button>
+          <!-- v4.252: phone surface for the v4.245 GitHub push. The
+               #clip-push-github-btn original lives in the label-row,
+               which is height:0 on phone — this entry dispatches to
+               it. Hidden unless the loaded clip is GitHub-linked;
+               .has-unpushed (amber) when it has unpushed edits.
+               State managed by _updatePushAffordance(). -->
+          <button
+            class="phone-menu-item"
+            id="phone-menu-push-github"
+            data-action="push-github"
+            type="button"
+            hidden
+          >
+            <span class="phone-menu-icon" aria-hidden="true">⇡</span>
+            <span class="phone-menu-push-label">Push to GitHub</span>
+          </button>
           <div class="phone-menu-divider"></div>
           <button class="phone-menu-item" data-action="settings" type="button">
             <span class="phone-menu-icon" aria-hidden="true">⚙</span>
