@@ -15723,6 +15723,23 @@ body.anim-page-active #reading-view {
   background: linear-gradient(rgba(8, 10, 20, 0.4), rgba(8, 10, 20, 0.6));
 }
 
+/* v4.254: Text over a picture. Both scrims above darken the art in EVERY
+   theme, but the text took the theme's --fg, which is dark ink on light and
+   sepia: dark on a darkened picture. So where a picture is behind the text
+   (reading view: body.anim-page-art; Book view: .book-page--art), the text
+   tokens are re-pointed at a light ink, once, for both surfaces. Book view
+   inks its pages from the reader's paper (--paper-fg: light, sepia, gray,
+   night) rather than the theme, so that token is re-pointed too. An effect-
+   alone scene keeps its light scrim and the theme's own ink. */
+body.anim-page-art #reading-view,
+.book-page--art {
+  --fg: #f4f0e8;
+  --paper-fg: #f4f0e8;
+  --fg-dim: #cdc6b8;
+  --played-fg: #bdb6a8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
 /* v4.166: built-in ambient effects — procedural CSS scenes (no art). A soft
    dusk tint lets light particles (snow/dust) read on any paper theme while
    keeping text legible (text sits at z-index 1 above the scene). */

@@ -10235,7 +10235,7 @@ function _animApplyToSpreadScenes() {
       if (e.__revokeUrl) { try { URL.revokeObjectURL(e.__revokeUrl); } catch {} }
       e.remove();
     });
-    pageEl.classList.remove("book-page--scene");
+    pageEl.classList.remove("book-page--scene", "book-page--art");
     const tpi = parseInt(pageEl.dataset.textPageIdx, 10);
     if (!Number.isFinite(tpi)) return;
     // This page's sentence range. We select the scene by the page's LAST
@@ -10319,7 +10319,9 @@ function _animApplyToSpreadScenes() {
       if (scene.fx) layer.appendChild(fxEl());
       layer.appendChild(scrim);
       pageEl.prepend(layer);
-      pageEl.classList.add("book-page--scene");
+      // v4.254: picture pages take the light scene ink; an effect-alone page
+      // (light scrim, above) keeps the theme's.
+      pageEl.classList.add("book-page--scene", "book-page--art");
     });
   });
 }
@@ -10881,7 +10883,7 @@ function _animPageHide() {
     _animPageFxEl.style.display = "none";
     delete _animPageFxEl.dataset.fx;
   }
-  try { document.body.classList.remove("anim-page-active"); } catch {}
+  try { document.body.classList.remove("anim-page-active", "anim-page-art"); } catch {}
 }
 
 // Built-in effect scene in the Audio (scrolling reading) view — no sheet to
@@ -10899,7 +10901,10 @@ function _animPageShowFx(cue) {
     _animPageLayerEl.classList.add("shown");
     _animPageLayerEl.classList.add("anim-page-layer--fx"); // lighter scrim
   }
-  try { document.body.classList.add("anim-page-active"); } catch {}
+  try {
+    document.body.classList.add("anim-page-active");
+    document.body.classList.remove("anim-page-art");
+  } catch {}
 }
 
 function _animPageShow(cue) {
@@ -10946,7 +10951,9 @@ function _animPageShow(cue) {
       bg.classList.toggle("anim-page-bg--kenburns", !_animReducedMotion());
     }
     if (_animPageLayerEl) _animPageLayerEl.classList.add("shown");
-    try { document.body.classList.add("anim-page-active"); } catch {}
+    // v4.254: a picture sits under a dark scrim in every theme, so the text
+    // over it takes the light scene ink (styles.css: "Text over a picture").
+    try { document.body.classList.add("anim-page-active", "anim-page-art"); } catch {}
   });
 }
 
