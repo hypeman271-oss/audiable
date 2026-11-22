@@ -5386,6 +5386,53 @@ body[data-offline="true"] .import-dropdown-item {
   color: var(--fg-dim);
 }
 
+/* v4.253: Library ▸ Storyboard is a wide-desktop authoring tool (DEVICES.md:
+   phone and tablet keep the Library row as it was). */
+@media (max-width: 1279px) {
+  #library-storyboard {
+    display: none;
+  }
+}
+/* The storyboard import's report: one block per chapter, a line per scene. */
+.storyboard-report-body {
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.storyboard-report-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.storyboard-report-head h3 {
+  margin: 0;
+  font-size: 14px;
+  white-space: pre;
+}
+.storyboard-report-warning {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--working);
+}
+.storyboard-report-rows {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.storyboard-report-rows .is-ok {
+  color: var(--fg-dim);
+}
+.storyboard-report-rows .is-note {
+  color: var(--fg);
+}
+.storyboard-report-rows .is-bad {
+  color: var(--danger);
+}
+
 .chapter-banner-btn {
   font-family: inherit;
   font-size: 12px;

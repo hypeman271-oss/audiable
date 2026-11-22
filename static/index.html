@@ -3207,6 +3207,16 @@
             class="link-btn"
             aria-label="Import a previously-exported library zip"
           >Import</button>
+          <!-- v4.253: a whole book's scenes from one storyboard .json plus
+               its pictures (storyboard-import.js). Wide desktop only, and
+               only where Animate authoring is (_animAuthoringAvailable). -->
+          <button
+            id="library-storyboard"
+            type="button"
+            class="link-btn"
+            aria-label="Import a storyboard: scenes for many chapters from one .json file and its pictures"
+            title="Pick the storyboard .json together with its pictures"
+          >Storyboard</button>
           <button
             id="library-hide-played"
             type="button"
@@ -3239,6 +3249,13 @@
             id="library-import-file"
             type="file"
             accept=".zip,application/zip,application/x-zip-compressed"
+            hidden
+          />
+          <input
+            id="library-storyboard-file"
+            type="file"
+            accept=".json,application/json,image/*"
+            multiple
             hidden
           />
         </div>
@@ -4546,6 +4563,24 @@
            payload) so the user can copy/download it when reporting a
            "chapter X keeps failing" issue. Linked from Settings →
            "View debug log →" and from the failures banner. -->
+      <!-- v4.253: what a storyboard import did, row by row. Every scene the
+           file names ends here with a status: placed, or why not. -->
+      <dialog id="storyboard-report" class="debug-log-dialog storyboard-report">
+        <div class="voice-browser-head">
+          <div>
+            <h2>Storyboard</h2>
+            <p class="debug-log-subtitle" id="storyboard-report-summary"></p>
+          </div>
+          <button
+            id="storyboard-report-close"
+            type="button"
+            class="link-btn"
+            aria-label="Close the storyboard report"
+          >Close</button>
+        </div>
+        <div id="storyboard-report-body" class="storyboard-report-body"></div>
+      </dialog>
+
       <dialog id="debug-log-dialog" class="debug-log-dialog">
         <div class="voice-browser-head">
           <div>
@@ -5714,6 +5749,9 @@
          tests/sentence_ids_test.js for the cross-impl test. Loaded
          BEFORE app.js so window.NS_IDS is defined when app code runs. -->
     <script src="/sentence-ids.js"></script>
+    <!-- v4.253: storyboard import's matching rules (window.NS_STORYBOARD),
+         pure so tests/storyboard_import_test.js runs it in Node. -->
+    <script src="/storyboard-import.js"></script>
     <script src="/app.js"></script>
     <!-- v225v3.16 (#622): overlay tour engine. Exposes window.OverlayTour
          for any caller (Settings "Take the tour", future product-led

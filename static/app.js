@@ -10260,18 +10260,21 @@ function _animApplyToSpreadScenes() {
       }
     }
     if (!scene) return;
-    // Built-in ambient effect: a CSS scene, no sheet to resolve. Render it
-    // synchronously and move on.
-    if (scene.fx) {
-      const layer = document.createElement("div");
-      layer.className = "anim-book-scene anim-book-scene--fx";
+    const fxEl = () => {
       const fx = document.createElement("div");
       fx.className = "bv-fx";
       fx.dataset.fx = scene.fx;
       if (_animReducedMotion()) fx.dataset.reduced = "1";
+      return fx;
+    };
+    // Built-in ambient effect: a CSS scene, no sheet to resolve. Render it
+    // synchronously and move on.
+    if (scene.fx && !_animCueHasSheet(scene)) {
+      const layer = document.createElement("div");
+      layer.className = "anim-book-scene anim-book-scene--fx";
       const scrim = document.createElement("div");
       scrim.className = "anim-book-scene-scrim";
-      layer.appendChild(fx);
+      layer.appendChild(fxEl());
       layer.appendChild(scrim);
       pageEl.prepend(layer);
       pageEl.classList.add("book-page--scene");
@@ -10311,6 +10314,9 @@ function _animApplyToSpreadScenes() {
       const scrim = document.createElement("div");
       scrim.className = "anim-book-scene-scrim";
       layer.appendChild(bg);
+      // v4.253: a picture scene's effect drifts over the art, under the scrim
+      // (the same order as the reading view's layer: bg, fx, scrim).
+      if (scene.fx) layer.appendChild(fxEl());
       layer.appendChild(scrim);
       pageEl.prepend(layer);
       pageEl.classList.add("book-page--scene");
@@ -10348,6 +10354,10 @@ function _animSyncAuthoringBtn() {
   // (TDZ) — the try/catch makes that early call a safe no-op; the boot wiring
   // below sets the initial state once the const exists.
   try {
+    // v4.253: Library ▸ Storyboard is Animate authoring too, so it follows
+    // the same gate (and is hidden below wide desktop in styles.css).
+    const sbBtn = document.getElementById("library-storyboard");
+    if (sbBtn) sbBtn.hidden = !_animAuthoringAvailable();
     if (!animateModeBtn) return;
     const ok = _animAuthoringAvailable();
     animateModeBtn.hidden = !ok;
@@ -10797,10 +10807,35 @@ function _animSpritePlay(cue) {
 // ── Page (scene) tier: full-bleed background behind the text. Source is a
 // sprite-sheet loop (frames cycle, full-bleed) or a still image (Ken-Burns
 // slow pan/zoom). A page cue holds until the next one.
+// v4.253: does a page cue carry a picture? A cue may carry a picture AND an
+// effect (a storyboard scene: the art with embers drifting over it); only a
+// cue with no picture is an effect-alone scene.
+function _animCueHasSheet(cue) {
+  return !!(cue && (cue.sheetId || cue.sheetBlob || cue.sheet));
+}
+
+// Turn the reading view's effect element on for `cue.fx`, or off. Shared by
+// the effect-alone scene and the picture-plus-effect scene.
+function _animPageFxSet(cue) {
+  if (!_animPageFxEl) return;
+  if (!cue || !cue.fx) {
+    _animPageFxEl.style.display = "none";
+    delete _animPageFxEl.dataset.fx;
+    return;
+  }
+  _animPageFxEl.dataset.fx = cue.fx;
+  if (_animReducedMotion()) _animPageFxEl.dataset.reduced = "1";
+  else delete _animPageFxEl.dataset.reduced;
+  const host = typeof readingView !== "undefined" && readingView;
+  const h = host ? host.clientHeight : 0;
+  if (h) _animPageFxEl.style.height = h + "px";
+  _animPageFxEl.style.display = "";
+}
+
 function _animReconcilePage(cue, playing) {
   if (!_animPageLayerEl || !_animPageBgEl) return;
   // Built-in effect scene (no art).
-  if (cue && cue.fx) {
+  if (cue && cue.fx && !_animCueHasSheet(cue)) {
     if (_animPage.cueId !== cue.id) _animPageShowFx(cue);
     return;
   }
@@ -10859,15 +10894,7 @@ function _animPageShowFx(cue) {
     _animPageBgEl.style.backgroundImage = "";
     _animPageBgEl.classList.remove("anim-page-bg--sprite", "anim-page-bg--kenburns");
   }
-  if (_animPageFxEl) {
-    _animPageFxEl.dataset.fx = cue.fx;
-    if (_animReducedMotion()) _animPageFxEl.dataset.reduced = "1";
-    else delete _animPageFxEl.dataset.reduced;
-    const host = typeof readingView !== "undefined" && readingView;
-    const h = host ? host.clientHeight : 0;
-    if (h) _animPageFxEl.style.height = h + "px";
-    _animPageFxEl.style.display = "";
-  }
+  _animPageFxSet(cue);
   if (_animPageLayerEl) {
     _animPageLayerEl.classList.add("shown");
     _animPageLayerEl.classList.add("anim-page-layer--fx"); // lighter scrim
@@ -10881,7 +10908,9 @@ function _animPageShow(cue) {
   _animPage.cueId = cue.id;
   _animPage.frames = Math.max(1, parseInt(cue.frames, 10) || 1);
   _animPage.frameIdx = 0;
-  if (_animPageFxEl) { _animPageFxEl.style.display = "none"; delete _animPageFxEl.dataset.fx; }
+  // v4.253: a picture scene may carry an effect over it (storyboard import);
+  // it keeps the picture's darker scrim, not the effect-alone lighter one.
+  _animPageFxSet(cue);
   if (_animPageLayerEl) _animPageLayerEl.classList.remove("anim-page-layer--fx");
   const bg = _animPageBgEl;
   _animResolveSheetUrl(cue).then((resolved) => {
@@ -37751,6 +37780,364 @@ $("library-import-file").addEventListener("change", (e) => {
   // Reset so selecting the same file twice still fires "change".
   e.target.value = "";
 });
+
+// ── v4.253: Storyboard import ─────────────────────────────────────────────
+// A whole book's scenes from one JSON file plus its pictures (Library ▸
+// Storyboard). The matching rules live in storyboard-import.js
+// (window.NS_STORYBOARD, run in Node by tests/storyboard_import_test.js);
+// this half stores the pictures and writes each scene exactly as the 🎬
+// Animate palette does (_animSaveCueForSentence): kind:"page", the picture in
+// the anim_sheets store by sheetId, its bytes uploaded for sheetSha so the
+// scene travels to other devices and published books. One addition: a
+// `storyboard: {id, anchor}` stamp, so a re-import replaces its own scenes
+// and never touches one placed by hand.
+//
+// Every scene the file names ends in the report with a status. A scene that
+// silently fails to appear reads exactly like one that was never authored.
+const STORYBOARD_STATUS = {
+  placed: "Placed",
+  "not-found": "Line not found in the chapter",
+  "out-of-order": "Its line comes before the previous scene's",
+  "same-sentence": "Another scene in the file is on that sentence",
+  "kept-yours": "Sentence already has a scene; kept that one",
+  "no-art": "No picture and no effect",
+  "no-picture": "Picture not picked",
+  "bad-picture": "Picture couldn't be read",
+  "store-failed": "Picture couldn't be stored",
+  "no-chapter": "Chapter not placed",
+};
+
+// Each placed scene gets its OWN stored copy of its picture, even when two
+// scenes use the same file: _removeAnimationCue deletes a cue's sheet, so a
+// shared sheet would blank the other scene. The server stores bytes by hash
+// (_animUploadSheet), so the upload is not doubled.
+async function _storyboardStoreImage(file) {
+  const storeBlob = await _animDownscaleImageBlob(file);
+  const sheetId = "sheet_" + _annotateNewId();
+  try {
+    await putAnimSheet(sheetId, storeBlob);
+  } catch (e) {
+    console.warn("[storyboard] putAnimSheet failed:", e);
+    return null;
+  }
+  const sheetSha = await _animUploadSheet(storeBlob);
+  return { sheetId, sheetSha, resized: storeBlob !== file };
+}
+
+async function _storyboardCanDecode(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    if (bmp && bmp.close) bmp.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function _storyboardImport(fileList) {
+  const SB = window.NS_STORYBOARD;
+  if (!SB) {
+    setStatus("Storyboard import didn't load. Reload the page and try again.", true);
+    _dlog("anim-import", "NS_STORYBOARD missing");
+    return;
+  }
+  const files = Array.from(fileList || []);
+  const jsonFiles = files.filter((f) => /\.json$/i.test(f.name));
+  if (jsonFiles.length !== 1) {
+    setStatus(
+      jsonFiles.length
+        ? "Pick one storyboard .json at a time, with its pictures."
+        : "Pick the storyboard .json together with its pictures.",
+      true
+    );
+    return;
+  }
+  const jsonFile = jsonFiles[0];
+  let raw;
+  try {
+    raw = JSON.parse(await jsonFile.text());
+  } catch (e) {
+    setStatus(`"${jsonFile.name}" isn't valid JSON: ${e.message}`, true);
+    _dlog("anim-import", "bad json", { file: jsonFile.name, error: String(e) });
+    return;
+  }
+  const sb = SB.parse(raw, { fx: _ANIM_FX });
+  const report = { file: jsonFile.name, title: sb.title, errors: sb.errors.slice(), chapters: [], unusedImages: [] };
+  if (!sb.ok) {
+    _storyboardShowReport(report);
+    setStatus(`"${jsonFile.name}" isn't a storyboard. See the report.`, true);
+    return;
+  }
+  setStatus("Storyboard: placing scenes…");
+
+  // Pictures by file name (case-insensitive, as Windows names files).
+  const images = new Map();
+  for (const f of files) if (f !== jsonFile) images.set(f.name.toLowerCase(), f);
+  const usedImages = new Set();
+  const decodes = new Map(); // name -> Promise<boolean>, so each file decodes once
+  const canUse = (name) => {
+    const f = images.get(name);
+    if (!f) return Promise.resolve(false);
+    if (!decodes.has(name)) decodes.set(name, _storyboardCanDecode(f));
+    return decodes.get(name);
+  };
+
+  const fileIds = new Set(sb.chapters.flatMap((c) => c.scenes.map((s) => s.id)));
+  const byTitle = new Map();
+  for (const c of await listClips()) {
+    const t = (c.title || "").trim();
+    if (!byTitle.has(t)) byTitle.set(t, []);
+    byTitle.get(t).push(c);
+  }
+
+  for (const ch of sb.chapters) {
+    const entry = { clip: ch.clip, clipId: null, warning: null, rows: [], orphans: [] };
+    report.chapters.push(entry);
+    const matches = byTitle.get(ch.clip) || [];
+    if (matches.length !== 1) {
+      entry.warning = matches.length
+        ? `${matches.length} chapters in your library are titled "${ch.clip}". Rename all but one, then import again.`
+        : "Not in your library. Add or sync it, then import again.";
+      entry.rows = ch.scenes.map((s) => ({ id: s.id, status: "no-chapter" }));
+      continue;
+    }
+    const clip = matches[0];
+    entry.clipId = clip.id;
+    // Numbered exactly as the reading view numbers them (enterReadingView):
+    // splitSentencesClient over clip.text, line ids only when the counts agree.
+    const sentences = splitSentencesClient(clip.text || "");
+    const lineIds =
+      Array.isArray(clip.lines) && clip.lines.length === sentences.length
+        ? clip.lines.map((l) => (l && typeof l.id === "string" ? l.id : null))
+        : null;
+    if (!lineIds) {
+      entry.warning =
+        "Not stored by sentence, so these scenes are pinned to sentence numbers: an edit that adds or removes a sentence above one moves it. Tick “Store this clip by sentence” for this chapter, then import again.";
+    }
+
+    // Decide the pictures BEFORE placing, so a scene whose picture is missing
+    // goes through the matcher as "no art" and an earlier import's scene for
+    // it stays where it was instead of vanishing.
+    const missing = new Map(); // scene id -> "no-picture" | "bad-picture"
+    const scenes = [];
+    for (const sc of ch.scenes) {
+      if (!sc.image) { scenes.push(sc); continue; }
+      const key = sc.image.toLowerCase();
+      if (images.has(key)) usedImages.add(key);
+      if (await canUse(key)) { scenes.push(sc); continue; }
+      // Without its picture a scene is its effect alone, or "no art".
+      missing.set(sc.id, images.has(key) ? "bad-picture" : "no-picture");
+      scenes.push({ ...sc, image: null });
+    }
+
+    const before = Array.isArray(clip.animationCues) ? clip.animationCues : [];
+    const plan = SB.placeChapter({ sentences, lineIds, scenes, cues: before, fileIds });
+    const sceneById = new Map(ch.scenes.map((s) => [s.id, s]));
+    const placed = [];
+    for (const row of plan.rows) {
+      const sc = sceneById.get(row.id);
+      const why = missing.get(row.id);
+      if (row.status === "no-art" && why) {
+        // The matcher said "no art" because the picture was set aside
+        // above; say which picture, and keep its note about any earlier scene.
+        const prior = (row.detail || "").replace(/^No picture and no effect\.\s*/, "");
+        row.status = why;
+        row.detail = sc.image + (prior ? ". " + prior : "");
+        continue;
+      }
+      if (row.status !== "placed") continue;
+      if (why) row.note = `Picture ${sc.image} ${why === "no-picture" ? "wasn't picked" : "couldn't be read"}: placed as its effect alone.`;
+      const cue = {
+        id: "anim_" + _annotateNewId(),
+        kind: "page",
+        effect: "page",
+        startIdx: row.idx,
+        endIdx: row.idx,
+        startLineId: row.lineId,
+        endLineId: row.lineId,
+        storyboard: { id: sc.id, anchor: sc.anchor },
+      };
+      if (sc.fx) cue.fx = sc.fx;
+      if (sc.image && !why) {
+        const stored = await _storyboardStoreImage(images.get(sc.image.toLowerCase()));
+        if (!stored) {
+          if (!sc.fx) {
+            row.status = "store-failed";
+            row.detail = sc.image;
+            continue;
+          }
+          row.note = `Picture ${sc.image} couldn't be stored: placed as its effect alone.`;
+        } else {
+          cue.sheetId = stored.sheetId;
+          if (stored.sheetSha) cue.sheetSha = stored.sheetSha;
+          cue.frames = 1;
+          cue.fps = 8;
+          cue.source = "image";
+          if (stored.resized) row.note = `Picture resized to ${ANIM_IMG_MAX_SIDE}px so it renders in Book view.`;
+        }
+      } else if (sc.fx) {
+        cue.effect = sc.fx; // an effect alone, as the palette writes one
+      }
+      placed.push(cue);
+    }
+
+    const next = plan.keep.concat(placed);
+    const snapshot = JSON.stringify(before);
+    let written = null;
+    try {
+      // The mutator is synchronous on purpose: an IndexedDB transaction
+      // commits itself across an await, so every picture is stored above.
+      written = await _mutateClipAtomic(clip.id, (cc) => {
+        const now = Array.isArray(cc.animationCues) ? cc.animationCues : [];
+        if (JSON.stringify(now) !== snapshot) throw new Error("chapter changed during import");
+        cc.animationCues = next;
+      });
+    } catch (e) {
+      _dlog("anim-import", "write failed", { clip: ch.clip, error: String(e) });
+    }
+    if (!written) {
+      for (const c of placed) if (c.sheetId) deleteAnimSheet(c.sheetId);
+      entry.warning = "Couldn't save this chapter's scenes (it changed while importing). Nothing in it was changed; import again.";
+      for (const row of plan.rows) if (row.status === "placed") { row.status = "store-failed"; row.detail = "Chapter not saved."; }
+      continue;
+    }
+    // Pictures of the earlier import's scenes that were replaced.
+    const live = new Set(next.map((c) => c && c.sheetId).filter(Boolean));
+    for (const c of before) if (c && c.sheetId && !live.has(c.sheetId)) deleteAnimSheet(c.sheetId);
+    entry.rows = plan.rows;
+    entry.orphans = plan.orphans.map((c) => ({ id: c.storyboard.id, idx: typeof c.startIdx === "number" ? c.startIdx : null }));
+    if (_currentClipId === clip.id) {
+      _animLoadCues(written);
+      if (typeof _animApplyToSpreadScenes === "function") _animApplyToSpreadScenes();
+    }
+  }
+  for (const name of images.keys()) if (!usedImages.has(name)) report.unusedImages.push(images.get(name).name);
+
+  _storyboardShowReport(report);
+  const rows = report.chapters.flatMap((c) => c.rows);
+  const nPlaced = rows.filter((r) => r.status === "placed").length;
+  const notPlaced = rows.filter((r) => r.status !== "placed");
+  setStatus(
+    `Storyboard: ${nPlaced} of ${rows.length} scenes placed` +
+      (notPlaced.length ? `, ${notPlaced.length} not. See the report.` : "."),
+    notPlaced.length > 0
+  );
+  _dlog("anim-import", "storyboard imported", {
+    file: report.file,
+    placed: nPlaced,
+    notPlaced: notPlaced.map((r) => ({ id: r.id, status: r.status, detail: r.detail || null })),
+    errors: report.errors,
+  });
+}
+
+function _storyboardShowReport(report) {
+  const dlg = $("storyboard-report");
+  const body = $("storyboard-report-body");
+  const summary = $("storyboard-report-summary");
+  if (!dlg || !body) return;
+  const rows = report.chapters.flatMap((c) => c.rows);
+  const nPlaced = rows.filter((r) => r.status === "placed").length;
+  summary.textContent = `${report.title ? report.title + " · " : ""}${report.file}: ${nPlaced} of ${rows.length} scenes placed.`;
+  body.textContent = "";
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  if (report.errors.length) {
+    const box = el("div", "storyboard-report-chapter");
+    box.appendChild(el("h3", null, "In the file"));
+    const ul = el("ul", "storyboard-report-rows");
+    for (const e of report.errors) ul.appendChild(el("li", "is-bad", e));
+    box.appendChild(ul);
+    body.appendChild(box);
+  }
+  for (const ch of report.chapters) {
+    const box = el("div", "storyboard-report-chapter");
+    const head = el("div", "storyboard-report-head");
+    const good = ch.rows.filter((r) => r.status === "placed").length;
+    head.appendChild(el("h3", null, `${ch.clip}  ${good}/${ch.rows.length}`));
+    if (ch.clipId != null) {
+      const open = el("button", "link-btn", "Open");
+      open.type = "button";
+      open.addEventListener("click", () => {
+        dlg.close();
+        loadClip(ch.clipId);
+      });
+      head.appendChild(open);
+    }
+    box.appendChild(head);
+    if (ch.warning) box.appendChild(el("p", "storyboard-report-warning", ch.warning));
+    const ul = el("ul", "storyboard-report-rows");
+    for (const r of ch.rows) {
+      const ok = r.status === "placed";
+      const where = typeof r.idx === "number" ? ` (sentence ${r.idx + 1})` : "";
+      let text = `${r.id}: ${STORYBOARD_STATUS[r.status] || r.status}${where}`;
+      if (r.detail) text += `. ${r.detail}`;
+      if (r.note) text += `. ${r.note}`;
+      ul.appendChild(el("li", ok ? (r.note ? "is-note" : "is-ok") : "is-bad", text));
+    }
+    box.appendChild(ul);
+    if (ch.orphans.length) {
+      const p = el(
+        "p",
+        "storyboard-report-warning",
+        `Placed by an earlier storyboard and no longer in this file, so kept: ${ch.orphans
+          .map((o) => o.id + (o.idx != null ? ` (sentence ${o.idx + 1})` : ""))
+          .join(", ")}.`
+      );
+      const rm = el("button", "link-btn", "Remove these");
+      rm.type = "button";
+      rm.addEventListener("click", async () => {
+        const ids = new Set(ch.orphans.map((o) => o.id));
+        let dropped = [];
+        const written = await _mutateClipAtomic(ch.clipId, (cc) => {
+          const all = Array.isArray(cc.animationCues) ? cc.animationCues : [];
+          dropped = all.filter((c) => c && c.storyboard && ids.has(c.storyboard.id));
+          cc.animationCues = all.filter((c) => !dropped.includes(c));
+        }).catch(() => null);
+        if (!written) {
+          setStatus("Couldn't remove those scenes. See the console.", true);
+          return;
+        }
+        for (const c of dropped) if (c.sheetId) deleteAnimSheet(c.sheetId);
+        if (_currentClipId === ch.clipId) {
+          _animLoadCues(written);
+          if (typeof _animApplyToSpreadScenes === "function") _animApplyToSpreadScenes();
+        }
+        ch.orphans = [];
+        p.remove();
+        setStatus(`Removed ${dropped.length} old storyboard scene${dropped.length === 1 ? "" : "s"} from ${ch.clip}.`);
+      });
+      p.appendChild(document.createTextNode(" "));
+      p.appendChild(rm);
+      box.appendChild(p);
+    }
+    body.appendChild(box);
+  }
+  if (report.unusedImages.length) {
+    const box = el("div", "storyboard-report-chapter");
+    box.appendChild(el("h3", null, "Pictures no scene names"));
+    box.appendChild(el("p", "storyboard-report-warning", report.unusedImages.join(", ")));
+    body.appendChild(box);
+  }
+  if (!dlg.open) dlg.showModal();
+}
+
+$("library-storyboard").addEventListener("click", () => $("library-storyboard-file").click());
+$("library-storyboard-file").addEventListener("change", (e) => {
+  const picked = e.target.files;
+  if (picked && picked.length) {
+    _storyboardImport(picked).catch((err) => {
+      setStatus("Storyboard import failed. Settings ▸ View debug log has the details.", true);
+      _dlog("anim-import", "threw", { error: String(err && err.stack || err) });
+      console.error("[storyboard]", err);
+    });
+  }
+  e.target.value = "";
+});
+$("storyboard-report-close").addEventListener("click", () => $("storyboard-report").close());
 
 // ---- Library multi-select -----------------------------------------------
 // Bulk delete + bulk export for clip libraries that have grown past
