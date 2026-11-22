@@ -108,8 +108,30 @@ console.log("placeChapter: finding the sentence");
   check("two scenes on one sentence: the second is reported", r.one.status === "placed" && r.two.status === "same-sentence", r);
 }
 {
+  // v4.255: a scene with nothing to show yet is placed, as a placeholder
+  // that holds its brief, so the editor and Export carry every scene.
   const r = byId(place([scene("bare", "The blue hour", { image: null, fx: null })]).rows);
-  check("a scene with neither picture nor effect is reported", r.bare.status === "no-art", r.bare);
+  check("a scene with neither picture nor effect is placed (a placeholder)", r.bare.status === "placed" && r.bare.idx === 0, r.bare);
+  // …but never in place of art: an earlier import's scene for it that has
+  // a picture or an effect stays.
+  const hasSheet = (c) => !!c.sheetId;
+  const earlier = [{ id: "anim_e", kind: "page", startIdx: 3, sheetId: "pic", storyboard: { id: "bare", anchor: "x" } }];
+  const k = place([scene("bare", "The blue hour", { image: null, fx: null })], earlier);
+  check("an earlier scene with a picture stays, where it was", byId(k.rows).bare.status === "no-art" && k.keep.includes(earlier[0]), k);
+  const fxEarlier = [{ id: "anim_f", kind: "page", startIdx: 3, fx: "glow", storyboard: { id: "bare", anchor: "x" } }];
+  const kf = sb.placeChapter({ sentences: SENTENCES, scenes: [scene("bare", "The blue hour", { image: null, fx: null })], cues: fxEarlier, hasSheet });
+  check("an earlier scene with an effect stays", byId(kf.rows).bare.status === "no-art" && kf.keep.includes(fxEarlier[0]), kf.rows);
+  // A picture not picked never replaces one already stored, even when the
+  // file gives the scene an effect too; over an effect alone, it places.
+  const pic = [{ id: "anim_p", kind: "page", startIdx: 3, sheetId: "pic", storyboard: { id: "bare", anchor: "x" } }];
+  const kp = sb.placeChapter({ sentences: SENTENCES, scenes: [scene("bare", "The blue hour", { image: null, fx: "glow", pictureMissing: true })], cues: pic, hasSheet });
+  check("a missing picture keeps the stored one", byId(kp.rows).bare.status === "no-art" && kp.keep.includes(pic[0]), kp.rows);
+  const kq = sb.placeChapter({ sentences: SENTENCES, scenes: [scene("bare", "The blue hour", { image: null, fx: "glow", pictureMissing: true })], cues: fxEarlier, hasSheet });
+  check("a missing picture over an effect alone places", byId(kq.rows).bare.status === "placed", kq.rows);
+  // An earlier placeholder is replaced: the file's brief and anchor win.
+  const blank = [{ id: "anim_g", kind: "page", startIdx: 3, storyboard: { id: "bare", anchor: "x" } }];
+  const kb = sb.placeChapter({ sentences: SENTENCES, scenes: [scene("bare", "The blue hour", { image: null, fx: null })], cues: blank, hasSheet });
+  check("an earlier placeholder is placed again", byId(kb.rows).bare.status === "placed" && !kb.keep.includes(blank[0]), kb);
 }
 {
   const r = byId(place([scene("fx", "The blue hour", { image: null, fx: "glow" })]).rows);
@@ -162,6 +184,108 @@ console.log("placeChapter: what is already there");
   const hand = { id: "h", kind: "page", startIdx: 1, startLineId: "L2" };
   const r = byId(place([scene("s", "counted.")], [hand], lineIds).rows);
   check("an existing cue is found by its line id before its index", r.s.status === "placed", r.s);
+}
+
+console.log("parse: the brief (v4.255)");
+{
+  const p = sb.parse({ storyboard: 1, chapters: [{ clip: "c", scenes: [
+    { id: "a", anchor: "x", fx: "glow", shot: "Wide. The nursery.", art: "New", key: true },
+    { id: "b", anchor: "y", fx: "glow", key: "yes" },
+  ] }] }, { fx: FX });
+  const [a, b] = p.chapters[0].scenes;
+  check("shot, art and key are kept", a.shot === "Wide. The nursery." && a.art === "New" && a.key === true, a);
+  check("key is only ever true, never a string", b.key === undefined, b);
+}
+
+console.log("outlineChapter (v4.255)");
+const hasSheet = (c) => !!c.sheetId;
+{
+  const cues = [
+    { id: "late", kind: "page", startIdx: 5, fx: "glow" },
+    { id: "pic", kind: "page", startIdx: 1, sheetId: "s1", storyboard: { id: "ch-s1", anchor: "counted." } },
+    { id: "blank", kind: "page", startIdx: 3 },
+    { id: "gone", kind: "page", startIdx: 40 },
+    { id: "badge", kind: "badge", startIdx: 2 },
+  ];
+  const rows = sb.outlineChapter({ sentences: SENTENCES, lineIds: null, cues, hasSheet });
+  check("only page cues, in reading order, lost ones last", rows.map((r) => r.cue.id).join() === "pic,blank,late,gone", rows.map((r) => r.cue.id));
+  check("status says picture / empty / fx / lost", rows.map((r) => r.status).join() === "picture,empty,fx,lost", rows.map((r) => r.status));
+  check("a scene holds until the next one", rows[0].until === 2 && rows[1].until === 4 && rows[2].until === SENTENCES.length - 1, rows.map((r) => r.until));
+  check("a stamped scene keeps its id and anchor", rows[0].id === "ch-s1" && rows[0].anchor === "counted." && !rows[0].hand);
+  check("a hand-placed scene's anchor is its sentence", rows[1].hand && rows[1].anchor === SENTENCES[3]);
+  const byLine = sb.outlineChapter({ sentences: SENTENCES, lineIds: SENTENCES.map((_, i) => "L" + i),
+    cues: [{ id: "m", kind: "page", startIdx: 0, startLineId: "L4", fx: "rain" }], hasSheet });
+  check("the line id places it before the index", byLine[0].idx === 4, byLine[0]);
+}
+
+console.log("exportBook (v4.255)");
+{
+  const cues = [
+    // Stamped, and its anchor still reads in its sentence.
+    { id: "anim_a", kind: "page", startIdx: 0, sheetId: "s1", fx: "embers",
+      storyboard: { id: "ch01-s1", anchor: "The blue hour was the best", shot: "Wide.", art: "New", key: true } },
+    // Stamped, but moved in the editor to sentence 6: its old anchor no
+    // longer reads there, so the sentence itself becomes the anchor.
+    { id: "anim_b", kind: "page", startIdx: 6, fx: "glow", storyboard: { id: "ch01-s2", anchor: "counted." } },
+    // Placed by hand with the palette.
+    { id: "anim_c", kind: "page", startIdx: 4, sheetId: "s2" },
+    // No picture and no effect yet.
+    { id: "anim_d", kind: "page", startIdx: 5, storyboard: { id: "ch01-s9", anchor: "x", shot: "Later." } },
+  ];
+  const { file, pictures, warnings } = sb.exportBook({
+    title: "Book 1",
+    chapters: [{ clip: "01_The_Cull", sentences: SENTENCES, lineIds: null, cues }],
+    hasSheet,
+    pictureName: (c, id) => id + ".webp",
+  });
+  const sc = Object.fromEntries(file.chapters[0].scenes.map((s) => [s.id, s]));
+  check("the file is a storyboard the import reads", sb.parse(file, { fx: FX }).ok && file.title === "Book 1");
+  check("a stamped scene keeps its id, anchor, brief and picture", sc["ch01-s1"].anchor === "The blue hour was the best" &&
+    sc["ch01-s1"].shot === "Wide." && sc["ch01-s1"].art === "New" && sc["ch01-s1"].key === true && sc["ch01-s1"].image === "ch01-s1.webp" && sc["ch01-s1"].fx === "embers", sc["ch01-s1"]);
+  check("a moved scene is anchored on its new sentence", sc["ch01-s2"].anchor === SENTENCES[6], sc["ch01-s2"]);
+  // An author's anchor that runs on into the next sentence still places
+  // its scene, so it is kept word for word (Book 1 has 13 of these).
+  {
+    const run = { id: "anim_r", kind: "page", startIdx: 1, fx: "glow", storyboard: { id: "r", anchor: "and counted. “Sufficient,” he said." } };
+    const out = sb.exportBook({ chapters: [{ clip: "x", sentences: SENTENCES, lineIds: null, cues: [run] }], hasSheet });
+    check("an anchor spanning two sentences is kept", out.file.chapters[0].scenes[0].anchor === run.storyboard.anchor && !out.warnings.length, out);
+  }
+  const hand = file.chapters[0].scenes.find((s) => s.id.startsWith("01-the-cull-"));
+  check("a hand-placed scene gets an id and its sentence", !!hand && hand.anchor === SENTENCES[4] && hand.image === hand.id + ".webp", hand);
+  check("each picture is listed once with its scene's name", pictures.length === 2 && pictures.every((p) => p.name.endsWith(".webp")), pictures.map((p) => p.name));
+  check("a scene with nothing yet is exported with its brief, no warning (it imports as a placeholder)",
+    !!sc["ch01-s9"] && sc["ch01-s9"].shot === "Later." && !sc["ch01-s9"].image && !sc["ch01-s9"].fx && !warnings.some((w) => w.includes("ch01-s9")), warnings);
+  // The round trip: import the export into an empty copy of the chapter.
+  const parsed = sb.parse(file, { fx: FX });
+  const back = sb.placeChapter({ sentences: SENTENCES, lineIds: null, scenes: parsed.chapters[0].scenes, cues: [] });
+  const at = Object.fromEntries(back.rows.map((r) => [r.id, r.idx]));
+  check("every exported scene places back on its own sentence", at["ch01-s1"] === 0 && at["ch01-s2"] === 6 && at[hand.id] === 4 && at["ch01-s9"] === 5, back.rows);
+  check("a clean export has no warnings", warnings.length === 0, warnings);
+}
+{
+  // A scene on the SECOND "Sufficient." line, moved there in the editor:
+  // as a bare sentence it would import onto the first one. Said, not hidden.
+  const sents = ["Sufficient.", "He nodded.", "Sufficient."];
+  const { warnings } = sb.exportBook({
+    chapters: [{ clip: "13", sentences: sents, lineIds: null, cues: [{ id: "anim_x", kind: "page", startIdx: 2, fx: "glow" }] }],
+    hasSheet,
+  });
+  check("an anchor that would land elsewhere is named", warnings.some((w) => w.includes("instead of 3")), warnings);
+}
+{
+  // v4.255: a placeholder still waiting for its painting keeps the file
+  // name the storyboard gave it, so the export names it again (and writes
+  // no picture for it), and an import with the painting attaches it.
+  const cue = { id: "anim_w", kind: "page", startIdx: 0, storyboard: { id: "ch02-s1", anchor: "The blue hour", image: "ch02-s1.webp", shot: "A husk." } };
+  const { file, pictures } = sb.exportBook({
+    chapters: [{ clip: "02", sentences: SENTENCES, lineIds: null, cues: [cue] }],
+    hasSheet,
+    pictureName: (c, id) => (hasSheet(c) ? id + ".webp" : null),
+  });
+  const s = file.chapters[0].scenes[0];
+  check("a waiting placeholder exports the picture it waits for", s.image === "ch02-s1.webp" && pictures.length === 0, { s, pictures });
+  const back = place([sb.parse(file, { fx: FX }).chapters[0].scenes[0]], [cue], null, new Set(["ch02-s1"]));
+  check("…and an import with that picture replaces the placeholder", byId(back.rows)["ch02-s1"].status === "placed" && !back.keep.includes(cue), back);
 }
 
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");

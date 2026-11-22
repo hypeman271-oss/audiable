@@ -5744,6 +5744,97 @@
 
     </main>
 
+    <!-- v4.255: the storyboard editor (Library ▸ Storyboard), laid out like
+         the game's Workshop editors. Outside <main> so nothing it is inside
+         can scroll it or contain its fixed position. The viewport holds the
+         REAL reading card while it is open (app.js _sbOpen moves it in and
+         _sbClose puts it back), so the preview is the page a reader sees. -->
+    <div id="sb-editor" class="sb-editor" hidden role="dialog" aria-label="Storyboard editor">
+      <header class="sb-head">
+        <h2>Storyboard</h2>
+        <span class="sb-head-note">Edits save to the chapter as you make them.</span>
+        <div class="sb-head-actions">
+          <button id="sb-import" type="button" class="link-btn" title="Pick a storyboard .json together with its pictures">Import…</button>
+          <button id="sb-export" type="button" class="link-btn" title="Write the book's scenes as a storyboard .json and its pictures into a folder">Export…</button>
+          <button id="sb-close" type="button" class="link-btn" aria-label="Close the storyboard editor">Close</button>
+        </div>
+      </header>
+      <div class="sb-body">
+        <aside class="sb-outliner" aria-label="Outliner">
+          <div class="sb-panel-head">
+            <h3>Outliner</h3>
+            <span id="sb-count" class="sb-count"></span>
+          </div>
+          <input id="sb-search" class="sb-search" type="search" placeholder="Search scenes" aria-label="Search scenes" />
+          <label class="sb-check"><input id="sb-all-chapters" type="checkbox" /> All chapters, with or without scenes</label>
+          <div id="sb-rows" class="sb-rows"></div>
+        </aside>
+        <section class="sb-stage" aria-label="Viewport">
+          <div class="sb-toolbar">
+            <div class="sb-views" role="group" aria-label="Preview">
+              <button id="sb-view-book" type="button" class="sb-seg" aria-pressed="true">Book</button>
+              <button id="sb-view-reading" type="button" class="sb-seg" aria-pressed="false">Reading</button>
+              <button id="sb-view-phone" type="button" class="sb-seg" aria-pressed="false" title="Book view at a phone's width">Phone width</button>
+            </div>
+            <div class="sb-transport">
+              <button id="sb-prev" type="button" class="sb-seg" aria-label="Previous scene">◀</button>
+              <span id="sb-where" class="sb-where"></span>
+              <button id="sb-next" type="button" class="sb-seg" aria-label="Next scene">▶</button>
+              <button id="sb-play" type="button" class="sb-seg">Play from here</button>
+            </div>
+            <button id="sb-add" type="button" class="sb-seg sb-add" disabled>Add a scene</button>
+          </div>
+          <div id="sb-viewport" class="sb-viewport">
+            <div id="sb-frame" class="sb-frame"></div>
+          </div>
+          <div class="sb-lane-wrap">
+            <p id="sb-lane-label" class="sb-lane-label"></p>
+            <div id="sb-lane" class="sb-lane" aria-label="The chapter's sentences"></div>
+          </div>
+        </section>
+        <aside id="sb-details" class="sb-details" aria-label="Details">
+          <div class="sb-panel-head"><h3>Details</h3></div>
+          <input id="sb-filter" class="sb-search" type="search" placeholder="Filter properties" aria-label="Filter properties" />
+          <p id="sb-details-empty" class="sb-empty">Pick a scene in the Outliner.</p>
+          <div id="sb-cats" class="sb-cats" hidden>
+            <details class="sb-cat" open>
+              <summary>Placement</summary>
+              <p id="sb-place-where" class="sb-field-strong"></p>
+              <blockquote id="sb-place-sentence" class="sb-quote"></blockquote>
+              <p id="sb-place-note" class="sb-note"></p>
+              <button id="sb-find-again" type="button" class="link-btn" hidden>Find its anchor again</button>
+            </details>
+            <details class="sb-cat" open data-scene-only>
+              <summary>Picture</summary>
+              <img id="sb-thumb" class="sb-thumb" alt="This scene's picture" hidden />
+              <p id="sb-picture-none" class="sb-note"></p>
+              <div class="sb-btn-row">
+                <button id="sb-picture-pick" type="button" class="link-btn">Pick a picture…</button>
+                <button id="sb-picture-clear" type="button" class="link-btn">Clear</button>
+              </div>
+              <input id="sb-picture-file" type="file" accept="image/*" hidden />
+            </details>
+            <details class="sb-cat" open data-scene-only>
+              <summary>Effect</summary>
+              <label class="sb-field">Effect <select id="sb-fx"></select></label>
+              <p class="sb-note">Drawn over the picture, or alone when there is none.</p>
+            </details>
+            <details class="sb-cat" open data-scene-only>
+              <summary>Brief</summary>
+              <label class="sb-field">Shot <textarea id="sb-shot" rows="4" placeholder="What the picture shows"></textarea></label>
+              <label class="sb-field">Art <select id="sb-art"></select></label>
+              <label class="sb-check"><input id="sb-key" type="checkbox" /> Key frame ★</label>
+              <p id="sb-brief-note" class="sb-note"></p>
+            </details>
+            <div class="sb-danger" data-scene-only>
+              <button id="sb-remove" type="button" class="link-btn">Remove this scene</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+      <p id="sb-status" class="sb-status" aria-live="polite"></p>
+    </div>
+
     <!-- v225v4.0 (#810): sentence ID helpers (normalize, hashText,
          mintLineId). MUST stay in lockstep with sentence_ids.py — see
          tests/sentence_ids_test.js for the cross-impl test. Loaded

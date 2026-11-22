@@ -139,13 +139,16 @@ test.describe("storyboard import", () => {
 
     const report = page.locator("#storyboard-report");
     await expect(report).toBeVisible();
-    await expect(page.locator("#storyboard-report-summary")).toHaveText(/3 of 8 scenes placed/);
+    await expect(page.locator("#storyboard-report-summary")).toHaveText(/5 of 8 scenes placed, 2 of them placeholders/);
     const body = page.locator("#storyboard-report-body");
     await expect(body).toContainText("s1: Placed (sentence 1)");
     await expect(body).toContainText("s2: Line not found in the chapter");
     await expect(body).toContainText("s3: Placed");
-    await expect(body).toContainText("s4: Picture not picked. missing.png");
-    await expect(body).toContainText("s5: Picture couldn't be read. broken.png");
+    // v4.255: a picture not here yet makes a placeholder that waits for it.
+    await expect(body).toContainText("s4: Placed");
+    await expect(body).toContainText("Picture missing.png wasn't picked: placed as a placeholder that waits for it.");
+    await expect(body).toContainText("s5: Placed");
+    await expect(body).toContainText("Picture broken.png couldn't be read: placed as a placeholder that waits for it.");
     await expect(body).toContainText("s6: Sentence already has a scene; kept that one");
     await expect(body).toContainText("s7: Placed");
     await expect(body).toContainText("lost: Chapter not placed");
@@ -156,7 +159,7 @@ test.describe("storyboard import", () => {
     await page.screenshot({ path: "test-results/storyboard-report.png" });
 
     let cues = await cuesOf(page, clipId);
-    expect(cues.length).toBe(4); // the hand scene + s1, s3, s7
+    expect(cues.length).toBe(6); // the hand scene + s1, s3, s7 + placeholders s4, s5
     expect(cues.find((c) => c.id === "anim_hand")).toBeTruthy();
     const s1 = bySb(cues, "s1");
     const s3 = bySb(cues, "s3");
@@ -167,8 +170,9 @@ test.describe("storyboard import", () => {
     expect(s3.sheetId).toBeFalsy();
     expect(s7.sheetId).toBeTruthy();
     expect(s7.sheetId).not.toBe(s1.sheetId);
-    expect(bySb(cues, "s4")).toBeFalsy();
-    expect(bySb(cues, "s5")).toBeFalsy();
+    expect(bySb(cues, "s4").sheetId).toBeFalsy();
+    expect(bySb(cues, "s4").storyboard.image).toBe("missing.png");
+    expect(bySb(cues, "s5").storyboard.image).toBe("broken.png");
 
     // Each scene's sentence, as the reading view numbers it, holds its anchor.
     await page.locator("#storyboard-report-close").click();
@@ -212,10 +216,10 @@ test.describe("storyboard import", () => {
     // Re-import the same file: its scenes are replaced, not doubled, and the
     // pictures of the scenes it replaced are deleted.
     await page.locator("#library-storyboard-file").setInputFiles(files(storyboard(SCENES), png));
-    await expect(page.locator("#storyboard-report-summary")).toHaveText(/3 of 8 scenes placed/);
+    await expect(page.locator("#storyboard-report-summary")).toHaveText(/5 of 8 scenes placed/);
     await page.locator("#storyboard-report-close").click();
     cues = await cuesOf(page, clipId);
-    expect(cues.length).toBe(4);
+    expect(cues.length).toBe(6);
     const s1b = bySb(cues, "s1");
     expect(s1b.sheetId).not.toBe(s1.sheetId);
     const sheets = await page.evaluate(
@@ -223,6 +227,18 @@ test.describe("storyboard import", () => {
       [s1.sheetId, s7.sheetId, s1b.sheetId, bySb(cues, "s7").sheetId]
     );
     expect(sheets).toEqual([false, false, true, true]);
+
+    // v4.255: the file again with NONE of its pictures picked. A scene whose
+    // picture is not here never loses the one it has (s1 keeps its picture
+    // even though the file also gives it an effect), and nothing is doubled.
+    await page.locator("#library-storyboard-file").setInputFiles([files(storyboard(SCENES), png)[0]]);
+    await expect(page.locator("#storyboard-report-body")).toContainText("s1: Picture not picked. a.png. Its earlier scene stays on sentence 1");
+    await page.locator("#storyboard-report-close").click();
+    cues = await cuesOf(page, clipId);
+    expect(cues.length).toBe(6);
+    expect(bySb(cues, "s1").sheetId).toBe(s1b.sheetId);
+    expect(bySb(cues, "s7").sheetId).toBeTruthy();
+    expect(await page.evaluate((i) => getAnimSheet(i).then((b) => !!b), s1b.sheetId)).toBe(true);
 
     // Removing one of two scenes that share a picture leaves the other's.
     await page.evaluate(({ id, idx }) => _removeAnimationCue(id, idx), { id: clipId, idx: bySb(cues, "s7").startIdx });
@@ -234,7 +250,7 @@ test.describe("storyboard import", () => {
   test("a scene dropped from the file is kept and offered for removal", async ({ page }) => {
     const png = await makePng(page);
     await page.locator("#library-storyboard-file").setInputFiles(files(storyboard(SCENES), png));
-    await expect(page.locator("#storyboard-report-summary")).toHaveText(/3 of 8 scenes placed/);
+    await expect(page.locator("#storyboard-report-summary")).toHaveText(/5 of 8 scenes placed/);
     await page.locator("#storyboard-report-close").click();
 
     const fewer = SCENES.filter((s) => s.id !== "s7");
@@ -249,7 +265,7 @@ test.describe("storyboard import", () => {
     await expect(body).not.toContainText("no longer in this file");
     cues = await cuesOf(page, clipId);
     expect(bySb(cues, "s7")).toBeFalsy();
-    expect(cues.length).toBe(3);
+    expect(cues.length).toBe(5); // the hand scene, s1, s3 and placeholders s4, s5
     await expect.poll(() => page.evaluate((i) => getAnimSheet(i).then((b) => !!b), orphanSheet)).toBe(false);
   });
 
@@ -260,6 +276,28 @@ test.describe("storyboard import", () => {
     await expect(page.locator("#storyboard-report")).toBeVisible();
     await expect(page.locator("#storyboard-report-body")).toContainText("storyboard");
     expect(await cuesOf(page, clipId)).toHaveLength(1);
+  });
+
+  // v4.255: picking every file in the Book 1 folder brought the stand-in
+  // tool's .standins.json along, and the import refused the whole pick.
+  test("a whole folder picked: the storyboard is used, other .json named", async ({ page }) => {
+    const png = await makePng(page);
+    await page.locator("#library-storyboard-file").setInputFiles(
+      files(storyboard(SCENES), png, [
+        { name: ".standins.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({ made: ["a.png"] })) },
+        { name: "broken.json", mimeType: "application/json", buffer: Buffer.from("{ not json") },
+      ])
+    );
+    await expect(page.locator("#storyboard-report-summary")).toHaveText(/book1-storyboard\.json: 5 of 8 scenes placed/);
+    await expect(page.locator("#storyboard-report-body")).toContainText(".standins.json, broken.json: not a storyboard.");
+    await page.locator("#storyboard-report-close").click();
+
+    // Two storyboards at once is still one too many, and says which.
+    await page.locator("#library-storyboard-file").setInputFiles([
+      { name: "one.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(storyboard(SCENES))) },
+      { name: "two.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(storyboard(SCENES))) },
+    ]);
+    await expect(page.locator("#status")).toContainText("one.json and two.json are both storyboards");
   });
 
   test("the Storyboard button is a desktop tool", async ({ page }) => {

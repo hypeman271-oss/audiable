@@ -9,6 +9,10 @@
 //   parse(raw, { fx })   -> is this a storyboard, and what does it hold?
 //   placeChapter(...)    -> which sentence does each scene sit on, and why
 //                           not, for each one that cannot be placed?
+//   outlineChapter(...)  -> v4.255: a chapter's scenes as the storyboard
+//                           editor lists them, in reading order
+//   exportBook(...)      -> v4.255: the book's scenes as a storyboard file,
+//                           proved to place back on the same sentences
 //
 // The app half (app.js, "Storyboard import") stores the pictures, writes the
 // cues through _mutateClipAtomic and shows the report. Every row comes back
@@ -50,10 +54,16 @@
   // Validate a parsed storyboard. Returns { ok, title, chapters, errors }.
   // `opts.fx` is the app's set of built-in effects (_ANIM_FX): the app owns
   // that list, this module never keeps a copy of it.
+  // Does this parsed JSON claim to be a storyboard at all? Picking a whole
+  // folder brings other .json files with it (a tool's .standins.json).
+  function isStoryboard(raw) {
+    return !!raw && typeof raw === "object" && raw.storyboard === 1;
+  }
+
   function parse(raw, opts) {
     const fxOk = (opts && opts.fx) || new Set();
     const errors = [];
-    if (!raw || typeof raw !== "object" || raw.storyboard !== 1) {
+    if (!isStoryboard(raw)) {
       return { ok: false, title: "", chapters: [], errors: ['Not a storyboard file (it needs "storyboard": 1).'] };
     }
     if (!Array.isArray(raw.chapters) || raw.chapters.length === 0) {
@@ -88,7 +98,13 @@
           errors.push(`${where} (${id}): "${fx}" is not an effect Lyrith has (${[...fxOk].join(", ")}).`);
           fx = null;
         }
-        scenes.push({ id, anchor, image, fx });
+        // v4.255: the painting brief travels with the scene (the editor's
+        // Details ▸ Brief). Optional; the import only stores it.
+        const brief = {};
+        if (typeof sc.shot === "string" && sc.shot.trim()) brief.shot = sc.shot.trim();
+        if (typeof sc.art === "string" && sc.art.trim()) brief.art = sc.art.trim();
+        if (sc.key === true) brief.key = true;
+        scenes.push(Object.assign({ id, anchor, image, fx }, brief));
       });
       chapters.push({ clip, scenes });
     });
@@ -111,6 +127,10 @@
   //   cues:      the clip's current animationCues
   //   fileIds:   every scene id in the whole storyboard (a scene may move
   //              chapters between versions of the file)
+  //   hasSheet:  the app's answer to "does this cue carry a picture"
+  //              (_animCueHasSheet); without it an earlier cue counts as art
+  // Each scene may say pictureMissing: its picture was named but is not
+  // here (not picked, or unreadable), so the app passed it with image null.
   // Returns { rows, keep, orphans }:
   //   rows:    one per scene { id, status, idx?, lineId?, detail? }
   //            status: placed | not-found | out-of-order | kept-yours |
@@ -119,11 +139,21 @@
   //            not place earlier); placed rows are added to these by the app
   //   orphans: cues an earlier import placed whose id is no longer in the
   //            file. Kept, and listed, never deleted here.
-  function placeChapter({ sentences, lineIds, scenes, cues, fileIds }) {
+  //
+  // v4.255: a scene with neither picture nor effect (none in the file, or
+  // its picture not picked yet) is PLACED, as a placeholder that holds its
+  // brief; readers never see one, the scene before it holds. It is "no-art"
+  // only when placing it would take art away from an earlier import's scene
+  // for it, and that scene stays: the file gives no art and the earlier one
+  // has some, or the file's picture is missing and the earlier one has a
+  // picture.
+  function placeChapter({ sentences, lineIds, scenes, cues, fileIds, hasSheet }) {
     const sents = Array.isArray(sentences) ? sentences : [];
     const ids = Array.isArray(lineIds) && lineIds.length === sents.length ? lineIds : null;
     const lineIdToIdx = ids ? new Map(ids.map((id, i) => [id, i])) : null;
     const inFile = fileIds instanceof Set ? fileIds : new Set(scenes.map((s) => s.id));
+    const hasPicture = (c) => !!c && (typeof hasSheet === "function" ? hasSheet(c) : true);
+    const hasArt = (c) => !!c && (!!c.fx || hasPicture(c));
 
     // The chapter as one folded string, with where each sentence starts.
     const starts = [];
@@ -169,8 +199,9 @@
     const usedHere = new Set();
     let cursor = 0;
     for (const sc of scenes) {
-      if (!sc.image && !sc.fx) {
-        rows.push({ id: sc.id, status: "no-art", detail: "No picture and no effect." });
+      const prev = previous.get(sc.id);
+      if ((!sc.image && !sc.fx && hasArt(prev)) || (sc.pictureMissing && hasPicture(prev))) {
+        rows.push({ id: sc.id, status: "no-art", detail: "" });
         continue;
       }
       const needle = foldAnchor(sc.anchor);
@@ -225,7 +256,121 @@
     return { rows, keep, orphans };
   }
 
-  const api = { fold, foldAnchor, parse, placeChapter };
+  // v4.255: a chapter's page scenes in reading order, as the storyboard
+  // editor lists them. `hasSheet(cue)` is the app's own answer to "does this
+  // cue carry a picture" (_animCueHasSheet), never a copy of it.
+  //   returns [{ cue, idx, until, status, id, hand, fx, anchor, sentence }]
+  //     status: picture | fx | empty | lost (its sentence is gone)
+  //     until:  the last sentence the scene covers (it holds until the next)
+  function outlineChapter({ sentences, lineIds, cues, hasSheet }) {
+    const sents = Array.isArray(sentences) ? sentences : [];
+    const ids = Array.isArray(lineIds) && lineIds.length === sents.length ? lineIds : null;
+    const lineIdToIdx = ids ? new Map(ids.map((id, i) => [id, i])) : null;
+    const pic = typeof hasSheet === "function" ? hasSheet : () => false;
+    const rows = [];
+    for (const cue of Array.isArray(cues) ? cues : []) {
+      if (!cue || cue.kind !== "page") continue;
+      let idx = cueIndex(cue, lineIdToIdx);
+      if (idx != null && (idx < 0 || idx >= sents.length)) idx = null;
+      const stamp = cue.storyboard || null;
+      rows.push({
+        cue,
+        idx,
+        until: null,
+        status: idx == null ? "lost" : pic(cue) ? "picture" : cue.fx ? "fx" : "empty",
+        id: stamp && stamp.id ? stamp.id : null,
+        hand: !(stamp && stamp.id),
+        fx: cue.fx || null,
+        anchor: stamp && stamp.anchor ? stamp.anchor : idx != null ? sents[idx] : "",
+        sentence: idx != null ? sents[idx] : "",
+      });
+    }
+    rows.sort((a, b) => (a.idx == null ? Infinity : a.idx) - (b.idx == null ? Infinity : b.idx));
+    const placed = rows.filter((r) => r.idx != null);
+    placed.forEach((r, i) => {
+      r.until = i + 1 < placed.length ? Math.max(r.idx, placed[i + 1].idx - 1) : sents.length - 1;
+    });
+    return rows;
+  }
+
+  // v4.255: the book's scenes as a storyboard file (the editor's Export).
+  //   chapters:    [{ clip, sentences, lineIds, cues }] in book order
+  //   hasSheet:    as in outlineChapter
+  //   pictureName: (cue, sceneId) -> the picture's file name, or null
+  // Returns { file, pictures: [{ cue, name }], warnings: [string] }.
+  //
+  // Each scene keeps the author's stored anchor (which may run on into the
+  // next sentence) as long as it still places the scene on its own sentence;
+  // the import's matcher is the judge, not a guess. Where it would not (the
+  // text was revised, or no anchor was stored), the sentence itself is the
+  // anchor. Then the file is PLACED again against the same sentences: a
+  // scene that would still come back on another sentence (one that repeats
+  // earlier in the chapter) is named in the warnings, never exported wrong.
+  function exportBook({ title, chapters, hasSheet, pictureName }) {
+    const out = { storyboard: 1, title: title || "Storyboard", chapters: [] };
+    const pictures = [];
+    const warnings = [];
+    const usedIds = new Set();
+    for (const ch of Array.isArray(chapters) ? chapters : []) {
+      const rows = outlineChapter({ sentences: ch.sentences, lineIds: ch.lineIds, cues: ch.cues, hasSheet });
+      if (!rows.length) continue;
+      const slug = String(ch.clip || "chapter").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "chapter";
+      const scenes = [];
+      const expect = new Map();
+      const sentenceOf = new Map();
+      for (const r of rows) {
+        if (r.idx == null) {
+          warnings.push(`${ch.clip}: ${r.id || "a scene placed by hand"} has lost its sentence, so it is not exported.`);
+          continue;
+        }
+        let id = r.id || `${slug}-${String(r.cue.id || "").replace(/^anim_/, "") || scenes.length + 1}`;
+        while (usedIds.has(id)) id += "-2";
+        usedIds.add(id);
+        const st = r.cue.storyboard || {};
+        const sc = { id, anchor: foldAnchor(st.anchor || "") ? st.anchor : r.sentence };
+        const name = r.status === "picture" && typeof pictureName === "function" ? pictureName(r.cue, id) : null;
+        if (name) {
+          sc.image = name;
+          pictures.push({ cue: r.cue, name });
+        } else if (st.image) {
+          sc.image = st.image; // the picture it is still waiting for
+        }
+        if (r.fx) sc.fx = r.fx;
+        if (st.shot) sc.shot = st.shot;
+        if (st.art) sc.art = st.art;
+        if (st.key) sc.key = true;
+        scenes.push(sc);
+        expect.set(id, r.idx);
+        sentenceOf.set(id, r.sentence);
+      }
+      if (!scenes.length) continue;
+      // Proof: place the exported scenes back on this chapter as it stands.
+      // A stored anchor that lands elsewhere gives way to its sentence, and
+      // the chapter is placed once more to judge the result.
+      const prove = () => placeChapter({ sentences: ch.sentences, lineIds: ch.lineIds, scenes, cues: [] });
+      let back = prove();
+      let swapped = false;
+      for (const row of back.rows) {
+        const sc = scenes.find((s) => s.id === row.id);
+        if ((row.status !== "placed" || row.idx !== expect.get(row.id)) && sc.anchor !== sentenceOf.get(row.id)) {
+          sc.anchor = sentenceOf.get(row.id);
+          swapped = true;
+        }
+      }
+      if (swapped) back = prove();
+      for (const row of back.rows) {
+        if (row.status === "no-art") continue;
+        const want = expect.get(row.id);
+        if (row.status !== "placed" || row.idx !== want) {
+          warnings.push(`${ch.clip}: ${row.id} would import onto ${row.idx == null ? "no sentence" : "sentence " + (row.idx + 1)} instead of ${want + 1} (${row.status}).`);
+        }
+      }
+      out.chapters.push({ clip: ch.clip, scenes });
+    }
+    return { file: out, pictures, warnings };
+  }
+
+  const api = { fold, foldAnchor, isStoryboard, parse, placeChapter, outlineChapter, exportBook };
   if (typeof window !== "undefined") window.NS_STORYBOARD = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

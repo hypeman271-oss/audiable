@@ -10216,9 +10216,42 @@ async function _animPreloadSheets(clip) {
 // preloaded URL cache only — no IDB/decode here (audio-safe). Still images get
 // a Ken-Burns drift; sprite-source scenes show their first frame (no per-frame
 // loop in Book view for now). See docs/animation-system-design.md §12.
+// The scene (page cue) in force at sentence `idx`: the one with the largest
+// start at or before it. A scene holds until the next one starts. Book view,
+// the playback tick and the storyboard editor all ask this one question.
+// v4.255: a scene with neither picture nor effect is the author's
+// placeholder (a storyboard scene not painted yet). Readers never see it:
+// the scene before it holds.
+function _animPageCueAt(idx) {
+  let scene = null;
+  let best = -1;
+  for (const c of Array.isArray(_animCues) ? _animCues : []) {
+    if (!c || c.kind !== "page") continue;
+    if (!c.fx && !_animCueHasSheet(c)) continue;
+    const range = _animResolveRange(c);
+    if (!range || range[0] > idx) continue;
+    if (range[0] > best) {
+      best = range[0];
+      scene = c;
+    }
+  }
+  return scene;
+}
+
 function _animApplyToSpreadScenes() {
   if (!_animEnabled()) return;
-  if (!Array.isArray(_animCues) || !_animCues.length) return;
+  if (!Array.isArray(_animCues) || !_animCues.length) {
+    // v4.255: the last scene removed must leave the pages it painted, not
+    // stay drawn on them until the next re-render.
+    document.querySelectorAll(".book-view-page[data-text-page-idx], .book-page[data-text-page-idx]").forEach((pageEl) => {
+      pageEl.querySelectorAll(".anim-book-scene").forEach((e) => {
+        if (e.__revokeUrl) { try { URL.revokeObjectURL(e.__revokeUrl); } catch {} }
+        e.remove();
+      });
+      pageEl.classList.remove("book-page--scene", "book-page--art");
+    });
+    return;
+  }
   if (typeof _bookSentenceToPage === "undefined" || !Array.isArray(_bookSentenceToPage)) {
     return;
   }
@@ -10248,17 +10281,7 @@ function _animApplyToSpreadScenes() {
       if (_bookSentenceToPage[i] === tpi) lastS = i;
     }
     if (lastS < 0) return;
-    let scene = null;
-    let best = -1;
-    for (const c of _animCues) {
-      if (!c || c.kind !== "page") continue;
-      const range = _animResolveRange(c);
-      if (!range || range[0] > lastS) continue;
-      if (range[0] > best) {
-        best = range[0];
-        scene = c;
-      }
-    }
+    const scene = _animPageCueAt(lastS);
     if (!scene) return;
     const fxEl = () => {
       const fx = document.createElement("div");
@@ -10579,20 +10602,13 @@ function _animTick() {
   let emphasizeEffect = null; // 'highlight' | 'glow' covering the current sentence
   let badgeLabel = null; // last active badge cue's label wins
   let activeSprite = null; // last active sprite cue wins
-  let activePage = null; // page (scene) cue with the largest start ≤ idx
-  let activePageStart = -1;
+  // Scene marker: active from its start onward, until a later page cue.
+  const activePage = _animPageCueAt(idx);
   for (const cue of _animCues) {
     if (!cue) continue;
     const range = _animResolveRange(cue);
     if (!range) continue;
-    if (cue.kind === "page") {
-      // Scene marker: active from its start onward, until a later page cue.
-      if (range[0] <= idx && range[0] > activePageStart) {
-        activePage = cue;
-        activePageStart = range[0];
-      }
-      continue;
-    }
+    if (cue.kind === "page") continue;
     if (idx < range[0] || idx > range[1]) continue; // not active
     if (cue.kind === "sprite") {
       activeSprite = cue;
@@ -11391,6 +11407,14 @@ async function markCurrentClipPlayed() {
 function setStatus(msg, isError = false) {
   statusEl.textContent = msg || "";
   statusEl.classList.toggle("error", !!isError);
+  // v4.255: the storyboard editor covers the page; its status line says it too.
+  if (document.body.classList.contains("sb-editing")) {
+    const s = document.getElementById("sb-status");
+    if (s) {
+      s.textContent = msg || "";
+      s.classList.toggle("error", !!isError);
+    }
+  }
 }
 
 // v4.212: the Generate button overwrites the loaded clip in place (v4.211),
@@ -27544,7 +27568,14 @@ function _bookViewV3Setup(source) {
         }
       }
     } catch {}
-    const avail = Math.round(vh - top - 12 - bottomReserve);
+    // v4.255: inside the storyboard editor the page ends at the editor's
+    // viewport (the lane and status line sit under it), not the window.
+    const sbViewport = document.body.classList.contains("sb-editing")
+      ? document.getElementById("sb-viewport")
+      : null;
+    const avail = sbViewport
+      ? Math.round(sbViewport.getBoundingClientRect().bottom - top - 12)
+      : Math.round(vh - top - 12 - bottomReserve);
     if (avail > 200) spread.style.height = avail + "px";
   } catch {}
   const pageHeight = spread.clientHeight;
@@ -27915,7 +27946,8 @@ function _bookViewV3GotoSentenceIdx(sentenceIdx) {
 
 
   // Original translateX path. Bypasses GotoSpread's anchor re-capture
-  // so the anchor sentence stays stable across subsequent resizes.
+  // (the spread's FIRST sentence, which drifts) so the anchor sentence
+  // stays stable across subsequent resizes.
   const spread = bookViewSpread;
   const pageRow = spread.querySelector(".book-view-page-row");
   if (!pageRow) return;
@@ -27923,6 +27955,12 @@ function _bookViewV3GotoSentenceIdx(sentenceIdx) {
   _bookViewCurrentSpread = target;
   pageRow.style.transform =
     `translateX(${-target * _bookViewV3State.spreadWidth}px)`;
+  // v4.255: the sentence asked for IS the anchor. A re-layout runs
+  // _bookViewV3Setup, whose GotoSpread(0) re-captures the anchor as
+  // sentence 0, then comes back here with the anchor it saved; without
+  // this line the anchor stayed 0, so the NEXT resize (a window drag, the
+  // storyboard editor's phone width) threw the reader to the chapter start.
+  _bookViewV3State.anchorSentenceIdx = sentenceIdx;
   _bookViewV3UpdateNav();
 }
 
@@ -37807,7 +37845,7 @@ const STORYBOARD_STATUS = {
   "out-of-order": "Its line comes before the previous scene's",
   "same-sentence": "Another scene in the file is on that sentence",
   "kept-yours": "Sentence already has a scene; kept that one",
-  "no-art": "No picture and no effect",
+  "no-art": "No picture or effect in the file, so the scene already here is kept",
   "no-picture": "Picture not picked",
   "bad-picture": "Picture couldn't be read",
   "store-failed": "Picture couldn't be stored",
@@ -37831,6 +37869,18 @@ async function _storyboardStoreImage(file) {
   return { sheetId, sheetSha, resized: storeBlob !== file };
 }
 
+// A chapter's sentences numbered exactly as the reading view numbers them
+// (enterReadingView): splitSentencesClient over clip.text, and its line ids
+// only when the counts agree. The import, the editor and Export all ask this.
+function _storyboardSentencesOf(clip) {
+  const sentences = splitSentencesClient((clip && clip.text) || "");
+  const lineIds =
+    clip && Array.isArray(clip.lines) && clip.lines.length === sentences.length
+      ? clip.lines.map((l) => (l && typeof l.id === "string" ? l.id : null))
+      : null;
+  return { sentences, lineIds };
+}
+
 async function _storyboardCanDecode(file) {
   try {
     const bmp = await createImageBitmap(file);
@@ -37850,26 +37900,48 @@ async function _storyboardImport(fileList) {
   }
   const files = Array.from(fileList || []);
   const jsonFiles = files.filter((f) => /\.json$/i.test(f.name));
-  if (jsonFiles.length !== 1) {
-    setStatus(
-      jsonFiles.length
-        ? "Pick one storyboard .json at a time, with its pictures."
-        : "Pick the storyboard .json together with its pictures.",
-      true
-    );
+  if (!jsonFiles.length) {
+    setStatus("Pick the storyboard .json together with its pictures.", true);
     return;
   }
-  const jsonFile = jsonFiles[0];
-  let raw;
-  try {
-    raw = JSON.parse(await jsonFile.text());
-  } catch (e) {
-    setStatus(`"${jsonFile.name}" isn't valid JSON: ${e.message}`, true);
-    _dlog("anim-import", "bad json", { file: jsonFile.name, error: String(e) });
+  // v4.255: picking a whole folder brings other .json files along (a tool's
+  // .standins.json). Use the one that says it is a storyboard and name the
+  // rest; with one .json picked, it is read and reported as before.
+  const read = [];
+  for (const f of jsonFiles) {
+    try {
+      read.push({ f, raw: JSON.parse(await f.text()), err: null });
+    } catch (e) {
+      read.push({ f, raw: null, err: e });
+    }
+  }
+  let pick = read.length === 1 ? read[0] : null;
+  let leftOut = [];
+  if (!pick) {
+    const boards = read.filter((r) => SB.isStoryboard(r.raw));
+    if (boards.length !== 1) {
+      setStatus(
+        boards.length
+          ? `Pick one storyboard at a time: ${boards.map((r) => r.f.name).join(" and ")} are both storyboards.`
+          : `None of the .json files picked is a storyboard (${jsonFiles.map((f) => f.name).join(", ")}). A storyboard says "storyboard": 1.`,
+        true
+      );
+      return;
+    }
+    pick = boards[0];
+    leftOut = read.filter((r) => r !== pick).map((r) => r.f.name);
+  }
+  const jsonFile = pick.f;
+  const raw = pick.raw;
+  if (pick.err) {
+    setStatus(`"${jsonFile.name}" isn't valid JSON: ${pick.err.message}`, true);
+    _dlog("anim-import", "bad json", { file: jsonFile.name, error: String(pick.err) });
     return;
   }
   const sb = SB.parse(raw, { fx: _ANIM_FX });
-  const report = { file: jsonFile.name, title: sb.title, errors: sb.errors.slice(), chapters: [], unusedImages: [] };
+  // The editor's Export names the book the way the last import did.
+  if (sb.ok && sb.title) try { localStorage.setItem("narrative.storyboardTitle", sb.title); } catch {}
+  const report = { file: jsonFile.name, title: sb.title, errors: sb.errors.slice(), chapters: [], unusedImages: [], leftOut };
   if (!sb.ok) {
     _storyboardShowReport(report);
     setStatus(`"${jsonFile.name}" isn't a storyboard. See the report.`, true);
@@ -37910,13 +37982,7 @@ async function _storyboardImport(fileList) {
     }
     const clip = matches[0];
     entry.clipId = clip.id;
-    // Numbered exactly as the reading view numbers them (enterReadingView):
-    // splitSentencesClient over clip.text, line ids only when the counts agree.
-    const sentences = splitSentencesClient(clip.text || "");
-    const lineIds =
-      Array.isArray(clip.lines) && clip.lines.length === sentences.length
-        ? clip.lines.map((l) => (l && typeof l.id === "string" ? l.id : null))
-        : null;
+    const { sentences, lineIds } = _storyboardSentencesOf(clip);
     if (!lineIds) {
       entry.warning =
         "Not stored by sentence, so these scenes are pinned to sentence numbers: an edit that adds or removes a sentence above one moves it. Tick “Store this clip by sentence” for this chapter, then import again.";
@@ -37934,11 +38000,11 @@ async function _storyboardImport(fileList) {
       if (await canUse(key)) { scenes.push(sc); continue; }
       // Without its picture a scene is its effect alone, or "no art".
       missing.set(sc.id, images.has(key) ? "bad-picture" : "no-picture");
-      scenes.push({ ...sc, image: null });
+      scenes.push({ ...sc, image: null, pictureMissing: true });
     }
 
     const before = Array.isArray(clip.animationCues) ? clip.animationCues : [];
-    const plan = SB.placeChapter({ sentences, lineIds, scenes, cues: before, fileIds });
+    const plan = SB.placeChapter({ sentences, lineIds, scenes, cues: before, fileIds, hasSheet: _animCueHasSheet });
     const sceneById = new Map(ch.scenes.map((s) => [s.id, s]));
     const placed = [];
     for (const row of plan.rows) {
@@ -37953,7 +38019,10 @@ async function _storyboardImport(fileList) {
         continue;
       }
       if (row.status !== "placed") continue;
-      if (why) row.note = `Picture ${sc.image} ${why === "no-picture" ? "wasn't picked" : "couldn't be read"}: placed as its effect alone.`;
+      if (why) {
+        row.note = `Picture ${sc.image} ${why === "no-picture" ? "wasn't picked" : "couldn't be read"}: ` +
+          (sc.fx ? "placed as its effect alone." : "placed as a placeholder that waits for it. Readers see the scene before it.");
+      }
       const cue = {
         id: "anim_" + _annotateNewId(),
         kind: "page",
@@ -37962,7 +38031,15 @@ async function _storyboardImport(fileList) {
         endIdx: row.idx,
         startLineId: row.lineId,
         endLineId: row.lineId,
-        storyboard: { id: sc.id, anchor: sc.anchor },
+        // v4.255: the painting brief rides on the stamp, for the editor.
+        storyboard: Object.assign(
+          { id: sc.id, anchor: sc.anchor },
+          sc.shot ? { shot: sc.shot } : null,
+          sc.art ? { art: sc.art } : null,
+          sc.key ? { key: true } : null,
+          // A picture named and not stored yet: the one this scene waits for.
+          sc.image && why ? { image: sc.image } : null
+        ),
       };
       if (sc.fx) cue.fx = sc.fx;
       if (sc.image && !why) {
@@ -37984,7 +38061,10 @@ async function _storyboardImport(fileList) {
         }
       } else if (sc.fx) {
         cue.effect = sc.fx; // an effect alone, as the palette writes one
+      } else if (!sc.image) {
+        row.note = "Nothing to show yet: placed as a placeholder that holds its brief. Readers see the scene before it until it has a picture or an effect.";
       }
+      if (!cue.sheetId && !cue.fx) row.placeholder = true;
       placed.push(cue);
     }
 
@@ -38021,11 +38101,14 @@ async function _storyboardImport(fileList) {
   for (const name of images.keys()) if (!usedImages.has(name)) report.unusedImages.push(images.get(name).name);
 
   _storyboardShowReport(report);
+  if (_sb.open) _sbRefresh().catch((e) => console.warn("[storyboard] editor refresh:", e));
   const rows = report.chapters.flatMap((c) => c.rows);
   const nPlaced = rows.filter((r) => r.status === "placed").length;
+  const nWaiting = rows.filter((r) => r.status === "placed" && r.placeholder).length;
   const notPlaced = rows.filter((r) => r.status !== "placed");
   setStatus(
     `Storyboard: ${nPlaced} of ${rows.length} scenes placed` +
+      (nWaiting ? ` (${nWaiting} waiting for a picture or an effect)` : "") +
       (notPlaced.length ? `, ${notPlaced.length} not. See the report.` : "."),
     notPlaced.length > 0
   );
@@ -38044,7 +38127,9 @@ function _storyboardShowReport(report) {
   if (!dlg || !body) return;
   const rows = report.chapters.flatMap((c) => c.rows);
   const nPlaced = rows.filter((r) => r.status === "placed").length;
-  summary.textContent = `${report.title ? report.title + " · " : ""}${report.file}: ${nPlaced} of ${rows.length} scenes placed.`;
+  const nWaiting = rows.filter((r) => r.status === "placed" && r.placeholder).length;
+  summary.textContent = `${report.title ? report.title + " · " : ""}${report.file}: ${nPlaced} of ${rows.length} scenes placed` +
+    (nWaiting ? `, ${nWaiting} of them placeholders waiting for a picture or an effect.` : ".");
   body.textContent = "";
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
@@ -38129,10 +38214,15 @@ function _storyboardShowReport(report) {
     box.appendChild(el("p", "storyboard-report-warning", report.unusedImages.join(", ")));
     body.appendChild(box);
   }
+  if (report.leftOut && report.leftOut.length) {
+    const box = el("div", "storyboard-report-chapter");
+    box.appendChild(el("h3", null, "Other .json files picked, left out"));
+    box.appendChild(el("p", "storyboard-report-warning", report.leftOut.join(", ") + ": not a storyboard."));
+    body.appendChild(box);
+  }
   if (!dlg.open) dlg.showModal();
 }
 
-$("library-storyboard").addEventListener("click", () => $("library-storyboard-file").click());
 $("library-storyboard-file").addEventListener("change", (e) => {
   const picked = e.target.files;
   if (picked && picked.length) {
@@ -38145,6 +38235,871 @@ $("library-storyboard-file").addEventListener("change", (e) => {
   e.target.value = "";
 });
 $("storyboard-report-close").addEventListener("click", () => $("storyboard-report").close());
+
+// ---- Storyboard editor (v4.255) -------------------------------------------
+// Library ▸ Storyboard opens the book's scenes laid out like the game's
+// Workshop editors: an Outliner of chapters and their scenes; the REAL
+// reading card as the viewport (moved in, and put back on close, never a
+// copy, so what you see is what a reader sees); a transport; a lane of the
+// chapter's sentences; and Details in folding categories.
+//
+// Lyrith's chapters are the master copy. Every edit is written to the
+// chapter at once through _mutateClipAtomic, the way the 🎬 palette writes,
+// so it syncs like any cue. Export writes the book back out as a storyboard
+// file and its pictures, which Import reads.
+//
+// Every action changes the viewport or says why not on the status line.
+const SB_MIN_WIDTH = 1280; // DEVICES.md: the wide-desktop tier
+const SB_ART = ["New", "Card", "Same frame", "Reuse"];
+const _sb = {
+  open: false,
+  view: "book", // book | reading | phone
+  chapters: [], // [{ clip, sentences, lineIds, rows }] in book order
+  picked: null, // { clipId, cueId }; cueId null = the chapter, no scene
+  addAt: null, // { clipId, idx }: a free sentence picked on the lane
+  home: null, // where the reading card lives outside the editor
+  wasBook: false,
+  bookKey: null, // the clip and view Book view was last laid out for
+  thumbUrl: null,
+  thumbToken: 0,
+  drag: null,
+};
+
+function _sbSay(msg, isErr) {
+  setStatus(msg, isErr); // setStatus mirrors into #sb-status while editing
+}
+
+function _sbEl(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function _sbFirstWords(text, n = 9) {
+  const w = String(text || "").split(/\s+/).filter(Boolean);
+  return w.slice(0, n).join(" ") + (w.length > n ? "…" : "");
+}
+
+function _sbChapterOf(clip) {
+  const { sentences, lineIds } = _storyboardSentencesOf(clip);
+  const rows = window.NS_STORYBOARD.outlineChapter({
+    sentences, lineIds, cues: clip.animationCues, hasSheet: _animCueHasSheet,
+  });
+  return { clip, sentences, lineIds, rows };
+}
+
+async function _sbLoadChapters() {
+  const clips = (await listClips()).filter((c) => c && typeof c.text === "string" && c.text.trim());
+  clips.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), undefined, { numeric: true }));
+  _sb.chapters = clips.map(_sbChapterOf);
+}
+
+function _sbChapter(clipId) {
+  return _sb.chapters.find((c) => c.clip.id === clipId) || null;
+}
+
+function _sbPicked() {
+  const p = _sb.picked;
+  const ch = p ? _sbChapter(p.clipId) : null;
+  const row = ch && p.cueId ? ch.rows.find((r) => r.cue.id === p.cueId) || null : null;
+  return { ch, row };
+}
+
+function _sbLabel(row) {
+  return row.id || "the scene placed by hand";
+}
+
+function _sbQuery() {
+  const v = $("sb-search").value.trim();
+  return v ? window.NS_STORYBOARD.fold(v).toLowerCase() : "";
+}
+
+function _sbMatches(row, q) {
+  if (!q) return true;
+  const st = row.cue.storyboard || {};
+  return [row.id, row.anchor, row.sentence, st.shot, row.fx].some(
+    (t) => t && window.NS_STORYBOARD.fold(t).toLowerCase().includes(q)
+  );
+}
+
+function _sbVisibleRows() {
+  const q = _sbQuery();
+  const out = [];
+  for (const ch of _sb.chapters) for (const row of ch.rows) if (_sbMatches(row, q)) out.push({ ch, row });
+  return out;
+}
+
+// A new scene's id follows the chapter's own (ch01-s4 after ch01-s3), and
+// is never one the book already uses.
+function _sbNewSceneId(ch) {
+  const taken = new Set(_sb.chapters.flatMap((c) => c.rows.map((r) => r.id).filter(Boolean)));
+  let prefix = null;
+  let n = 0;
+  for (const r of ch.rows) {
+    const m = /^(.*-s)(\d+)$/.exec(r.id || "");
+    if (!m) continue;
+    if (!prefix) prefix = m[1];
+    if (m[1] === prefix) n = Math.max(n, Number(m[2]));
+  }
+  if (!prefix) {
+    const title = String(ch.clip.title || "").trim();
+    const num = /^(\d+)/.exec(title);
+    prefix = num
+      ? "ch" + num[1].padStart(2, "0") + "-s"
+      : (title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "chapter") + "-s";
+  }
+  let id;
+  do id = prefix + ++n; while (taken.has(id));
+  return id;
+}
+
+// The stamp that makes a scene the storyboard's: a scene placed by hand gets
+// one (an id and its sentence) the first time the editor writes its brief.
+function _sbStamp(cue, ch, row) {
+  if (!cue.storyboard || !cue.storyboard.id) {
+    cue.storyboard = Object.assign({}, cue.storyboard, {
+      id: _sbNewSceneId(ch),
+      anchor: (cue.storyboard && cue.storyboard.anchor) || row.sentence || row.anchor,
+    });
+  }
+  return cue.storyboard;
+}
+
+function _sbSheetInUse(sheetId) {
+  return _sb.chapters.some((ch) => (ch.clip.animationCues || []).some((c) => c && c.sheetId === sheetId));
+}
+
+// ---- drawing ----
+
+function _sbRenderOutliner() {
+  const box = $("sb-rows");
+  box.textContent = "";
+  const q = _sbQuery();
+  const all = $("sb-all-chapters").checked;
+  const { ch: pch, row: prow } = _sbPicked();
+  let total = 0;
+  let shown = 0;
+  let withScenes = 0;
+  for (const ch of _sb.chapters) {
+    total += ch.rows.length;
+    if (ch.rows.length) withScenes++;
+    const rows = ch.rows.filter((r) => _sbMatches(r, q));
+    shown += rows.length;
+    if (!rows.length && (q || !all)) continue;
+    const group = _sbEl("div", "sb-chapter");
+    const head = _sbEl("button", "sb-chapter-head");
+    head.type = "button";
+    head.dataset.clip = String(ch.clip.id);
+    head.title = ch.rows.length ? "Open this chapter" : "No scenes yet: open it, then pick a sentence on the lane to add one";
+    if (pch === ch && !prow) head.classList.add("is-picked");
+    head.appendChild(_sbEl("span", "sb-chapter-title", ch.clip.title || "Untitled"));
+    head.appendChild(_sbEl("span", "sb-chapter-count", String(ch.rows.length)));
+    group.appendChild(head);
+    for (const r of rows) group.appendChild(_sbRowEl(ch, r, r === prow));
+    if (!ch.rows.length) group.appendChild(_sbEl("p", "sb-empty", "No scenes yet."));
+    box.appendChild(group);
+  }
+  if (!box.children.length) {
+    box.appendChild(_sbEl("p", "sb-empty", q
+      ? "No scene matches that search."
+      : "No scenes in the library yet. Import a storyboard, or tick “All chapters”, open one and add a scene from the lane."));
+  }
+  $("sb-count").textContent = q
+    ? `${shown} of ${total} scenes`
+    : `${total} scene${total === 1 ? "" : "s"} in ${withScenes} chapter${withScenes === 1 ? "" : "s"}`;
+}
+
+function _sbRowEl(ch, r, picked) {
+  const b = _sbEl("button", "sb-row sb-row--" + r.status);
+  b.type = "button";
+  b.dataset.cue = r.cue.id;
+  b.dataset.clip = String(ch.clip.id);
+  if (picked) b.classList.add("is-picked");
+  b.title = r.sentence || r.anchor || "";
+  const st = r.cue.storyboard || {};
+  const top = _sbEl("span", "sb-row-top");
+  top.appendChild(_sbEl("span", "sb-dot"));
+  top.appendChild(_sbEl("span", "sb-row-id", r.hand ? "by hand" : r.id));
+  if (st.key) {
+    const k = _sbEl("span", "sb-key", "★");
+    k.title = "Key frame";
+    top.appendChild(k);
+  }
+  if (r.idx != null) top.appendChild(_sbEl("span", "sb-row-at", "§" + (r.idx + 1)));
+  b.appendChild(top);
+  b.appendChild(_sbEl("span", "sb-row-text", _sbFirstWords(r.anchor)));
+  const chips = _sbEl("span", "sb-chips");
+  if (r.status === "picture" || (r.status === "lost" && _animCueHasSheet(r.cue))) chips.appendChild(_sbEl("span", "sb-chip", "picture"));
+  if (r.fx) chips.appendChild(_sbEl("span", "sb-chip sb-chip--fx", r.fx));
+  if (r.status === "empty") chips.appendChild(_sbEl("span", "sb-chip sb-chip--warn", "Nothing yet"));
+  if (r.status === "lost") {
+    const c = _sbEl("span", "sb-chip sb-chip--bad", "sentence lost");
+    c.title = "Its sentence is no longer in the chapter (the text was revised). Pick it, then Find again or click a free sentence on the lane.";
+    chips.appendChild(c);
+  }
+  b.appendChild(chips);
+  return b;
+}
+
+function _sbRenderDetails() {
+  const { ch, row } = _sbPicked();
+  const at = !row && ch && _sb.addAt && _sb.addAt.clipId === ch.clip.id ? _sb.addAt.idx : null;
+  const any = !!row || at != null;
+  $("sb-details-empty").hidden = any;
+  $("sb-details-empty").textContent = ch
+    ? "Pick a scene in the Outliner, or a sentence on the lane."
+    : "Pick a scene in the Outliner.";
+  $("sb-cats").hidden = !any;
+  document.querySelectorAll("#sb-cats [data-scene-only]").forEach((n) => (n.hidden = !row));
+  if (!any) return _sbShowThumb(null);
+
+  const where = $("sb-place-where");
+  const quote = $("sb-place-sentence");
+  const note = $("sb-place-note");
+  $("sb-find-again").hidden = !(row && row.idx == null);
+  if (!row) {
+    where.textContent = `Sentence ${at + 1}`;
+    quote.textContent = ch.sentences[at] || "";
+    note.textContent = "No scene starts here. Add one with the button under the page.";
+    return _sbShowThumb(null);
+  }
+  const st = row.cue.storyboard || {};
+  if (row.idx == null) {
+    where.textContent = "Sentence lost";
+    quote.textContent = row.anchor || "";
+    note.textContent = "The chapter no longer has this scene's sentence (its text was revised). Find again looks for the anchor; or click a free sentence on the lane to place it there.";
+  } else {
+    where.textContent =
+      `Sentence ${row.idx + 1}` + (row.until > row.idx ? ` · holds through sentence ${row.until + 1}` : "");
+    quote.textContent = row.sentence;
+    note.textContent = row.hand
+      ? "Placed by hand in the 🎬 palette."
+      : `Storyboard scene ${row.id}. Drag its marker on the lane to move it.`;
+  }
+
+  const pic = _animCueHasSheet(row.cue);
+  $("sb-picture-none").hidden = pic;
+  $("sb-picture-none").textContent = st.image
+    ? `Waiting for ${st.image}. Pick it here, or import the storyboard again with it.`
+    : "No picture: the scene is its effect alone, or nothing yet.";
+  $("sb-picture-pick").textContent = pic ? "Replace…" : "Pick a picture…";
+  $("sb-picture-clear").disabled = !pic;
+  $("sb-picture-clear").title = pic ? "Take the picture off this scene" : "This scene has no picture to clear";
+  _sbShowThumb(pic ? row.cue : null);
+
+  $("sb-fx").value = row.fx || "";
+  $("sb-shot").value = st.shot || "";
+  const art = $("sb-art");
+  if (st.art && !Array.from(art.options).some((o) => o.value === st.art)) art.appendChild(new Option(st.art, st.art));
+  art.value = st.art || "";
+  $("sb-key").checked = !!st.key;
+  $("sb-brief-note").textContent = row.hand
+    ? "Writing a brief gives this scene a storyboard id, so Export and Import carry it."
+    : "";
+  _sbFilterDetails();
+}
+
+async function _sbShowThumb(cue) {
+  const img = $("sb-thumb");
+  const token = ++_sb.thumbToken;
+  if (_sb.thumbUrl) {
+    try { URL.revokeObjectURL(_sb.thumbUrl); } catch {}
+    _sb.thumbUrl = null;
+  }
+  if (!cue) {
+    img.hidden = true;
+    img.removeAttribute("src");
+    return;
+  }
+  const blob = await _animEnsureSheetBlob(cue).catch(() => null);
+  if (token !== _sb.thumbToken) return;
+  if (!blob) {
+    img.hidden = true;
+    $("sb-picture-none").hidden = false;
+    $("sb-picture-none").textContent = "This scene's picture isn't on this device yet (it has not synced here).";
+    return;
+  }
+  _sb.thumbUrl = URL.createObjectURL(blob);
+  img.src = _sb.thumbUrl;
+  img.hidden = false;
+}
+
+function _sbFilterDetails() {
+  const q = $("sb-filter").value.trim().toLowerCase();
+  document.querySelectorAll("#sb-cats .sb-cat").forEach((cat) => {
+    const hit = !q || cat.textContent.toLowerCase().includes(q);
+    cat.classList.toggle("is-filtered", !hit);
+    if (hit && q) cat.open = true;
+  });
+}
+
+function _sbRenderLane() {
+  const lane = $("sb-lane");
+  lane.textContent = "";
+  const { ch, row } = _sbPicked();
+  $("sb-lane-label").textContent = ch
+    ? `${ch.clip.title || "Untitled"} · ${ch.sentences.length} sentences · drag a marker to move its scene, click a free sentence to add one`
+    : "";
+  if (!ch) {
+    lane.appendChild(_sbEl("p", "sb-empty", "Pick a chapter or a scene: its sentences show here."));
+    return;
+  }
+  const at = new Map();
+  for (const r of ch.rows) if (r.idx != null) at.set(r.idx, r);
+  const span = row && row.idx != null ? [row.idx, row.until] : null;
+  ch.sentences.forEach((s, i) => {
+    const cell = _sbEl("div", "sb-cell");
+    cell.dataset.idx = String(i);
+    cell.title = `${i + 1}. ${s}`;
+    cell.appendChild(_sbEl("span", "sb-cell-n", String(i + 1)));
+    if (span && i >= span[0] && i <= span[1]) cell.classList.add("is-covered");
+    if (_sb.addAt && _sb.addAt.clipId === ch.clip.id && _sb.addAt.idx === i) cell.classList.add("is-target");
+    const r = at.get(i);
+    if (r) {
+      const st = r.cue.storyboard || {};
+      const m = _sbEl("div", "sb-marker sb-marker--" + r.status, st.key ? "★" : r.status === "picture" ? "▣" : r.fx ? "✦" : "○");
+      m.dataset.cue = r.cue.id;
+      m.title = `${_sbLabel(r)}: drag onto another sentence to move it`;
+      if (r === row) m.classList.add("is-picked");
+      cell.classList.add("has-scene");
+      cell.appendChild(m);
+    }
+    lane.appendChild(cell);
+  });
+  const focus = lane.querySelector(".sb-marker.is-picked, .sb-cell.is-target");
+  const cell = focus && (focus.classList.contains("sb-cell") ? focus : focus.closest(".sb-cell"));
+  if (cell) lane.scrollLeft = Math.max(0, cell.offsetLeft - lane.clientWidth / 2 + cell.offsetWidth / 2);
+}
+
+function _sbHasNarration(ch) {
+  return !!(
+    ch && _currentClipId === ch.clip.id &&
+    Array.isArray(sentenceOffsetsSec) && sentenceOffsetsSec.length &&
+    (playerEl.currentSrc || playerEl.getAttribute("src"))
+  );
+}
+
+function _sbRenderTransport() {
+  const vis = _sbVisibleRows();
+  const { ch, row } = _sbPicked();
+  const i = row ? vis.findIndex((v) => v.row === row) : -1;
+  $("sb-prev").disabled = !vis.length || i <= 0;
+  $("sb-next").disabled = !vis.length || (i >= 0 && i >= vis.length - 1);
+  $("sb-where").textContent = row ? (i >= 0 ? `Scene ${i + 1} of ${vis.length}` : "Not in the search") : "";
+  const play = $("sb-play");
+  const placed = row && row.idx != null;
+  const audio = _sbHasNarration(ch);
+  play.disabled = !(placed && audio);
+  play.title = !row
+    ? "Pick a scene first"
+    : !placed
+      ? "This scene has lost its sentence, so there is nowhere to play from"
+      : !audio
+        ? "This chapter has no narration yet, so there is nothing to play. Generate its audio first."
+        : `Narrate from sentence ${row.idx + 1}`;
+  const add = $("sb-add");
+  const at = !row && ch && _sb.addAt && _sb.addAt.clipId === ch.clip.id ? _sb.addAt.idx : null;
+  add.disabled = at == null;
+  add.textContent = at == null ? "Add a scene" : `Add a scene at sentence ${at + 1}`;
+  add.title = at == null ? "Click a sentence on the lane that has no scene, then add one there" : "";
+}
+
+// Show what is picked on the real page, in the chosen view.
+async function _sbShow() {
+  const { ch, row } = _sbPicked();
+  $("sb-frame").classList.toggle("sb-frame--phone", _sb.view === "phone");
+  for (const v of ["book", "reading", "phone"]) $("sb-view-" + v).setAttribute("aria-pressed", String(_sb.view === v));
+  if (!ch) return;
+  const idx = row && row.idx != null ? row.idx : _sb.addAt && _sb.addAt.clipId === ch.clip.id ? _sb.addAt.idx : null;
+  if (_sb.view === "reading") {
+    if (!bookView.hidden) exitBookView();
+    _sb.bookKey = null;
+    _animInit();
+    _animPage.cueId = null;
+    _animReconcilePage(idx != null ? _animPageCueAt(idx) : null, false);
+    const span = idx != null ? sentenceSpans[idx] : null;
+    if (span) span.scrollIntoView({ block: "center" });
+    return;
+  }
+  const key = ch.clip.id + ":" + _sb.view;
+  if (bookView.hidden || _sb.bookKey !== key) {
+    if (!bookView.hidden) exitBookView();
+    await enterBookView();
+    _sb.bookKey = key;
+  }
+  if (idx != null && bookViewSpread.classList.contains("v3")) _bookViewV3GotoSentenceIdx(idx);
+}
+
+async function _sbRedraw() {
+  const { ch } = _sbPicked();
+  if (ch && _currentClipId !== ch.clip.id) {
+    await loadClip(ch.clip.id);
+    _sb.bookKey = null;
+  }
+  _sbRenderOutliner();
+  _sbRenderDetails();
+  _sbRenderLane();
+  _sbRenderTransport();
+  await _sbShow();
+}
+
+async function _sbPick(clipId, cueId) {
+  _sb.picked = { clipId, cueId: cueId || null };
+  _sb.addAt = null;
+  await _sbRedraw();
+}
+
+async function _sbRefresh() {
+  await _sbLoadChapters();
+  const { ch, row } = _sbPicked();
+  if (_sb.picked && !ch) _sb.picked = null;
+  else if (_sb.picked && _sb.picked.cueId && !row) _sb.picked.cueId = ch.rows[0] ? ch.rows[0].cue.id : null;
+  _sb.bookKey = null; // the chapter's scenes may all be new
+  await _sbRedraw();
+}
+
+// ---- writing ----
+
+// Write one chapter's cues, then show the result everywhere it is drawn.
+// `mutate(cues, clip)` runs inside the transaction and must not await.
+async function _sbWrite(clipId, mutate) {
+  let written = null;
+  let why = null;
+  try {
+    written = await _mutateClipAtomic(clipId, (cc) => {
+      if (!Array.isArray(cc.animationCues)) cc.animationCues = [];
+      mutate(cc.animationCues, cc);
+    });
+  } catch (e) {
+    why = e && e.message;
+    _dlog("anim-edit", "storyboard editor write failed", { clipId, error: String(e) });
+  }
+  if (!written) {
+    _sbSay(`Couldn't save that to the chapter${why ? ": " + why : ""}. Nothing was changed.`, true);
+    return null;
+  }
+  const i = _sb.chapters.findIndex((c) => c.clip.id === clipId);
+  if (i >= 0) _sb.chapters[i] = _sbChapterOf(written);
+  if (_currentClipId === clipId) {
+    _animLoadCues(written);
+    _animApplyToSpreadScenes();
+  }
+  return written;
+}
+
+// Edit the picked scene's cue. Says `said` and redraws when it lands.
+async function _sbEditCue(fn, said) {
+  const { ch, row } = _sbPicked();
+  if (!ch || !row) {
+    _sbSay("Pick a scene first.", true);
+    return null;
+  }
+  const id = row.cue.id;
+  const w = await _sbWrite(ch.clip.id, (all) => {
+    const cue = all.find((c) => c && c.id === id);
+    if (!cue) throw new Error("that scene is no longer in the chapter");
+    fn(cue, ch, row);
+  });
+  if (w) {
+    if (said) _sbSay(said);
+    await _sbRedraw();
+  }
+  return w;
+}
+
+async function _sbMove(cueId, toIdx) {
+  const { ch } = _sbPicked();
+  const row = ch && ch.rows.find((r) => r.cue.id === cueId);
+  if (!row) return _sbSay("That scene is no longer in the chapter.", true);
+  if (toIdx === row.idx) return;
+  const holder = ch.rows.find((r) => r.idx === toIdx && r !== row);
+  if (holder) {
+    return _sbSay(`Sentence ${toIdx + 1} already has a scene (${_sbLabel(holder)}). Move or remove that one first.`, true);
+  }
+  const lineId = ch.lineIds ? ch.lineIds[toIdx] : null;
+  _sb.picked = { clipId: ch.clip.id, cueId };
+  _sb.addAt = null;
+  await _sbEditCue((cue) => {
+    cue.startIdx = toIdx;
+    cue.endIdx = toIdx;
+    if (lineId) {
+      cue.startLineId = lineId;
+      cue.endLineId = lineId;
+    } else {
+      delete cue.startLineId;
+      delete cue.endLineId;
+    }
+    // Its anchor is the sentence it is on now, so Export finds it there.
+    if (cue.storyboard) cue.storyboard.anchor = ch.sentences[toIdx];
+  }, `Moved ${_sbLabel(row)} to sentence ${toIdx + 1}.`);
+}
+
+async function _sbAdd() {
+  const { ch, row } = _sbPicked();
+  const at = !row && ch && _sb.addAt && _sb.addAt.clipId === ch.clip.id ? _sb.addAt.idx : null;
+  if (at == null) return _sbSay("Click a sentence on the lane that has no scene first.", true);
+  if (ch.rows.some((r) => r.idx === at)) return _sbSay(`Sentence ${at + 1} already has a scene.`, true);
+  const cue = {
+    id: "anim_" + _annotateNewId(),
+    kind: "page",
+    effect: "page",
+    startIdx: at,
+    endIdx: at,
+    storyboard: { id: _sbNewSceneId(ch), anchor: ch.sentences[at] },
+  };
+  const lineId = ch.lineIds ? ch.lineIds[at] : null;
+  if (lineId) {
+    cue.startLineId = lineId;
+    cue.endLineId = lineId;
+  }
+  const w = await _sbWrite(ch.clip.id, (all) => { all.push(cue); });
+  if (!w) return;
+  _sb.picked = { clipId: ch.clip.id, cueId: cue.id };
+  _sb.addAt = null;
+  _sbSay(`Added ${cue.storyboard.id} at sentence ${at + 1}. Give it a picture or an effect in Details.`);
+  await _sbRedraw();
+}
+
+async function _sbRemove() {
+  const { ch, row } = _sbPicked();
+  if (!row) return _sbSay("Pick a scene first.", true);
+  const id = row.cue.id;
+  const sheet = row.cue.sheetId || null;
+  const at = ch.rows.indexOf(row);
+  const w = await _sbWrite(ch.clip.id, (all, cc) => {
+    cc.animationCues = all.filter((c) => !(c && c.id === id));
+  });
+  if (!w) return;
+  if (sheet && !_sbSheetInUse(sheet)) deleteAnimSheet(sheet);
+  const now = _sbChapter(ch.clip.id);
+  const next = now && now.rows[Math.min(at, now.rows.length - 1)];
+  _sb.picked = { clipId: ch.clip.id, cueId: next ? next.cue.id : null };
+  _sbSay(`Removed ${_sbLabel(row)}${sheet ? " and its picture" : ""}.`);
+  await _sbRedraw();
+}
+
+async function _sbSetPicture(file) {
+  const { ch, row } = _sbPicked();
+  if (!row) return _sbSay("Pick a scene first.", true);
+  if (!(await _storyboardCanDecode(file))) {
+    return _sbSay(`“${file.name}” couldn't be read as a picture. Nothing was changed.`, true);
+  }
+  const stored = await _storyboardStoreImage(file);
+  if (!stored) return _sbSay(`“${file.name}” couldn't be stored on this device (out of space?). Nothing was changed.`, true);
+  let old = null;
+  const w = await _sbEditCue((cue) => {
+    old = cue.sheetId || null;
+    cue.sheetId = stored.sheetId;
+    if (stored.sheetSha) cue.sheetSha = stored.sheetSha;
+    else delete cue.sheetSha;
+    delete cue.sheetBlob;
+    delete cue.sheet;
+    cue.source = "image";
+    cue.frames = 1;
+    cue.fps = 8;
+    cue.effect = "page";
+    if (cue.storyboard) delete cue.storyboard.image; // no longer waiting for one
+  }, `Picture set on ${_sbLabel(row)}` + (stored.resized ? `, resized to ${ANIM_IMG_MAX_SIDE}px so it renders in Book view.` : "."));
+  if (!w) {
+    deleteAnimSheet(stored.sheetId);
+    return;
+  }
+  if (old && old !== stored.sheetId && !_sbSheetInUse(old)) deleteAnimSheet(old);
+}
+
+async function _sbClearPicture() {
+  const { row } = _sbPicked();
+  if (!row || !_animCueHasSheet(row.cue)) return _sbSay("This scene has no picture to clear.", true);
+  let old = null;
+  const w = await _sbEditCue((cue) => {
+    old = cue.sheetId || null;
+    for (const k of ["sheetId", "sheetSha", "sheetBlob", "sheet", "source", "frames", "fps"]) delete cue[k];
+    cue.effect = cue.fx || "page"; // an effect alone, as the palette writes one
+  }, `Picture cleared from ${_sbLabel(row)}${row.fx ? `: its ${row.fx} stays` : ": readers see the scene before it until it has a picture or an effect"}.`);
+  if (w && old && !_sbSheetInUse(old)) deleteAnimSheet(old);
+}
+
+async function _sbFindAgain() {
+  const { ch, row } = _sbPicked();
+  const anchor = row && row.cue.storyboard && row.cue.storyboard.anchor;
+  if (!anchor) return _sbSay("This scene has no anchor text to look for. Click a free sentence on the lane to place it there.", true);
+  // The import's own matcher answers where an anchor reads.
+  const plan = window.NS_STORYBOARD.placeChapter({
+    sentences: ch.sentences, lineIds: ch.lineIds, scenes: [{ id: "find", anchor, fx: "glow" }], cues: [],
+  });
+  const hit = plan.rows[0];
+  if (!hit || hit.status !== "placed") {
+    return _sbSay(`“${_sbFirstWords(anchor)}” isn't in the chapter any more. Click a free sentence on the lane to place the scene there.`, true);
+  }
+  return _sbMove(row.cue.id, hit.idx);
+}
+
+// ---- Export ----
+
+async function _sbExport() {
+  const SB = window.NS_STORYBOARD;
+  await _sbLoadChapters();
+  const book = _sb.chapters.filter((c) => c.rows.length);
+  if (!book.length) return _sbSay("There are no scenes to export yet.", true);
+  // Each picture's bytes first: its file name takes the stored type.
+  const blobs = new Map();
+  const missing = [];
+  for (const ch of book) {
+    for (const r of ch.rows) {
+      if (r.status !== "picture") continue;
+      const b = await _animEnsureSheetBlob(r.cue).catch(() => null);
+      if (b) blobs.set(r.cue, b);
+      else missing.push(`${ch.clip.title}: ${_sbLabel(r)}'s picture isn't on this device, so it is exported without one.`);
+    }
+  }
+  const EXT = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif", "image/avif": ".avif" };
+  let title = "";
+  try { title = localStorage.getItem("narrative.storyboardTitle") || ""; } catch {}
+  const out = SB.exportBook({
+    title: title || "Storyboard",
+    chapters: book.map((c) => ({ clip: c.clip.title, sentences: c.sentences, lineIds: c.lineIds, cues: c.clip.animationCues })),
+    hasSheet: _animCueHasSheet,
+    pictureName: (cue, id) => (blobs.has(cue) ? id + (EXT[blobs.get(cue).type] || ".png") : null),
+  });
+  const nScenes = out.file.chapters.reduce((n, c) => n + c.scenes.length, 0);
+  const slug = (title || "storyboard").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "storyboard";
+  const jsonName = /storyboard$/.test(slug) ? slug + ".json" : slug + "-storyboard.json";
+  const json = new Blob([JSON.stringify(out.file, null, 2) + "\n"], { type: "application/json" });
+  const warn = out.warnings.concat(missing);
+  const tail = warn.length ? ` ${warn.length} to look at: ${warn.join(" ")}` : "";
+  const sc = `${nScenes} scene${nScenes === 1 ? "" : "s"}`;
+
+  if (typeof window.showDirectoryPicker !== "function") {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(json);
+    a.download = jsonName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    _sbSay(`Exported ${sc} as ${jsonName}. This browser can't write a folder, so the ${out.pictures.length} pictures were not saved with it (Chrome, Edge and the desktop app can).${tail}`, true);
+    return;
+  }
+  let dir;
+  try {
+    dir = await window.showDirectoryPicker({ id: "lyrith-storyboard", mode: "readwrite" });
+  } catch (e) {
+    if (e && e.name === "AbortError") return _sbSay("Export cancelled: no folder was picked.");
+    return _sbSay(`Couldn't open that folder: ${(e && e.message) || e}`, true);
+  }
+  const write = async (name, data) => {
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(data);
+    await w.close();
+  };
+  try {
+    await write(jsonName, json);
+    for (const p of out.pictures) await write(p.name, blobs.get(p.cue));
+  } catch (e) {
+    _dlog("anim-edit", "storyboard export failed", { error: String(e) });
+    return _sbSay(`Export stopped partway: ${(e && e.message) || e}. Export again to finish.`, true);
+  }
+  _sbSay(`Exported ${sc} and ${out.pictures.length} picture${out.pictures.length === 1 ? "" : "s"} to ${dir.name}/${jsonName}.${tail}`, warn.length > 0);
+  _dlog("anim-edit", "storyboard exported", { folder: dir.name, scenes: nScenes, pictures: out.pictures.length, warnings: warn });
+}
+
+// ---- open / close ----
+
+async function _sbOpen() {
+  if (_sb.open) return;
+  if (window.innerWidth < SB_MIN_WIDTH) {
+    return _sbSay(`The storyboard editor needs a wide window (${SB_MIN_WIDTH}px or wider). Widen the window to open it.`, true);
+  }
+  if (!window.NS_STORYBOARD) return _sbSay("The storyboard editor didn't load. Reload the page and try again.", true);
+  const card = document.querySelector("section.card.card-text");
+  if (!card) return _sbSay("The reading card isn't on this page, so there is nothing to preview in. Reload and try again.", true);
+  _sb.home = { parent: card.parentNode, next: card.nextSibling };
+  _sb.wasBook = !bookView.hidden;
+  _sb.bookKey = null;
+  $("sb-frame").appendChild(card);
+  $("sb-editor").hidden = false;
+  document.body.classList.add("sb-editing");
+  _sb.open = true;
+  $("sb-status").textContent = "";
+  await _sbLoadChapters();
+  // Start on the open chapter, else the first with scenes.
+  const cur = _sbChapter(_currentClipId);
+  const first = cur && cur.rows.length ? cur : _sb.chapters.find((c) => c.rows.length) || cur;
+  _sb.picked = first ? { clipId: first.clip.id, cueId: first.rows[0] ? first.rows[0].cue.id : null } : null;
+  _sb.addAt = null;
+  await _sbRedraw();
+}
+
+function _sbClose(why) {
+  if (!_sb.open) return;
+  _sb.open = false;
+  _sb.drag = null;
+  const card = document.querySelector("#sb-frame > section.card-text");
+  const home = _sb.home;
+  if (card && home && home.parent) {
+    home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
+  }
+  $("sb-editor").hidden = true;
+  document.body.classList.remove("sb-editing");
+  if (!_sb.wasBook && !bookView.hidden) exitBookView();
+  _sb.bookKey = null;
+  _sbShowThumb(null);
+  if (why) setStatus(why, true);
+}
+
+{
+  const fx = $("sb-fx");
+  fx.appendChild(new Option("None", ""));
+  for (const f of _ANIM_FX) fx.appendChild(new Option(f, f));
+  const art = $("sb-art");
+  art.appendChild(new Option("—", ""));
+  for (const a of SB_ART) art.appendChild(new Option(a, a));
+}
+const _sbFail = (what) => (err) => {
+  _sbSay(`The storyboard editor couldn't ${what}. Settings ▸ View debug log has the details.`, true);
+  _dlog("anim-edit", what + " threw", { error: String((err && err.stack) || err) });
+  console.error("[storyboard editor]", err);
+};
+$("library-storyboard").addEventListener("click", () => _sbOpen().catch(_sbFail("open")));
+$("sb-close").addEventListener("click", () => _sbClose());
+$("sb-import").addEventListener("click", () => $("library-storyboard-file").click());
+$("sb-export").addEventListener("click", () => _sbExport().catch(_sbFail("export")));
+$("sb-search").addEventListener("input", () => { _sbRenderOutliner(); _sbRenderTransport(); });
+$("sb-all-chapters").addEventListener("change", () => _sbRenderOutliner());
+$("sb-rows").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-clip]");
+  if (!b) return;
+  const ch = _sb.chapters.find((c) => String(c.clip.id) === b.dataset.clip);
+  if (ch) _sbPick(ch.clip.id, b.dataset.cue || null).catch(_sbFail("show that scene"));
+});
+for (const v of ["book", "reading", "phone"]) {
+  $("sb-view-" + v).addEventListener("click", () => {
+    _sb.view = v;
+    _sbShow().catch(_sbFail("change the view"));
+  });
+}
+$("sb-prev").addEventListener("click", () => _sbStep(-1));
+$("sb-next").addEventListener("click", () => _sbStep(1));
+function _sbStep(d) {
+  const vis = _sbVisibleRows();
+  if (!vis.length) return _sbSay("There are no scenes to step through.", true);
+  const { row } = _sbPicked();
+  let i = row ? vis.findIndex((v) => v.row === row) : -1;
+  i = i < 0 ? 0 : Math.max(0, Math.min(vis.length - 1, i + d));
+  _sbPick(vis[i].ch.clip.id, vis[i].row.cue.id).catch(_sbFail("show that scene"));
+}
+$("sb-play").addEventListener("click", () => {
+  const { row } = _sbPicked();
+  if (!row || row.idx == null) return _sbSay("Pick a placed scene first.", true);
+  seekToSentence(row.idx);
+  playerEl.play().catch((e) => _sbSay(`Couldn't play: ${(e && e.message) || e}`, true));
+});
+$("sb-add").addEventListener("click", () => _sbAdd().catch(_sbFail("add a scene")));
+$("sb-remove").addEventListener("click", () => _sbRemove().catch(_sbFail("remove the scene")));
+$("sb-find-again").addEventListener("click", () => _sbFindAgain().catch(_sbFail("find the anchor")));
+$("sb-picture-pick").addEventListener("click", () => $("sb-picture-file").click());
+$("sb-picture-file").addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (f) _sbSetPicture(f).catch(_sbFail("set the picture"));
+});
+$("sb-picture-clear").addEventListener("click", () => _sbClearPicture().catch(_sbFail("clear the picture")));
+$("sb-fx").addEventListener("change", () => {
+  const v = $("sb-fx").value;
+  _sbEditCue((cue) => {
+    if (v) cue.fx = v;
+    else delete cue.fx;
+    if (!_animCueHasSheet(cue)) cue.effect = v || "page";
+  }, v ? `Effect set to ${v}.` : "Effect removed.").catch(_sbFail("set the effect"));
+});
+$("sb-shot").addEventListener("change", () => {
+  const v = $("sb-shot").value.trim();
+  _sbEditCue((cue, ch, row) => {
+    const st = _sbStamp(cue, ch, row);
+    if (v) st.shot = v;
+    else delete st.shot;
+  }, "Shot saved.").catch(_sbFail("save the shot"));
+});
+$("sb-art").addEventListener("change", () => {
+  const v = $("sb-art").value;
+  _sbEditCue((cue, ch, row) => {
+    const st = _sbStamp(cue, ch, row);
+    if (v) st.art = v;
+    else delete st.art;
+  }, v ? `Art source: ${v}.` : "Art source cleared.").catch(_sbFail("save the art source"));
+});
+$("sb-key").addEventListener("change", () => {
+  const on = $("sb-key").checked;
+  _sbEditCue((cue, ch, row) => {
+    const st = _sbStamp(cue, ch, row);
+    if (on) st.key = true;
+    else delete st.key;
+  }, on ? "Marked as a key frame." : "No longer a key frame.").catch(_sbFail("save the key frame"));
+});
+$("sb-filter").addEventListener("input", _sbFilterDetails);
+
+// The lane: drag a marker onto another sentence to move its scene; click a
+// sentence to pick its scene, or a free one to add (or re-place a lost) scene.
+{
+  const lane = $("sb-lane");
+  const clearDrop = () => lane.querySelectorAll(".is-drop").forEach((c) => c.classList.remove("is-drop"));
+  lane.addEventListener("pointerdown", (e) => {
+    const m = e.target.closest(".sb-marker");
+    if (!m || e.button !== 0) return;
+    e.preventDefault();
+    _sb.drag = { cueId: m.dataset.cue, from: Number(m.closest(".sb-cell").dataset.idx), over: null };
+    try { m.setPointerCapture(e.pointerId); } catch {}
+  });
+  lane.addEventListener("pointermove", (e) => {
+    const d = _sb.drag;
+    if (!d) return;
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = hit && hit.closest ? hit.closest("#sb-lane .sb-cell") : null;
+    const idx = cell ? Number(cell.dataset.idx) : null;
+    if (idx === d.over) return;
+    clearDrop();
+    if (cell && idx !== d.from) cell.classList.add("is-drop");
+    d.over = idx;
+  });
+  lane.addEventListener("pointerup", () => {
+    const d = _sb.drag;
+    _sb.drag = null;
+    clearDrop();
+    if (!d || d.over == null || d.over === d.from) return; // a click: picked below
+    _sbMove(d.cueId, d.over).catch(_sbFail("move the scene"));
+  });
+  lane.addEventListener("pointercancel", () => {
+    _sb.drag = null;
+    clearDrop();
+  });
+  lane.addEventListener("click", (e) => {
+    const { ch, row } = _sbPicked();
+    if (!ch) return;
+    const m = e.target.closest(".sb-marker");
+    if (m) {
+      if (!row || row.cue.id !== m.dataset.cue) _sbPick(ch.clip.id, m.dataset.cue).catch(_sbFail("show that scene"));
+      return;
+    }
+    const cell = e.target.closest(".sb-cell");
+    if (!cell) return;
+    const idx = Number(cell.dataset.idx);
+    const held = ch.rows.find((r) => r.idx === idx);
+    if (held) return _sbPick(ch.clip.id, held.cue.id).catch(_sbFail("show that scene"));
+    if (row && row.idx == null) return _sbMove(row.cue.id, idx).catch(_sbFail("place the scene"));
+    _sb.picked = { clipId: ch.clip.id, cueId: null };
+    _sb.addAt = { clipId: ch.clip.id, idx };
+    _sbRedraw().catch(_sbFail("show that sentence"));
+  });
+}
+
+// A wide-desktop tool: below the tier it closes and says why.
+window.addEventListener("resize", () => {
+  if (_sb.open && window.innerWidth < SB_MIN_WIDTH) {
+    _sbClose(`Storyboard editor closed: it needs a wide window (${SB_MIN_WIDTH}px or wider).`);
+  }
+});
 
 // ---- Library multi-select -----------------------------------------------
 // Bulk delete + bulk export for clip libraries that have grown past

@@ -5433,6 +5433,465 @@ body[data-offline="true"] .import-dropdown-item {
   color: var(--danger);
 }
 
+/* v4.255: the storyboard editor, laid out like the game's Workshop editors:
+   Outliner | viewport (the real reading card) over the lane | Details. The
+   window never scrolls; each side panel scrolls inside itself, and the
+   viewport is never inside anything that scrolls, so it stays in view. */
+body.sb-editing {
+  overflow: hidden;
+}
+.sb-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--bg);
+  color: var(--fg);
+}
+.sb-editor[hidden],
+.sb-editor [hidden] {
+  display: none !important;
+}
+.sb-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--bg-card);
+}
+.sb-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.sb-head-note {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.sb-head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+}
+.sb-body {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr) 330px;
+  min-height: 0;
+}
+.sb-outliner,
+.sb-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--bg-card);
+}
+.sb-outliner {
+  border-right: 1px solid var(--border-strong);
+}
+.sb-details {
+  border-left: 1px solid var(--border-strong);
+}
+.sb-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.sb-panel-head h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.sb-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.sb-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.sb-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.sb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sb-chapter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sb-chapter-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.sb-chapter-count {
+  color: var(--fg-dim);
+  font-weight: 400;
+}
+.sb-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--bg-card-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.sb-row:hover,
+.sb-chapter-head:hover {
+  background: var(--hover-soft);
+}
+.sb-row.is-picked,
+.sb-chapter-head.is-picked {
+  border-color: var(--accent);
+  background: var(--bg-card-2);
+}
+.sb-row > * {
+  align-self: stretch;
+  justify-content: flex-start;
+  text-align: left;
+}
+.sb-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sb-row-id {
+  font-weight: 600;
+}
+.sb-row-at {
+  margin-left: auto;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+}
+.sb-key {
+  color: var(--working);
+}
+.sb-row-text {
+  color: var(--fg-dim);
+  line-height: 1.35;
+}
+.sb-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4caf50;
+  flex: none;
+}
+.sb-row--fx .sb-dot {
+  background: var(--accent);
+}
+.sb-row--empty .sb-dot {
+  background: var(--working);
+}
+.sb-row--lost .sb-dot {
+  background: var(--danger);
+}
+.sb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sb-chip {
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-emph);
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--fg-dim);
+}
+.sb-chip--fx {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.sb-chip--warn {
+  color: var(--working);
+  border-color: var(--working);
+}
+.sb-chip--bad {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.sb-empty {
+  margin: 4px 0;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.sb-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.sb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sb-views,
+.sb-transport {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sb-seg {
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.sb-seg[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sb-seg:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.sb-where {
+  min-width: 92px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.sb-add {
+  margin-left: auto;
+}
+.sb-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  background: var(--bg);
+}
+.sb-frame {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+.sb-frame--phone {
+  width: 390px;
+  border-left: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-strong);
+}
+/* The real reading card, lifted in: only its page is shown, edge to edge. */
+.sb-frame > .card.card-text {
+  margin: 0;
+  max-width: none;
+  width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  border-radius: 0;
+  box-shadow: none;
+}
+.sb-frame > .card.card-text > :not(#reading-view):not(#book-view):not(dialog) {
+  display: none !important;
+}
+.sb-lane-wrap {
+  border-top: 1px solid var(--border-strong);
+  padding: 4px 12px 8px;
+  background: var(--bg-card);
+}
+.sb-lane-label {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-lane {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  user-select: none;
+}
+.sb-cell {
+  position: relative;
+  flex: 0 0 26px;
+  height: 46px;
+  border-radius: 5px;
+  background: var(--bg-card-2);
+  cursor: pointer;
+}
+.sb-cell:hover {
+  outline: 1px solid var(--border-emph);
+}
+.sb-cell.is-covered {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-card-2));
+}
+.sb-cell.is-target,
+.sb-cell.is-drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+.sb-cell-n {
+  position: absolute;
+  bottom: 2px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 9.5px;
+  color: var(--fg-dim);
+}
+.sb-marker {
+  position: absolute;
+  top: 3px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  background: #4caf50;
+  color: #fff;
+  cursor: grab;
+  touch-action: none;
+}
+.sb-marker--fx {
+  background: var(--accent);
+}
+.sb-marker--empty {
+  background: var(--working);
+}
+.sb-marker.is-picked {
+  box-shadow: 0 0 0 2px var(--fg);
+}
+.sb-cats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sb-cat {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px 10px;
+  background: var(--bg-card-2);
+}
+.sb-cat.is-filtered {
+  display: none;
+}
+.sb-cat summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 2px 0 6px;
+}
+.sb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.sb-field select,
+.sb-field textarea {
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+.sb-field textarea {
+  resize: vertical;
+}
+.sb-field-strong {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sb-quote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--accent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.sb-note {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.sb-thumb {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #000;
+}
+.sb-btn-row {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+}
+.sb-danger {
+  padding-top: 4px;
+}
+.sb-danger .link-btn {
+  color: var(--danger);
+}
+.sb-status {
+  margin: 0;
+  min-height: 1.4em;
+  padding: 5px 16px;
+  border-top: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.sb-status.error {
+  color: var(--danger);
+}
+
 .chapter-banner-btn {
   font-family: inherit;
   font-size: 12px;
