@@ -7,6 +7,36 @@
 
 const { test, expect } = require("@playwright/test");
 
+// The first-launch tour (first-tour, v225v3.17) opens over an empty
+// library about 1.5 s after load, and its backdrop takes every click
+// until it is dismissed. None of these tests is about the tour, so mark
+// it seen before any page script runs, the way a returning reader has it.
+// The splash needs nothing: it removes itself within 4 s, and Playwright
+// retries a click until nothing covers its target.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("narrative.tour.first-tour.seen", String(Date.now()));
+    } catch (_) {}
+  });
+});
+
+// Settings opens on Account; Theme lives under Appearance.
+async function openAppearanceSettings(page) {
+  await page.locator("#settings-btn").click();
+  await page.locator('.settings-sidebar-item[data-cat="appearance"]').click();
+  return page.locator('.theme-picker[aria-label="Theme"] label');
+}
+
+// From 1280px up the voice browser lives in the author pane (v225fe,
+// #647) and the 🎤 trigger is display:none; below that it is a dialog the
+// trigger opens. Open whichever this width has.
+async function openVoiceBrowser(page) {
+  const trigger = page.locator("#voice-trigger");
+  if (await trigger.isVisible()) await trigger.click();
+  await page.locator("#browse-voices-btn").click();
+}
+
 test.describe("regression — Settings dialog", () => {
   test("feedback mailto: href has raw @ (not %40) — broke in v56-v62", async ({ page }) => {
     // v62 fix: the address in mailto: must NOT be URL-encoded. Encoding
@@ -43,12 +73,9 @@ test.describe("regression — Theme", () => {
     // wraps them and intercepts pointer events. Click the visible
     // label by its text instead of trying to .check() the radio.
     await page.goto("/");
-    await page.locator("#settings-btn").click();
+    const themes = await openAppearanceSettings(page);
 
-    await page
-      .locator(".theme-picker label")
-      .filter({ hasText: "Light" })
-      .click();
+    await themes.filter({ hasText: "Light" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
     await page.reload();
@@ -66,18 +93,12 @@ test.describe("regression — Theme", () => {
     await page.emulateMedia({ colorScheme: "dark" });
 
     await page.goto("/");
-    await page.locator("#settings-btn").click();
+    const themes = await openAppearanceSettings(page);
     // Flip to Light first so we have something to clear, then Auto.
-    await page
-      .locator(".theme-picker label")
-      .filter({ hasText: "Light" })
-      .click();
+    await themes.filter({ hasText: "Light" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-    await page
-      .locator(".theme-picker label")
-      .filter({ hasText: "Auto" })
-      .click();
+    await themes.filter({ hasText: "Auto" }).click();
     // With prefers-color-scheme: dark and Theme = Auto, the resolver
     // returns "dark" → applyTheme removes the attribute entirely.
     await expect(page.locator("html")).not.toHaveAttribute(
@@ -100,11 +121,7 @@ test.describe("regression — Voice browser plumbing", () => {
     await expect(page.locator("#voice option")).not.toHaveCount(0, {
       timeout: 15_000,
     });
-    // v110: Voice picker + Browse voices live inside a dialog now,
-    // opened from the 🎤 trigger in the hero. Open it first so
-    // #browse-voices-btn is in the layout.
-    await page.locator("#voice-trigger").click();
-    await page.locator("#browse-voices-btn").click();
+    await openVoiceBrowser(page);
     await expect(page.locator(".catalog-voice")).not.toHaveCount(0, {
       timeout: 15_000,
     });
@@ -137,7 +154,7 @@ test.describe("regression — Voice browser plumbing", () => {
     // v217 wired per-voice commercial-license metadata through
     // /api/voices and renders a colored chip next to the name. This
     // test pins down:
-    //   (a) /api/voices includes license_commercial on every row
+    //   (a) /api/voices/catalog includes license_commercial on every row
     //   (b) the catalog renders at least one Commercial ✓ badge
     //       (the dev box has LibriTTS installed → green badge)
     //   (c) badges carry a non-empty title for the credit-line tooltip
@@ -146,10 +163,13 @@ test.describe("regression — Voice browser plumbing", () => {
       timeout: 15_000,
     });
 
-    // Capture /api/voices payload shape.
-    const voicesRes = await page.request.get("/api/voices");
+    // Capture the catalog payload shape. The license fields are on
+    // /api/voices/catalog (tts/catalog.py), which is what the voice
+    // browser renders from; /api/voices is the installed-voice list
+    // for the main picker and carries none. Both wrap rows in .voices.
+    const voicesRes = await page.request.get("/api/voices/catalog");
     expect(voicesRes.ok()).toBeTruthy();
-    const voices = await voicesRes.json();
+    const voices = (await voicesRes.json()).voices;
     expect(Array.isArray(voices)).toBeTruthy();
     expect(voices.length).toBeGreaterThan(0);
     for (const v of voices.slice(0, 5)) {
@@ -161,8 +181,7 @@ test.describe("regression — Voice browser plumbing", () => {
     if (libritts) expect(libritts.license_commercial).toBe(true);
 
     // Open the voice browser and verify at least one badge renders.
-    await page.locator("#voice-trigger").click();
-    await page.locator("#browse-voices-btn").click();
+    await openVoiceBrowser(page);
     await expect(page.locator(".catalog-voice")).not.toHaveCount(0, {
       timeout: 15_000,
     });
@@ -283,6 +302,9 @@ test.describe("regression — hidden attribute respected by CSS", () => {
 
     // These elements all start with the `hidden` attribute in
     // index.html. None should be visible to the user on a fresh load.
+    // #presets-list is not among them: since v166 renderPresets()
+    // unhides it on boot to show the "Save preset" tip when there are
+    // no presets, so it is visible on purpose.
     const expectedHidden = [
       "#chapter-banner",
       "#chapter-queue",
@@ -290,7 +312,6 @@ test.describe("regression — hidden attribute respected by CSS", () => {
       "#mini-player",
       "#bookmarks-list",
       "#filler-counts",
-      "#presets-list",
     ];
     for (const sel of expectedHidden) {
       await expect(page.locator(sel), `${sel} should be hidden`).toBeHidden();
